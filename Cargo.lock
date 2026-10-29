@@ -4191,7 +4191,6 @@ dependencies = [
  "sinex-protocol",
  "sinex-source-core",
  "sinex-sources",
- "sqlx",
  "tempfile",
  "tokio",
 ]

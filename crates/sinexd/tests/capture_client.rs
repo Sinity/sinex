@@ -1,5 +1,5 @@
 //! Real capture-only client, local spooling and the daemon's NATS ingress.
-#[path = "../../sinexd/tests/support/daemon.rs"]
+#[path = "support/daemon.rs"]
 mod daemon;
 use daemon::*;
 use sqlx::{Connection, PgConnection};
@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn capture(root: &Path, nats: &devkit::nats::TestNats) -> Process {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_sinex-capture"));
+    let mut command = Command::new(Path::new(env!("CARGO_BIN_EXE_sinexd")).with_file_name("sinex-capture"));
     command
         .args([
             "--nats",
@@ -92,10 +92,10 @@ async fn path_events(conn: &mut PgConnection, path: &Path) -> Vec<(String, Strin
 #[devkit::test]
 async fn capture_only_binary_spools_before_daemon_and_resumes_over_nats_once() {
     // Both packages must be selected so this is the exact candidate's daemon.
-    let capture_binary = Path::new(env!("CARGO_BIN_EXE_sinex-capture"));
-    let daemon_binary = capture_binary.with_file_name("sinexd");
+    let daemon_binary = Path::new(env!("CARGO_BIN_EXE_sinexd")).to_path_buf();
+    let capture_binary = daemon_binary.with_file_name("sinex-capture");
     assert!(
-        daemon_binary.is_file(),
+        capture_binary.is_file(),
         "select -p sinex-capture -p sinexd to build both clients"
     );
     let db = devkit::pg::test_database().unwrap();
