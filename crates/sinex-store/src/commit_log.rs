@@ -501,12 +501,14 @@ pub async fn record_replay_frame(
     conn: &mut PgConnection,
     producer: &str,
     frame: &str,
+    family:&str,
+    write_kind_prefixes:&[String],
     operation: sinex_model::OperationId,
     ids: &[Uuid],
     last: Option<i64>,
 ) -> Result<()> {
     let outcome = serde_json::json!({"admitted":ids.len(),"replay":operation});
-    sqlx::query!("INSERT INTO core.ingress_frames (producer,frame,admitted,outcome,commit_seq) VALUES ($1,$2,$3,$4,$5)",producer,frame,ids,outcome,last).execute(conn).await?;
+    sqlx::query!("INSERT INTO core.ingress_frames (producer,frame,admitted,outcome,commit_seq,family,write_kind_prefixes) VALUES ($1,$2,$3,$4,$5,$6,$7)",producer,frame,ids,outcome,last,family,write_kind_prefixes).execute(conn).await?;
     Ok(())
 }
 

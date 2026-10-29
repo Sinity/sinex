@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone)]
 pub(crate) struct CheckedReplay {
     pub family:String,
+    pub write_kind_prefixes:Vec<String>,
     pub producer: String,
     pub frame: String,
     pub sequence: ProducerReplay,
@@ -253,6 +254,8 @@ pub(crate) async fn finish(
         conn,
         &request.producer,
         &request.frame,
+        &request.family,
+        &request.write_kind_prefixes,
         s.operation,
         &ids,
         last,
@@ -270,9 +273,10 @@ impl Ingest {
         run: RunId,
         sequence: ProducerReplay,
     ) -> Result<Acknowledgment, String> {
-        let family=authority::write(&self.grants,producer).map_err(|error|error.to_string())?.family.clone();
+        let write=authority::write(&self.grants,producer).map_err(|error|error.to_string())?;
         let request = CheckedReplay {
-            family,
+            family:write.family.clone(),
+            write_kind_prefixes:write.kind_prefixes.clone(),
             producer: producer.into(),
             frame: frame.into(),
             sequence,
@@ -352,7 +356,7 @@ impl Ingest {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
                     family:Some(request.family.clone()),
-                    write_kind_prefixes:authority::write(&self.grants,&request.producer).map_err(Check::Configuration)?.kind_prefixes.clone(),
+                    write_kind_prefixes:request.write_kind_prefixes.clone(),
                     assign_orders,
                     producer: request.producer.clone(),
                     frame: String::new(),
