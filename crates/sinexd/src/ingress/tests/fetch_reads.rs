@@ -24,7 +24,7 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db:devkit::pg
     }
     let forged=h.client.request(h.subjects.fetch_event("unconfigured"),serde_json::to_vec(&json!({"event":id,"producer":"replica"})).unwrap().into()).await.unwrap();
     let forged:FetchEventReply=serde_json::from_slice(&forged.payload).unwrap();assert_eq!(forged.refusal_kind,Some(FetchRefusalKind::Invalid));assert!(forged.event.is_none());
-    let message=h.client.request(h.subjects.fetch_material("replica"),serde_json::to_vec(&FetchMaterial{material}).unwrap().into()).await.unwrap();
+    let message=h.client.request(h.subjects.fetch_material("replica"),serde_json::to_vec(&FetchMaterial{material,range:None}).unwrap().into()).await.unwrap();
     let reply:FetchMaterialReply=serde_json::from_slice(&message.payload).unwrap();assert_eq!(reply.refusal,None);assert_eq!(reply.material.unwrap().id,material);assert!(!reply.extents.is_empty());
 }
 
@@ -53,4 +53,26 @@ async fn oversized_fetched_payloads_use_verified_bounded_transfers(db:devkit::pg
     let payload:Value=serde_json::from_slice(&bytes).unwrap();assert_eq!(payload["command"],command);
     let request=FetchPayload{event,offset:0,length:1,hash:"blake3:changed".into()};
     let response=h.client.request(h.subjects.fetch_payload("replica"),serde_json::to_vec(&request).unwrap().into()).await.unwrap();let reply:FetchPayloadReply=serde_json::from_slice(&response.payload).unwrap();assert_eq!(reply.refusal_kind,Some(FetchRefusalKind::Changed));assert!(reply.data.is_empty());
+}
+
+#[devkit::test]
+async fn oversized_material_metadata_has_verified_range_transfers(db:devkit::pg::TestDatabase) {
+    use sinex_protocol::{FetchRange,MaterialFrame};
+    let grant=||crate::ingress::fetch::Grants{kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]};
+    let h=Harness::start_with_grants(db,std::collections::BTreeMap::from([("kitty".into(),grant()),("replica".into(),grant())])).await;
+    let (material,mut frame)=h.material_frame("large-manifest",b"retained source\n");
+    let manifest=sinex_model::Manifest::from_json(json!({"description":"x ".repeat(h.client.server_info().max_payload)}));
+    if let Ingress::Material{material,..}=&mut frame {material.manifest=manifest.clone();} else {panic!("material frame");}
+    let encoded=serde_json::to_vec(&frame).unwrap();let blob=h.fixture_blob(&encoded);
+    assert_eq!(h.send("kitty",&Ingress::LargeFrame{frame:"large-manifest".into(),blob,length:encoded.len() as u64}).await.refusal,None);
+    let response=h.client.request(h.subjects.fetch_material("replica"),serde_json::to_vec(&FetchMaterial{material,range:None}).unwrap().into()).await.unwrap();
+    let reply:FetchMaterialReply=serde_json::from_slice(&response.payload).unwrap();assert_eq!(reply.refusal,None);let reference=reply.material_ref.unwrap();let mut bytes=Vec::new();
+    while (bytes.len() as u64)<reference.length {
+        let request=FetchMaterial{material,range:Some(FetchRange{offset:bytes.len() as u64,length:u64::MAX,hash:reference.hash.clone()})};
+        let response=h.client.request(h.subjects.fetch_material("replica"),serde_json::to_vec(&request).unwrap().into()).await.unwrap();assert!(response.payload.len()<=h.client.server_info().max_payload);
+        let reply:FetchMaterialReply=serde_json::from_slice(&response.payload).unwrap();assert_eq!(reply.refusal,None);let transfer=reply.transfer.unwrap();assert_eq!(transfer.offset,bytes.len() as u64);assert_eq!(transfer.total,reference.length);assert_eq!(transfer.hash,reference.hash);
+        let data=base64::engine::general_purpose::STANDARD.decode(transfer.data).unwrap();assert!(!data.is_empty());bytes.extend(data);
+    }
+    assert_eq!(format!("blake3:{}",blake3::hash(&bytes).to_hex()),reference.hash);
+    let reply:FetchMaterialReply=serde_json::from_slice(&bytes).unwrap();let frame:MaterialFrame=reply.material.unwrap();assert_eq!(frame.manifest,manifest);assert!(!reply.extents.is_empty());
 }

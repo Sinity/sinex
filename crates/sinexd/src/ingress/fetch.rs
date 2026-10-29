@@ -2,8 +2,9 @@
 use super::*;
 use serde::{Deserialize, de::DeserializeOwned};
 use sinex_model::Class;
-use sinex_protocol::{ConfirmedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply, FetchPayload, FetchPayloadReply, FetchRefusalKind, PayloadReference, Withheld};
+use sinex_protocol::{MaterialReference,ConfirmedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply, FetchPayload, FetchPayloadReply, FetchRefusalKind, PayloadReference, Withheld};
 use std::collections::BTreeMap;
+use sqlx::Connection;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +53,9 @@ impl Requests {
     }
     async fn event_for(&self,producer:&str,id:EventId)->ReadResult<ConfirmedEvent> {
         let grant=self.grants(producer)?;
-        let mut conn=self.reads.acquire().await.map_err(unavailable)?;
+        let mut connection=self.reads.acquire().await.map_err(unavailable)?;
+        let mut conn=connection.begin().await.map_err(unavailable)?;
+        sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").execute(&mut *conn).await.map_err(unavailable)?;
         let classes=grant.classes.iter().map(|class|serde_json::to_value(class).expect("classes serialize").as_str().expect("class string").to_owned()).collect::<Vec<_>>().join(",");
         sinex_store::query::set_grants(&mut conn,&classes).await.map_err(unavailable)?;
         let view=sinex_store::query::show(&mut conn,&sinex_model::query::Reference::Event(id.0)).await.map_err(|error|match error {
@@ -113,7 +116,9 @@ impl Requests {
     pub(super) async fn fetch_material(&self,producer:&str,request:&FetchMaterial)->FetchMaterialReply {
         let result:ReadResult<_>=async {
             let grant=self.grants(producer)?;
-            let mut conn=self.reads.acquire().await.map_err(unavailable)?;
+            let mut connection=self.reads.acquire().await.map_err(unavailable)?;
+        let mut conn=connection.begin().await.map_err(unavailable)?;
+        sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").execute(&mut *conn).await.map_err(unavailable)?;
             let owner=sqlx::query_scalar!("SELECT producer FROM core.ingress_frames WHERE material_id=$1 AND refusal IS NULL ORDER BY number LIMIT 1",request.material.0).fetch_optional(&mut *conn).await.map_err(unavailable)?.ok_or_else(missing)?;
             let owner_grant=self.read_grants.get(&owner).ok_or_else(denied)?;
             if !grant.intersects(owner_grant) {return Err(denied());}
@@ -132,6 +137,22 @@ impl Requests {
             if self.blobs.is_sealed(&material.blob).map_err(unavailable)? {return Err(Refusal{kind:FetchRefusalKind::Locked,reason:"sealed material requires an operator unlock".into()});}
             Ok(FetchMaterialReply{material:Some(MaterialFrame{id:material.id,input:sinex_model::InputRef{kind:input.kind,locator:input.locator,host:input.host},blob:material.blob,length:material.length,parser:material.parser,parser_version:material.parser_version,part_index:material.part_index,previous_part:material.previous_part,manifest:material.manifest}),extents:vec![descriptor],..Default::default()})
         }.await;
+        let result=result.and_then(|reply| {
+            let bytes=serde_json::to_vec(&reply).map_err(unavailable)?;
+            let hash=format!("blake3:{}",blake3::hash(&bytes).to_hex());
+            if let Some(range)=&request.range {
+                if range.hash!=hash {return Err(Refusal{kind:FetchRefusalKind::Changed,reason:"material metadata changed; fetch its reference again".into()});}
+                let start=usize::try_from(range.offset).ok().filter(|offset|*offset<=bytes.len()).ok_or_else(||Refusal{kind:FetchRefusalKind::Invalid,reason:"material metadata offset is outside its length".into()})?;
+                let transfer=self.max_payload.saturating_sub(2048)*3/4;
+                if transfer==0 {return Err(unavailable("NATS message limit cannot hold a material transfer"));}
+                let length=range.length.min(transfer).min((bytes.len()-start) as u64) as usize;
+                return Ok(FetchMaterialReply{transfer:Some(FetchPayloadReply{offset:range.offset,total:bytes.len() as u64,hash,data:base64::engine::general_purpose::STANDARD.encode(&bytes[start..start+length]),..Default::default()}),..Default::default()});
+            }
+            if bytes.len() as u64+1024>self.max_payload {
+                return Ok(FetchMaterialReply{material_ref:Some(MaterialReference{material:request.material,length:bytes.len() as u64,hash}),..Default::default()});
+            }
+            Ok(reply)
+        });
         result.unwrap_or_else(|error|FetchMaterialReply{refusal:Some(error.reason),refusal_kind:Some(error.kind),..Default::default()})
     }
 }
