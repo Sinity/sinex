@@ -552,8 +552,8 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             // registered schema, independently of its payload values.
             d.payload_schema = Some(json!({
                 "type":"object",
-                "properties":{"session":{"type":"string"},"origin":{"type":"string"}},
-                "required":["session","origin"],
+                "properties":{"session":{"type":"string"},"origin":{"type":"string"},"started":{"type":"string","format":"date-time"}},
+                "required":["session","origin","started"],
                 "additionalProperties":true
             }));
         }
