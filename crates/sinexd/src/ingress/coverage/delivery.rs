@@ -8,7 +8,7 @@ pub(super) async fn verify(
     claims: &Claims,
     completion: &sinex_protocol::DeliveredCompletion,
     position: i64,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let js = crate::publisher::context(client.clone());
     let stream = js
         .get_stream(subjects.confirmed_stream())
@@ -18,7 +18,7 @@ pub(super) async fn verify(
         || crate::publisher::stream_instance(&stream) != claims.instance
         || completion.stream_sequence == 0
     {
-        return Err("coverage_native_incarnation_changed".into());
+        return Err(Failure::Invalidated("coverage_native_incarnation_changed".into()));
     }
     let consumer = stream
         .get_consumer::<consumer::pull::Config>(&subjects.consumer_name(&claims.scope))
@@ -35,7 +35,7 @@ pub(super) async fn verify(
         || info.config.ack_policy != consumer::AckPolicy::Explicit
         || completion.stream_sequence > info.delivered.stream_sequence
     {
-        return Err("coverage_native_delivery_window_unproven".into());
+        return Err(Failure::Invalidated("coverage_native_delivery_window_unproven".into()));
     }
     let message = stream
         .get_raw_message(completion.stream_sequence)
@@ -45,7 +45,7 @@ pub(super) async fn verify(
         || !matches!(serde_json::from_slice::<sinex_protocol::Confirmed>(&message.payload),
             Ok(sinex_protocol::Confirmed::PositionComplete { commit_seq }) if commit_seq == position)
     {
-        return Err("coverage_native_completed_position_unproven".into());
+        return Err(Failure::Invalidated("coverage_native_completed_position_unproven".into()));
     }
     Ok(())
 }

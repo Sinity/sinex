@@ -81,6 +81,7 @@ fn covered_frame(claims: &Claims, stamp: String, required: bool) -> sinex_model:
             required,
             stamp,
             position: claims.position,
+            policy_epoch: claims.policy_epoch,
             scope: claims.scope.clone(),
             catalog: claims.catalog.clone(),
             instance: claims.instance.clone(),
@@ -123,6 +124,11 @@ async fn optional_emergency_stamp_loses_certification_without_relaxing_required_
         validate(&mut conn, &optional).await.unwrap(),
         Some(epoch.active)
     );
+    let mut forged=mandatory.clone();
+    forged.coverage.as_mut().unwrap().policy_epoch+=1;
+    assert!(validate(&mut conn,&forged).await.is_err(),"a valid stamp does not authenticate a changed outer epoch");
+    forged.coverage.as_mut().unwrap().required=false;
+    assert_eq!(validate(&mut conn,&forged).await.unwrap(),None);
     sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"changed\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
     assert!(validate(&mut conn, &mandatory).await.is_err());
     assert_eq!(validate(&mut conn, &optional).await.unwrap(), None);
@@ -143,4 +149,9 @@ async fn optional_emergency_stamp_loses_certification_without_relaxing_required_
         "optional certification cannot turn missing owner signing authority into a semantic refusal"
     );
     unavailable.rollback().await.unwrap();
+    let mut corrupt=conn.begin().await.unwrap();
+    sqlx::query("ALTER TABLE core.owner_protocol_key DROP CONSTRAINT owner_protocol_key_secret_check").execute(&mut *corrupt).await.unwrap();
+    sqlx::query("UPDATE core.owner_protocol_key SET secret=decode('00','hex')").execute(&mut *corrupt).await.unwrap();
+    assert!(validate(&mut corrupt,&optional).await.is_err(),"optional proof validation cannot drop certification silently when private signing authority is malformed");
+    corrupt.rollback().await.unwrap();
 }

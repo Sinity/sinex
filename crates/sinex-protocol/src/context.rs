@@ -34,6 +34,7 @@ pub struct DeliveredCompletion {
 pub struct CoverageProof {
     pub stamp: String,
     pub position: i64,
+    pub policy_epoch: i64,
     pub scope: String,
 }
 
@@ -41,7 +42,7 @@ pub struct CoverageProof {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CoverageStatus {
     Complete { proof: CoverageProof },
-    Incomplete { reason: String },
+    Incomplete { reason: String, basis: crate::ReplayBasisStatus },
     NotRequested,
 }
 

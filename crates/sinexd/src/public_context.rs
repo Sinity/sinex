@@ -150,6 +150,7 @@ impl Provider {
                 coverage: if request.coverage.is_some() {
                     CoverageStatus::Incomplete {
                         reason: "coverage_not_established".into(),
+                        basis: sinex_protocol::ReplayBasisStatus::Unverified,
                     }
                 } else {
                     CoverageStatus::NotRequested

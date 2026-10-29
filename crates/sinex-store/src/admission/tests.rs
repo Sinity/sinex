@@ -1043,6 +1043,7 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let policy_epoch = crate::privacy::projection::epoch(&mut conn).await.unwrap().active;
     let offered = |position: i64, content: u8| {
         let mut event = keyed("canonical", 1, content, position);
         event.origin = Origin::Derived {
@@ -1059,6 +1060,7 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
                 required: true,
                 stamp: "already-validated-by-admission".into(),
                 position,
+                policy_epoch,
                 scope: "scope".into(),
                 catalog: "catalog".into(),
                 instance: "instance".into(),

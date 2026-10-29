@@ -71,7 +71,7 @@ pub struct InputReference {
 
 /// Both states fence current output. An invalidated operation discards its
 /// partial chain; these optional identities never assert an epoch change.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ReplayBasisStatus {
     Invalidated {

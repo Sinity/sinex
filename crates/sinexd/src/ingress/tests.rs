@@ -81,6 +81,7 @@ fn test_write(
 }
 
 struct Harness {
+    requests: Requests,
     writer: WriterHandle,
     reads: sqlx::PgPool,
     nats: devkit::nats::TestNats,
@@ -215,6 +216,7 @@ impl Harness {
         )
         .unwrap();
         let (stop, stopped) = watch::channel(false);
+        let observed_requests = requests.clone();
         let (ready, responders_ready) = tokio::sync::oneshot::channel();
         let task_client = client.clone();
         tokio::spawn(async move {
@@ -226,6 +228,7 @@ impl Harness {
             .await
             .expect("producer request subscriptions become ready");
         let harness = Self {
+            requests: observed_requests,
             writer: handle,
             reads,
             nats,

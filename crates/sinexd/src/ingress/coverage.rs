@@ -15,6 +15,14 @@ enum Failure {
     #[error("{0}")]
     Unverified(String),
 }
+impl Failure {
+    fn basis(&self, policy_epoch: Option<i64>, scope: Option<String>) -> ReplayBasisStatus {
+        match self {
+            Self::Invalidated(_) => ReplayBasisStatus::Invalidated { policy_epoch, scope },
+            Self::Unverified(_) => ReplayBasisStatus::Unverified,
+        }
+    }
+}
 impl From<String> for Failure {
     fn from(reason: String) -> Self {
         Self::Unverified(reason)
@@ -450,12 +458,14 @@ impl Requests {
                                     .await
                                     .map_err(|error| error.to_string())?,
                                 position: raw.position,
+                                policy_epoch: raw.policy_epoch,
                                 scope: raw.scope,
                             },
                         }
                     }
                     Err(reason) => CoverageStatus::Incomplete {
                         reason: reason.to_string(),
+                        basis: reason.basis(current_epoch, current_scope.clone()),
                     },
                 };
                 ReplayContinuation::Complete {
@@ -474,13 +484,7 @@ impl Requests {
         .await;
         result.unwrap_or_else(|failure| {
             let reason = failure.to_string();
-            let basis = match failure {
-                Failure::Invalidated(_) => ReplayBasisStatus::Invalidated {
-                    policy_epoch: current_epoch,
-                    scope: current_scope,
-                },
-                Failure::Unverified(_) => ReplayBasisStatus::Unverified,
-            };
+            let basis = failure.basis(current_epoch, current_scope);
             InputReplayReply::Incomplete { reason, basis }
         })
     }
@@ -492,7 +496,12 @@ impl Requests {
         request: &CoverageRequest,
         context: &sinex_protocol::PublicContext,
     ) -> CoverageStatus {
-        let result: Result<_, String> = async {
+        let mut current_epoch = None;
+        let current_scope = self.read_grants.get(producer)
+            .map(|grant| grant.consumer_scope(producer, &self.subjects).1);
+        let result: Result<_, Failure> = async {
+            let policy = sinex_store::privacy::projection::epoch(conn).await.map_err(|error|error.to_string())?;
+            current_epoch = policy.ready().then_some(policy.active);
             let sinex_protocol::PublicContext::Available {
                 settings_identity,
                 owner_revision,
@@ -504,20 +513,25 @@ impl Requests {
             let basis = request
                 .basis
                 .as_ref()
-                .ok_or("coverage_completed_replay_basis_required")?;
-            let mut claims = read_coverage::open(conn, &basis.stamp)
-                .await
-                .map_err(|error| error.to_string())?;
+                .ok_or_else(||Failure::Invalidated("coverage_completed_replay_basis_required".into()))?;
+            let key = sinex_store::owner_protocol::key(conn).await
+                .map_err(|error|Failure::Unverified(error.to_string()))?;
+            let mut claims: Claims = sinex_store::owner_protocol::open(&key, read_coverage::DOMAIN, &basis.stamp)
+                .map_err(|error|match error {
+                    sinex_store::Error::Invalid(reason) => Failure::Invalidated(reason),
+                    error => Failure::Unverified(error.to_string()),
+                })?;
             let Contract {
                 family,
                 scope,
                 catalog,
                 ..
-            } = contract(&self.read_grants, producer, &self.subjects)?;
+            } = contract(&self.read_grants, producer, &self.subjects).map_err(Failure::Invalidated)?;
             let native = instance(&self.client, &self.subjects).await?;
             if claims.replay_root.is_none()
                 || claims.purpose != "basis"
                 || basis.position != claims.position
+                || basis.policy_epoch != claims.policy_epoch
                 || basis.scope != claims.scope
                 || request.completed_position < claims.position
                 || !same(
@@ -533,13 +547,13 @@ impl Requests {
                 )
                 || *owner_revision < claims.owner_revision
             {
-                return Err("coverage_replay_basis_changed".into());
+                return Err(Failure::Invalidated("coverage_replay_basis_changed".into()));
             }
             if request.completed_position > claims.position {
                 let completion = request
                     .completion
                     .as_ref()
-                    .ok_or("coverage_native_completion_receipt_required")?;
+                    .ok_or_else(||Failure::Invalidated("coverage_native_completion_receipt_required".into()))?;
                 delivery::verify(
                     &self.client,
                     &self.subjects,
@@ -569,13 +583,17 @@ impl Requests {
             Ok(CoverageProof {
                 stamp,
                 position: claims.position,
+                policy_epoch: claims.policy_epoch,
                 scope: claims.scope,
             })
         }
         .await;
         match result {
             Ok(proof) => CoverageStatus::Complete { proof },
-            Err(reason) => CoverageStatus::Incomplete { reason },
+            Err(failure) => CoverageStatus::Incomplete {
+                reason: failure.to_string(),
+                basis: failure.basis(current_epoch, current_scope),
+            },
         }
     }
 }
@@ -647,6 +665,7 @@ impl Ingest {
                 required: !optional,
                 stamp: proof.stamp.clone(),
                 position: proof.position,
+                policy_epoch: proof.policy_epoch,
                 scope,
                 catalog,
                 instance: native,

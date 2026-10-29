@@ -8,6 +8,8 @@ This page is the public contract for any program outside the Sinex daemon that w
 
 **NATS is integral.** Without it there are no outside producers, no frame acknowledgments, no confirmed stream and no language-neutral way to derive from Sinex. PostgreSQL stays the store of record, every position included; NATS is the delivery path to and from everything outside the daemon. Ruling, 2026-10-18: "I'm almost certain NATS is integral to the architecture … sinex architecture is quite deliberate" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:be2768ea-de74-48a0-8c8d-26a318191069).
 
+The daemon binds its public API socket after NATS acknowledges all producer request subscriptions on that connection. This startup boundary lets a client issue its first producer RPC immediately after the new socket becomes available, including after a daemon restart. Subscription startup failures propagate through daemon supervision.
+
 ### Frames
 
 A producer sends typed frames on its own ingress subject and receives typed replies.
@@ -224,3 +226,5 @@ Receipts bind the frozen logical frame bytes. Excision retains a minimal negativ
 
 
 An incomplete replay reply distinguishes owner-confirmed invalidation from unverified availability. Both fence current output. Invalidation revokes the affected basis and publication generation through the existing scope-reset/replay transition; it preserves private custody and paid vectors. A bad cursor discards that partial chain without inventing an epoch change. Database, broker or transport uncertainty leaves the private cache retained and unserved until the owner can verify it. Optional current epoch and scope values are returned only when actually observed.
+
+An incomplete public-context coverage status carries the same typed basis state. A known invalidation reports only the current epoch and scope actually observed by the owner; verification uncertainty reports `unverified`. Raw coverage proofs expose their signed `policy_epoch`, position and scope so the producer can fence its retained outbox. The owner rejects a changed outer epoch, position or scope even when the opaque stamp itself is valid. These raw proofs remain distinct from `FullProjectionComplete` certificates.

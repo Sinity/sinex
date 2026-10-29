@@ -158,6 +158,7 @@ pub async fn validate(
         || claims.producer != frame.producer
         || frame.family.as_deref() != Some(claims.family.as_str())
         || claims.position != expected.position
+        || claims.policy_epoch != expected.policy_epoch
         || claims.scope != expected.scope
         || claims.catalog != expected.catalog
         || claims.instance != expected.instance
