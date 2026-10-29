@@ -99,6 +99,21 @@ async fn public_recorded_response_reuses_accounting_and_policy_authoring_require
         "{configured}"
     );
     let reference = configured["result"]["policy"].as_str().unwrap();
+    let (status, repeated_policy) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"model-policy","definition":definition}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{repeated_policy}");
+    assert_eq!(
+        repeated_policy["result"]["policy"], reference,
+        "{repeated_policy}"
+    );
+    assert_eq!(
+        repeated_policy["result"]["model_call"]["outcome"], "authorized",
+        "{repeated_policy}"
+    );
     let route = &policy.routes[0];
     let request = InputRequest {
         operation: route.operation.clone(),

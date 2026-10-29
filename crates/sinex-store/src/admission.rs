@@ -38,7 +38,8 @@ mod write;
 pub(crate) use archive::remove_live;
 pub(crate) use derived::mark_archived_dirty;
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
-pub(crate) use register::recorded;
+pub use register::native_key;
+pub(crate) use register::{native_keys, recorded};
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]

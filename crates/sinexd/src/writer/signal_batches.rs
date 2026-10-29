@@ -40,7 +40,7 @@ pub(super) async fn admit(
     let mut acquisitions = BTreeMap::<EventId, (EventId, sinex_model::MaterialId)>::new();
     for event in source.events() {
         if let Some((location, _)) = event.location()
-            && let Some(live) = sinex_store::signals::live_reading(tx, event).await?
+            && let Some(live) = sinex_store::signals::live_reading(tx, &source, event).await?
         {
             acquisitions.insert(event.id, (live, location.material));
         }

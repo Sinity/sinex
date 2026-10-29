@@ -115,6 +115,7 @@ async fn model_disabled_capture_keeps_exact_screen_and_audio_materials_after_res
         Some(0)
     );
     ctx.close().await.unwrap();
+    drop(sink);
     let mut fresh = ReaderContext::open(&url, &store, settings).await.unwrap();
     for (id, blob, bytes) in retained {
         assert_eq!(fresh.blobs.read(&blob).unwrap(), bytes);

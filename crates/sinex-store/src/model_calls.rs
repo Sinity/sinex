@@ -19,6 +19,7 @@ async fn recorded_event(
     conn: &mut PgConnection,
     source: &str,
     kind: &sinex_model::KindRef,
+    material: sinex_model::MaterialId,
     key: &str,
     current: bool,
 ) -> Result<Outcome> {
@@ -28,19 +29,20 @@ async fn recorded_event(
         (RecordedResponse::EVENT_TYPE, RecordedResponse::VERSION),
         (ModelReceipt::EVENT_TYPE, ModelReceipt::VERSION),
     ];
-    if !supported.contains(&(kind.name.as_str(), kind.version)) {
+    if source != "model.records" || !supported.contains(&(kind.name.as_str(), kind.version)) {
         return Err(Error::Invalid(
             "model accounting lookup requires a canonical model kind".into(),
         ));
     }
     let version = i64::try_from(kind.version)
         .map_err(|_| Error::Invalid("unsupported model record version".into()))?;
+    let key = crate::native_key(conn, material, &sinex_model::EquivalenceKey(key.into())).await?;
     let event=sqlx::query_scalar!(r#"WITH candidates AS (
       SELECT e.id,e.commit_seq,(NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id) AND
         (EXISTS(SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id) OR EXISTS(SELECT 1 FROM core.live_locations l WHERE l.event_id=e.id))) AS live
       FROM core.events e WHERE e.source=$1 AND e.event_type=$2 AND e.kind_version=$3 AND e.equivalence_key=$4)
       SELECT id AS "id!" FROM candidates WHERE NOT $5 OR live
-      ORDER BY live DESC,commit_seq,id LIMIT 1"#,source,kind.name,version,key,current).fetch_optional(conn).await?;
+      ORDER BY live DESC,commit_seq,id LIMIT 1"#,source,kind.name,version,key.0,current).fetch_optional(conn).await?;
     Ok(Outcome::RecordLookup {
         event: event.map(EventId),
     })
@@ -183,9 +185,10 @@ pub(crate) async fn apply(
         Action::FindRecord {
             source,
             kind,
+            material,
             key,
             current,
-        } => recorded_event(conn, source, kind, key, *current).await,
+        } => recorded_event(conn, source, kind, *material, key, *current).await,
         Action::AuthorizePolicy { policy, at } => authorize(conn, *policy, *at).await,
         Action::FindRequest { policy, response } => find_request(conn, *policy, *response).await,
         Action::Reserve { request, at } => accounting::reserve(conn, blobs, *request, *at).await,

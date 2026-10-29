@@ -43,7 +43,7 @@ impl Api {
                 serde_json::to_string(&at).expect("time serializes"),
                 serde_json::to_string(caller.actor).expect("actor serializes")
             );
-            let event = self
+            let (event, material) = self
                 .model_record_event_original(
                     &mut conn,
                     caller,
@@ -55,7 +55,7 @@ impl Api {
                 .await?;
             let event = match event {
                 Some(id) => id,
-                None => self.model_existing(caller, &policy, true).await?,
+                None => self.model_existing(caller, &policy, material, true).await?,
             };
             let outcome = self
                 .model_action(caller, Action::AuthorizePolicy { policy: event, at })
@@ -90,8 +90,8 @@ impl Api {
             let Some((class,targets_current))=sinex_store::model_calls::recording_class(&mut conn,&ids.into_iter().collect::<Vec<_>>()).await.map_err(|error|error.to_string())? else {
                 return Err("recorded response needs known input classification before retention".into());
             };
-            let response_event=self.model_record_event_original(&mut conn,caller,ModelRecord::Response(response.clone()),class,at,Some(definition)).await?;
-            let response_event=match response_event{Some(id)=>id,None=>self.model_existing(caller,&response,false).await?};
+            let (response_event,material)=self.model_record_event_original(&mut conn,caller,ModelRecord::Response(response.clone()),class,at,Some(definition)).await?;
+            let response_event=match response_event{Some(id)=>id,None=>self.model_existing(caller,&response,material,false).await?};
             let lookup=self.model_action(caller,Action::FindRequest{policy,response:response_event}).await?;
             let ModelOutcome::RequestLookup{request:previous,policy_current}=lookup else {
                 return Ok(json!({"response":format!("sinex:ev/{response_event}"),"model_call":lookup}));
@@ -170,7 +170,7 @@ impl Api {
                 serde_json::to_string(&at).expect("time serializes"),
                 serde_json::to_string(caller.actor).expect("actor serializes")
             );
-            let captured = self
+            let (captured, material) = self
                 .model_record_event_original(
                     &mut conn,
                     caller,
@@ -182,7 +182,10 @@ impl Api {
                 .await?;
             let receipt = match captured {
                 Some(id) => id,
-                None => self.model_existing(caller, &record, false).await?,
+                None => {
+                    self.model_existing(caller, &record, material, false)
+                        .await?
+                }
             };
             let outcome = self
                 .model_action_with(caller, Action::RecordActual { receipt, at }, capabilities)
@@ -214,8 +217,8 @@ impl Api {
             )
             .await?
         {
-            Some(id) => Ok(id),
-            None => self.model_existing(caller, &request, true).await,
+            (Some(id), _) => Ok(id),
+            (None, material) => self.model_existing(caller, &request, material, true).await,
         }
     }
 
@@ -223,6 +226,7 @@ impl Api {
         &self,
         caller: &Caller,
         payload: &P,
+        material: sinex_model::MaterialId,
         current: bool,
     ) -> Result<EventId, String> {
         let sinex_model::KeyKind::Fields(fields) = P::KEY else {
@@ -239,6 +243,7 @@ impl Api {
                         name: P::EVENT_TYPE.into(),
                         version: P::VERSION,
                     },
+                    material,
                     key,
                     current,
                 },
@@ -257,7 +262,7 @@ impl Api {
         record: ModelRecord,
         minimum: Class,
         at: Timestamp,
-    ) -> Result<Option<EventId>, String> {
+    ) -> Result<(Option<EventId>, sinex_model::MaterialId), String> {
         self.model_record_event_original(conn, caller, record, minimum, at, None)
             .await
     }
@@ -269,7 +274,7 @@ impl Api {
         minimum: Class,
         at: Timestamp,
         original: Option<&str>,
-    ) -> Result<Option<EventId>, String> {
+    ) -> Result<(Option<EventId>, sinex_model::MaterialId), String> {
         let writer = self
             .writer
             .as_ref()
@@ -293,7 +298,10 @@ impl Api {
         if admitted.outcome.failures != 0 {
             return Err("model record was not admitted".into());
         }
-        Ok(admitted.outcome.admitted_ids.first().copied())
+        let material = admitted
+            .material
+            .ok_or("model record has no retained material")?;
+        Ok((admitted.outcome.admitted_ids.first().copied(), material))
     }
 
     async fn model_action(&self, caller: &Caller, action: Action) -> Result<ModelOutcome, String> {

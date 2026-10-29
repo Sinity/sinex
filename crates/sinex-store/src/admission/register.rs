@@ -410,7 +410,7 @@ impl Outcome {
 
 /// A native field key names one immutable input copy. Neither a declared host
 /// nor a caller-selected input UUID can join another copy's reading history.
-pub(super) async fn native_keys(
+pub(crate) async fn native_keys(
     conn: &mut PgConnection,
     batch: &Batch,
     events: &mut [Event],
@@ -448,13 +448,36 @@ pub(super) async fn native_keys(
             let input = inputs.get(&location.material.0).ok_or_else(|| {
                 Error::Invalid("native reading has no owner-registered immutable input".into())
             })?;
-            let encoded = serde_json::to_vec(&(input, key.0.as_str()))
-                .map_err(|error| Error::Invalid(error.to_string()))?;
-            key.0 = blake3::derive_key("sinex.native_input_key.v1", &encoded)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
+            key.0 = scoped_native_key(input, &key.0)?;
         }
     }
     Ok(())
+}
+
+fn scoped_native_key(input: &Uuid, key: &str) -> Result<String> {
+    let encoded =
+        serde_json::to_vec(&(input, key)).map_err(|error| Error::Invalid(error.to_string()))?;
+    Ok(blake3::derive_key("sinex.native_input_key.v1", &encoded)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// Resolve the native field key using this material's owner-registered input.
+/// The input scope is never supplied by a producer or inferred from payload text.
+pub async fn native_key(
+    conn: &mut PgConnection,
+    material: sinex_model::MaterialId,
+    key: &sinex_model::EquivalenceKey,
+) -> Result<sinex_model::EquivalenceKey> {
+    let input: Uuid = sqlx::query_scalar("SELECT input_id FROM raw.materials WHERE id=$1")
+        .bind(material.0)
+        .fetch_optional(conn)
+        .await?
+        .ok_or_else(|| {
+            Error::Invalid("native reading has no owner-registered immutable input".into())
+        })?;
+    Ok(sinex_model::EquivalenceKey(scoped_native_key(
+        &input, &key.0,
+    )?))
 }

@@ -28,6 +28,136 @@ async fn write(conn: &mut AdmissionContext, batch: &Batch) -> Outcome {
     tx.commit().await.unwrap();
     outcome
 }
+#[devkit::test]
+async fn native_handoff_resolution_preserves_registered_input_scope_and_repeat_identity(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    sinex_store::source_declarations::register(&mut conn, &crate::catalog::source_declarations())
+        .await
+        .unwrap();
+    let hash = format!("blake3:{}", "0".repeat(64));
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,0,'present')")
+        .bind(&hash)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let native = |host: &str, order: i64| {
+        let material = MaterialId::new();
+        let event = Event::build(
+            &HandoffRecorded {
+                delivery_id: "synthetic-native-handoff".into(),
+                channel: ::signals::Channel::Notice,
+                handed_at: Timestamp::from_unix_secs(1_800_000_000).unwrap(),
+            },
+            sinex_sources::sources::signals::SPEC.name,
+            Origin::Record {
+                location: RecordLocation {
+                    material,
+                    anchor: 0,
+                },
+                output_index: 0,
+            },
+            ReadingOrder(order),
+            [9; 32],
+            Class::Open,
+        )
+        .unwrap();
+        let mut offered = batch(vec![event.clone()]);
+        offered.kind = BatchKind::Source(Box::new(sinex_model::SourceProgress {
+            source: Some(sinex_model::SourceRef {
+                name: sinex_sources::sources::signals::SPEC.name.into(),
+                version: 1,
+            }),
+            host: Some(host.into()),
+            binding: "synthetic-native-signals".into(),
+            data_keys: vec![],
+            input: sinex_model::InputRef {
+                kind: "host-signal".into(),
+                locator: "synthetic-host-observations".into(),
+                host: host.into(),
+            },
+            observation: sinex_model::ObservationFacts {
+                changed: true,
+                ..Default::default()
+            },
+            revision: sinex_model::RevisionChange::Appended,
+            material: Some(sinex_model::MaterialRef {
+                id: material,
+                input: None,
+                blob: hash.clone(),
+                length: 0,
+                part_index: 0,
+                previous_part: None,
+                parser: "signals".into(),
+                parser_version: 1,
+                manifest: sinex_model::Manifest::from_json(json!({})),
+            }),
+            cursor: json!(null),
+            carry: json!(null),
+            memory: None,
+        }));
+        (offered, event)
+    };
+    let (first, event) = native("fixture", 1);
+    let offered_key = event.equivalence_key.clone();
+    assert_eq!(write(&mut conn, &first).await.admitted, 1);
+    let unscoped:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.live_equivalence WHERE source=$1 AND event_type=$2 AND equivalence_key=core.encode_equivalence_key($3))")
+        .bind(&event.source).bind(&event.event_type).bind(&offered_key.as_ref().unwrap().0).fetch_one(&mut *conn).await.unwrap();
+    assert!(
+        !unscoped,
+        "ordinary native admission scopes this field key to its registered input"
+    );
+    let scoped = sinex_store::native_key(
+        &mut conn,
+        event.location().unwrap().0.material,
+        offered_key.as_ref().unwrap(),
+    )
+    .await
+    .unwrap();
+    let retained:EventId=sqlx::query_scalar::<_,uuid::Uuid>("SELECT event_id FROM core.live_equivalence WHERE source=$1 AND event_type=$2 AND equivalence_key=core.encode_equivalence_key($3)")
+        .bind(&event.source).bind(&event.event_type).bind(scoped.0).fetch_one(&mut *conn).await.map(EventId).unwrap();
+    assert_eq!(retained, event.id);
+    assert!(
+        sinex_store::native_key(&mut conn, MaterialId::new(), offered_key.as_ref().unwrap())
+            .await
+            .is_err(),
+        "an absent material cannot invent an input scope"
+    );
+    assert_eq!(
+        sinex_store::signals::live_reading(&mut conn, &first, &event)
+            .await
+            .unwrap(),
+        Some(event.id)
+    );
+    assert_eq!(
+        event.equivalence_key, offered_key,
+        "resolution leaves the offered event unchanged"
+    );
+    let (retry, repeated) = native("fixture", 2);
+    let outcome = write(&mut conn, &retry).await;
+    assert_eq!((outcome.admitted, outcome.repeats), (0, 1));
+    assert_eq!(
+        sinex_store::signals::live_reading(&mut conn, &retry, &repeated)
+            .await
+            .unwrap(),
+        Some(event.id)
+    );
+    let (other, independent) = native("another-host", 3);
+    assert_eq!(write(&mut conn, &other).await.admitted, 1);
+    assert_eq!(
+        sinex_store::signals::live_reading(&mut conn, &other, &independent)
+            .await
+            .unwrap(),
+        Some(independent.id)
+    );
+    assert_eq!(
+        sinex_store::signals::live_reading(&mut conn, &first, &event)
+            .await
+            .unwrap(),
+        Some(event.id)
+    );
+}
 async fn fixture(conn: &mut AdmissionContext) -> (Batch, Event, EventId, EventId) {
     let material = MaterialId::new();
     let native_material = MaterialId::new();

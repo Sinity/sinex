@@ -406,6 +406,9 @@ pub enum Action {
     FindRecord {
         source: String,
         kind: crate::KindRef,
+        /// The submitted acquisition's owner-registered material determines
+        /// native input scope; a caller-provided input UUID never does.
+        material: crate::MaterialId,
         key: String,
         current: bool,
     },

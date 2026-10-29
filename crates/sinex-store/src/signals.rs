@@ -273,8 +273,13 @@ pub async fn frozen_payload(
 /// Resolve an acquisition repeated in another frame to its retained live reading.
 pub async fn live_reading(
     conn: &mut PgConnection,
+    batch: &sinex_model::Batch,
     event: &sinex_model::Event,
 ) -> Result<Option<EventId>> {
+    // Admission scopes native field keys to the registered immutable input.
+    // Resolve with that same identity without changing the offered event.
+    let mut event = event.clone();
+    crate::admission::native_keys(conn, batch, std::slice::from_mut(&mut event)).await?;
     if let Some(key) = &event.equivalence_key {
         return Ok(sqlx::query_scalar!("SELECT event_id FROM core.live_equivalence WHERE source=$1 AND event_type=$2 AND equivalence_key=core.encode_equivalence_key($3)",event.source,event.event_type,key.0).fetch_optional(conn).await?.map(EventId));
     }

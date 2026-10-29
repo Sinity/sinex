@@ -610,14 +610,15 @@ async fn admit_with_checkpoint(
                             if let Some(acquisition) =
                                 batch.events().find(|candidate| candidate.id == *parent)
                             {
-                                *parent = sinex_store::signals::live_reading(&mut tx, acquisition)
-                                    .await
-                                    .map_err(store_error)?
-                                    .ok_or_else(|| {
-                                        WriteError::Refused(
-                                            "signal physical handoff is unavailable".into(),
-                                        )
-                                    })?;
+                                *parent =
+                                    sinex_store::signals::live_reading(&mut tx, batch, acquisition)
+                                        .await
+                                        .map_err(store_error)?
+                                        .ok_or_else(|| {
+                                            WriteError::Refused(
+                                                "signal physical handoff is unavailable".into(),
+                                            )
+                                        })?;
                             }
                         }
                         parents.sort_unstable();
