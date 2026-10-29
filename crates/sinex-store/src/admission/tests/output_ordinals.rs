@@ -167,18 +167,64 @@ async fn negative_sql_ordinals_are_refused_by_each_coordinate_table(db: devkit::
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    admit_one(&mut conn, &batch(vec![keyed("negative", 1, 1, 1)])).await;
+    let event = Event::build(
+        &CommandImported {
+            command: "coordinate check seed".into(),
+            hostname: "synthetic".into(),
+            started_at: None,
+            header_elapsed: None,
+            paths: vec![],
+            n: 0,
+        },
+        "negative",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(1),
+        [1; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let id = event.id.0;
+    assert_eq!(admit_one(&mut conn, &batch(vec![event])).await.admitted, 1);
+    let live: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.live_locations WHERE event_id=$1")
+            .bind(id)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        live, 1,
+        "the location-keyed seed must exercise coordinate rows"
+    );
     let statements = [
         "INSERT INTO core.live_locations SELECT material_id,anchor,event_type,-1,event_id,reading_order,record_hash FROM core.live_locations LIMIT 1",
         "INSERT INTO core.hidden_records (source,event_type,material_id,anchor,output_index,operation_id) SELECT 'negative',event_type,material_id,anchor,-1,id FROM core.events LIMIT 1",
         "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,anchor,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT 0,id,event_type,source,material_id,anchor,-1,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
         "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,anchor,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT -1,id,event_type,source,material_id,anchor,0,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
     ];
-    for sql in statements {
+    let constraints = [
+        "output_index_in_range",
+        "output_index_in_range",
+        "admission_stage_output_index_check",
+        "admission_stage_ord_check",
+    ];
+    for (sql, constraint) in statements.into_iter().zip(constraints) {
         let error = sqlx::query(sql).execute(&mut conn).await.unwrap_err();
         assert_eq!(
             error.as_database_error().and_then(|e| e.code()).as_deref(),
             Some("23514"),
+            "{error}"
+        );
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(|error| error.constraint()),
+            Some(constraint),
             "{error}"
         );
     }
