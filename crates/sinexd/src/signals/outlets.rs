@@ -2,13 +2,16 @@
 use super::*;
 use ::signals::notifications::{Notice, NotificationConfig, RouteCommand};
 use config::{Command, ValueTarget};
-use signal_delivery::{Deliverer, NotificationRequest, NotificationUpdate};
+use signal_delivery::{
+    AttemptContext, CancellationToken, Deliverer, NotificationRequest, NotificationUpdate,
+};
 use std::time::Duration;
 
 pub(super) async fn notifications(
     api: &Api,
     config: &Config,
     condition: signal_delivery::PolicyCheck,
+    cancellation: CancellationToken,
 ) -> Result<
     (
         mpsc::UnboundedSender<NotificationRequest>,
@@ -58,6 +61,8 @@ pub(super) async fn notifications(
             updates,
             condition,
             Arc::new(|| millis(Timestamp::now()).expect("host delivery clock fits milliseconds")),
+            cancellation,
+            None,
         )
         .await
         .map_err(error)
@@ -109,25 +114,30 @@ pub(super) fn notice(pending: &PendingDelivery, passive_count: u64) -> Notice {
 pub(super) async fn effect(
     config: &Config,
     pending: &PendingDelivery,
+    attempt: &AttemptContext,
 ) -> ::signals::DeliveryOutcome {
+    use ::signals::DeliveryOutcome;
+    if let Err(interrupted) = attempt.check() {
+        return DeliveryOutcome::NotSent(interrupted.reason().into());
+    }
     let delivery = &pending.delivery;
     let Some(rule) = &pending.rule else {
-        return ::signals::DeliveryOutcome::NotSent("no_local_rule_outlet".into());
+        return DeliveryOutcome::NotSent("no_local_rule_outlet".into());
     };
     let reference = delivery
         .basis
         .first()
         .map(|row| row.reference.clone())
         .unwrap_or_else(|| notice(pending, 0).reference);
-    let result = match delivery.channel {
+    match delivery.channel {
         ::signals::Channel::Action => match rule
             .rule
             .command
             .as_ref()
             .and_then(|name| config.actions.get(name))
         {
-            Some(command) => command_effect(command, &reference, config.outlet_timeout_ms).await,
-            None => Err("action_command_not_configured".into()),
+            Some(command) => command_effect(command, &reference, attempt).await,
+            None => DeliveryOutcome::NotSent("action_command_not_configured".into()),
         },
         ::signals::Channel::Value => match rule
             .rule
@@ -135,18 +145,22 @@ pub(super) async fn effect(
             .as_ref()
             .and_then(|name| config.values.get(name))
         {
-            Some(target) => value_effect(target, delivery, config.outlet_timeout_ms).await,
-            None => Err("value_target_not_configured".into()),
+            Some(target) => value_effect(target, delivery, attempt).await,
+            None => DeliveryOutcome::NotSent("value_target_not_configured".into()),
         },
-        _ => Err("not_an_effect_channel".into()),
-    };
-    match result {
-        Ok(()) => ::signals::DeliveryOutcome::Delivered,
-        Err(reason) => ::signals::DeliveryOutcome::NotSent(reason),
+        _ => DeliveryOutcome::NotSent("not_an_effect_channel".into()),
     }
 }
 
-async fn command_effect(command: &Command, reference: &str, timeout: u64) -> Result<(), String> {
+async fn command_effect(
+    command: &Command,
+    reference: &str,
+    attempt: &AttemptContext,
+) -> ::signals::DeliveryOutcome {
+    use ::signals::DeliveryOutcome;
+    if let Err(interrupted) = attempt.check() {
+        return DeliveryOutcome::NotSent(interrupted.reason().into());
+    }
     let mut process = tokio::process::Command::new(&command.program);
     process
         .args(&command.arguments)
@@ -155,67 +169,182 @@ async fn command_effect(command: &Command, reference: &str, timeout: u64) -> Res
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
-    let mut child = process
-        .spawn()
-        .map_err(|error| format!("action_spawn:{error}"))?;
-    let status = tokio::time::timeout(Duration::from_millis(timeout), child.wait())
-        .await
-        .map_err(|_| "action_deadline".to_string())?
-        .map_err(|error| format!("action_wait:{error}"))?;
-    if status.success() {
-        Ok(())
+    let Ok(mut child) = process.spawn() else {
+        return DeliveryOutcome::NotSent("action_spawn".into());
+    };
+    match attempt.run(child.wait()).await {
+        Ok(Ok(status)) if status.success() => DeliveryOutcome::Delivered,
+        Ok(Ok(_)) => DeliveryOutcome::NotSent("action_exit".into()),
+        // A spawned process may already have acted. Cancellation never converts
+        // that phase into a claim that no physical effect was possible.
+        Ok(Err(_)) | Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            DeliveryOutcome::Unknown
+        }
+    }
+}
+
+// Observe submitted private staging work before dropping its cleanup owner.
+// After interruption, this acknowledgement grants no right to publish it.
+async fn stage<F: std::future::Future>(
+    attempt: &AttemptContext,
+    work: F,
+) -> Result<F::Output, (signal_delivery::Interrupted, bool)> {
+    let mut work = std::pin::pin!(work);
+    let mut submitted = false;
+    let result = attempt
+        .run(std::future::poll_fn(|context| {
+            submitted = true;
+            std::future::Future::poll(work.as_mut(), context)
+        }))
+        .await;
+    match result {
+        Ok(result) => Ok(result),
+        Err(interrupted) => {
+            if submitted {
+                let _ = work.await;
+            }
+            Err((interrupted, submitted))
+        }
+    }
+}
+
+async fn file_value(
+    path: &std::path::Path,
+    bytes: &[u8],
+    attempt: &AttemptContext,
+) -> ::signals::DeliveryOutcome {
+    use ::signals::DeliveryOutcome;
+    use tokio::io::AsyncWriteExt;
+    if let Err(interrupted) = attempt.check() {
+        return DeliveryOutcome::NotSent(interrupted.reason().into());
+    }
+    let Some(directory) = path.parent() else {
+        return DeliveryOutcome::NotSent("value_file_parent".into());
+    };
+    let Ok(staged) = tempfile::TempPath::try_from_path(
+        directory.join(format!(".sinex-signal-{}", uuid::Uuid::now_v7())),
+    ) else {
+        return DeliveryOutcome::NotSent("value_stage_path".into());
+    };
+    let mut file = match stage(
+        attempt,
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&staged),
+    )
+    .await
+    {
+        Ok(Ok(file)) => file,
+        Ok(Err(_)) => return DeliveryOutcome::NotSent("value_stage_create".into()),
+        Err((interrupted, _)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
+    };
+    let mut remaining = bytes;
+    while !remaining.is_empty() {
+        match stage(attempt, file.write(remaining)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => return DeliveryOutcome::NotSent("value_stage_write".into()),
+            Ok(Ok(written)) => remaining = &remaining[written..],
+            Err((interrupted, _)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
+        }
+    }
+    match stage(attempt, file.sync_all()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => return DeliveryOutcome::NotSent("value_stage_sync".into()),
+        Err((interrupted, _)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
+    }
+    drop(file);
+    if let Err(interrupted) = attempt.check() {
+        return DeliveryOutcome::NotSent(interrupted.reason().into());
+    }
+    // The rename can publish after it has been submitted to the filesystem.
+    // Always observe its result, retaining Unknown if the attempt expired.
+    match stage(attempt, tokio::fs::rename(&staged, path)).await {
+        Ok(Ok(())) => {}
+        Err((interrupted, false)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
+        Ok(Err(_)) | Err((_, true)) => return DeliveryOutcome::Unknown,
+    }
+    match stage(attempt, async {
+        let directory = tokio::fs::File::open(directory).await?;
+        directory.sync_all().await
+    })
+    .await
+    {
+        Ok(Ok(())) => DeliveryOutcome::Delivered,
+        Ok(Err(_)) | Err(_) => DeliveryOutcome::Unknown,
+    }
+}
+
+async fn http_value(
+    url: &str,
+    bytes: Vec<u8>,
+    attempt: &AttemptContext,
+) -> ::signals::DeliveryOutcome {
+    use ::signals::DeliveryOutcome;
+    if let Err(interrupted) = attempt.check() {
+        return DeliveryOutcome::NotSent(interrupted.reason().into());
+    }
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return DeliveryOutcome::NotSent("value_http_client".into()),
+    };
+    let mut submitted = false;
+    let response = attempt
+        .run(async {
+            submitted = true;
+            client
+                .post(url)
+                .header("content-type", "application/json")
+                .body(bytes)
+                .send()
+                .await
+        })
+        .await;
+    let response = match response {
+        Ok(Ok(response)) => response,
+        // Connection/TLS failures precede an HTTP request. Error text and URLs
+        // remain private, including configured query strings.
+        Ok(Err(error)) if error.is_connect() || error.is_builder() => {
+            return DeliveryOutcome::NotSent("value_http_connect".into());
+        }
+        Err(interrupted) if !submitted => {
+            return DeliveryOutcome::NotSent(interrupted.reason().into());
+        }
+        Ok(Err(_)) | Err(_) => return DeliveryOutcome::Unknown,
+    };
+    // A value target acknowledges the POST through its status, not a response
+    // body. An unrelated streaming body cannot revoke that definitive result.
+    if response.status().is_success() {
+        DeliveryOutcome::Delivered
     } else {
-        Err(format!("action_exit:{status}"))
+        DeliveryOutcome::NotSent("value_http_status".into())
     }
 }
 
 async fn value_effect(
     target: &ValueTarget,
     delivery: &::signals::Delivery,
-    timeout: u64,
-) -> Result<(), String> {
-    let bytes = serde_json::to_vec(delivery).map_err(error)?;
+    attempt: &AttemptContext,
+) -> ::signals::DeliveryOutcome {
+    use ::signals::DeliveryOutcome;
+    if let Err(interrupted) = attempt.check() {
+        return DeliveryOutcome::NotSent(interrupted.reason().into());
+    }
+    let Ok(bytes) = serde_json::to_vec(delivery) else {
+        return DeliveryOutcome::NotSent("value_encode".into());
+    };
     match target {
-        ValueTarget::File { path } => {
-            let path = path.clone();
-            tokio::task::spawn_blocking(move || -> Result<(), String> {
-                use std::io::Write;
-                let directory = path.parent().ok_or("value file has no parent")?;
-                let mut staged = tempfile::NamedTempFile::new_in(directory).map_err(error)?;
-                staged.write_all(&bytes).map_err(error)?;
-                staged.as_file().sync_all().map_err(error)?;
-                staged.persist(&path).map_err(error)?;
-                std::fs::File::open(directory)
-                    .and_then(|directory| directory.sync_all())
-                    .map_err(error)
-            })
-            .await
-            .map_err(error)?
-        }
-        ValueTarget::Loopback { url } => {
-            let url = url.clone();
-            tokio::task::spawn_blocking(move || {
-                let agent: ureq::Agent = ureq::Agent::config_builder()
-                    .timeout_global(Some(Duration::from_millis(timeout)))
-                    .max_redirects(0)
-                    .build()
-                    .into();
-                agent
-                    .post(url)
-                    .header("content-type", "application/json")
-                    .send(&bytes)
-                    .and_then(|response| {
-                        if response.status().is_success() {
-                            Ok(response)
-                        } else {
-                            Err(ureq::Error::StatusCode(response.status().as_u16()))
-                        }
-                    })
-                    .map(|_| ())
-                    .map_err(|error| format!("value_http:{error}"))
-            })
-            .await
-            .map_err(error)?
-        }
+        ValueTarget::File { path } => file_value(path, &bytes, attempt).await,
+        ValueTarget::Loopback { url } => http_value(url, bytes, attempt).await,
     }
 }
+
+#[cfg(test)]
+mod tests;

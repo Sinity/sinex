@@ -6,6 +6,7 @@ mod outlets;
 mod provenance;
 use crate::api::Api;
 pub(crate) use config::Config;
+use signal_delivery::{AttemptContext, CancellationToken};
 use sinex_model::event_types::signal::{
     CheckpointRecorded, DeliveryRecorded, DesktopReceiptRecorded, HandoffRecorded, ReceiptRecorded,
     SignalRecord,
@@ -48,8 +49,79 @@ pub(crate) async fn run(
     subjects: Subjects,
     grants: Arc<crate::ingress::fetch::ProducerGrants>,
     settings_identity: String,
+    commits: watch::Receiver<u64>,
+    stop: watch::Receiver<bool>,
+) -> Result<(), String> {
+    let lifetime = OwnerLifetime::new(stop.clone());
+    let result = run_owned(
+        api,
+        client,
+        subjects,
+        grants,
+        settings_identity,
+        commits,
+        stop,
+        lifetime.cancellation.clone(),
+    )
+    .await;
+    lifetime.finish().await?;
+    result
+}
+
+struct OwnerLifetime {
+    cancellation: CancellationToken,
+    bridge: Option<tokio::task::JoinHandle<()>>,
+}
+impl OwnerLifetime {
+    fn new(mut stop: watch::Receiver<bool>) -> Self {
+        let cancellation = CancellationToken::new();
+        if *stop.borrow() {
+            cancellation.cancel();
+        }
+        let owner = cancellation.clone();
+        let bridge = tokio::spawn(async move {
+            loop {
+                if *stop.borrow() {
+                    break;
+                }
+                tokio::select! {
+                    _ = owner.cancelled() => return,
+                    changed = stop.changed() => if changed.is_err() { break; },
+                }
+            }
+            owner.cancel();
+        });
+        Self {
+            cancellation,
+            bridge: Some(bridge),
+        }
+    }
+    async fn finish(mut self) -> Result<(), String> {
+        self.cancellation.cancel();
+        if let Some(bridge) = self.bridge.take() {
+            bridge.await.map_err(error)?;
+        }
+        Ok(())
+    }
+}
+impl Drop for OwnerLifetime {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        if let Some(bridge) = self.bridge.take() {
+            bridge.abort();
+        }
+    }
+}
+
+async fn run_owned(
+    api: Api,
+    client: async_nats::Client,
+    subjects: Subjects,
+    grants: Arc<crate::ingress::fetch::ProducerGrants>,
+    settings_identity: String,
     mut commits: watch::Receiver<u64>,
     mut stop: watch::Receiver<bool>,
+    cancellation: CancellationToken,
 ) -> Result<(), String> {
     let config = api
         .source_config
@@ -65,15 +137,14 @@ pub(crate) async fn run(
         grants.clone(),
     ));
     let (notices, mut updates, worker) =
-        outlets::notifications(&api, &config, authorizer.desktop()).await?;
+        outlets::notifications(&api, &config, authorizer.desktop(), cancellation.clone()).await?;
     let mut resumed = false;
+    let mut outcome = async {
     loop {
-        if *stop.borrow() {
+        if *stop.borrow() || cancellation.is_cancelled() {
             break;
         }
-        if worker.is_finished() {
-            return worker.await.map_err(error)?.map_err(error);
-        }
+        if worker.is_finished() { break; }
         let _serial = api
             .writer
             .as_ref()
@@ -464,16 +535,22 @@ pub(crate) async fn run(
             }
             return Err(reason);
         }
-        dispatch(&api, &config, &decision_state, &notices, &authorizer).await?;
+        dispatch(&api, &config, &decision_state, &notices, &authorizer, &cancellation).await?;
         drop(conn);
         drop(_serial);
     }
+    Ok::<_, String>(())
+    }.await;
+    cancellation.cancel();
     drop(notices);
     let mut worker = worker;
     loop {
         tokio::select! {
-            result=&mut worker=>return result.map_err(error)?.map_err(error),
-            update=updates.recv()=>match update {Some(update)=>persist_update(&api,update).await?,None=>return worker.await.map_err(error)?.map_err(error)},
+            result=&mut worker=>return outcome.and(result.map_err(error)?.map_err(error)),
+            update=updates.recv()=>match update {
+                Some(update)=>if let Err(error)=persist_update(&api,update).await { outcome=Err(error); },
+                None=>return outcome.and(worker.await.map_err(error)?.map_err(error)),
+            },
         }
     }
 }
@@ -772,8 +849,12 @@ async fn dispatch(
     state: &Checkpoint,
     notices: &mpsc::UnboundedSender<signal_delivery::NotificationRequest>,
     authorizer: &authorize::Authorizer,
+    cancellation: &CancellationToken,
 ) -> Result<(), String> {
     for pending in state.outbox.values() {
+        if cancellation.is_cancelled() {
+            break;
+        }
         if let Some(attempt) = &pending.import {
             if state.notifications.attempt(&pending.delivery.id).is_none() {
                 let (imported, _result) = tokio::sync::oneshot::channel();
@@ -820,15 +901,39 @@ async fn dispatch(
             ::signals::Channel::Value | ::signals::Channel::Action
                 if !state.attempts.contains_key(&pending.delivery.id) =>
             {
-                let mut conn = api.reads.acquire().await.map_err(error)?;
-                let saved = sinex_store::signals::load(&mut conn, &api.host)
-                    .await
-                    .map_err(error)?
-                    .ok_or("outlet has no committed host checkpoint")?;
+                let attempt = AttemptContext::new(
+                    std::time::Duration::from_millis(config.outlet_timeout_ms),
+                    None,
+                    cancellation.clone(),
+                );
+                let prepared = attempt
+                    .run(async {
+                        let mut conn = api.reads.acquire().await.map_err(error)?;
+                        let saved = sinex_store::signals::load(&mut conn, &api.host)
+                            .await
+                            .map_err(error)?
+                            .ok_or("outlet has no committed host checkpoint")?;
+                        Ok::<_, String>((conn, saved))
+                    })
+                    .await;
+                let ((mut conn, saved), interrupted) = match prepared {
+                    Ok(result) => (result?, None),
+                    Err(interrupted) => {
+                        // Work authority has ended. These reads serve only the
+                        // existing writer-owned minimal NoSend bookkeeping.
+                        let mut conn = api.reads.acquire().await.map_err(error)?;
+                        let saved = sinex_store::signals::load(&mut conn, &api.host)
+                            .await
+                            .map_err(error)?
+                            .ok_or("outlet bookkeeping has no committed host checkpoint")?;
+                        ((conn, saved), Some(interrupted))
+                    }
+                };
                 let mut latest = saved.checkpoint;
                 if latest.attempts.contains_key(&pending.delivery.id) {
                     continue;
                 }
+                let interrupted = interrupted.or_else(|| attempt.check().err());
                 let at = Timestamp::now();
                 let receipt = ::signals::DeliveryReceipt {
                     delivery_id: pending.delivery.id.clone(),
@@ -838,7 +943,12 @@ async fn dispatch(
                         _ => "value",
                     }
                     .into(),
-                    outcome: ::signals::DeliveryOutcome::Unknown,
+                    outcome: interrupted.map_or(
+                        ::signals::DeliveryOutcome::Unknown,
+                        |interrupted| {
+                            ::signals::DeliveryOutcome::NotSent(interrupted.reason().into())
+                        },
+                    ),
                 };
                 latest
                     .attempts
@@ -862,12 +972,26 @@ async fn dispatch(
                     at,
                 )
                 .await?;
+                if interrupted.is_some() {
+                    continue;
+                }
                 let mut receipt = receipt;
-                receipt.outcome = if authorizer.effect(pending).await? {
-                    outlets::effect(config, pending).await
-                } else {
-                    ::signals::DeliveryOutcome::Cancelled
+                receipt.outcome = match authorizer.effect(pending, &attempt).await {
+                    Ok(Some(::signals::notifications::SendDecision::Permit)) => {
+                        outlets::effect(config, pending, &attempt).await
+                    }
+                    Ok(Some(::signals::notifications::SendDecision::Cancel)) => {
+                        ::signals::DeliveryOutcome::Cancelled
+                    }
+                    Ok(Some(::signals::notifications::SendDecision::HoldUntil { .. }))
+                    | Ok(None) => ::signals::DeliveryOutcome::NotSent("policy_incomplete".into()),
+                    Err(failure) => ::signals::DeliveryOutcome::NotSent(failure.reason().into()),
                 };
+                if receipt.outcome == ::signals::DeliveryOutcome::Unknown {
+                    // The committed unknown is already the custody record. An
+                    // uncertain effect never creates another physical attempt.
+                    continue;
+                }
                 let at = Timestamp::now();
                 receipt.at = millis(at)?;
                 let saved = sinex_store::signals::load(&mut conn, &api.host)
@@ -902,4 +1026,46 @@ async fn dispatch(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod attempt_tests {
+    use super::*;
+    #[devkit::test]
+    async fn actual_stop_watch_cancels_the_owner_attempt_and_joins_its_bridge() {
+        let (stop, observed) = watch::channel(false);
+        let lifetime = OwnerLifetime::new(observed);
+        let attempt = AttemptContext::new(
+            std::time::Duration::from_secs(10),
+            None,
+            lifetime.cancellation.clone(),
+        );
+        stop.send_replace(true);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            attempt.cancellation().cancelled(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            attempt.check(),
+            Err(signal_delivery::Interrupted::Cancelled)
+        );
+        lifetime.finish().await.unwrap();
+    }
+    #[devkit::test]
+    async fn an_already_requested_stop_never_creates_an_uncancelled_attempt() {
+        let (_stop, observed) = watch::channel(true);
+        let lifetime = OwnerLifetime::new(observed);
+        let attempt = AttemptContext::new(
+            std::time::Duration::from_secs(10),
+            None,
+            lifetime.cancellation.clone(),
+        );
+        assert_eq!(
+            attempt.check(),
+            Err(signal_delivery::Interrupted::Cancelled)
+        );
+        lifetime.finish().await.unwrap();
+    }
 }
