@@ -45,7 +45,7 @@ mod snapshot;
 pub struct WorkActs;
 impl Keyed for WorkActs {
     const NAME: &'static str = "work.acts";
-    const VERSION: u32 = 4;
+    const VERSION: u32 = 5;
     const INPUTS: &'static [&'static str] = &["polylogue.work_snapshot"];
     const OUTPUTS: &'static [&'static str] = &["work.act", "work.coverage"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {

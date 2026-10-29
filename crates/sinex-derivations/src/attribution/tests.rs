@@ -42,7 +42,7 @@ fn act(cwd: &str, repo: Option<&str>) -> Event {
     );
     record(
         "work.act",
-        json!({"act":"act","session":"session","episode":null,
+        json!({"act":"act","session":"session","episode":null,"at_evidence":{"quality":"intrinsic","precision":"instant","until":null},
         "objective":repo.map(|repo| json!({"kind":"task","reference":"task-1","repository":repo})),
         "label":null,"label_source":evidence(&seed),"machine":"box","at":at(0),"ended_at":null,
         "evidence":evidence(&seed),"agency":"operator","action":"prompt","path":null,"failed":false,"cwd":cwd}),

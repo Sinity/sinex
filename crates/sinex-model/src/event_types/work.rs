@@ -52,8 +52,23 @@ pub struct WorkCoverage {
     pub reasons: std::collections::BTreeMap<String, u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "work.act", key = ["act"], replace = newer, time = at, quality = intrinsic)]
+/// Source clock evidence stays separate from its timestamp.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkTimeEvidence {
+    pub quality: crate::TimeQuality,
+    pub precision: Option<String>,
+    pub until: Option<Timestamp>,
+}
+impl Default for WorkTimeEvidence {
+    fn default()->Self {Self{quality:crate::TimeQuality::Unknown,precision:None,until:None}}
+}
+impl WorkTimeEvidence {
+    pub fn instant(&self,at:Option<Timestamp>)->Option<Timestamp>{
+        (self.quality!=crate::TimeQuality::Unknown&&self.precision.as_deref()==Some("instant")&&self.until.is_none()).then_some(at).flatten()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkAct {
     pub act: String,
     pub session: String,
@@ -63,7 +78,11 @@ pub struct WorkAct {
     pub label_source: ActivityEvidence,
     pub machine: Option<String>,
     pub at: Timestamp,
+    #[serde(default)]
+    pub at_evidence: WorkTimeEvidence,
     pub ended_at: Option<Timestamp>,
+    #[serde(default)]
+    pub ended_at_evidence: Option<WorkTimeEvidence>,
     pub evidence: ActivityEvidence,
     pub agency: Agency,
     pub action: String,
@@ -81,6 +100,25 @@ pub struct WorkAct {
     pub git_identity: Option<GitIdentity>,
     #[serde(default)]
     pub terminal: Option<TerminalIdentity>,
+}
+
+impl crate::EventPayload for WorkAct {
+    const VERSION:u64=2;
+    const EVENT_TYPE:&'static str="work.act";
+    const KEY:crate::KeyKind=crate::KeyKind::Fields(&["act"]);
+    const REPLACE:crate::ReplaceRule=crate::ReplaceRule::ReplaceWhenNewer;
+    fn ts_orig(&self)->crate::TsOrig {crate::TsOrig::maybe(self.at_evidence.instant(Some(self.at)),self.at_evidence.quality)}
+    fn payload_schema()->Value {serde_json::to_value(schemars::schema_for!(Self)).expect("work act schema serializes")}
+    fn declaration()->crate::KindDeclaration {
+        let mut declaration=crate::KindDeclaration::schemaless(crate::KindRef{name:Self::EVENT_TYPE.into(),version:Self::VERSION},"sinex".into());
+        declaration.normalization=crate::kinds::Normalization::Rust;
+        declaration.payload_schema=Some(Self::payload_schema());
+        declaration.key_rule=Some(crate::kinds::KeyRule::Fields{fields:vec!["act".into()]});
+        declaration.replace_rule=Some(Self::REPLACE);
+        declaration.time_rule=Some(crate::kinds::TimeRule::InstantEvidence{field:"at".into(),evidence_field:"at_evidence".into()});
+        declaration.search=Self::SEARCH;
+        declaration
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]

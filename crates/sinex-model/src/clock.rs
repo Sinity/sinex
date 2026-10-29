@@ -91,7 +91,7 @@ impl schemars::JsonSchema for Timestamp {
 }
 
 /// How `ts_orig` was obtained.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, crate::DbCheck)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema, crate::DbCheck)]
 #[serde(rename_all = "snake_case")]
 pub enum TimeQuality {
     /// The source recorded the time of the thing itself.

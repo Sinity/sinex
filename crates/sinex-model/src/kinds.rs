@@ -108,6 +108,9 @@ impl KeyRule {
 #[serde(tag = "rule", rename_all = "snake_case")]
 pub enum TimeRule {
     Unknown,
+    /// A source supplies quality and precision beside the timestamp. Only an
+    /// explicitly instantaneous value establishes an action's clock.
+    InstantEvidence { field: String, evidence_field: String },
     FirstPresent {
         fields: Vec<String>,
         quality: TimeQuality,
@@ -233,6 +236,14 @@ impl KindDeclaration {
             .ok_or("historical declaration has no rules")?
         {
             TimeRule::Unknown => TsOrig::unknown(),
+            TimeRule::InstantEvidence{field,evidence_field}=>{
+                let evidence=payload.get(evidence_field);
+                let quality=evidence.and_then(|value|value.get("quality")).cloned()
+                    .and_then(|value|serde_json::from_value::<TimeQuality>(value).ok()).unwrap_or(TimeQuality::Unknown);
+                if quality==TimeQuality::Unknown||evidence.and_then(|value|value.get("precision")).and_then(Value::as_str)!=Some("instant")
+                    ||evidence.and_then(|value|value.get("until")).is_some_and(|value|!value.is_null()) {TsOrig::unknown()}
+                else {TsOrig::maybe(present(field).map(|value|serde_json::from_value::<Timestamp>(value.clone())).transpose().map_err(|_|format!("invalid date-time at /{field}"))?,quality)}
+            },
             TimeRule::FirstPresent { fields, quality } => {
                 match fields
                     .iter()

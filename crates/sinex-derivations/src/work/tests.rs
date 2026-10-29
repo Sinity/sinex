@@ -48,14 +48,25 @@ fn session(id: &str, branch: Option<&str>) -> Event {
         "session":id,"reducer_version":1,"source_position":1,"complete":true,
         "repo":"synthetic/repo","branch":branch,"machine":"box","kind":"main","mode":null,"cwd":["/synthetic/repo"],
         "objectives":[],"record":{"product":"work_snapshot","snapshot":{
-            "reducer_version":1,"position":1,"session":{"id":id},"messages":[],"calls":[],"turns":[],"sources":[],"native":[]}}}),0);
+            "reducer_version":1,"position":1,"session_id":id,"session":{"id":id},"retired":false,"unavailable":[],"messages":[],"calls":[],"turns":[],"sources":[],"native":[]}}}),0);
     event.kind_version=3;
     event
+}
+fn fixture_evidence(at:&Value)->Value {
+    if at.is_null(){json!({"quality":"unknown","precision":null,"until":null})}
+    else{json!({"quality":"intrinsic","precision":"instant","until":null})}
+}
+fn qualify_fixture_times(snapshot:&mut Event){
+    for (kind,fields)in [("messages",vec![("at","at_evidence")]),("calls",vec![("at","at_evidence"),("result_at","result_at_evidence")]),("turns",vec![("start","start_evidence"),("end","end_evidence")])]{
+        for entry in snapshot.payload["record"]["snapshot"][kind].as_array_mut().unwrap(){
+            for (field,evidence)in &fields{if entry.get(*evidence).is_none(){entry[*evidence]=fixture_evidence(&entry[*field]);}}
+        }
+    }
 }
 fn prompt(id: &str, seconds: i64) -> Event {
     let mut snapshot=session(id,None);
     snapshot.payload["record"]["snapshot"]["messages"]=json!([{"message":format!("{id}/{seconds}"),"role":"user","written_by":"human","prompt_kind":"prose","at":at(seconds),"source_event":"synthetic-source"}]);
-    snapshot
+    qualify_fixture_times(&mut snapshot);snapshot
 }
 fn tool(payload:Value,anchor:u64)->Event {
     let id=payload["session"].as_str().unwrap().to_owned();let mut snapshot=session(&id,None);
@@ -63,7 +74,7 @@ fn tool(payload:Value,anchor:u64)->Event {
     if call.get("call").is_none(){call["call"]=json!(format!("{id}/{anchor}"));}
     if call.get("outcome").is_none(){call["outcome"]=json!({"kind":"no_result"});}
     else if call["outcome"].is_string(){call["outcome"]=json!({"kind":call["outcome"]});}
-    snapshot.payload["record"]["snapshot"]["calls"]=json!([call]);snapshot
+    snapshot.payload["record"]["snapshot"]["calls"]=json!([call]);qualify_fixture_times(&mut snapshot);snapshot
 }
 /// Assemble fixture parts before invoking the consumer. Every production
 /// computation below receives only complete atomic snapshots, never per-entry events.
@@ -590,6 +601,7 @@ fn atomic_snapshot_entries_cite_only_the_snapshot_and_unknown_times_are_visible(
         {"message":"untimed","role":"user","written_by":"human","prompt_kind":"prose","at":null}]);
     snapshot.payload["record"]["snapshot"]["calls"]=json!([{"call":"call","session":"atomic","action":"file_edit","path":"/synthetic/repo/file.rs","at":at(1),"result_at":at(2),"outcome":{"kind":"error"},"check_passed":false}]);
     snapshot.payload["record"]["snapshot"]["turns"]=json!([{"turn":"turn","session":"atomic","start":at(0),"end":at(3),"errors":1}]);
+    qualify_fixture_times(&mut snapshot);
     let computed=Keyed::compute(&WorkActs,&json!({"session":"atomic"}),&[snapshot.clone()],&env);
     let acts:Vec<_>=computed.outputs.iter().filter(|event|event.event_type=="work.act").collect();
     assert_eq!(acts.len(),3);
@@ -623,4 +635,27 @@ fn empty_snapshot_and_newer_unsupported_reducer_do_not_fall_back_to_old_acts(){
     assert_eq!(coverage.state,WorkCoverageState::Unavailable);
     assert_eq!(coverage.timed_entries,None);
     assert_eq!(coverage.reasons["unsupported_reducer_or_kind_version"],1);
+}
+
+#[devkit::test]
+fn source_time_quality_periods_sparse_coverage_and_retirement_remain_explicit(){
+    let env=Env::at(at(100),sinex_model::time_settings::TimeSettings::new("UTC",0,0).unwrap());
+    let mut snapshot=complete_snapshots(&[session("a",Some("task")),prompt("a",0),prompt("a",10)]).remove(0);
+    snapshot.payload["record"]["snapshot"]["messages"][0]["at_evidence"]=json!({"quality":"captured","precision":"instant"});
+    snapshot.payload["record"]["snapshot"]["messages"][1]["at_evidence"]=json!({"quality":"intrinsic","precision":"day"});
+    snapshot.payload["record"]["snapshot"]["sources"]=json!([{"selected":true,"projection":{"block_count":3,"block_ordinals":[0]}}]);
+    let computed=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[snapshot.clone()],&env);
+    let acts:Vec<_>=computed.outputs.iter().filter(|event|event.event_type=="work.act").collect();
+    assert_eq!(acts.len(),1);assert_eq!(acts[0].ts_orig.quality,sinex_model::TimeQuality::Captured);
+    let declared=<WorkAct as sinex_model::EventPayload>::declaration().evaluate(&acts[0].payload,sinex_model::Class::Open).unwrap();
+    assert_eq!(declared.ts_orig,acts[0].ts_orig);
+    let coverage=computed.outputs.iter().find_map(|event|event.payload_as::<WorkCoverage>()).unwrap();
+    assert_eq!(coverage.state,WorkCoverageState::Partial);
+    assert_eq!(coverage.reasons["entry_time_not_instant"],1);assert_eq!(coverage.reasons["sparse_selected_source"],1);
+    snapshot.payload["record"]["snapshot"]=json!({"reducer_version":1,"position":1,"session_id":"a","session":null,"retired":true,"unavailable":[],"messages":[],"calls":[],"turns":[],"sources":[],"native":[]});
+    for field in ["repo","branch","kind","mode","machine","git_identity","terminal","boot_id"]{snapshot.payload[field]=Value::Null;}
+    snapshot.payload["objectives"]=json!([]);
+    let retired=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[snapshot],&env).outputs;
+    assert_eq!(retired.len(),1);let coverage=retired[0].payload_as::<WorkCoverage>().unwrap();
+    assert_eq!(coverage.state,WorkCoverageState::Complete);assert_eq!(coverage.eligible_entries,Some(0));assert_eq!(coverage.reasons["retired"],1);
 }

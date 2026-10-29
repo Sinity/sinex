@@ -14,8 +14,8 @@ pub(super) async fn register(url:&str){
 pub(super) fn snapshot(session:&str,branch:&str,prompts:&[Timestamp],position:i64)->Value{
     json!({"session":session,"reducer_version":1,"source_position":position,"complete":true,
         "repo":"synthetic/repo","branch":branch,"kind":"main","mode":null,"machine":"box","cwd":["/synthetic/repo"],"objectives":[],
-        "record":{"product":"work_snapshot","snapshot":{"reducer_version":1,"position":position,"session":{"id":session},
-            "messages":prompts.iter().map(|at|json!({"message":format!("{session}/{at}"),"role":"user","written_by":"human","prompt_kind":"prose","at":at,"source_event":"synthetic-source"})).collect::<Vec<_>>(),
+        "record":{"product":"work_snapshot","snapshot":{"reducer_version":1,"position":position,"session_id":session,"session":{"id":session},"retired":false,"unavailable":[],
+            "messages":prompts.iter().map(|at|json!({"message":format!("{session}/{at}"),"role":"user","written_by":"human","prompt_kind":"prose","at":at,"at_evidence":{"quality":"intrinsic","precision":"instant","until":null},"source_event":"synthetic-source"})).collect::<Vec<_>>(),
             "calls":[],"turns":[],"sources":[],"native":[]}}})
 }
 
