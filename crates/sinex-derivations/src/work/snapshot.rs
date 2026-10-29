@@ -103,7 +103,7 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
         Ok(envelope)=>envelope,Err(_)=>return unavailable(parent,session,Some(REDUCER_VERSION),"invalid_snapshot"),
     };
     let snapshot=envelope.record.snapshot;
-    if !envelope.complete||envelope.record.product!="work_snapshot"||envelope.session!=session||snapshot.session_id!=session||snapshot.session.as_ref().is_some_and(|metadata|metadata.id!=session)
+    if envelope.source_position<0||!envelope.complete||envelope.record.product!="work_snapshot"||envelope.session!=session||snapshot.session_id!=session||snapshot.session.as_ref().is_some_and(|metadata|metadata.id!=session)
         ||snapshot.reducer_version!=envelope.reducer_version||snapshot.position!=envelope.source_position {
         return unavailable(parent,session,Some(envelope.reducer_version),"incomplete_or_inconsistent_snapshot")
     }

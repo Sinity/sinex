@@ -625,6 +625,9 @@ fn empty_snapshot_and_newer_unsupported_reducer_do_not_fall_back_to_old_acts(){
     let coverage=outputs[0].payload_as::<WorkCoverage>().unwrap();
     assert_eq!(coverage.state,WorkCoverageState::Complete);
     assert_eq!((coverage.eligible_entries,coverage.timed_entries,coverage.untimed_entries),(Some(0),Some(0),Some(0)));
+    let mut invalid=empty.clone();invalid.payload["source_position"]=json!(-1);invalid.payload["record"]["snapshot"]["position"]=json!(-1);
+    let invalid=Keyed::compute(&WorkActs,&json!({"session":"atomic"}),&[invalid],&env).outputs;
+    assert_eq!(invalid[0].payload["state"],"unavailable");
     let old=complete_snapshots(&[empty,prompt("atomic",0)]).remove(0);
     let mut unsupported=old.clone();unsupported.id=sinex_model::EventId::new();
     unsupported.payload["reducer_version"]=json!(2);
