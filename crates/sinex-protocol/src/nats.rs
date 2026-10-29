@@ -314,6 +314,8 @@ pub enum Ingress {
     /// name when the last arrives, so chunks sent again under new frame names
     /// (a new attempt) change nothing they already delivered.
     Chunk {
+        /// Location-free shared encoding descriptor; offsets and total count encoded bytes.
+        descriptor: Vec<u8>,
         frame: String,
         for_frame: String,
         blob: String,

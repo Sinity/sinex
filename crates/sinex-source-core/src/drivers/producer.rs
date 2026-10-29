@@ -28,7 +28,6 @@ use staging::Snapshots;
 
 use crate::drivers::{self, Acquired, DriverError, MaterialSink};
 use crate::{Limits, Source};
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::{BatchKind, FrameRefusal, Origin, RecordOutcome, RunId};
@@ -42,9 +41,6 @@ use std::time::Duration;
 
 /// Event frames stay well under NATS's default 1 MiB message limit.
 const FRAME_BYTES: usize = 512 * 1024;
-/// Bytes per chunk frame: base64 grows them by a third, and the frame must fit
-/// the default 1 MiB message limit.
-const CHUNK_BYTES: usize = 512 * 1024;
 /// How long to wait for an acknowledgment before asking what Sinex has.
 const ACK_WAIT: Duration = Duration::from_secs(30);
 
@@ -73,6 +69,23 @@ pub enum Error {
 
 fn nats(e: impl std::fmt::Display) -> Error {
     Error::Nats(e.to_string())
+}
+
+fn submit_error(error: sinex_transport::producer::SubmitError) -> Error {
+    match error {
+        sinex_transport::producer::SubmitError::NoReceipt(frame) => Error::NoAck(frame),
+        sinex_transport::producer::SubmitError::Refused {
+            frame,
+            reason,
+            kind,
+        } => Error::Refused {
+            frame,
+            reason,
+            kind,
+            recorded: true,
+        },
+        other => nats(other),
+    }
 }
 
 /// The content store root shared with Sinex, whose frame directories receive the bytes;
@@ -113,21 +126,16 @@ impl Position {
 
     pub fn load(dir: &Path, binding: &str) -> Result<Self, Error> {
         let path = Self::path(dir, binding);
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).map_err(|e| Error::State(path, e.to_string()))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(Error::State(path, e.to_string())),
+        match std::fs::File::open(&path) {
+            Ok(file) => read_state(file, &path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(Error::State(path, error.to_string())),
         }
     }
 
     /// Write durably: a temporary file, synced, then renamed over the old one.
     pub fn save(&self, dir: &Path, binding: &str) -> Result<(), Error> {
-        write_durably(
-            &Self::path(dir, binding),
-            &serde_json::to_vec(self).expect("position serializes"),
-        )
+        write_durably(&Self::path(dir, binding), self)
     }
 }
 
@@ -182,28 +190,24 @@ impl UnacknowledgedFrames {
 
     fn load(dir: &Path, binding: &str) -> Result<Option<Self>, Error> {
         let path = Self::path(dir, binding);
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                let value: Value = serde_json::from_slice(&bytes)
-                    .map_err(|e| Error::State(path.clone(), e.to_string()))?;
+        match std::fs::File::open(&path) {
+            Ok(file) => {
+                let value: Value = read_state(file, &path)?;
                 if value.get("sources").is_none() || value.get("records").is_none() {
-                    return Err(Error::State(path, "unsupported unacknowledged-frame format; drain the old producer first, then upgrade".into()));
+                    return Err(Error::State(path,"unsupported unacknowledged-frame format; drain the old producer first, then upgrade".into()));
                 }
                 serde_json::from_value(value)
                     .map(Some)
-                    .map_err(|e| Error::State(path, e.to_string()))
+                    .map_err(|error| Error::State(path, error.to_string()))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(Error::State(path, e.to_string())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(Error::State(path, error.to_string())),
         }
     }
 
     fn save(&self, dir: &Path, binding: &str) -> Result<(), Error> {
         let path = Self::path(dir, binding);
-        write_durably(
-            &path,
-            &serde_json::to_vec(self).expect("unacknowledged frames serialize"),
-        )
+        write_durably(&path, self)
     }
 
     fn clear(dir: &Path, binding: &str) -> Result<(), Error> {
@@ -216,17 +220,38 @@ impl UnacknowledgedFrames {
     }
 }
 
-fn write_durably(path: &Path, bytes: &[u8]) -> Result<(), Error> {
-    let err = |e: std::io::Error| Error::State(path.to_owned(), e.to_string());
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(err)?;
-    }
-    let tmp = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&tmp).map_err(err)?;
-    std::io::Write::write_all(&mut file, bytes).map_err(err)?;
-    file.sync_all().map_err(err)?;
-    std::fs::rename(&tmp, path).map_err(err)?;
-    Ok(())
+fn read_state<T: serde::de::DeserializeOwned>(
+    file: std::fs::File,
+    path: &Path,
+) -> Result<T, Error> {
+    let prepared=hashed_blobs::Prepared::inspect(file,None,hashed_blobs::ReadLimits::default()).map_err(|error|Error::State(path.to_owned(),format!("invalid encoded producer state: {error}; drain the old producer first, then upgrade")))?;
+    let reader = prepared
+        .reader(None, hashed_blobs::ReadLimits::default())
+        .map_err(|error| Error::State(path.to_owned(), error.to_string()))?;
+    serde_json::from_reader(std::io::BufReader::new(reader))
+        .map_err(|error| Error::State(path.to_owned(), error.to_string()))
+}
+fn write_durably(path: &Path, value: &impl Serialize) -> Result<(), Error> {
+    let err = |error: &dyn std::fmt::Display| Error::State(path.to_owned(), error.to_string());
+    let directory = path
+        .parent()
+        .ok_or_else(|| Error::State(path.to_owned(), "state path has no parent".into()))?;
+    std::fs::create_dir_all(directory).map_err(|error| err(&error))?;
+    let temporary = tempfile::NamedTempFile::new_in(directory).map_err(|error| err(&error))?;
+    let preparation = hashed_blobs::Preparation::new(directory).map_err(|error| err(&error))?;
+    let mut writer = preparation
+        .plain_writer(temporary.reopen().map_err(|error| err(&error))?, 3)
+        .map_err(|error| err(&error))?;
+    serde_json::to_writer(&mut writer, value).map_err(|error| err(&error))?;
+    drop(writer.finish().map_err(|error| err(&error))?);
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| err(&error))?;
+    temporary.persist(path).map_err(|error| err(&error))?;
+    std::fs::File::open(directory)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| err(&error))
 }
 
 /// What one poll sent.
@@ -542,12 +567,12 @@ impl Producer {
             let file = match std::fs::File::open(&source.path) {
                 Ok(mut file) => {
                     std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(source.offset)).map_err(|e| Error::Local(e.to_string()))?;
-                    file
+                    Box::new(file) as Box<dyn Read>
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     let body = serde_json::to_vec(frame).expect("frame serializes");
                     let prepared = self.frame_for_message(frame.clone(), &body);
-                    frame_bytes::snapshot(self.frame_root(store), &self.name, prepared.frame(), &source.blob, source.length).map_err(|e| Error::Local(e.to_string()))?
+                    Box::new(frame_bytes::reader(self.frame_root(store), &self.name, prepared.frame(), &source.blob, source.length).map_err(|e| Error::Local(e.to_string()))?) as Box<dyn Read>
                 }
                 Err(error) => return Err(Error::Local(error.to_string())),
             };
@@ -577,7 +602,7 @@ impl Producer {
     fn frame_for_message(&self, frame: Ingress, body: &[u8]) -> Ingress {
         if body.len() + 4096 > self.max_message {
             Ingress::LargeFrame {
-                frame: format!("{}/large", frame.frame()),
+                frame: frame.frame().to_owned(),
                 blob: format!("blake3:{}", blake3::hash(body).to_hex()),
                 length: body.len() as u64,
             }
@@ -603,15 +628,7 @@ impl Producer {
         let frame = self.frame_for_message(frame, &body);
         let root = self.frame_root(shared);
         if let Some(material) = material {
-            frame_bytes::write(
-                root,
-                &self.name,
-                frame.frame(),
-                &material.blob,
-                material.length,
-                snapshots.open(&material.blob)?,
-            )
-            .map_err(|e| Error::Local(e.to_string()))?;
+            snapshots.handoff(root, &self.name, frame.frame(), &material.blob)?;
         }
         if let Ingress::LargeFrame { blob, length, .. } = &frame {
             frame_bytes::write(
@@ -630,68 +647,19 @@ impl Producer {
     /// Send `frame`, after uploading its frame bytes in chunks when Sinex
     /// does not share this host's content store.
     async fn deliver(&mut self, frame: Ingress, shared: &Store) -> Result<Acknowledgment, Error> {
-        if let Some(store) = &self.upload {
-            let root = store.0.clone();
-            let dir = frame_bytes::directory(&root, &self.name, frame.frame());
-            if dir.exists() {
-                let mut names = Vec::new();
-                for entry in std::fs::read_dir(&dir).map_err(|e| Error::Local(e.to_string()))? {
-                    let entry = entry.map_err(|e| Error::Local(e.to_string()))?;
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if blake3::Hash::from_hex(&name).is_ok() {
-                        names.push((
-                            format!("blake3:{name}"),
-                            entry
-                                .metadata()
-                                .map_err(|e| Error::Local(e.to_string()))?
-                                .len(),
-                        ));
-                    }
-                }
-                for (blob, length) in names {
-                    self.upload(frame.frame(), &blob, length, &root).await?;
-                }
-            }
-        }
-        let _ = shared;
+        let root = self.frame_root(shared).to_owned();
+        sinex_transport::producer::transfer_frame(
+            &self.client,
+            &self.subjects,
+            &self.name,
+            &mut self.acks,
+            &root,
+            &frame,
+            ACK_WAIT,
+        )
+        .await
+        .map_err(submit_error)?;
         self.send(frame).await
-    }
-
-    /// Send the bytes named `blob` from the uploading store's frame directory, in
-    /// order, as chunk frames. Each attempt names its frames afresh: Sinex
-    /// keeps the bytes it already has by offset, so a repeated upload costs
-    /// only the sending, and a refused attempt never blocks the next one.
-    async fn upload(
-        &mut self,
-        for_frame: &str,
-        blob: &str,
-        total: u64,
-        root: &Path,
-    ) -> Result<(), Error> {
-        let mut reader = frame_bytes::snapshot(root, &self.name, for_frame, blob, total)
-            .map_err(|e| Error::Local(e.to_string()))?;
-        let attempt = uuid::Uuid::now_v7();
-        let mut offset = 0u64;
-        let mut bytes = vec![0; total.min(CHUNK_BYTES as u64) as usize];
-        loop {
-            let count = (total - offset).min(CHUNK_BYTES as u64) as usize;
-            reader
-                .read_exact(&mut bytes[..count])
-                .map_err(|e| Error::Local(e.to_string()))?;
-            self.send(Ingress::Chunk {
-                frame: format!("{blob}/{attempt}/{offset}"),
-                for_frame: for_frame.to_owned(),
-                blob: blob.to_owned(),
-                offset,
-                total,
-                data: base64::engine::general_purpose::STANDARD.encode(&bytes[..count]),
-            })
-            .await?;
-            offset += count as u64;
-            if offset >= total {
-                return Ok(());
-            }
-        }
     }
 
     /// Send one frame and wait for its acknowledgment.
@@ -706,10 +674,7 @@ impl Producer {
             ACK_WAIT,
         )
         .await
-        .map_err(|error| match error {
-            sinex_transport::producer::SubmitError::NoReceipt(frame) => Error::NoAck(frame),
-            other => nats(other),
-        })?;
+        .map_err(submit_error)?;
         let recorded = true;
         if let Some(reason) = &ack.refusal {
             return Err(Error::Refused {
@@ -951,6 +916,7 @@ fn retry(frame: &mut Ingress) {
         | Ingress::ReplaySequence { frame, .. }
         | Ingress::Material { frame, .. }
         | Ingress::Events { frame, .. }
+        | Ingress::Signals { frame, .. }
         | Ingress::LargeFrame { frame, .. }
         | Ingress::Chunk { frame, .. } => *frame = name,
     }

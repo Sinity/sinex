@@ -154,6 +154,7 @@ pub(crate) async fn refusing(
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
                 Ingress::Chunk { .. }
+                | Ingress::Signals { .. }
                 | Ingress::LargeFrame { .. }
                 | Ingress::RegisterKinds { .. }
                 | Ingress::ReplaySequence { .. } => (None, vec![]),

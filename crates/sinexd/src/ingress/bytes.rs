@@ -9,6 +9,7 @@ impl Ingest {
     pub(super) async fn receive_chunk(&self, producer: &str, chunk: &Ingress) -> Result<(), Check> {
         let Ingress::Chunk {
             for_frame,
+            descriptor,
             blob,
             offset,
             total,
@@ -18,19 +19,20 @@ impl Ingest {
         else {
             return Err(Check::Refused("expected a chunk".into()));
         };
+        let descriptor = hashed_blobs::EncodedBlob::decode(descriptor)
+            .map_err(|error| Check::Bytes(error.to_string()))?;
+        if descriptor.hash.to_string() != *blob || descriptor.stored_len != *total {
+            return Err(Check::Bytes(
+                "encoded chunk differs from its logical name or stored length".into(),
+            ));
+        }
         let data = base64::engine::general_purpose::STANDARD
             .decode(data)
             .map_err(|e| Check::Bytes(format!("chunk data is not base64: {e}")))?;
         let root = self.blobs.root().to_owned();
-        let (producer, for_frame, blob, offset, total) = (
-            producer.to_owned(),
-            for_frame.clone(),
-            blob.clone(),
-            *offset,
-            *total,
-        );
+        let (producer, for_frame, offset) = (producer.to_owned(), for_frame.clone(), *offset);
         tokio::task::spawn_blocking(move || {
-            frame_bytes::receive(&root, &producer, &for_frame, &blob, total, offset, &data)
+            frame_bytes::receive(&root, &producer, &for_frame, &descriptor, offset, &data)
         })
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?
@@ -56,8 +58,8 @@ impl Ingest {
         let producer = producer.to_owned();
         let expected_name = name.clone();
         let inner = tokio::task::spawn_blocking(move || {
-            let file = frame_bytes::snapshot(&root, &producer, &name, &blob, length)
-                .map_err(check_bytes)?;
+            let file =
+                frame_bytes::reader(&root, &producer, &name, &blob, length).map_err(check_bytes)?;
             serde_json::from_reader::<_, Ingress>(std::io::BufReader::new(file)).map_err(|e| {
                 if e.is_io() {
                     Check::Unavailable(e.to_string())
@@ -81,6 +83,7 @@ impl Ingest {
         match inner {
             Ingress::Material { .. }
             | Ingress::Events { .. }
+            | Ingress::Signals { .. }
             | Ingress::RegisterKinds { .. }
             | Ingress::ReplaySequence { .. } => {
                 if inner.frame() != expected_name {
@@ -120,10 +123,10 @@ impl Ingest {
             material.length,
         );
         tokio::task::spawn_blocking(move || {
-            let file = frame_bytes::snapshot(&root, &producer, &frame, &blob, length)
+            let prepared = frame_bytes::prepared(&root, &producer, &frame, &blob, length)
                 .map_err(check_bytes)?;
             let stored = blobs
-                .put_seekable(std::io::BufReader::new(file))
+                .put_prepared(prepared)
                 .map_err(|e| Check::Unavailable(e.to_string()))?;
             if stored != blob {
                 return Err(Check::Bytes(format!(

@@ -1,38 +1,72 @@
-//! A poll's material bytes, held in a temporary directory by their hash until
-//! they are written to the frame's directory.
+//! A poll owns one encoded custody inode per material until the frame takes it.
 use super::*;
-use std::io::{Read, Write};
+use hashed_blobs::{EncodedBlob, Preparation, ReadLimits};
+use std::io::Read;
 
 pub(super) struct Snapshots(tempfile::TempDir);
 impl Snapshots {
     pub(crate) fn new() -> Result<Self, Error> {
         tempfile::tempdir()
             .map(Self)
-            .map_err(|e| Error::Local(e.to_string()))
+            .map_err(|error| Error::Local(error.to_string()))
     }
-    pub(super) fn put_reader(&self, mut reader: impl Read) -> Result<String, String> {
-        let mut file = tempfile::NamedTempFile::new_in(self.0.path()).map_err(|e| e.to_string())?;
-        let mut hash = blake3::Hasher::new();
-        let mut buffer = [0; 65536];
-        loop {
-            let n = reader.read(&mut buffer).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
-            hash.update(&buffer[..n]);
-        }
-        let hash = hash.finalize().to_hex().to_string();
-        file.persist(self.0.path().join(&hash))
-            .map_err(|e| e.to_string())?;
-        Ok(format!("blake3:{hash}"))
+    pub(super) fn put_reader(&self, reader: impl Read) -> Result<String, String> {
+        let temporary =
+            tempfile::NamedTempFile::new_in(self.0.path()).map_err(|error| error.to_string())?;
+        let prepared = Preparation::new(self.0.path())
+            .map_err(|error| error.to_string())?
+            .plain_into(
+                temporary.reopen().map_err(|error| error.to_string())?,
+                reader,
+                3,
+            )
+            .map_err(|error| error.to_string())?;
+        let descriptor = prepared.descriptor();
+        drop(prepared);
+        let name = descriptor.hash.hex();
+        temporary
+            .persist(self.0.path().join(&name))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            self.0.path().join(format!("{name}.descriptor")),
+            descriptor.encode(),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(descriptor.hash.to_string())
     }
-    pub(crate) fn open(&self, name: &str) -> Result<std::fs::File, Error> {
-        let hash = name
+    fn descriptor(&self, name: &str) -> Result<EncodedBlob, Error> {
+        let name = name
             .strip_prefix("blake3:")
-            .ok_or_else(|| Error::Local("invalid private snapshot name".into()))?;
-        blake3::Hash::from_hex(hash).map_err(|e| Error::Local(e.to_string()))?;
-        std::fs::File::open(self.0.path().join(hash)).map_err(|e| Error::Local(e.to_string()))
+            .ok_or_else(|| Error::Local("invalid snapshot name".into()))?;
+        blake3::Hash::from_hex(name).map_err(|error| Error::Local(error.to_string()))?;
+        let bytes = std::fs::read(self.0.path().join(format!("{name}.descriptor")))
+            .map_err(|error| Error::Local(error.to_string()))?;
+        EncodedBlob::decode(&bytes).map_err(|error| Error::Local(error.to_string()))
+    }
+    pub(crate) fn open(&self, name: &str) -> Result<hashed_blobs::BlobReader, Error> {
+        let descriptor = self.descriptor(name)?;
+        let file = std::fs::File::open(self.0.path().join(descriptor.hash.hex()))
+            .map_err(|error| Error::Local(error.to_string()))?;
+        descriptor
+            .open(file, None, ReadLimits::default())
+            .map_err(|error| Error::Local(error.to_string()))
+    }
+    pub(super) fn handoff(
+        &self,
+        root: &Path,
+        producer: &str,
+        frame: &str,
+        name: &str,
+    ) -> Result<(), Error> {
+        let descriptor = self.descriptor(name)?;
+        frame_bytes::link_encoded(
+            root,
+            producer,
+            frame,
+            &descriptor,
+            &self.0.path().join(descriptor.hash.hex()),
+        )
+        .map_err(|error| Error::Local(error.to_string()))
     }
 }
 impl MaterialSink for Snapshots {
@@ -40,6 +74,6 @@ impl MaterialSink for Snapshots {
         self.put_reader(bytes)
     }
     fn put_file(&self, path: &Path) -> Result<String, String> {
-        self.put_reader(std::fs::File::open(path).map_err(|e| e.to_string())?)
+        self.put_reader(std::fs::File::open(path).map_err(|error| error.to_string())?)
     }
 }

@@ -96,6 +96,9 @@ impl Blobs {
         }
         Ok(hash.to_string())
     }
+    /// Prepared external encodings have already passed common identity verification.
+    /// The segment append checks encoded bytes again before they can commit.
+    pub fn put_prepared(&self,prepared:Prepared)->Result<String>{self.prepare(prepared)}
     /// Compression and hashing happen outside the writer lock; admission syncs all waiting bytes together.
     pub fn put(&self, bytes: &[u8]) -> Result<String> {
         self.prepare(self.preparation()?.plain(bytes, 3)?)

@@ -11,6 +11,12 @@ pub enum SubmitError {
     Reply(#[from] crate::replies::ReplyError),
     #[error("no durable receipt for frame {0}")]
     NoReceipt(String),
+    #[error("Sinex refused encoded custody frame {frame}: {reason}")]
+    Refused {
+        frame: String,
+        reason: String,
+        kind: sinex_model::FrameRefusal,
+    },
 }
 /// Retrieve every matching owned receipt through native catalog pages.
 /// This eager convenience method owns the resulting DTOs; callers needing a lazy traversal may request RecordedPage directly.
@@ -172,4 +178,92 @@ pub async fn submit_frame(
                     && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
         })
         .ok_or_else(|| SubmitError::NoReceipt(id.into()))
+}
+
+/// Transfer encoded custody under the original authenticated frame namespace.
+/// The root is local sender custody, never a path accepted by the server.
+#[allow(clippy::too_many_arguments)]
+pub async fn transfer_frame(
+    client: &Client,
+    subjects: &Subjects,
+    producer: &str,
+    acks: &mut Subscriber,
+    root: &std::path::Path,
+    frame: &Ingress,
+    idle: Duration,
+) -> Result<(), SubmitError> {
+    use base64::Engine;
+    use std::io::Read;
+    let directory = crate::frame_bytes::directory(root, producer, frame.frame());
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(SubmitError::Transport(error.to_string())),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| SubmitError::Transport(error.to_string()))?;
+        let name = entry.file_name();
+        let Some(name) = name
+            .to_str()
+            .filter(|name| blake3::Hash::from_hex(name).is_ok())
+        else {
+            continue;
+        };
+        let blob = format!("blake3:{name}");
+        let (descriptor, mut reader) =
+            crate::frame_bytes::encoded(root, producer, frame.frame(), &blob)
+                .map_err(|error| SubmitError::Transport(error.to_string()))?;
+        let attempt = uuid::Uuid::now_v7();
+        let mut offset = 0u64;
+        let widest = format!("bytes/{attempt}/{name}/{}", u64::MAX);
+        let envelope = Ingress::Chunk {
+            frame: widest.clone(),
+            for_frame: frame.frame().into(),
+            blob: blob.clone(),
+            descriptor: descriptor.encode(),
+            offset: u64::MAX,
+            total: descriptor.stored_len,
+            data: String::new(),
+        };
+        let framing = serde_json::to_vec(&envelope)
+            .expect("chunk envelope serializes")
+            .len()
+            + format!("NATS/1.0\r\nNats-Msg-Id: {widest}\r\n\r\n").len();
+        let unit =
+            (client.server_info().max_payload.saturating_sub(framing) / 4 * 3).min(64 * 1024);
+        if unit == 0 {
+            return Err(SubmitError::Transport(
+                "server budget cannot hold encoded custody framing".into(),
+            ));
+        }
+        let mut buffer = vec![0; unit];
+        while offset < descriptor.stored_len {
+            let n = (descriptor.stored_len - offset).min(unit as u64) as usize;
+            reader
+                .read_exact(&mut buffer[..n])
+                .map_err(|error| SubmitError::Transport(error.to_string()))?;
+            let chunk = Ingress::Chunk {
+                frame: format!("bytes/{attempt}/{name}/{offset}"),
+                for_frame: frame.frame().into(),
+                blob: blob.clone(),
+                descriptor: descriptor.encode(),
+                offset,
+                total: descriptor.stored_len,
+                data: base64::engine::general_purpose::STANDARD.encode(&buffer[..n]),
+            };
+            let receipt = submit_frame(client, subjects, producer, acks, &chunk, idle).await?;
+            let kind = receipt
+                .refusal_kind()
+                .unwrap_or(sinex_model::FrameRefusal::Bytes);
+            if let Some(reason) = receipt.refusal {
+                return Err(SubmitError::Refused {
+                    frame: receipt.frame,
+                    reason,
+                    kind,
+                });
+            }
+            offset += n as u64;
+        }
+    }
+    Ok(())
 }

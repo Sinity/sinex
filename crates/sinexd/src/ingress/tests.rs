@@ -9,6 +9,18 @@ use std::sync::Arc;
 
 /// A daemon slice for tests: NATS, a database, the writer, the ingress task
 /// and a content store.
+fn encoded_fixture(bytes: &[u8]) -> (hashed_blobs::EncodedBlob, Vec<u8>) {
+    use std::io::Read;
+    let directory = tempfile::tempdir().unwrap();
+    let prepared = hashed_blobs::Preparation::new(directory.path())
+        .unwrap()
+        .plain(bytes, 3)
+        .unwrap();
+    let descriptor = prepared.descriptor();
+    let mut encoded = Vec::new();
+    prepared.into_file().read_to_end(&mut encoded).unwrap();
+    (descriptor, encoded)
+}
 struct TestReply {
     payload: Vec<u8>,
 }
@@ -81,6 +93,8 @@ impl Harness {
                 .or_default()
                 .write
                 .get_or_insert_with(|| crate::ingress::authority::WriteGrant {
+                    forward_signals: false,
+                    emergency_sinex_blocked_host: None,
                     family: producer.into(),
                     kind_prefixes: prefixes,
                     classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
@@ -113,6 +127,17 @@ impl Harness {
             .await
             .unwrap();
         let requests = Requests {
+            public_context: crate::public_context::Provider::new(
+                query_language::time::DaySetting::new(
+                    jiff::tz::TimeZone::get("UTC").unwrap(),
+                    jiff::civil::Time::constant(4, 0, 0, 0),
+                )
+                .unwrap()
+                .wire(),
+                "test-host".into(),
+                None,
+            )
+            .unwrap(),
             client: client.clone(),
             consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             read_grants: grants.clone(),
@@ -573,7 +598,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     let text = "events where event_type = polylogue.session and payload.origin = claude-code";
     let mut ctx = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
-        jiff::tz::TimeZone::UTC,
+        jiff::tz::TimeZone::get("UTC").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(declarations));
@@ -855,18 +880,21 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
         material.blob = blob.clone();
         material.length = total;
     }
+    let (descriptor, encoded) = encoded_fixture(&bytes);
+    let middle = encoded.len() / 2;
     let chunk = |attempt: &str, offset: usize, end: usize| Ingress::Chunk {
+        descriptor: descriptor.encode(),
         for_frame: "m-up".into(),
         frame: format!("{blob}/{attempt}/{offset}"),
         blob: blob.clone(),
         offset: offset as u64,
-        total,
-        data: base64::engine::general_purpose::STANDARD.encode(&bytes[offset..end]),
+        total: descriptor.stored_len,
+        data: base64::engine::general_purpose::STANDARD.encode(&encoded[offset..end]),
     };
     // Out of order is refused and recorded; in order is accepted.
-    let ack = h.send("node", &chunk("a", 1_000, bytes.len())).await;
+    let ack = h.send("node", &chunk("a", middle, encoded.len())).await;
     assert!(ack.refusal.unwrap().contains("ordered prefix"));
-    for (offset, end) in [(0, 1_000), (1_000, bytes.len())] {
+    for (offset, end) in [(0, middle), (middle, encoded.len())] {
         let ack = h.send("node", &chunk("b", offset, end)).await;
         assert_eq!(ack.refusal, None, "{ack:?}");
     }
@@ -1166,13 +1194,15 @@ async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(
     // A content store fault must not be recorded as a permanent refusal.
     std::fs::remove_dir_all(root.path().join("incoming")).unwrap();
     std::fs::write(root.path().join("incoming"), b"blocked directory").unwrap();
+    let (descriptor, encoded) = encoded_fixture(bytes);
     let mut chunk = Ingress::Chunk {
+        descriptor: descriptor.encode(),
         frame: "chunk".into(),
         for_frame: "material".into(),
         blob,
         offset: 0,
-        total: bytes.len() as u64,
-        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        total: descriptor.stored_len,
+        data: base64::engine::general_purpose::STANDARD.encode(&encoded),
     };
     assert!(matches!(
         ingest.receive_chunk("node", &chunk).await,
@@ -1212,8 +1242,7 @@ async fn a_recorded_refusal_keeps_the_frame_bytes_on_redelivery(db: devkit::pg::
             .await;
         assert!(ack.refusal.is_some());
         assert!(
-            frame_bytes::snapshot(&h.store_dir, "node", "invalid", &blob, bytes.len() as u64)
-                .is_ok()
+            frame_bytes::reader(&h.store_dir, "node", "invalid", &blob, bytes.len() as u64).is_ok()
         );
     }
     assert_eq!(h.recorded("node", &["invalid"]).await.len(), 1);
@@ -1265,7 +1294,7 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let context = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
-        jiff::tz::TimeZone::UTC,
+        jiff::tz::TimeZone::get("UTC").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
     let bound = sinex_model::query::bind("failures", &context).unwrap();
@@ -1608,6 +1637,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         );
     }
     let bad_bytes = Ingress::Chunk {
+        descriptor: vec![],
         frame: "bad-bytes".into(),
         for_frame: "b/material/bytes".into(),
         blob: "not-a-blob".into(),
@@ -1653,7 +1683,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         reads: h.reads.clone(),
         writer: Some(h.writer.clone()),
         blobs: h.blobs.clone(),
-        zone: jiff::tz::TimeZone::UTC,
+        zone: jiff::tz::TimeZone::get("UTC").unwrap(),
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         agent_grants: vec![],
         unlock: Default::default(),
@@ -1706,16 +1736,18 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
     let h = Harness::start(db).await;
     let bytes = b"synthetic bytes";
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+    let (descriptor, encoded) = encoded_fixture(bytes);
     let chunk = |name: &str, offset, data: &[u8]| Ingress::Chunk {
+        descriptor: descriptor.encode(),
         frame: name.into(),
         for_frame: "pending-material".into(),
         blob: blob.clone(),
         offset,
-        total: bytes.len() as u64,
+        total: descriptor.stored_len,
         data: base64::engine::general_purpose::STANDARD.encode(data),
     };
     assert!(
-        h.send("node", &chunk("prefix", 0, &bytes[..3]))
+        h.send("node", &chunk("prefix", 0, &encoded[..3]))
             .await
             .refusal
             .is_none()
@@ -1726,13 +1758,14 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
     sinex_store::privacy::set_source_class(&mut conn, "node", sinex_model::Class::Sealed, "test")
         .await
         .unwrap();
-    let ack = h.send("node", &chunk("remaining", 3, &bytes[3..])).await;
+    let ack = h.send("node", &chunk("remaining", 3, &encoded[3..])).await;
     assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
     assert!(!directory.exists());
     assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 0);
 }
 
 mod fetch_reads;
+mod public_context;
 
 mod consumer_reads;
 
