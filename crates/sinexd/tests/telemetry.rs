@@ -73,7 +73,7 @@ async fn daemon_samples_admission_and_failures_through_public_commands() {
         binary,
         &database,
         &store,
-        "events where event_type = sinex.telemetry and payload.component = writer",
+        "events where event_type = sinex.telemetry AND payload.component = writer",
     );
     assert_eq!(ordinary["total"], 1, "{ordinary}");
     let status: serde_json::Value = serde_json::from_str(&finish(&mut run(

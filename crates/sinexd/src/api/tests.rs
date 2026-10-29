@@ -74,23 +74,37 @@ async fn admit(w: &World, texts: &[&str], from: i64) {
 }
 
 async fn submit_events(w: &World, events: Vec<Event>) -> i64 {
-    w.writer
-        .submit(
-            writer::Priority::Live,
-            Batch {
-                run: RunId::new(),
-                kind: BatchKind::Api {
-                    actor: "test".into(),
+    let mut pending = events;
+    while !pending.is_empty() {
+        let ids: std::collections::BTreeSet<_> = pending.iter().map(|event| event.id).collect();
+        let (ready, remaining): (Vec<_>, Vec<_>) =
+            pending.into_iter().partition(|event| match &event.origin {
+                Origin::Record { .. } => true,
+                Origin::Derived { parents } => parents.iter().all(|parent| !ids.contains(parent)),
+            });
+        assert!(
+            !ready.is_empty(),
+            "synthetic event graph has a dependency cycle"
+        );
+        w.writer
+            .submit(
+                writer::Priority::Live,
+                Batch {
+                    run: RunId::new(),
+                    kind: BatchKind::Api {
+                        actor: "test".into(),
+                    },
+                    records: vec![RecordOutcome::Events {
+                        location: None,
+                        events: ready,
+                    }],
+                    archive: vec![],
                 },
-                records: vec![RecordOutcome::Events {
-                    location: None,
-                    events,
-                }],
-                archive: vec![],
-            },
-        )
-        .await
-        .unwrap();
+            )
+            .await
+            .unwrap();
+        pending = remaining;
+    }
     let seq = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
         .await
         .unwrap();
@@ -791,7 +805,14 @@ async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatab
         body["result"]["text"]
             .as_str()
             .unwrap()
-            .contains("nothing stored, so no coverage anywhere"),
+            .contains("no declared temporal coverage stored"),
+        "{body}"
+    );
+    assert!(
+        body["result"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Stored panel: sinex:ev/"),
         "{body}"
     );
 

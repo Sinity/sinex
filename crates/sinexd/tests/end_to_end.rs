@@ -1196,7 +1196,7 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
     let answer = t.query("telemetry where payload.component = publisher");
     assert_eq!(answer["total"], 1, "{answer}");
     let ordinary =
-        t.query("events where event_type = sinex.telemetry and payload.component = publisher");
+        t.query("events where event_type = sinex.telemetry AND payload.component = publisher");
     assert_eq!(ordinary["total"], 1, "{ordinary}");
     let mut command = t.sinexd(&["admin", "status"]);
     command.env("SINEX_PRIVATE_MODE", dir.0.join("private-mode"));
@@ -1743,7 +1743,7 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
     let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &input]));
     backfill();
     let query =
-        "events where event_type = capture.gap and payload.reason = sequence fields payload";
+        "events where event_type = capture.gap AND payload.reason = sequence fields payload";
     let first = target.query(query);
     assert_eq!(first["total"], 1, "{first}");
     assert_eq!(

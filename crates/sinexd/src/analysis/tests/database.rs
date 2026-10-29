@@ -83,9 +83,13 @@ impl World {
         let store = tempfile::tempdir().unwrap();
         let blobs = sinex_store::Blobs::open(store.path()).unwrap();
         let (handle, queues) = writer::channels();
+        let mut connection = writer::claim(connection).await.unwrap();
+        crate::catalog::install_native_sources(&mut connection)
+            .await
+            .unwrap();
         let task = tokio::spawn(writer::run(
             url.clone(),
-            writer::claim(connection).await.unwrap(),
+            connection,
             queues,
             Arc::new(Keys::new(
                 crate::analysis::keyed(),
@@ -333,11 +337,16 @@ async fn gaps_are_where_coverage_does_not_reach(db: devkit::pg::TestDatabase) {
         [
             ("code.git", "2026-09-14T02:00:00Z", "gap"),
             ("code.git", "2026-09-15T08:00:00.000001Z", "gap"),
+            ("source.observation", "2026-09-14T02:00:00Z", "unknown"),
         ],
         "{all:#?}"
     );
     assert_eq!(all[0].to, "2026-09-14T08:00:00Z");
     assert_eq!(all[1].to, "2026-09-17T02:00:00Z");
+    assert_eq!(
+        all[2].to, "2026-09-17T02:00:00Z",
+        "an ordinary coverage reading does not prove temporal coverage of its own observer"
+    );
     let unknown = gaps(
         &mut conn,
         &settings,

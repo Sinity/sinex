@@ -26,7 +26,10 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
     let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&base.join("store")).unwrap();
     let (handle, queues) = writer::channels();
-    let connection = writer::claim(connection).await.unwrap();
+    let mut connection = writer::claim(connection).await.unwrap();
+    crate::catalog::install_native_sources(&mut connection)
+        .await
+        .unwrap();
     tokio::spawn(writer::run(
         url.clone(),
         connection,

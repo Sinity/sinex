@@ -40,7 +40,7 @@ async fn wait_rows(socket: &Path, words: &str, count: usize) -> Vec<Value> {
     loop {
         let answer = call(
             socket,
-            json!({"method":"search","words":format!("event_type = document.text and {words}"),"page":100}),
+            json!({"method":"search","words":format!("event_type = document.text AND {words}"),"page":100}),
         );
         let rows = answer["rows"].as_array().unwrap();
         if rows.len() == count {
