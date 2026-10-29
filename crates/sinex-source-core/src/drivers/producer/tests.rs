@@ -677,7 +677,7 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
         (blob.clone(), *length)
     };
     // Both attempts were rebuilt from the same logical frame. Only its name changes.
-    assert_ne!(json_bytes(&received[0]).0, json_bytes(&received[1]).0);
+    assert_ne!(json_bytes(received[0]).0, json_bytes(received[1]).0);
     assert_eq!(position.cursor, json!({"segment":1}));
 }
 
