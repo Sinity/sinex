@@ -28,11 +28,18 @@ fn quantity(value: &str) -> Result<u64> {
         .parse()
         .map_err(|_| Error::Invalid("stored model accounting quantity is invalid".into()))
 }
+pub(super) fn timestamp(value: &str) -> Result<Timestamp> {
+    value
+        .parse::<i128>()
+        .ok()
+        .and_then(|value| Timestamp::from_unix_ns(value).ok())
+        .ok_or_else(|| Error::Invalid("stored model accounting period is invalid".into()))
+}
 async fn find(conn: &mut PgConnection, hash: &str, request: bool) -> Result<Option<Entry>> {
     sinex_model::model_calls::digest(hash).map_err(Error::Invalid)?;
     let row=sqlx::query!(r#"SELECT entry_id,encode(request_hash,'hex') AS request,policy_event,
       encode(policy_definition_hash,'hex') AS "definition!",policy_name,policy_version,operation,account_scope,currency,unit,
-      period_start,period_end,encode(bucket_hash,'hex') AS "bucket!",reserved_units::text AS reserved,actual_units::text AS actual,state,
+      period_start_ns::text AS "period_start!",period_end_ns::text AS "period_end!",encode(bucket_hash,'hex') AS "bucket!",reserved_units::text AS reserved,actual_units::text AS actual,state,
       encode(output_hash,'hex') AS output,encode(receipt_hash,'hex') AS receipt,receipt_event,overrun
       FROM derivation.model_calls WHERE CASE WHEN $2 THEN request_hash=decode($1,'hex') ELSE receipt_hash=decode($1,'hex') END"#,hash,request).fetch_optional(conn).await?;
     let Some(row) = row else { return Ok(None) };
@@ -48,8 +55,8 @@ async fn find(conn: &mut PgConnection, hash: &str, request: bool) -> Result<Opti
             scope: row.account_scope,
             currency: row.currency,
             unit: row.unit,
-            period_start: Timestamp(row.period_start),
-            period_end: Timestamp(row.period_end),
+            period_start: timestamp(&row.period_start)?,
+            period_end: timestamp(&row.period_end)?,
         },
         bucket: row.bucket,
         reserved: row.reserved.as_deref().map(quantity).transpose()?,
@@ -93,9 +100,9 @@ async fn pending(
     let limit = budget.limit_units.to_string();
     let hash = definition(policy);
     let bucket = budget.bucket();
-    sqlx::query!(r#"INSERT INTO derivation.model_calls(entry_id,request_hash,policy_event,policy_definition_hash,policy_name,policy_version,operation,account_scope,bucket_hash,currency,unit,period_start,period_end,limit_units,reserved_units,state,created_at,updated_at)
-      VALUES($1,decode($2,'hex'),$3,decode($4,'hex'),$5,$6,$7,$8,decode($9,'hex'),$10,$11,$12,$13,$14::text::numeric,$15::text::numeric,'reserved',$16,$16)"#,
-      entry,request.request_id,id.0,hash,policy.policy.name,policy.policy.version,request.request.operation,budget.scope,bucket,budget.currency,budget.unit,budget.period_start.0,budget.period_end.0,limit,estimate,at.0).execute(conn).await?;
+    sqlx::query!(r#"INSERT INTO derivation.model_calls(entry_id,request_hash,policy_event,policy_definition_hash,policy_name,policy_version,operation,account_scope,bucket_hash,currency,unit,period_start_ns,period_end_ns,limit_units,reserved_units,state,created_at,updated_at)
+      VALUES($1,decode($2,'hex'),$3,decode($4,'hex'),$5,$6,$7,$8,decode($9,'hex'),$10,$11,$12::text::numeric,$13::text::numeric,$14::text::numeric,$15::text::numeric,'reserved',$16,$16)"#,
+      entry,request.request_id,id.0,hash,policy.policy.name,policy.policy.version,request.request.operation,budget.scope,bucket,budget.currency,budget.unit,budget.period_start.unix_ns().to_string(),budget.period_end.unix_ns().to_string(),limit,estimate,at.0).execute(conn).await?;
     Ok(entry)
 }
 /// An incurred response may have no representable quote. Its actual amount,
@@ -124,9 +131,9 @@ async fn recorded(
     let limit = budget.limit_units.to_string();
     let actual = response.actual.units.to_string();
     let receipt = response.receipt_identity();
-    sqlx::query!(r#"INSERT INTO derivation.model_calls(entry_id,request_hash,policy_event,policy_definition_hash,policy_name,policy_version,operation,account_scope,bucket_hash,currency,unit,period_start,period_end,limit_units,reserved_units,actual_units,state,response_event,output_hash,receipt_hash,reason,created_at,updated_at)
-      VALUES($1,decode($2,'hex'),$3,decode($4,'hex'),$5,$6,$7,$8,decode($9,'hex'),$10,$11,$12,$13,$14::text::numeric,$15::text::numeric,$16::text::numeric,'recorded',$17,decode($18,'hex'),decode($19,'hex'),$20,$21,$21)"#,
-      entry,request.request_id,request.policy.0,hash,policy.policy.name,policy.policy.version,request.request.operation,budget.scope,bucket,budget.currency,budget.unit,budget.period_start.0,budget.period_end.0,limit,estimate,actual,response_event.0,response.output_hash.0,receipt,reason,at.0).execute(conn).await?;
+    sqlx::query!(r#"INSERT INTO derivation.model_calls(entry_id,request_hash,policy_event,policy_definition_hash,policy_name,policy_version,operation,account_scope,bucket_hash,currency,unit,period_start_ns,period_end_ns,limit_units,reserved_units,actual_units,state,response_event,output_hash,receipt_hash,reason,created_at,updated_at)
+      VALUES($1,decode($2,'hex'),$3,decode($4,'hex'),$5,$6,$7,$8,decode($9,'hex'),$10,$11,$12::text::numeric,$13::text::numeric,$14::text::numeric,$15::text::numeric,$16::text::numeric,'recorded',$17,decode($18,'hex'),decode($19,'hex'),$20,$21,$21)"#,
+      entry,request.request_id,request.policy.0,hash,policy.policy.name,policy.policy.version,request.request.operation,budget.scope,bucket,budget.currency,budget.unit,budget.period_start.unix_ns().to_string(),budget.period_end.unix_ns().to_string(),limit,estimate,actual,response_event.0,response.output_hash.0,receipt,reason,at.0).execute(conn).await?;
     Ok(entry)
 }
 
@@ -255,9 +262,9 @@ pub(super) async fn record_actual(
     let definition = definition(&policy);
     let actual = receipt.actual.units.to_string();
     let limit = policy.policy.budget.limit_units.to_string();
-    sqlx::query!(r#"INSERT INTO derivation.model_calls(entry_id,policy_event,policy_definition_hash,policy_name,policy_version,operation,account_scope,bucket_hash,currency,unit,period_start,period_end,limit_units,actual_units,state,receipt_hash,receipt_event,created_at,updated_at)
-      VALUES($1,$2,decode($3,'hex'),$4,$5,$6,$7,decode($8,'hex'),$9,$10,$11,$12,$13::text::numeric,$14::text::numeric,'actual_unbound',decode($15,'hex'),$16,$17,$17)"#,
-      entry,record.policy.0,definition,receipt.policy_name,receipt.policy_version,receipt.operation,basis.scope,bucket,basis.currency,basis.unit,basis.period_start.0,basis.period_end.0,limit,actual,hash,id.0,at.0).execute(&mut *conn).await?;
+    sqlx::query!(r#"INSERT INTO derivation.model_calls(entry_id,policy_event,policy_definition_hash,policy_name,policy_version,operation,account_scope,bucket_hash,currency,unit,period_start_ns,period_end_ns,limit_units,actual_units,state,receipt_hash,receipt_event,created_at,updated_at)
+      VALUES($1,$2,decode($3,'hex'),$4,$5,$6,$7,decode($8,'hex'),$9,$10,$11::text::numeric,$12::text::numeric,$13::text::numeric,$14::text::numeric,'actual_unbound',decode($15,'hex'),$16,$17,$17)"#,
+      entry,record.policy.0,definition,receipt.policy_name,receipt.policy_version,receipt.operation,basis.scope,bucket,basis.currency,basis.unit,basis.period_start.unix_ns().to_string(),basis.period_end.unix_ns().to_string(),limit,actual,hash,id.0,at.0).execute(&mut *conn).await?;
     mark_overrun(conn, entry).await?;
     actual_decision(
         find(conn, &hash, false)

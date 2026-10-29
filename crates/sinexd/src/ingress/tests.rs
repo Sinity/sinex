@@ -215,8 +215,16 @@ impl Harness {
         )
         .unwrap();
         let (stop, stopped) = watch::channel(false);
+        let (ready, responders_ready) = tokio::sync::oneshot::channel();
         let task_client = client.clone();
-        tokio::spawn(async move { run(task_client, ingest, requests, stopped).await.unwrap() });
+        tokio::spawn(async move {
+            run(task_client, ingest, requests, stopped, ready)
+                .await
+                .unwrap()
+        });
+        responders_ready
+            .await
+            .expect("producer request subscriptions become ready");
         let harness = Self {
             writer: handle,
             reads,

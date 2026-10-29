@@ -1381,6 +1381,7 @@ pub(crate) async fn run(
     mut ingest: Ingest,
     requests: Requests,
     mut stop: watch::Receiver<bool>,
+    ready: tokio::sync::oneshot::Sender<()>,
 ) -> Result<(), String> {
     ingest.public_context = Some(requests.public_context.clone());
     ingest.transport_client = Some(client.clone());
@@ -1394,7 +1395,7 @@ pub(crate) async fn run(
     tokio::select! {
         () = stopped => Ok(()),
         result = consume(client.clone(), ingest) => result,
-        result = serve(client, requests) => result,
+        result = serve(client, requests, ready) => result,
     }
 }
 
@@ -1460,7 +1461,11 @@ async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<(), S
 }
 
 /// Answer producer requests, at most [`REQUESTS_AT_ONCE`] at a time.
-async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), String> {
+async fn serve(
+    client: async_nats::Client,
+    requests: Requests,
+    ready: tokio::sync::oneshot::Sender<()>,
+) -> Result<(), String> {
     let subscribe = |subject: String| {
         let client = client.clone();
         async move {
@@ -1482,6 +1487,11 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
         subscribe(requests.subjects.fetch_material_all()).await?,
     ]);
     client.flush().await.map_err(|e| e.to_string())?;
+    // The API socket becomes available only after the broker has acknowledged
+    // every producer request subscription on this connection.
+    ready
+        .send(())
+        .map_err(|_| "producer request startup receiver closed".to_owned())?;
     let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(REQUESTS_AT_ONCE));
     let mut running = tokio::task::JoinSet::new();
     loop {

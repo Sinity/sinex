@@ -829,6 +829,104 @@ fn receipt_capability() -> Capabilities {
 }
 
 #[devkit::test]
+async fn submicrosecond_receipt_period_survives_repeat_restart_and_later_binding(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut configured = policy("1", 35, 10);
+    configured.policy.budget.period_start = Timestamp::from_unix_ns(137).unwrap();
+    configured.policy.budget.period_end =
+        Timestamp::from_unix_ns(at(1000).unix_ns() + 911).unwrap();
+    let basis = sinex_model::model_calls::BudgetBasis::from(&configured.policy.budget);
+    let policy = captured(&configured);
+    let target = input("fractional period");
+    admit(&mut conn, vec![policy.clone(), target.clone()]).await;
+    act(
+        &mut conn,
+        Action::AuthorizePolicy {
+            policy: policy.id,
+            at: at(200),
+        },
+    )
+    .await;
+    let request = requested(policy.id, &target);
+    let event = captured(&request);
+    admit(&mut conn, vec![event.clone()]).await;
+    let Outcome::Accepted { .. } = act(
+        &mut conn,
+        Action::Reserve {
+            request: event.id,
+            at: at(200),
+        },
+    )
+    .await
+    else {
+        panic!("configured hold")
+    };
+    let mut payload = receipt(policy.id, 7);
+    payload.receipt.basis = basis.clone();
+    let receipt = captured(&payload);
+    admit(&mut conn, vec![receipt.clone()]).await;
+    for reused in [false, true] {
+        let outcome = act_with(
+            &mut conn,
+            Action::RecordActual {
+                receipt: receipt.id,
+                at: at(1200),
+            },
+            receipt_capability(),
+        )
+        .await;
+        let Outcome::ActualAccepted { decision } = outcome else {
+            panic!("exact submicrosecond receipt must remain valid: {outcome:?}")
+        };
+        assert_eq!(decision.reused, reused);
+    }
+    let row=sqlx::query!("SELECT entry_id,period_start_ns::text AS \"start!\",period_end_ns::text AS \"end!\" FROM derivation.model_calls WHERE receipt_hash IS NOT NULL").fetch_one(&mut *conn).await.unwrap();
+    assert_eq!(row.start, "137");
+    assert_eq!(row.end, basis.period_end.unix_ns().to_string());
+    conn.close().await.unwrap();
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let output = json!({"text":"neutral submicrosecond fixture"});
+    let response = captured(&RecordedResponse {
+        request_id: request.request_id,
+        request: request.request,
+        output_hash: OutputHash::for_value(&output),
+        output,
+        actual: payload.receipt.actual,
+        provider_receipt: Some(payload.receipt.provider_receipt),
+        received_at: at(1201),
+    });
+    admit(&mut conn, vec![response.clone()]).await;
+    let outcome = act(
+        &mut conn,
+        Action::Reconcile {
+            request: event.id,
+            response: response.id,
+            at: at(1201),
+        },
+    )
+    .await;
+    let Outcome::Accepted { decision } = outcome else {
+        panic!("exact original period must bind: {outcome:?}")
+    };
+    assert!(decision.reused);
+    assert_eq!(decision.actual_units, Some(7));
+    let after=sqlx::query!("SELECT entry_id,period_start_ns::text AS \"start!\",period_end_ns::text AS \"end!\",coalesce(actual_units,reserved_units)::text AS \"amount!\" FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    assert_eq!(after.entry_id, row.entry_id);
+    assert_eq!(after.start, row.start);
+    assert_eq!(after.end, row.end);
+    assert_eq!(after.amount, "7");
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM derivation.model_calls")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap(),
+        Some(1)
+    );
+}
+
+#[devkit::test]
 async fn actual_unbound_requires_both_deployment_capability_and_authorized_operator_policy(
     db: devkit::pg::TestDatabase,
 ) {
@@ -902,10 +1000,13 @@ async fn actual_unbound_requires_both_deployment_capability_and_authorized_opera
     };
     assert_eq!(decision.state, State::ActualUnbound);
     assert_eq!(decision.bound_request, None);
-    let row=sqlx::query!("SELECT request_hash,reserved_units::text AS reserved,actual_units::text AS actual,period_start,period_end,receipt_event FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    let row=sqlx::query!("SELECT request_hash,reserved_units::text AS reserved,actual_units::text AS actual,period_start_ns::text AS \"period_start!\",period_end_ns::text AS \"period_end!\",receipt_event FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(row.actual.as_deref(), Some("7"));
     assert_eq!(
-        (Timestamp(row.period_start), Timestamp(row.period_end)),
+        (
+            accounting::timestamp(&row.period_start).unwrap(),
+            accounting::timestamp(&row.period_end).unwrap()
+        ),
         (at(0), at(1000)),
         "observation clock is not an incurred period"
     );
@@ -1013,12 +1114,15 @@ async fn later_binding_merges_one_pending_hold_and_unbound_actual_atomically_acr
     };
     assert!(decision.reused);
     assert_eq!(decision.actual_units, Some(7));
-    let row=sqlx::query!("SELECT entry_id,request_hash,period_start,period_end,receipt_event,coalesce(actual_units,reserved_units)::text AS amount FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    let row=sqlx::query!("SELECT entry_id,request_hash,period_start_ns::text AS \"period_start!\",period_end_ns::text AS \"period_end!\",receipt_event,coalesce(actual_units,reserved_units)::text AS amount FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(row.entry_id, entry);
     assert!(row.request_hash.is_some());
     assert_eq!(row.receipt_event, Some(record.id.0));
     assert_eq!(
-        (Timestamp(row.period_start), Timestamp(row.period_end)),
+        (
+            accounting::timestamp(&row.period_start).unwrap(),
+            accounting::timestamp(&row.period_end).unwrap()
+        ),
         (at(0), at(1000))
     );
     assert_eq!(row.amount.as_deref(), Some("7"));
@@ -1131,11 +1235,14 @@ async fn contradictory_receipts_never_move_frozen_period_or_replace_known_amount
             receipt: original.receipt.identity()
         })
     );
-    let row=sqlx::query!("SELECT actual_units::text AS actual,period_start,period_end,policy_version FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    let row=sqlx::query!("SELECT actual_units::text AS actual,period_start_ns::text AS \"period_start!\",period_end_ns::text AS \"period_end!\",policy_version FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(row.actual.as_deref(), Some("7"));
     assert_eq!(row.policy_version, "1");
     assert_eq!(
-        (Timestamp(row.period_start), Timestamp(row.period_end)),
+        (
+            accounting::timestamp(&row.period_start).unwrap(),
+            accounting::timestamp(&row.period_end).unwrap()
+        ),
         (at(0), at(1000))
     );
 }
@@ -1276,12 +1383,15 @@ async fn unknown_quote_refuses_new_reservation_but_never_discards_incurred_actua
         assert_eq!(decision.state, State::Recorded);
         assert_eq!(decision.reused, reused);
     }
-    let row=sqlx::query!("SELECT reserved_units::text AS reserved,actual_units::text AS actual,period_start,period_end,reason FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    let row=sqlx::query!("SELECT reserved_units::text AS reserved,actual_units::text AS actual,period_start_ns::text AS \"period_start!\",period_end_ns::text AS \"period_end!\",reason FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(row.reserved, None);
     assert_eq!(row.actual.as_deref(), Some("7"));
     assert!(row.reason.as_deref().unwrap().contains("estimate exceeds"));
     assert_eq!(
-        (Timestamp(row.period_start), Timestamp(row.period_end)),
+        (
+            accounting::timestamp(&row.period_start).unwrap(),
+            accounting::timestamp(&row.period_end).unwrap()
+        ),
         (at(0), at(1000))
     );
 }
@@ -1336,11 +1446,14 @@ async fn an_unbound_actual_can_bind_with_an_unrepresentable_quote_without_moving
     assert_eq!(decision.reserved_units, None);
     assert_eq!(decision.actual_units, Some(7));
     assert!(decision.reused);
-    let row=sqlx::query!("SELECT entry_id,period_start,period_end,actual_units::text AS actual FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    let row=sqlx::query!("SELECT entry_id,period_start_ns::text AS \"period_start!\",period_end_ns::text AS \"period_end!\",actual_units::text AS actual FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(row.entry_id, entry);
     assert_eq!(row.actual.as_deref(), Some("7"));
     assert_eq!(
-        (Timestamp(row.period_start), Timestamp(row.period_end)),
+        (
+            accounting::timestamp(&row.period_start).unwrap(),
+            accounting::timestamp(&row.period_end).unwrap()
+        ),
         (at(0), at(1000))
     );
     assert_eq!(

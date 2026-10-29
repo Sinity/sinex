@@ -308,15 +308,19 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         tokens,
     };
     let (c, mut s) = (commits.clone(), stop.clone());
-    eprintln!("sinexd: API on {}", o.api.socket.display());
+    let (producer_requests_ready, ready) = tokio::sync::oneshot::channel();
     tasks.spawn(async move {
-        (
-            "API",
-            api::serve(config, reader_api, c, read_models, async move {
-                let _ = s.wait_for(|s| *s).await;
-            })
-            .await,
-        )
+        let result = match ready.await {
+            Ok(()) => {
+                eprintln!("sinexd: API on {}", config.socket.display());
+                api::serve(config, reader_api, c, read_models, async move {
+                    let _ = s.wait_for(|s| *s).await;
+                })
+                .await
+            }
+            Err(_) => Err("producer request subscriptions did not become ready".into()),
+        };
+        ("API", result)
     });
 
     // The daemon's own state, sampled into its telemetry spool.
@@ -380,7 +384,12 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         producer_grants,
     )?;
     let s = stop.clone();
-    tasks.spawn(async move { ("ingress", ingress::run(client, ingest, requests, s).await) });
+    tasks.spawn(async move {
+        (
+            "ingress",
+            ingress::run(client, ingest, requests, s, producer_requests_ready).await,
+        )
+    });
     // The writer stops when every handle is gone; the tasks above hold theirs.
     drop(handle);
 

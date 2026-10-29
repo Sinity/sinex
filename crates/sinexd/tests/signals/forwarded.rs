@@ -107,7 +107,13 @@ fn emergency_completion(context_token: String) -> sinex_protocol::signals::Emerg
     }
 }
 
-async fn context(client: &async_nats::Client, subjects: &Subjects) -> PublicContext {
+async fn context(
+    client: &async_nats::Client,
+    subjects: &Subjects,
+    process: &mut daemon::Process,
+    phase: &str,
+) -> PublicContext {
+    process.running();
     sinex_transport::replies::request_json(
         client,
         subjects.public_context("polylogue"),
@@ -116,7 +122,12 @@ async fn context(client: &async_nats::Client, subjects: &Subjects) -> PublicCont
         Duration::from_secs(10),
     )
     .await
-    .unwrap()
+    .unwrap_or_else(|error| {
+        panic!(
+            "public context during {phase}: {error}; daemon log:\n{}",
+            process.log()
+        )
+    })
 }
 async fn wait_deliveries(conn: &mut PgConnection, process: &mut daemon::Process, minimum: i64) {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -411,7 +422,7 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
     }
     let PublicContext::Available {
         interrupt_budget, ..
-    } = context(&client, &subjects).await
+    } = context(&client, &subjects, &mut process, "incomplete peer baseline").await
     else {
         panic!("owner policy should be available")
     };
@@ -447,7 +458,7 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
         interrupt_budget,
         context_token,
         ..
-    } = context(&client, &subjects).await
+    } = context(&client, &subjects, &mut process, "committed shared budget").await
     else {
         panic!("committed shared owner budget unavailable")
     };
@@ -563,7 +574,7 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
     process.stop().await;
     let mut process = start();
     ready(&mut process, &socket).await;
-    let _ = context(&client, &subjects).await;
+    let _ = context(&client, &subjects, &mut process, "daemon restart").await;
     assert_eq!(
         std::fs::read_to_string(&sink).unwrap().lines().count(),
         2,

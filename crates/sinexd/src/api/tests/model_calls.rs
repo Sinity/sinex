@@ -6,7 +6,7 @@ use sinex_model::model_calls::{
 };
 
 fn policy() -> Policy {
-    let now = Timestamp::now();
+    let now = Timestamp::from_unix_ns(Timestamp::now().unix_ns() / 1000 * 1000 + 137).unwrap();
     Policy {
         name: "public-model-fixture".into(),
         version: "1".into(),
@@ -334,7 +334,10 @@ async fn public_actual_unbound_receipt_later_binds_once_without_creating_a_fake_
     );
     let (status, again) = call(&w, Some(OPERATOR), request).await;
     assert_eq!(status, StatusCode::OK, "{again}");
-    assert_eq!(again["result"]["model_call"]["decision"]["reused"], true);
+    assert_eq!(
+        again["result"]["model_call"]["decision"]["reused"], true,
+        "{again}"
+    );
     assert_eq!(again["result"]["receipt"], first["result"]["receipt"]);
     let input = command("neutral actual receipt target", 0);
     admit_events(&w, vec![input.clone()]).await;
