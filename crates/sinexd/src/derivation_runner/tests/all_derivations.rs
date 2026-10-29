@@ -3,14 +3,19 @@
 //! gives the same live derived events as admitting it in pieces, in another
 //! order, deriving after each piece.
 use super::*;
+use sinex_model::event_types::account::CalendarEvent;
 use sinex_model::event_types::browser::BrowserVisit;
 use sinex_model::event_types::code::GitCommit;
-use sinex_model::event_types::communication::{ChatLineKind, ChatMessage, MailMessage};
+use sinex_model::event_types::communication::{
+    ChatLineKind, ChatMessage, ConversationMessage, MailMessage,
+};
 use sinex_model::event_types::desktop::{PresenceSpan, WindowFocused, WindowSpan};
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::event_types::machine::JournalEntry;
 use sinex_model::event_types::media::MusicPlayed;
+use sinex_model::event_types::query::Mark;
 use sinex_model::event_types::session::{ClipboardCopied, NotificationShown, PlayerChanged};
+use sinex_model::event_types::social::PostPublished;
 use sinex_model::{EventPayload, Origin};
 
 fn captured<P: EventPayload>(payload: &P, source: &str, anchor: u64) -> Event {
@@ -51,7 +56,8 @@ async fn declared_world(db: devkit::pg::TestDatabase) -> World {
 }
 
 /// Two days of a person at the machine: shells, windows, the browser, music,
-/// copies, notifications, mail, chat, commits, the journal and a watch.
+/// copies, notifications, mail, chat, social posts, direct messages, calendar
+/// plans, moment marks, commits, the journal and a watch.
 fn world() -> Vec<Event> {
     let mut out = Vec::new();
     let mut anchor = 0u64;
@@ -372,6 +378,89 @@ fn world() -> Vec<Event> {
             next(),
         ));
         out.push(captured(
+            &PostPublished {
+                service: "reddit".into(),
+                kind: "post".into(),
+                native_id: format!("post-{day}"),
+                created_at: Some(at(base + 920)),
+                title: Some("Example post".into()),
+                body: Some("Synthetic community update".into()),
+                url: None,
+                parent: None,
+                community: Some("example".into()),
+                tags: vec![],
+                score: None,
+                extra: Default::default(),
+            },
+            "social.reddit",
+            next(),
+        ));
+        out.push(captured(
+            &ConversationMessage {
+                service: "messenger".into(),
+                thread: "op|peer".into(),
+                thread_name: None,
+                participants: vec!["op".into(), "peer".into()],
+                sender: "op".into(),
+                sent_at: at(base + 940),
+                text: Some("Synthetic direct message".into()),
+                kind: Some("text".into()),
+                media: vec![],
+                reactions: vec![],
+                message_id: Some(format!("message-{day}")),
+                unsent_at: None,
+            },
+            "communication.messenger",
+            next(),
+        ));
+        out.push(captured(
+            &CalendarEvent {
+                calendar: "synthetic".into(),
+                uid: format!("plan-{day}"),
+                recurrence_id: None,
+                summary: Some("Planned reading".into()),
+                description: None,
+                location: None,
+                start: Some(at(base + 3_600)),
+                end: Some(at(base + 5_400)),
+                all_day: false,
+                zone: "UTC".into(),
+                local_zone: Some("UTC".into()),
+                status: None,
+                rrule: None,
+                exdates: vec![],
+                recurrence_start: None,
+                excluded_starts: vec![],
+                added_starts: vec![],
+                organizer: None,
+                attendees: vec![],
+                created_at: None,
+                last_modified: None,
+                sequence: None,
+                cancelled_at: None,
+                extra: Default::default(),
+            },
+            "account.calendar",
+            next(),
+        ));
+        out.push(captured(
+            &Mark {
+                host: "box".into(),
+                at: at(base + 30),
+                text: Some("Synthetic moment mark".into()),
+                cwd: None,
+                command: None,
+                app: None,
+                title: None,
+                by: "fixture".into(),
+                written_at: at(base + 30),
+                command_record: None,
+                focus_record: None,
+            },
+            "operator.marks",
+            next(),
+        ));
+        out.push(captured(
             &GitCommit {
                 repository: "/r".into(),
                 commit: format!("c{day}"),
@@ -610,6 +699,10 @@ async fn comparing_then_switching_the_derivations_matches_a_fresh_computation(
         stored
     );
 
+    changed
+        .switch(ChangedHourlyMetrics::NAME, comparison.id.unwrap(), "test")
+        .await
+        .unwrap();
     changed.catch_up().await.unwrap();
     let after = derived_set(&switched).await;
     assert_ne!(after, before);
