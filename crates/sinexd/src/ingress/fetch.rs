@@ -146,7 +146,7 @@ impl Requests {
             .filter(|grant| !grant.kind_prefixes.is_empty() && !grant.classes.is_empty())
             .ok_or_else(denied)
     }
-    async fn event_for(&self, producer: &str, id: EventId) -> ReadResult<ConfirmedEvent> {
+    async fn event_for(&self, producer: &str, id: EventId) -> ReadResult<FetchEventReply> {
         let grant = self.grants(producer)?;
         let mut connection = self.reads.acquire().await.map_err(unavailable)?;
         let mut conn = connection.begin().await.map_err(unavailable)?;
@@ -154,6 +154,37 @@ impl Requests {
             .execute(&mut *conn)
             .await
             .map_err(unavailable)?;
+        let tombstone=sqlx::query!("SELECT event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=$1",id.0).fetch_optional(&mut *conn).await.map_err(unavailable)?;
+        if let Some(erased) = tombstone {
+            if !grant.kind(&erased.event_type) {
+                return Err(denied());
+            }
+            let class: Class =
+                serde_json::from_value(Value::String(erased.class.ok_or_else(|| {
+                    unavailable(
+                        "erased event has unknown historical class; confirmed history has a gap",
+                    )
+                })?))
+                .map_err(unavailable)?;
+            if !grant.class(class) {
+                return Err(denied());
+            }
+            let (Some(commit_seq), Some(original_commit_seq)) =
+                (erased.commit_seq, erased.original_commit_seq)
+            else {
+                return Err(unavailable(
+                    "erased event has unknown historical positions; confirmed history has a gap",
+                ));
+            };
+            return Ok(FetchEventReply {
+                erased: Some(sinex_protocol::ErasedEvent {
+                    event: id,
+                    commit_seq,
+                    original_commit_seq,
+                }),
+                ..Default::default()
+            });
+        }
         let classes = grant
             .classes
             .iter()
@@ -195,28 +226,31 @@ impl Requests {
                 anchor: field(&view, "offset")?,
             })
         };
-        Ok(ConfirmedEvent {
-            kind_version: field(&view, "kind_version")?,
-            validation: field(&view, "validation")?,
-            commit_seq: field(&view, "commit_seq")?,
-            id: field(&view, "id")?,
-            event_type,
-            source: field(&view, "source")?,
-            run: field(&view, "run")?,
-            location,
-            output_index: field(&view, "output")?,
-            parents: field::<Option<Vec<EventId>>>(&view, "parents")?.unwrap_or_default(),
-            ts_orig: field(&view, "when")?,
-            ts_quality: field(&view, "time_quality")?,
-            ts_coided: field(&view, "seen")?,
-            ts_persisted: field(&view, "written")?,
-            record_state: field(&view, "record_state")?,
-            class,
-            equivalence_key: field(&view, "key")?,
-            reading_order: field(&view, "reading_order")?,
-            record_hash: field(&view, "record_hash")?,
-            payload: Some(view["payload"].clone()),
-            withheld: None,
+        Ok(FetchEventReply {
+            event: Some(ConfirmedEvent {
+                kind_version: field(&view, "kind_version")?,
+                validation: field(&view, "validation")?,
+                commit_seq: field(&view, "commit_seq")?,
+                id: field(&view, "id")?,
+                event_type,
+                source: field(&view, "source")?,
+                run: field(&view, "run")?,
+                location,
+                output_index: field(&view, "output")?,
+                parents: field::<Option<Vec<EventId>>>(&view, "parents")?.unwrap_or_default(),
+                ts_orig: field(&view, "when")?,
+                ts_quality: field(&view, "time_quality")?,
+                ts_coided: field(&view, "seen")?,
+                ts_persisted: field(&view, "written")?,
+                record_state: field(&view, "record_state")?,
+                class,
+                equivalence_key: field(&view, "key")?,
+                reading_order: field(&view, "reading_order")?,
+                record_hash: field(&view, "record_hash")?,
+                payload: Some(view["payload"].clone()),
+                withheld: None,
+            }),
+            ..Default::default()
         })
     }
     pub(super) async fn fetch_event(
@@ -225,10 +259,7 @@ impl Requests {
         request: &FetchEvent,
     ) -> FetchEventReply {
         match self.event_for(producer, request.event).await {
-            Ok(event) => FetchEventReply {
-                event: Some(event),
-                ..Default::default()
-            },
+            Ok(reply) => reply,
             Err(error) => FetchEventReply {
                 refusal: Some(error.reason),
                 refusal_kind: Some(error.kind),

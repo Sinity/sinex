@@ -495,8 +495,19 @@ pub enum FetchRefusalKind {
     Invalid,
     Unavailable,
 }
+/// Authoritative payload erasure. Only the confirmed feed completes its original slot.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ErasedEvent {
+    pub event: EventId,
+    pub commit_seq: i64,
+    pub original_commit_seq: i64,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct FetchEventReply {
+    /// Mutually exclusive with a retained event. Unknown historical positions stay unavailable.
+    #[serde(default)]
+    pub erased: Option<ErasedEvent>,
     pub event: Option<ConfirmedEvent>,
     pub refusal: Option<String>,
     pub refusal_kind: Option<FetchRefusalKind>,

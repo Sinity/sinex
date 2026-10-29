@@ -192,3 +192,130 @@ async fn accessible_empty_material_acknowledges_a_real_extent(db: devkit::pg::Te
     assert_eq!(extent.decoded_len, 0);
     assert!(extent.len > 0);
 }
+
+#[devkit::test]
+async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_current_grants(
+    db: devkit::pg::TestDatabase,
+) {
+    let grant = |classes| crate::ingress::fetch::Grants {
+        write: None,
+        kind_prefixes: vec!["command".into()],
+        classes,
+    };
+    let h = Harness::start_with_grants(
+        db,
+        std::collections::BTreeMap::from([
+            ("replica".into(), grant(vec![sinex_model::Class::Guarded])),
+            ("narrow".into(), grant(vec![sinex_model::Class::Open])),
+        ]),
+    )
+    .await;
+    let (material, frame) = h.material_frame("erasure-race", b"retained command\n");
+    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    let mut event = imported(material, 0, "retained command");
+    event.class = sinex_model::Class::Guarded;
+    let receipt = h
+        .send(
+            "kitty",
+            &Ingress::Events {
+                frame: "erasure-race-event".into(),
+                events: vec![event],
+                failures: vec![],
+            },
+        )
+        .await;
+    assert_eq!(receipt.refusal, None);
+    let request = FetchEvent {
+        event: receipt.admitted[0],
+    };
+    let before: FetchEventReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_event("replica"),
+        "replica",
+        &request,
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    let received = before.event.expect("event received before erasure");
+    assert!(before.erased.is_none());
+    assert_eq!(Some(received.commit_seq), receipt.commit_seq);
+    assert_eq!(h.excise("kitty", &[material]).await.refusal, None);
+    let after: FetchEventReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_event("replica"),
+        "replica",
+        &request,
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    assert!(after.event.is_none());
+    assert_eq!(after.refusal, None);
+    let erased = after.erased.expect("authoritative erasure evidence");
+    assert_eq!(erased.event, received.id);
+    assert_eq!(erased.original_commit_seq, received.commit_seq);
+    assert!(erased.commit_seq > erased.original_commit_seq);
+    let denied: FetchEventReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_event("narrow"),
+        "narrow",
+        &request,
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    assert_eq!(denied.refusal_kind, Some(FetchRefusalKind::Denied));
+    assert!(denied.erased.is_none());
+    assert!(denied.event.is_none());
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    sqlx::query!(
+        "UPDATE core.event_tombstones SET original_commit_seq=NULL WHERE event_id=$1",
+        request.event.0
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let unknown: FetchEventReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_event("replica"),
+        "replica",
+        &request,
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    assert_eq!(unknown.refusal_kind, Some(FetchRefusalKind::Unavailable));
+    assert!(unknown.erased.is_none());
+    assert!(
+        unknown
+            .refusal
+            .unwrap()
+            .contains("unknown historical positions")
+    );
+    sqlx::query!(
+        "UPDATE core.event_tombstones SET original_commit_seq=$2,class=NULL WHERE event_id=$1",
+        request.event.0,
+        erased.original_commit_seq
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let unknown: FetchEventReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_event("replica"),
+        "replica",
+        &request,
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    assert_eq!(unknown.refusal_kind, Some(FetchRefusalKind::Unavailable));
+    assert!(unknown.erased.is_none());
+    assert!(
+        unknown
+            .refusal
+            .unwrap()
+            .contains("unknown historical class")
+    );
+}
