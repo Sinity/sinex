@@ -29,7 +29,9 @@ async fn recorded_event(
         (RecordedResponse::EVENT_TYPE, RecordedResponse::VERSION),
         (ModelReceipt::EVENT_TYPE, ModelReceipt::VERSION),
     ];
-    if source != "model.records" || !supported.contains(&(kind.name.as_str(), kind.version)) {
+    // The daemon supplies the source from its canonical record declaration.
+    // The store checks typed kinds and the actual material's native input key.
+    if !supported.contains(&(kind.name.as_str(), kind.version)) {
         return Err(Error::Invalid(
             "model accounting lookup requires a canonical model kind".into(),
         ));

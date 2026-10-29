@@ -5,7 +5,7 @@ use serde_json::Value;
 pub async fn apply(conn: &mut PgConnection, events: &[Committed]) -> Result<()> {
     let entries: Vec<_> = events
         .iter()
-        .filter(|event| event.event_type == "text.embedding")
+        .filter(|event| event.event_type == TextEmbedding::EVENT_TYPE)
         .collect();
     if entries.is_empty() {
         return Ok(());
@@ -124,10 +124,10 @@ pub async fn rebuild(conn: &mut PgConnection) -> Result<()> {
     loop {
         let rows=sqlx::query!(r#"WITH selected AS MATERIALIZED (
             SELECT id,commit_seq,payload,class,octet_length(payload::text)::bigint AS size FROM core.events
-            WHERE event_type='text.embedding' AND commit_seq>$1 AND commit_seq<=$2 ORDER BY commit_seq LIMIT 1000
+            WHERE event_type=$4 AND commit_seq>$1 AND commit_seq<=$2 ORDER BY commit_seq LIMIT 1000
           ), bounded AS(SELECT s.*,sum(size) OVER(ORDER BY commit_seq)-size AS before FROM selected s)
           SELECT id AS "id!",commit_seq AS "commit_seq!",payload AS "payload!",class AS "class!" FROM bounded WHERE before<$3::bigint ORDER BY commit_seq"#,
-          after,head,crate::PAGE_BYTES).fetch_all(&mut *tx).await?;
+          after,head,crate::PAGE_BYTES,TextEmbedding::EVENT_TYPE).fetch_all(&mut *tx).await?;
         if rows.is_empty() {
             break;
         }

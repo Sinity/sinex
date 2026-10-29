@@ -1,6 +1,7 @@
 //! Rebuildable pgvector indexes over complete stored embedding events.
 //! Projection limits are coverage, never admission limits or vector truncation.
 use crate::{Error, Result};
+use sinex_model::EventPayload;
 use sinex_model::event_types::embedding::TextEmbedding;
 use sqlx::{Connection, PgConnection};
 use uuid::Uuid;
@@ -87,10 +88,11 @@ pub async fn validate_reference(
     position: i64,
 ) -> Result<()> {
     let payload = sqlx::query_scalar!(
-        r#"SELECT payload FROM core.visible_events WHERE id=$1 AND event_type='text.embedding'
+        r#"SELECT payload FROM core.visible_events WHERE id=$1 AND event_type=$3
         AND commit_seq<=$2 AND NOT audit.is_archived_at(id,$2)"#,
         reference,
-        position
+        position,
+        TextEmbedding::EVENT_TYPE
     )
     .fetch_optional(&mut *conn)
     .await?

@@ -238,6 +238,8 @@ impl Api {
             .model_action(
                 caller,
                 Action::FindRecord {
+                    // Source policy belongs to this owner declaration, never
+                    // to a requested source name or a store-side catalog copy.
                     source: records::RECORDS.name.into(),
                     kind: sinex_model::KindRef {
                         name: P::EVENT_TYPE.into(),
