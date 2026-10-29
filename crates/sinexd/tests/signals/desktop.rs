@@ -126,9 +126,23 @@ async fn issued_desktop_handoff_releases_policy_fence_and_next_effect_rechecks_c
         &socket,
         json!({"method":"mark","text":"synthetic controlled desktop handoff"}),
     );
-    tokio::time::timeout(Duration::from_secs(30), entered.notified())
-        .await
-        .unwrap();
+    if let Err(elapsed) = tokio::time::timeout(Duration::from_secs(30), entered.notified()).await {
+        // The original failure is fixed before retention; diagnostics cannot turn it into success.
+        let report = json!({"phase":"first_desktop_notify", "timeout_seconds":30,
+            "failure_observed_at_ms":i64::try_from(sinex_model::Timestamp::now().unix_ns()/1_000_000).unwrap(),
+            "fake_server_calls":calls.load(Ordering::SeqCst)});
+        let root = root.to_owned();
+        let capture = tokio::task::spawn_blocking(move || {
+            super::forwarded::retain_signal_failure(&report, &root)
+        });
+        let location = match tokio::time::timeout(Duration::from_secs(5), capture).await {
+            Ok(Ok(Ok(path))) => path.display().to_string(),
+            Ok(Ok(Err(error))) => format!("unavailable: {error}"),
+            Ok(Err(_)) => "unavailable: diagnostic file task failed".into(),
+            Err(_) => "unavailable: diagnostic file capture timed out (TEST_DURABLE_TMPDIR may contain partial evidence)".into(),
+        };
+        panic!("first desktop Notify: {elapsed}; private diagnostic artifact: {location}");
+    }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // The issued platform operation shares no admission or policy lock.
     let another = ok(

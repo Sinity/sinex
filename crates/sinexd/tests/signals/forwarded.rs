@@ -84,7 +84,10 @@ fn checkpoint_metadata(saved: sinex_store::signals::Saved) -> Value {
         "forwarded":forwarded,"match_basis":basis,"effect_receipts":state.attempts})
 }
 
-fn retain_signal_failure(report: &Value, root: &Path) -> Result<std::path::PathBuf, String> {
+pub(super) fn retain_signal_failure(
+    report: &Value,
+    root: &Path,
+) -> Result<std::path::PathBuf, String> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     let base = std::env::var_os("TEST_DURABLE_TMPDIR")
         .map(std::path::PathBuf::from)
