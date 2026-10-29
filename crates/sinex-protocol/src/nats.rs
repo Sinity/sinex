@@ -158,12 +158,19 @@ impl Subjects {
             .or_else(|| rest.strip_prefix("materials."))
             .or_else(|| rest.strip_prefix("excise."))
             .or_else(|| rest.strip_prefix("replay_scope."))
+            .or_else(|| rest.strip_prefix("public_context."))
             .or_else(|| rest.strip_prefix("fetch_event."))
             .or_else(|| rest.strip_prefix("fetch_material."))
             .or_else(|| rest.strip_prefix("confirmed_consumer."))?;
         valid_producer(producer).then_some(producer)
     }
 
+    pub fn public_context(&self, producer: &str) -> String {
+        format!("{}.public_context.{producer}", self.root)
+    }
+    pub fn public_context_all(&self) -> String {
+        format!("{}.public_context.*", self.root)
+    }
     pub fn fetch_event(&self, producer: &str) -> String {
         format!("{}.fetch_event.{producer}", self.root)
     }
@@ -193,6 +200,7 @@ impl Subjects {
             self.materials(producer),
             self.excise(producer),
             self.replay_scope(producer),
+            self.public_context(producer),
             self.fetch_event(producer),
             self.fetch_material(producer),
             self.confirmed_consumer(producer),

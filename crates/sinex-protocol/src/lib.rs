@@ -6,6 +6,11 @@
 #[cfg(feature = "cli")]
 pub mod cli;
 mod commands;
+pub mod context;
+pub use context::{
+    CoverageProof, CoverageRequest, CoverageStatus, PublicContext, PublicContextRequest,
+    PublicInterruptBudget,
+};
 pub mod nats;
 pub mod replies;
 mod request;

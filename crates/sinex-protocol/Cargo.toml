@@ -10,6 +10,9 @@ license.workspace = true
 cli = ["dep:clap"]
 
 [dependencies]
+schemars.workspace = true
+query-language.workspace = true
+signals.workspace = true
 sinex-model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
