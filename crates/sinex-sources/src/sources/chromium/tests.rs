@@ -122,13 +122,20 @@ fn a_declared_history_file_keeps_the_same_profile_as_directory_discovery() {
 fn an_unreadable_profile_roster_is_an_error_instead_of_empty_coverage() {
     let missing = std::env::temp_dir().join(format!("absent-browser-{}", uuid::Uuid::now_v7()));
     assert!(profiles(&missing).unwrap_err().contains("absent-browser"));
+}
+
+#[devkit::test]
+fn an_explicit_history_copy_needs_no_special_filename() {
     let path = history();
-    let invalid = path.with_file_name("not-a-history-database");
-    std::fs::write(&invalid, b"fixture").unwrap();
-    assert!(
-        profiles(&invalid)
-            .unwrap_err()
-            .contains("expected a Chromium History")
+    let copied = path.with_file_name("retained-history.sqlite");
+    std::fs::copy(&path, &copied).unwrap();
+    assert_eq!(profiles(&copied).unwrap()[0].1, copied);
+    let (_, original) = rows(&visits_driver(path, "fixture-host".into()));
+    let (captured, copy) = rows(&visits_driver(copied, "fixture-host".into()));
+    assert_eq!(captured.len(), 2);
+    assert_ne!(
+        original.detail("database_generation"),
+        copy.detail("database_generation")
     );
 }
 

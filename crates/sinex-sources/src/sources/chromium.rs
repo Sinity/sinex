@@ -232,12 +232,6 @@ pub fn urls_driver(history: PathBuf, host: String) -> SqliteRows {
 /// a `History` database, named `<browser dir>/<profile dir>`.
 fn profiles(user_data: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     if user_data.is_file() {
-        if user_data.file_name().is_none_or(|name| name != "History") {
-            return Err(format!(
-                "{}: expected a Chromium History database",
-                user_data.display()
-            ));
-        }
         return Ok(vec![(
             profile_of(&user_data.display().to_string()),
             user_data.to_owned(),
