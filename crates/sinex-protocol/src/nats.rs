@@ -638,8 +638,8 @@ pub enum Confirmed {
     },
 }
 
-/// A committed event. The payload is withheld (`None`) unless the event's
-/// class is `open`: consumers of the stream hold no class grants.
+/// Committed metadata on a class-and-kind-scoped stream topic. Shared-stream
+/// payloads are fetched under the authenticated consumer's grants.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
     pub kind_version: u64,
