@@ -14,8 +14,8 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
         selected: json!({"kind":"window","from":at,"to":at}),
         declarations: json!([]),
     };
-    let request = AnalysisRequest {
-        request: "synthetic-question".into(),
+    let mut request = AnalysisRequest {
+        request: String::new(),
         operation: "recall".into(),
         recipe: None,
         from: "1970-01-01".into(),
@@ -31,6 +31,7 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
         requested_at: at,
         selection: Some(selection),
     };
+    request.request = request_identity(&request).unwrap();
     let input = Event::build(
         &request,
         "analysis.request",
@@ -85,8 +86,8 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
 #[devkit::test]
 fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_definition() {
     let at = Timestamp::from_unix_secs(1_000).unwrap();
-    let request = AnalysisRequest {
-        request: "canonical-existing-request-id".into(),
+    let mut request = AnalysisRequest {
+        request: String::new(),
         operation: "recall".into(),
         recipe: None,
         from: "1970-01-01".into(),
@@ -111,6 +112,7 @@ fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_def
             declarations: json!({"schema":"x".repeat(32_768)}),
         }),
     };
+    request.request = request_identity(&request).unwrap();
     let input = Event::build(
         &request,
         "analysis.request",
@@ -137,15 +139,12 @@ fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_def
         payload: &input.payload,
     };
     let keys = RecallProducts.keys_for(&view, &env);
-    assert_eq!(
-        keys,
-        vec![json!({"request":"canonical-existing-request-id"})]
-    );
+    assert_eq!(keys, vec![json!({"request":request.request})]);
     assert_eq!(keys[0].as_object().unwrap().len(), 1);
     let selected = RecallProducts
         .selected_query(&keys[0], std::slice::from_ref(&input), &env)
         .unwrap();
-    assert_eq!(selected, request.selection.unwrap());
+    assert_eq!(Some(selected), request.selection);
     assert!(
         RecallProducts.selected_query(&keys[0], &[], &env).is_none(),
         "the key never substitutes for admitted request evidence"
@@ -156,6 +155,88 @@ fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_def
         RecallProducts
             .selected_query(&keys[0], &[wrong], &env)
             .is_none()
+    );
+}
+
+#[devkit::test]
+fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
+    let at = Timestamp::from_unix_secs(1_000).unwrap();
+    let mut request = AnalysisRequest {
+        request: String::new(),
+        operation: "recall".into(),
+        recipe: None,
+        from: "1970-01-01".into(),
+        to: "1970-01-01".into(),
+        metrics: vec![],
+        min_observed_fraction: None,
+        zone: "Etc/UTC".into(),
+        day_start: "06:00:00".into(),
+        grants: vec![],
+        started_at: at,
+        ended_at: at,
+        by: "fixture".into(),
+        requested_at: at,
+        selection: Some(QuerySelection {
+            query: "recall last".into(),
+            now: at,
+            read_as: None,
+            zone: "Etc/UTC".into(),
+            day_start: "06:00:00".into(),
+            grants: vec![],
+            selected: json!({"kind":"window","from":at,"to":at,"_fingerprint":"first"}),
+            declarations: json!([]),
+        }),
+    };
+    request.request = request_identity(&request).unwrap();
+    let input = Event::build(
+        &request,
+        "analysis.request",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let canonical_key = key(&request.request);
+    assert!(request_input(&canonical_key, std::slice::from_ref(&input)).is_ok());
+
+    let mut forged = input.clone();
+    forged.payload["request"] = json!("forged");
+    assert!(
+        request_input(&key("forged"), &[forged])
+            .unwrap_err()
+            .contains("identity")
+    );
+
+    for (pointer, value) in [
+        ("/selection/selected/kind", json!("session")),
+        ("/selection/zone", json!("Europe/Warsaw")),
+        ("/selection/day_start", json!("04:00:00")),
+        ("/selection/grants", json!(["guarded"])),
+        ("/selection/read_as", json!(42)),
+        ("/selection/declarations", json!([{"changed":true}])),
+    ] {
+        let mut changed = input.clone();
+        *changed.payload.pointer_mut(pointer).unwrap() = value;
+        assert!(
+            request_input(&canonical_key, &[changed])
+                .unwrap_err()
+                .contains("identity"),
+            "{pointer}"
+        );
+    }
+
+    let mut refreshed = input;
+    refreshed.payload["selection"]["selected"]["_fingerprint"] = json!("second");
+    assert!(
+        request_input(&canonical_key, &[refreshed]).is_ok(),
+        "the fingerprint changes evidence, not selector identity"
     );
 }
 

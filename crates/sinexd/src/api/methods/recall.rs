@@ -142,30 +142,7 @@ impl Api {
                 requested_at: at,
                 selection: Some(selection),
             };
-            let selected = request
-                .selection
-                .as_ref()
-                .expect("resolved recall selector");
-            let mut scope = selected.selected.clone();
-            scope
-                .as_object_mut()
-                .expect("resolved selector object")
-                .remove("_fingerprint");
-            request.request = blake3::hash(
-                serde_json::to_vec(&json!([
-                    request.operation,
-                    scope,
-                    selected.zone,
-                    selected.day_start,
-                    selected.grants,
-                    selected.read_as,
-                    selected.declarations
-                ]))
-                .map_err(|error| error.to_string())?
-                .as_slice(),
-            )
-            .to_hex()
-            .to_string();
+            request.request = crate::analysis::recall::request_identity(&request)?;
             let writer = self
                 .writer
                 .as_ref()

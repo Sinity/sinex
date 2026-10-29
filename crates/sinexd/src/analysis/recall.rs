@@ -107,6 +107,44 @@ fn key(request: &str) -> Value {
     json!({"request":request})
 }
 
+/// The retained selector defines identity; its changing input fingerprint does not.
+pub(crate) fn request_identity(request: &AnalysisRequest) -> Result<String, String> {
+    if request.operation != "recall" {
+        return Err("the request is not a recall selector".into());
+    }
+    let selected = request
+        .selection
+        .as_ref()
+        .ok_or("recall request has no selected context")?;
+    let mut scope = selected.selected.clone();
+    scope
+        .as_object_mut()
+        .ok_or("recall selector is not an object")?
+        .remove("_fingerprint");
+    Ok(blake3::hash(
+        serde_json::to_vec(&json!([
+            request.operation,
+            scope,
+            selected.zone,
+            selected.day_start,
+            selected.grants,
+            selected.read_as,
+            selected.declarations
+        ]))
+        .map_err(|error| error.to_string())?
+        .as_slice(),
+    )
+    .to_hex()
+    .to_string())
+}
+
+fn validate_request(request: &AnalysisRequest) -> Result<(), String> {
+    if request_identity(request)? != request.request {
+        return Err("recall request identity does not match its retained selector".into());
+    }
+    Ok(())
+}
+
 fn request_input<'a>(
     key: &Value,
     inputs: &'a [Event],
@@ -124,6 +162,7 @@ fn request_input<'a>(
         .ok_or("recall request event is unavailable")?;
     let request =
         serde_json::from_value(event.payload.clone()).map_err(|error| error.to_string())?;
+    validate_request(&request)?;
     Ok((event, request))
 }
 
@@ -402,6 +441,7 @@ pub(crate) async fn materialize(
     actor: &str,
     host: &str,
 ) -> Result<String, String> {
+    validate_request(&request)?;
     let zone = jiff::tz::TimeZone::get(&request.zone).map_err(|error| error.to_string())?;
     let day_start = request
         .day_start
@@ -419,6 +459,11 @@ pub(crate) async fn materialize(
     .await
     .map_err(|error| error.to_string())?
     .map(|(_, payload)| payload);
+    if let Some(payload) = &existing {
+        let retained: AnalysisRequest =
+            serde_json::from_value(payload.clone()).map_err(|error| error.to_string())?;
+        validate_request(&retained)?;
+    }
     let signature = request
         .selection
         .as_ref()
