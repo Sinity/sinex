@@ -264,8 +264,8 @@ async fn an_open_wake_day_updates_for_later_spans_without_dirtying_itself(
 async fn complete_snapshot_replacement_retires_omitted_calls_turns_and_empty_session(db:devkit::pg::TestDatabase){
     let w=world(db).await;
     let mut full=snapshot("a","task",&[0],1);
-    full.payload["record"]["snapshot"]["calls"]=json!([{"call":"call:edit","session":"a","action":"file_edit","path":"/synthetic/repo/lib.rs","at":at(1),"result_at":at(2),"outcome":{"kind":"ok"}}]);
-    full.payload["record"]["snapshot"]["turns"]=json!([{"turn":"turn:1","session":"a","start":at(0),"end":at(3),"errors":0}]);
+    full.payload["record"]["snapshot"]["calls"]=json!([{"call":"call:edit","session":"a","action":"file_edit","path":"/synthetic/repo/lib.rs","at":at(1),"at_evidence":{"quality":"intrinsic","precision":"instant"},"result_at":at(2),"result_at_evidence":{"quality":"intrinsic","precision":"instant"},"outcome":{"kind":"ok"}}]);
+    full.payload["record"]["snapshot"]["turns"]=json!([{"turn":"turn:1","session":"a","start":at(0),"start_evidence":{"quality":"intrinsic","precision":"instant"},"end":at(3),"end_evidence":{"quality":"intrinsic","precision":"instant"},"errors":0}]);
     w.admit(vec![full.clone()]).await;
     let mut runner=runner(&w).await;runner.catch_up().await.unwrap();
     assert_eq!(w.live::<WorkAct>().await.len(),3);
