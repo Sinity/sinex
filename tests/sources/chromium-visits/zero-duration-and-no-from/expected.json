@@ -6,7 +6,7 @@
         "type": "browser.visit",
         "ts": "2024-01-17T21:22:00Z",
         "time": "Intrinsic",
-        "key": "793e89d9d4050b9f754d6502f55b00efb6d180509010d5a1ed30a6380da15d80",
+        "key": "7c10fd3df0d66279978fdd0a6c2e637e10eff6086598781619c5289acaeb2a3d",
         "state": "Present",
         "payload": {
           "profile": "input",
@@ -16,7 +16,8 @@
           "visited_at": "2024-01-17T21:22:00Z",
           "from_visit": null,
           "transition": 1,
-          "duration_us": null
+          "duration_us": null,
+          "database_generation": "golden-host:7:11"
         }
       }
     ]

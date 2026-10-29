@@ -6,7 +6,7 @@
         "type": "browser.visit",
         "ts": "2024-01-17T21:20:00Z",
         "time": "Intrinsic",
-        "key": "cbbd436427f5417280042b168a192757bc95ac21c28bbb8decac36335e0775e0",
+        "key": "fe789c3ec1b51b11ab55b0185626df829b3d9bac07dbd5b2a7b16da681f0e63f",
         "state": "Present",
         "payload": {
           "profile": "input",
@@ -20,7 +20,8 @@
           "extra": {
             "segment_id": 3,
             "incremented_omnibox_typed_score": 1
-          }
+          },
+          "database_generation": "golden-host:7:11"
         }
       }
     ]
@@ -32,7 +33,7 @@
         "type": "browser.visit",
         "ts": "2024-01-17T21:21:00Z",
         "time": "Intrinsic",
-        "key": "cbce746f0674ba7ed96ba02791581fda2684cf07504e8f02b55fdad1da1d22fb",
+        "key": "c74fca54e1dd6ddf0ed54eeffa51aeca0f996c1ee6a5639a3a2f6e5fc6522971",
         "state": "Present",
         "payload": {
           "profile": "input",
@@ -42,7 +43,8 @@
           "visited_at": "2024-01-17T21:21:00Z",
           "from_visit": 101,
           "transition": 805306368,
-          "duration_us": null
+          "duration_us": null,
+          "database_generation": "golden-host:7:11"
         }
       }
     ]
