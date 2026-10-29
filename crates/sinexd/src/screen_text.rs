@@ -104,7 +104,11 @@ impl PerEvent for ScreenText {
 
     fn reads_for(&self, event: &Event) -> Reads {
         if event.payload.get("kind").and_then(|v| v.as_str()) == Some("screen")
-            && event.payload.get("accessibility_text").and_then(|text| text.as_str()).is_none()
+            && event
+                .payload
+                .get("accessibility_text")
+                .and_then(|text| text.as_str())
+                .is_none()
             && self.engine.is_some()
         {
             Self::READS
@@ -122,7 +126,9 @@ impl PerEvent for ScreenText {
             .payload_as::<sinex_model::event_types::session::MediaSegment>()
             .ok_or("not a valid media segment")?;
         let (engine, text) = text_for(&metadata, self.engine.as_deref(), || {
-            ocr(input.bytes.ok_or("the screen still's bytes were not read")?)
+            ocr(input
+                .bytes
+                .ok_or("the screen still's bytes were not read")?)
         })?;
         let started_at = metadata.started_at;
         let payload = ScreenTextPayload {

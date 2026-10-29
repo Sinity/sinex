@@ -50,6 +50,7 @@ async fn submit(
         &ctx.blobs,
         Arc::new(gmail::source()),
         "synthetic-gmail",
+        "synthetic",
         acquired,
     )
     .await
@@ -236,6 +237,7 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
         RunId::new(),
         Arc::new(gmail::source()),
         "synthetic-gmail-drive",
+        "synthetic",
         &crate::material_access::Sink(ctx.blobs.clone()),
         crate::material_access::Access::default(),
         Class::Open,
@@ -311,6 +313,7 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
         RunId::new(),
         Arc::new(gmail::source()),
         "synthetic-progress",
+        "synthetic",
         &crate::material_access::Sink(ctx.blobs.clone()),
         crate::material_access::Access::default(),
         Class::Open,

@@ -12,6 +12,13 @@ Family F01.
 
 **History files.** Zsh handles metafied bytes, extended headers and multiline commands; Bash handles optional timestamp records; Fish handles its escaped multiline structure and path lists. An explicitly declared plain-text history removes only LF or CRLF, preserving spaces, backslashes and timestamp-looking text as command content. Empty lines emit no event; whitespace-only lines are commands. Starts and durations stay unknown. It never guesses a timestamp or a shell. When an untimed file is rewritten, its records are aligned by sequence and multiplicity ([alignment](events.md#identity)); an ambiguous alignment is reported rather than collapsing all equal text into one command.
 
+A **standalone shell binding** reads one native history input independently of
+Atuin or terminal integration. It is an ordinary source binding with its own
+material and progress, not a separate admission path. Zsh, Bash and Fish select
+their declared formats; `terminal.text-history` is explicitly untimed text and
+supplies no shell identity. A later fusion may relate observations; it never
+replaces their original bytes.
+
 **Terminal sessions** are captured automatically.
 - Asciicast v2 and v3 keep the full header and one event per native input, output, resize, marker and exit record. V2 absolute offsets and v3 relative intervals resolve with exact decimal arithmetic. No command-span framing replaces native records; plain-text rendering and command spans are derivations.
 - Kitty records ANSI bytes of all buffers and windows, geometry, modes, session identity, cwd and title, and OSC 133 command facts. Poll snapshots and continuous terminal output are distinct observations. Repeated full snapshots may share content storage, and equal snapshots taken at different times are separate observations of the buffer. Kitty's complete ANSI snapshot stays readable even when a derived tail is empty; computing a tail never erases the full original.

@@ -1,8 +1,10 @@
 //! Every source, one module per family, registered in one list.
 #[cfg(feature = "full")]
-pub mod coverage;
-#[cfg(feature = "full")]
 pub mod activitywatch;
+#[cfg(feature = "full")]
+pub mod analysis;
+#[cfg(feature = "full")]
+pub mod signals;
 #[cfg(feature = "full")]
 pub mod arbtt;
 #[cfg(feature = "full")]
@@ -17,6 +19,8 @@ pub mod calendar;
 pub mod chromium;
 /// The Wayland clipboard and primary selection.
 pub mod clipboard;
+#[cfg(feature = "full")]
+pub mod coverage;
 /// Capture from the session bus, shared by the D-Bus sources.
 pub mod dbus;
 #[cfg(feature = "full")]
@@ -238,6 +242,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &forecast::FORMAT,
         &query::FORMAT,
         &analysis::FORMAT,
+        &signals::FORMAT,
         &page_crawl::FORMAT,
         &telemetry::FORMAT,
     ];

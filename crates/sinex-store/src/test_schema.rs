@@ -1,4 +1,4 @@
-use sqlx::{Executor, PgConnection};
+use sqlx::PgConnection;
 
 pub(crate) async fn downgrade(conn: &mut PgConnection) {
     sqlx::raw_sql(include_str!(

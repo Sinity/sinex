@@ -77,7 +77,7 @@ async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::Tes
     let mut read_again = keyed("s", 7, 1, 1);
     read_again.origin = history[7].origin.clone();
     let replay = Batch {
-        kind: BatchKind::Replay { operation },
+        kind: BatchKind::Replay {operation,source:None,host:None},
         archive: vec![ArchiveRequest::Replay {
             scope: sinex_model::ReplayScope {
                 materials: vec![material_of(&history[7])],

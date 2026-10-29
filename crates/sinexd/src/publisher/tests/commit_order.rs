@@ -165,7 +165,7 @@ async fn retained_inline_contract_two_is_refused_without_erasing_messages(db:dev
     let nats=devkit::nats::test_nats().unwrap();let subjects=Subjects::new(nats.prefix());let js=context(async_nats::connect(nats.url()).await.unwrap());
     let mut config=stream::Config{name:subjects.confirmed_stream(),subjects:vec![subjects.confirmed_all()],..Default::default()};config.metadata.insert(CONTRACT_KEY.into(),"2".into());
     js.create_stream(config).await.unwrap();let old=serde_json::json!({"type":"event","equivalence_key":"synthetic-inline-key"});
-    js.publish(subjects.confirmed_event("open","fixture.event"),serde_json::to_vec(&old).unwrap().into()).await.unwrap().await.unwrap();
+    js.publish(subjects.confirmed_event("open","fixture.event").into(),serde_json::to_vec(&old).unwrap().into()).await.unwrap().await.unwrap();
     let mut conn=PgConnection::connect(&db.url(None)).await.unwrap();assert!(publish_pending(&mut conn,&js,&subjects).await.unwrap_err().starts_with("confirmed_stream_contract_mismatch:"));
     let stream=js.get_stream(subjects.confirmed_stream()).await.unwrap();assert_eq!(stream.cached_info().state.messages,1);assert_eq!(stream.cached_info().config.metadata[CONTRACT_KEY],"2");
 }

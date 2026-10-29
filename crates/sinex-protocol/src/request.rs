@@ -10,6 +10,13 @@ use serde_json::{Map, Value};
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Status,
+    Signal {
+        action: String,
+        name: Option<String>,
+        rule: Option<String>,
+        page: Option<u64>,
+        cursor: Option<String>,
+    },
     Kinds {
         kind: Option<String>,
         page: Option<u64>,
@@ -142,6 +149,8 @@ pub enum Request {
         #[serde(default)]
         compare: Option<bool>,
         #[serde(default)]
+        switch: Option<i64>,
+        #[serde(default)]
         from: Option<String>,
         #[serde(default)]
         until: Option<String>,
@@ -199,6 +208,10 @@ pub enum Request {
         app: Option<String>,
         #[serde(default)]
         title: Option<String>,
+        #[serde(default)]
+        command_record: Option<String>,
+        #[serde(default)]
+        focus_record: Option<String>,
     },
     #[serde(rename = "privacy-rules")]
     PrivacyRules {
@@ -385,6 +398,7 @@ impl Request {
     pub fn method(&self) -> &'static str {
         match self {
             Request::Status => "status",
+            Request::Signal { .. } => "signal",
             Request::Kinds { .. } => "kinds",
             Request::Fields { .. } => "fields",
             Request::ForecastIssue { .. } => "forecast-issue",

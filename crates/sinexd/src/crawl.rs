@@ -78,7 +78,6 @@ pub(crate) async fn run(
         read_conn,
         blobs,
         writer,
-        host,
         vec![crate::binding_reader::BindingReader::with_reading(
             format,
             binding,

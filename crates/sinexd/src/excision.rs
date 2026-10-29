@@ -134,17 +134,18 @@ pub(crate) async fn excise_for_producer(
     if materials.is_empty() {
         return Err("an excise request names at least one material".into());
     }
-    let own = format!("ingress:{producer}");
     let mut plans = Vec::with_capacity(materials.len());
     for material in materials {
         let target = Target::Material(*material);
         let plan = excision::plan(conn, target)
             .await
             .map_err(|e| e.to_string())?;
+        let ids=plan.materials.iter().map(|material|material.id.0).collect::<Vec<_>>();
+        let own=sinex_store::producer_reads::materials_registered_by(conn,producer,&ids).await.map_err(|error|error.to_string())?;
         if let Some(other) = plan
             .materials
             .iter()
-            .find(|m| m.binding.as_deref() != Some(own.as_str()))
+            .find(|material| !own.contains(&material.id.0))
         {
             return Err(format!(
                 "material {} was not registered by {producer}; a producer excises only its own \

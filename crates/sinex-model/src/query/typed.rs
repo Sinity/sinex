@@ -72,51 +72,39 @@ pub struct Completion {
 }
 
 pub fn complete(text: &str) -> Vec<Completion> {
-    let start = text
-        .rfind(|c: char| c.is_whitespace() || c == ',')
-        .map_or(0, |i| i + 1);
-    let prefix = &text[start..];
     let first = text.split_whitespace().next().unwrap_or("");
     let alias = Alias::from_name(first);
     let table = Table::from_name(first).unwrap_or(Table::Events);
     let mut kinds: Option<BTreeSet<String>> =
         alias.map(|a| a.kinds.iter().map(|s| (*s).into()).collect());
-    if let Ok(tokens) = super::lex::tokens(&text[..start]) {
-        let mut mentioned = BTreeSet::new();
-        for (i, token) in tokens.iter().enumerate() {
-            if !token.is_word("event_type")
-                || !tokens
-                    .get(i + 1)
-                    .is_some_and(|t| t.is_symbol("=") || t.is_symbol(":"))
-            {
-                continue;
-            }
-            let values = &tokens[i + 2..];
-            let list = values.first().is_some_and(|t| t.is_symbol("["));
-            for value in values.iter().skip(usize::from(list)) {
-                if value.is_symbol("]") {
-                    break;
-                }
-                if value.kind != super::lex::Kind::Symbol {
-                    let value = if value.kind == super::lex::Kind::Word && value.text.contains('*')
-                    {
-                        Value::Glob(value.text.clone())
-                    } else {
-                        Value::Text(value.text.clone())
-                    };
-                    if let Some(selected) = selected_value(&value, None) {
-                        mentioned.extend(selected);
+    let ctx=Context::utc(jiff::Timestamp::UNIX_EPOCH);
+    let shared_catalog=super::syntax::catalog(&ctx);
+    let offered=query_language::complete::complete(text,text.len(),&shared_catalog);
+    let field_names: BTreeSet<String>=offered.iter().filter(|c|c.kind==query_language::complete::CompletionKind::Field).map(|c|c.value.clone()).collect();
+    // Complete one field-exists atom to inspect the already parsed kind filter.
+    // The shared completer owns the unfinished-token replacement span.
+    if let Some(candidate)=offered.iter().find(|c|c.kind==query_language::complete::CompletionKind::Field) {
+        let probe=format!("{}{} exists{}",&text[..candidate.replace.start],candidate.value,&text[candidate.replace.end..]);
+        if let Ok(parsed)=super::syntax::parse(&probe,&ctx) {
+            fn mentioned(c:&query_language::ast::Condition,out:&mut BTreeSet<String>) {
+                use query_language::ast::{ConditionKind as C,Operand as O,Value as V};
+                match &c.kind {
+                    C::And{conditions}|C::Or{conditions}=>for c in conditions {mentioned(c,out);},
+                    C::Compare{operand:O::Field{name},op:Op::Eq,value}|C::Match{field:name,value} if name=="event_type"=>{
+                        fn add(v:&V,out:&mut BTreeSet<String>) {
+                            match v {V::Set{values}=>for v in values {add(v,out);},V::Scalar{text,quoted}=>{
+                                let v=if !quoted&&text.contains('*'){Value::Glob(text.clone())}else{Value::Text(text.clone())};
+                                if let Some(selected)=selected_value(&v,None){out.extend(selected);}
+                            },_=>{}}
+                        }
+                        add(value,out);
                     }
-                }
-                if !list {
-                    break;
+                    _=>{}
                 }
             }
-        }
-        if !mentioned.is_empty() {
-            kinds = Some(kinds.map_or(mentioned.clone(), |alias| {
-                alias.intersection(&mentioned).cloned().collect()
-            }));
+            let mut selected=BTreeSet::new();
+            if let query_language::ast::Source::Unit{condition:Some(c),..}=parsed.source {mentioned(&c,&mut selected);}
+            if !selected.is_empty(){kinds=Some(kinds.map_or(selected.clone(),|alias|alias.intersection(&selected).cloned().collect()));}
         }
     }
     let mut choices = std::collections::BTreeMap::new();
@@ -156,7 +144,7 @@ pub fn complete(text: &str) -> Vec<Completion> {
     }
     choices
         .into_iter()
-        .filter(|(name, _)| name.starts_with(prefix))
+        .filter(|(name, _)| field_names.contains(name))
         .map(|(name, field_type)| Completion { name, field_type })
         .collect()
 }
@@ -323,6 +311,7 @@ fn operand(
     }
 }
 fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
+    if matches!(v,Value::Unknown){return Ok(());}
     if ty == FieldType::Json {
         return Ok(());
     }
@@ -379,6 +368,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
     });
     let kinds = if narrowed.is_some() { &narrowed } else { kinds };
     match e {
+        Expr::Truth{operand:field,..}=>operand(field,kinds,ctx)?,
         Expr::And(a, b) | Expr::Or(a, b) => {
             expr(a, kinds, ctx)?;
             expr(b, kinds, ctx)?;
@@ -417,7 +407,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                             })
                             .collect();
                         let check = |v: &Value| match v {
-                            Value::PlaceholderText(_) => true,
+                            Value::PlaceholderText(_) | Value::Unknown => true,
                             Value::Text(s) => values.contains(s.as_str()),
                             _ => false,
                         };
@@ -466,7 +456,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 return Err(QueryError::new("time differences require time fields"));
             }
         }
-        Expr::Words(_) | Expr::Overlaps { .. } => {}
+        Expr::Words(_) | Expr::Overlaps { .. } | Expr::Similar { .. } => {}
     }
     Ok(())
 }

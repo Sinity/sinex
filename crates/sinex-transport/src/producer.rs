@@ -120,6 +120,22 @@ pub async fn recorded(
     }
     Ok(receipts)
 }
+/// The frozen logical JSON byte identity survives a LargeFrame envelope.
+pub fn content_hash(frame:&Ingress)->Result<String,SubmitError>{
+    if let Ingress::LargeFrame{blob,..}=frame{return Ok(blob.clone())}
+    let bytes=serde_json::to_vec(frame).map_err(|error|SubmitError::Transport(error.to_string()))?;
+    Ok(format!("blake3:{}",blake3::hash(&bytes).to_hex()))
+}
+/// Resolve a recorded receipt only against the producer's frozen frame.
+pub fn check_receipt(frame:&Ingress,receipt:Acknowledgment)->Result<Acknowledgment,SubmitError>{
+    let expected=content_hash(frame)?;
+    if receipt.content_hash().is_none() && matches!(receipt.refusal_kind(),Some(sinex_model::FrameRefusal::Excised|sinex_model::FrameRefusal::PartiallyExcised)){return Ok(receipt);}
+    if receipt.content_hash()!=Some(expected.as_str()) {
+        return Err(SubmitError::Refused{frame:frame.frame().into(),reason:"frame_body_conflict_or_unknown_receipt_identity".into(),kind:sinex_model::FrameRefusal::Conflict});
+    }
+    Ok(receipt)
+}
+
 /// Submit an already prepared ingress frame. Large bodies use the existing LargeFrame byte transport.
 /// Broadcast hints never establish durability: only a complete integrity-verified owned receipt is returned.
 pub async fn submit_frame(
@@ -170,14 +186,15 @@ pub async fn submit_frame(
         )
         .await?
     };
-    receipts
+    let receipt=receipts
         .into_iter()
         .find(|receipt| {
             receipt.frame == id
                 || (receipt.frame == malformed
                     && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
         })
-        .ok_or_else(|| SubmitError::NoReceipt(id.into()))
+        .ok_or_else(|| SubmitError::NoReceipt(id.into()))?;
+    check_receipt(frame,receipt)
 }
 
 /// Transfer encoded custody under the original authenticated frame namespace.

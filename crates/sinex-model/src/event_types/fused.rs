@@ -211,7 +211,7 @@ pub struct ConversationFused {
 /// records that begin close together, or one beginning inside another's
 /// span, are the same rest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "rest.fused",
     key = ["record"],
     replace = newer,

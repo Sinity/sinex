@@ -28,6 +28,11 @@ pub enum DerivedScope {
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
     /// no events; the keys are marked dirty like admission marks them.
     Recompute { keys: Vec<Value>, #[serde(default)] policy_refresh: Option<crate::privacy::refresh::Refresh> },
+    /// Atomically select a compared producer, archive its old chains and schedule its outputs.
+    Select {
+        selection: crate::derivations::selection::Selection,
+        keys: Vec<Value>,
+    },
 }
 
 /// How far archiving and excision had gone when a derivation read its
@@ -88,6 +93,56 @@ pub(super) async fn apply_derived(
     let scope: DerivedScope = serde_json::from_value(scope.clone())
         .map_err(|e| Error::Invalid(format!("derived batch scope: {e}")))?;
     match scope {
+        DerivedScope::Select {
+            selection,
+            keys: marked,
+        } => {
+            crate::derivations::selection::validate(conn, derivation, &selection).await?;
+            let live: Vec<Uuid> = if selection.history == sinex_model::DerivationHistory::Recompute
+            {
+                sqlx::query_scalar(
+                "WITH RECURSIVE descendants AS (
+                  SELECT e.id FROM core.events e WHERE e.source=$1
+                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
+                  UNION SELECT c.child FROM core.event_children c JOIN descendants p ON c.parent=p.id)
+                 SELECT d.id FROM descendants d WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)")
+                .bind(derivation).fetch_all(&mut *conn).await?
+            } else {
+                vec![]
+            };
+            let seq = super::archive::position(conn).await?;
+            let dirty = mark_archived_dirty(conn, &live, seq, keys, Some(batch), None).await?;
+            super::archive::archive_at(
+                conn,
+                &live,
+                seq,
+                sinex_model::ArchiveReason::Recomputed,
+                None,
+                Some(selection.operation),
+            )
+            .await?;
+            remove_live(conn, &live).await?;
+            sqlx::query("INSERT INTO registry.derivations (name,version,kind,inputs,outputs,build) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version,kind=EXCLUDED.kind,inputs=EXCLUDED.inputs,outputs=EXCLUDED.outputs,build=EXCLUDED.build")
+                .bind(derivation).bind(selection.version).bind(&selection.kind).bind(&selection.inputs).bind(&selection.outputs).bind(&selection.build)
+                .execute(&mut *conn).await?;
+            if selection.kind == "per_event"
+                && selection.history == sinex_model::DerivationHistory::Recompute
+            {
+                crate::derivations::reset_position(conn, derivation).await?;
+            }
+            sqlx::query("INSERT INTO core.operations (id,kind,actor,scope) VALUES ($1,'producer_switch',$2,$3)")
+                .bind(selection.operation).bind(&selection.actor)
+                .bind(serde_json::json!({"derivation": derivation, "comparison": selection.comparison, "version": selection.version, "build": selection.build, "history": selection.history, "settings": selection.settings}))
+                .execute(&mut *conn).await?;
+            let name = derivation.to_owned();
+            Ok(dirty
+                + mark_dirty(
+                    conn,
+                    marked.into_iter().map(|key| (name.clone(), key)).collect(),
+                    seq,
+                )
+                .await?)
+        }
         DerivedScope::Recompute { keys: marked, policy_refresh } => {
             let seq =
                 sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
@@ -264,7 +319,7 @@ pub(super) async fn without_superseded_inputs(
         .map_err(|e| Error::Invalid(format!("derived batch scope: {e}")))?;
     let read = match &scope {
         DerivedScope::Keys { read, .. } | DerivedScope::Position { read, .. } => *read,
-        DerivedScope::Recompute { .. } => return Ok(None),
+        DerivedScope::Recompute { .. } | DerivedScope::Select { .. } => return Ok(None),
     };
     // Nothing archived or excised since the inputs were read: all still live.
     let now = ReadMark::now(conn).await?;
@@ -318,7 +373,7 @@ pub(super) async fn without_superseded_inputs(
             let mut records = Vec::new();
             let mut kept_keys = Vec::new();
             let mut again = Vec::new();
-            let name: &'static str = crate::derivations::static_type(derivation);
+            let name = derivation.to_owned();
             for (record, key) in batch.records.iter().zip(scoped) {
                 let events = match record {
                     RecordOutcome::Events { events, .. } => events.as_slice(),
@@ -326,7 +381,7 @@ pub(super) async fn without_superseded_inputs(
                 };
                 if events.iter().any(cites_superseded) {
                     dropped += events.len();
-                    again.push((name, key.key));
+                    again.push((name.clone(), key.key));
                 } else {
                     records.push(record.clone());
                     kept_keys.push(key);
@@ -372,7 +427,7 @@ pub(super) async fn without_superseded_inputs(
                 }
             }
         }
-        DerivedScope::Recompute { .. } => return Ok(None),
+        DerivedScope::Recompute { .. } | DerivedScope::Select { .. } => return Ok(None),
     }
     Ok(Some((kept, dropped)))
 }
@@ -424,7 +479,7 @@ pub(super) async fn mark_inputs_dirty(
         for query in keys.nearby_inputs(input).into_iter().filter(|_|policy_ready) {
             for selected in crate::derivations::read_window(conn, &query).await? {
                 dirty.extend(keys.keys(&KeyInput {
-                    event_type: selected.event.event_type,
+                    event_type: &selected.event.event_type,
                     ts_orig: selected.event.ts_orig.at.map(|at| at.0),
                     payload: &selected.event.payload,
                 }));
@@ -449,15 +504,11 @@ pub(super) async fn mark_inputs_dirty(
                JOIN derivation.outputs o ON o.derivation = r.derivation
                JOIN core.events e ON e.id = o.event_id AND e.event_type = r.event_type
                WHERE (e.payload->>r.start_field)::timestamptz <= r.finish
-                 AND ((e.payload->>r.end_field)::timestamptz >= r.start OR coalesce((e.payload->>r.open_field)::boolean, false))
+                 AND ((e.payload->>r.end_field) IS NULL OR (e.payload->>r.end_field)::timestamptz >= r.start OR coalesce((e.payload->>r.open_field)::boolean, false))
                  AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)"#,
             &names, &types, &starts, &ends, &from, &until, &open as &[Option<String>],
         ).fetch_all(&mut *conn).await?;
-        dirty.extend(
-            selected
-                .into_iter()
-                .map(|row| (crate::derivations::static_type(&row.derivation), row.key)),
-        );
+        dirty.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
     }
     mark_dirty(conn, dirty, seq).await
 }
@@ -532,7 +583,7 @@ pub(crate) async fn mark_archived_dirty(
                     .as_ref()
                     .is_some_and(|(name, keys)| *name == row.derivation && keys.contains(&row.key))
             })
-            .map(|row| (crate::derivations::static_type(&row.derivation), row.key))
+            .map(|row| (row.derivation, row.key))
             .collect(),
         seq,
     )

@@ -69,7 +69,7 @@ pub(crate) fn evidence(event: &Event) -> ActivityEvidence {
 }
 
 /// Unknown devices or source scopes are kept separate from known hosts.
-fn scope(payload: &Value, kind: &str) -> String {
+pub(crate) fn scope(payload: &Value, kind: &str) -> String {
     if let Some(scope) = payload
         .get("scope")
         .or_else(|| payload.pointer("/extra/scope"))

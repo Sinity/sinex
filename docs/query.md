@@ -42,6 +42,13 @@ through its registered bindings. The field list will be rendered into
 | `queries` | one saved query definition |
 | `result:<id>` | a kept result, read as a relation |
 
+Archived visibility is a relation and read-context choice: `events` excludes
+readings archived at the selected position; `archive` exposes archive history.
+`as of POSITION` selects historical visibility at that exact commit. It does
+not make every archived reading part of ordinary `events`, and current privacy
+and tombstone policy still applies. There is no separate `archived` table name
+or global include-archived switch.
+
 ```sh
 sinexctl 'gaps where binding = desktop.clipboard sort from'
 sinexctl 'shapes where source = health.samsung'
@@ -144,6 +151,15 @@ sinexctl 'commands where when in last 7d group by day(when), cwd count fill wher
 - Sequences (`seq`), `exists` subqueries, attached child relations and `distinct` over
   declared identity behave as the shared crate's laws state.
 
+SQL date functions use intervals produced by the same shared `DaySetting` as
+recall and stored day products. The trusted compiler prepares calendar boundaries
+in an operation-local temporary relation under the input snapshot, streaming
+unbounded operands in batches. Grouped time fields are prepared from their
+preceding relation. Boundaries retain nanoseconds, including seconds in the day
+start; folds use the first shared boundary and gaps use the shared transition.
+The temporary relation holds calendar boundaries and is cleared before the next
+outer read snapshot. `hour()` continues to name the local clock hour.
+
 ## Read context, paging and budgets
 
 - **An answer resolves once:** `now`, the zone, the day start, the query text and its
@@ -154,6 +170,15 @@ sinexctl 'commands where when in last 7d group by day(when), cwd count fill wher
 - Continuations are sealed to the question and the caller-visible context. A changed
   definition, grant or incompatible change refuses with `stale_cursor` and says how to
   restart. Totals count rows after semantic stages.
+- SQL continuations seek after the last row's typed sort values and stable identity;
+  grouped results retain their complete group identity even when fields hide a key.
+  The seal key belongs to the database and is unavailable through public read-only SQL.
+  Paging Open records works while sealed payload classes are locked.
+- Event continuations retain their selected commit position, declarations and current
+  privacy/excision versions. Mutable metadata also carries an atomic metadata epoch;
+  a run finishing invalidates its old metadata view without scanning prior result rows.
+  Stored recall continuations cite one immutable pack and a row coordinate in that pack.
+
 - **Four budgets stay apart:**
 
 | Budget | Belongs to | Changes the answer |

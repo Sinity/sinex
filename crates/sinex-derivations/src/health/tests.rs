@@ -51,7 +51,7 @@ fn fit(source: &str, secs: i64, value: f64) -> Event {
 }
 
 fn env() -> Env {
-    Env::at(at(10 * 86_400))
+    Env::at(at(10 * 86_400), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
 }
 
 fn keys(d: &dyn crate::AnyKeyed, e: &Event) -> Vec<Value> {

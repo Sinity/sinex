@@ -15,7 +15,6 @@ async fn turn(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         readers,
         stop,
@@ -75,7 +74,8 @@ async fn a_restarted_row_reader_remembers_every_stored_row(db: devkit::pg::TestD
     let mut ctx = ReaderContext::open(
         &db.url(None),
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -124,7 +124,8 @@ async fn a_restarted_directory_reader_stores_nothing_unchanged_and_sees_old_remo
     let mut ctx = ReaderContext::open(
         &db.url(None),
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();

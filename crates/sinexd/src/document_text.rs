@@ -153,7 +153,7 @@ impl PerEvent for DocumentText {
                 let payload = DocumentTextPayload {
                     record: serde_json::to_string(&(
                         &copy_event.source,
-                        copy_event.event_type,
+                        &copy_event.event_type,
                         sinex_derivations::derived_event::record_identity(copy_event),
                     ))
                     .expect("record identity serializes"),
