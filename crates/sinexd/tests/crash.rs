@@ -633,33 +633,9 @@ async fn checked_unchanged_coverage(target: &Target, bindings: &[String], before
     }
 }
 
-async fn backfill_survives(case: &str, inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
-    let started = Instant::now();
-    let note = |phase: &str| {
-        if case == "backfill_killed_between_atuin_batches" {
-            let stat = std::fs::read_to_string("/proc/self/stat").unwrap();
-            let fields: Vec<_> = stat
-                .rsplit_once(')')
-                .unwrap()
-                .1
-                .split_whitespace()
-                .collect();
-            let ticks = |index: usize| fields[index].parse::<u64>().unwrap();
-            eprintln!(
-                "ATUIN_PHASE {phase} wall_ns={} user_ticks={} system_ticks={} child_user_ticks={} child_system_ticks={}",
-                started.elapsed().as_nanos(),
-                ticks(11),
-                ticks(12),
-                ticks(13),
-                ticks(14),
-            );
-        }
-    };
-    note("begin");
+async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
     let reference = Target::new(&inputs);
-    note("reference_database");
     finish(&mut reference.backfill(&inputs));
-    note("reference_backfill");
     let verify = ready.is_some();
     let expected = if verify {
         consistent(&reference).await;
@@ -667,22 +643,18 @@ async fn backfill_survives(case: &str, inputs: Inputs, ready: Option<&str>, lock
     } else {
         state(&mut reference.connect().await).await
     };
-    note("reference_proof");
     assert_eq!(expected.events as usize, inputs.expected_events);
 
     let target = Target::new(&inputs);
     kill_at(&target, &mut target.backfill(&inputs), ready, lock_sql).await;
-    note("killed_target");
     consistent(&target).await;
     finish(&mut target.backfill(&inputs));
-    note("restarted_backfill");
     consistent(&target).await;
     let actual = if verify {
         verified_backfill_state(&target, &inputs).await
     } else {
         state(&mut target.connect().await).await
     };
-    note("restart_proof");
     same(&actual, &expected, "after the restart");
     if verify {
         let bindings = [
@@ -693,7 +665,6 @@ async fn backfill_survives(case: &str, inputs: Inputs, ready: Option<&str>, lock
             let native_materials = material_ids(owner, Some(&bindings)).await;
             let all_materials = material_ids(owner, None).await;
             finish(&mut owner.backfill(&inputs));
-            note("unchanged_backfill");
             consistent(owner).await;
             same(
                 &verified_backfill_state(owner, &inputs).await,
@@ -706,7 +677,6 @@ async fn backfill_survives(case: &str, inputs: Inputs, ready: Option<&str>, lock
                 "unchanged native inputs preserve every actual material identity"
             );
             checked_unchanged_coverage(owner, &bindings, &all_materials).await;
-            note("unchanged_proof");
         }
         // Both stores replay their own captured bytes and explicit predecessor
         // cuts. No cursor coordinate is borrowed from the other store.
@@ -717,14 +687,11 @@ async fn backfill_survives(case: &str, inputs: Inputs, ready: Option<&str>, lock
             "command.executed",
         ];
         finish(&mut reference.replay(&scope));
-        note("reference_replay");
         finish(&mut target.replay(&scope));
-        note("restarted_replay");
         consistent(&reference).await;
         consistent(&target).await;
         let replayed_reference = verified_backfill_state(&reference, &inputs).await;
         let replayed_target = verified_backfill_state(&target, &inputs).await;
-        note("replay_proofs");
         for (label, replayed, before) in [
             ("reference", &replayed_reference, &expected),
             ("restarted", &replayed_target, &actual),
@@ -759,7 +726,7 @@ macro_rules! backfill_steps {
     ($inputs:expr; $($name:ident: $ready:expr, $lock:expr;)*) => {$(
         #[devkit::test]
         async fn $name() {
-            backfill_survives(stringify!($name), $inputs, $ready, &$lock).await;
+            backfill_survives($inputs, $ready, &$lock).await;
         }
     )*};
 }
