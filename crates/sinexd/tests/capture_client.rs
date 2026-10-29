@@ -9,7 +9,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn capture(root: &Path, nats: &devkit::nats::TestNats) -> Process {
-    let mut command = Command::new(Path::new(env!("CARGO_BIN_EXE_sinexd")).with_file_name("sinex-capture"));
+    let mut command =
+        Command::new(Path::new(env!("CARGO_BIN_EXE_sinexd")).with_file_name("sinex-capture"));
     command
         .args([
             "--nats",
