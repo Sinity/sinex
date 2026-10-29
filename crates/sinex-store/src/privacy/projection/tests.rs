@@ -42,7 +42,7 @@ async fn configured_epoch_transforms_encoded_sql_search_and_recovers_new_origina
 
 #[devkit::test]
 async fn lost_legacy_original_is_unavailable_and_failed_activation_remains_stale(db:devkit::pg::TestDatabase){
-    let mut conn=AdmissionContext::connect(&db.url(None)).await.unwrap();let event=document("fixture.policy","leafsecret");let id=event.id.0;admit(&mut conn,vec![event]).await;
+    let mut conn=AdmissionContext::connect(&db.url(None)).await.unwrap();let event=document("fixture.policy","[masked]");let id=event.id.0;admit(&mut conn,vec![event]).await;
     // Removing the preservation marker simulates a predecessor row. Its
     // historical content is deliberately never promoted to a known original.
     sqlx::query("DELETE FROM privacy.original_events WHERE event_id=$1").bind(id).execute(&mut *conn).await.unwrap();
@@ -51,6 +51,9 @@ async fn lost_legacy_original_is_unavailable_and_failed_activation_remains_stale
     assert!(!epoch(&mut conn).await.unwrap().ready());ensure_current(&mut conn).await.unwrap();assert_eq!(visible(&mut conn,id).await["unavailable"],"unavailable_original");
     privacy::end_rule(&mut conn,"configured field","fixture").await.unwrap();ensure_current(&mut conn).await.unwrap();
     assert_eq!(visible(&mut conn,id).await["unavailable"],"unavailable_original");
+    sqlx::query("DELETE FROM privacy.rules").execute(&mut *conn).await.unwrap();ensure_current(&mut conn).await.unwrap();
+    assert_eq!(visible(&mut conn,id).await["unavailable"],"unavailable_original","privileged history deletion cannot create custody");
+    let custody:bool=sqlx::query_scalar("SELECT recoverable FROM privacy.original_events WHERE event_id=$1").bind(id).fetch_one(&mut *conn).await.unwrap();assert!(!custody);
     let n:i64=sqlx::query_scalar("SELECT count(*) FROM core.visible_search_text WHERE event_id=$1").bind(id).fetch_one(&mut *conn).await.unwrap();assert_eq!(n,0);
 }
 
@@ -99,4 +102,16 @@ async fn repeated_identity_requires_exact_current_transformed_basis(db:devkit::p
     let basis:Option<i64>=sqlx::query_scalar("SELECT basis_epoch FROM privacy.original_events WHERE event_id=$1").bind(child_id.0).fetch_one(&mut *conn).await.unwrap();assert_eq!(basis,read.policy_epoch);
     privacy::end_rule(&mut conn,"configured field","fixture").await.unwrap();ensure_current(&mut conn).await.unwrap();
     let mut stale=derived_command(parent_id,"leafsecret");stale.reading_order=ReadingOrder(2);let batch=recomputation(parent_id,stale,read,head);let mut tx=conn.begin().await.unwrap();let error=tx.admit(&batch,&NoDerivations).await.unwrap_err();assert!(error.to_string().contains("derivation_policy_epoch_changed"));tx.rollback().await.unwrap();
+}
+
+
+#[devkit::test]
+async fn retained_history_proves_an_unmutated_legacy_row_before_future_rules(db:devkit::pg::TestDatabase){
+    let mut conn=AdmissionContext::connect(&db.url(None)).await.unwrap();let event=document("fixture.policy","leafsecret");let id=event.id.0;let original=event.payload.clone();admit(&mut conn,vec![event]).await;
+    sqlx::query("DELETE FROM privacy.original_events WHERE event_id=$1").bind(id).execute(&mut *conn).await.unwrap();
+    // First retained-history build has no configured historical rule or floor.
+    ensure_current(&mut conn).await.unwrap();
+    let custody:bool=sqlx::query_scalar("SELECT recoverable FROM privacy.original_events WHERE event_id=$1").bind(id).fetch_one(&mut *conn).await.unwrap();assert!(custody);
+    privacy::add_rule(&mut conn,&rule()).await.unwrap();ensure_current(&mut conn).await.unwrap();assert_eq!(visible(&mut conn,id).await["text"],"[masked]");
+    privacy::end_rule(&mut conn,"configured field","fixture").await.unwrap();ensure_current(&mut conn).await.unwrap();assert_eq!(visible(&mut conn,id).await,original);
 }

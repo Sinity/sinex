@@ -27,7 +27,7 @@ pub enum DerivedScope {
     },
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
     /// no events; the keys are marked dirty like admission marks them.
-    Recompute { keys: Vec<Value> },
+    Recompute { keys: Vec<Value>, #[serde(default)] policy_refresh: Option<crate::privacy::refresh::Refresh> },
 }
 
 /// How far archiving and excision had gone when a derivation read its
@@ -88,11 +88,12 @@ pub(super) async fn apply_derived(
     let scope: DerivedScope = serde_json::from_value(scope.clone())
         .map_err(|e| Error::Invalid(format!("derived batch scope: {e}")))?;
     match scope {
-        DerivedScope::Recompute { keys: marked } => {
+        DerivedScope::Recompute { keys: marked, policy_refresh } => {
             let seq =
                 sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
                     .fetch_one(&mut *conn)
                     .await?;
+            if let Some(refresh)=&policy_refresh {crate::privacy::refresh::record(conn,derivation,refresh).await?;}
             let name = derivation.to_string();
             mark_dirty(
                 conn,
@@ -416,10 +417,11 @@ pub(super) async fn mark_inputs_dirty(
 ) -> Result<usize> {
     let mut dirty = Vec::new();
     let mut ranges = Vec::new();
+    let policy_ready=crate::privacy::projection::epoch(conn).await?.ready();
     for input in inputs {
         dirty.extend(keys.keys(input));
         ranges.extend(keys.affected_ranges(input));
-        for query in keys.nearby_inputs(input) {
+        for query in keys.nearby_inputs(input).into_iter().filter(|_|policy_ready) {
             for selected in crate::derivations::read_window(conn, &query).await? {
                 dirty.extend(keys.keys(&KeyInput {
                     event_type: selected.event.event_type,

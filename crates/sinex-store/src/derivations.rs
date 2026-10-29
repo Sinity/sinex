@@ -199,22 +199,22 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             let gap = gap_ns.to_string();
             let bounds = sqlx::query!(
                 r#"WITH RECURSIVE chain(id, start, finish) AS (
-                     SELECT e.id, e.ts_orig, coalesce((e.payload->>$3)::timestamptz, e.ts_orig)
-                     FROM core.events e WHERE e.ts_orig=$4 AND e.event_type=ANY($1)
+                     SELECT e.id AS "id!", e.ts_orig, coalesce((e.payload->>$3)::timestamptz, e.ts_orig)
+                     FROM core.derivation_events e WHERE e.ts_orig=$4 AND e.event_type=ANY($1)
                        AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                    WHERE k.event_type=e.event_type AND e.payload @> k.contains)
                        AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
                      UNION
                      SELECT n.id, n.ts_orig, coalesce((n.payload->>$3)::timestamptz, n.ts_orig)
                      FROM chain c CROSS JOIN LATERAL (
-                       (SELECT e.id, e.ts_orig, e.payload FROM core.events e
+                       (SELECT e.id, e.ts_orig, e.payload FROM core.derivation_events e
                         WHERE e.event_type=ANY($1) AND e.ts_orig<c.start
                           AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                       WHERE k.event_type=e.event_type AND e.payload @> k.contains)
                           AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
                         ORDER BY e.ts_orig DESC, e.id LIMIT 1)
                        UNION ALL
-                       (SELECT e.id, e.ts_orig, e.payload FROM core.events e
+                       (SELECT e.id, e.ts_orig, e.payload FROM core.derivation_events e
                         WHERE e.event_type=ANY($1) AND e.ts_orig>c.start
                           AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                       WHERE k.event_type=e.event_type AND e.payload @> k.contains)
@@ -239,7 +239,7 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             let (types, contains) = kind_arrays(kinds);
             let bounds = sqlx::query!(
                 r#"SELECT min(e.ts_orig) AS start, max(e.ts_orig) AS finish
-                   FROM core.events e WHERE e.event_type = ANY($1) AND e.ts_orig IS NOT NULL
+                   FROM core.derivation_events e WHERE e.event_type = ANY($1) AND e.ts_orig IS NOT NULL
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                  WHERE k.event_type = e.event_type AND e.payload @> k.contains)
                      AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"#,
@@ -261,7 +261,7 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
         } => {
             let (types, contains) = kind_arrays(kinds);
             let end = sqlx::query_scalar!(
-                r#"SELECT min((e.payload->>$3)::timestamptz) AS finish FROM core.events e
+                r#"SELECT min((e.payload->>$3)::timestamptz) AS finish FROM core.derivation_events e
                    WHERE e.event_type = ANY($1) AND (e.payload->>$3)::timestamptz > $4
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                  WHERE k.event_type = e.event_type AND e.payload @> k.contains)
@@ -299,11 +299,11 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
         durations.push(duration);
     }
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
+             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM core.events e
+           FROM core.derivation_events e
            WHERE e.event_type = ANY($1) AND (e.ts_orig IS NOT NULL OR $8)
              AND ($3::timestamptz IS NULL OR e.ts_orig < $3)
              AND ($2::timestamptz IS NULL OR e.ts_orig >= $2 OR EXISTS (
@@ -365,17 +365,17 @@ async fn window_page(
     let (types, contains) = kind_arrays(&w.kinds);
     let (after_ts, after_seq) = after.unzip();
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
+             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule, page.matched AS "matched!"
-           FROM core.events e JOIN (
+           FROM core.derivation_events e JOIN (
              SELECT p.id, p.matched FROM (
                SELECT q.id, count(*) OVER () AS matched,
                       (sum(q.size) OVER (ORDER BY q.ts_orig, q.commit_seq) - q.size)::bigint AS before
                FROM (
                  SELECT s.id, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
-                 FROM core.events s
+                 FROM core.derivation_events s
                  WHERE s.event_type = ANY($1) AND s.ts_orig IS NOT NULL
                    AND ($2::timestamptz IS NULL OR s.ts_orig >= $2)
                    AND ($3::timestamptz IS NULL OR s.ts_orig < $3)
@@ -480,18 +480,18 @@ impl ValueGroup {
             .map(|(value, ts, seq)| (Some(value), Some(ts), Some(seq)))
             .unwrap_or_default();
         let rows = sqlx::query!(
-            r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-                 e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-                 e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+            r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+                 e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
+                 e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
                  (SELECT replace_rule FROM registry.event_types t WHERE t.name=e.event_type AND t.version=e.kind_version) AS replace_rule, page.value AS "value!", page.matched AS "matched!"
-               FROM core.events e JOIN (
+               FROM core.derivation_events e JOIN (
                  SELECT p.id, p.value, p.matched FROM (
                    SELECT q.id, q.value, count(*) OVER () AS matched,
                           (sum(q.size) OVER (ORDER BY q.value, q.ts_orig, q.commit_seq) - q.size)::bigint AS before
                    FROM (
                      SELECT s.id, v.value COLLATE "C" AS value, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
                      FROM unnest($1::text[]) v(value)
-                     JOIN core.events s ON s.payload->>$2 = v.value AND jsonb_typeof(s.payload->$2) = 'string'
+                     JOIN core.derivation_events s ON s.payload->>$2 = v.value AND jsonb_typeof(s.payload->$2) = 'string'
                      WHERE s.event_type = ANY($3) AND s.ts_orig >= $4 AND s.ts_orig < $5
                        AND ($6::text IS NULL OR (v.value COLLATE "C", s.ts_orig, s.commit_seq) > ($6 COLLATE "C", $7::timestamptz, $8::bigint))
                        AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
@@ -727,11 +727,11 @@ async fn nearest(
     match n.per {
         None => {
             let rows = sqlx::query!(
-                r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-                     e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-                     e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+                r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+                     e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
+                     e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-                   FROM core.events e
+                   FROM core.derivation_events e
                    WHERE e.event_type = ANY($1)
                      AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
@@ -775,7 +775,7 @@ async fn nearest(
                      x.kind_version AS "kind_version!", x.validation AS "validation!", x.replace_rule,
                      x.commit_seq AS "commit_seq!"
                    FROM unnest($5::text[]) AS v(val) CROSS JOIN LATERAL (
-                     SELECT e.*, (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule FROM core.events e
+                     SELECT e.*, (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule FROM core.derivation_events e
                      WHERE e.event_type = ANY($1)
                        AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
                        AND e.payload->>$6 = v.val
@@ -811,22 +811,22 @@ pub async fn after_seq(
     bytes: i64,
 ) -> Result<Vec<Committed>> {
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, page.seq AS "commit_seq!", e.kind_version, e.validation,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
+             e.record_state AS "record_state!", e.class AS "class!", page.seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule, e.kind_version, e.validation,
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM core.events e JOIN (
+           FROM core.derivation_events e JOIN (
              SELECT p.id, p.seq FROM (
                SELECT q.id, q.seq, (sum(q.size) OVER (ORDER BY q.seq) - q.size)::bigint AS before
                FROM (
                  SELECT s.id, s.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
-                 FROM core.events s
+                 FROM core.derivation_events s
                  WHERE s.commit_seq > $2 AND s.event_type = ANY($1)
                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
                  UNION ALL
                  SELECT c.event_id AS id, c.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
-                 FROM audit.archive_changes c JOIN core.events s ON s.id = c.event_id
+                 FROM audit.archive_changes c JOIN core.derivation_events s ON s.id = c.event_id
                  WHERE c.commit_seq > $2 AND NOT c.archived AND s.event_type = ANY($1)
                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
                  ORDER BY seq LIMIT $3
@@ -850,16 +850,16 @@ pub async fn after_seq(
 
 /// The live readings at these record locations, of any event type and output
 /// number.
-pub async fn live_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> Result<Vec<Event>> {
+pub(crate) async fn live_originals_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> Result<Vec<Event>> {
     let materials: Vec<Uuid> = locations.iter().map(|l| l.material.0).collect();
     let anchors: Vec<i64> = locations
         .iter()
         .map(|l| i64::try_from(l.anchor).unwrap_or(i64::MAX))
         .collect();
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
+             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, anchor)
            JOIN core.events e ON e.material_id = l.material_id AND e.anchor = l.anchor
@@ -955,11 +955,11 @@ pub async fn output_keys(conn: &mut PgConnection, derivation: &str) -> Result<Ve
 /// The live outputs a key last produced.
 pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> Result<Vec<Event>> {
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq, e.kind_version, e.validation,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
+             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM derivation.outputs o JOIN core.events e ON e.id = o.event_id
+           FROM derivation.outputs o JOIN core.derivation_events e ON e.id = o.event_id
            WHERE o.derivation = $1 AND o.key = $2
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
            ORDER BY e.ts_orig, e.commit_seq"#,

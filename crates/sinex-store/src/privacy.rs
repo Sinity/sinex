@@ -1,5 +1,6 @@
 //! Configured output rules and their atomic, grant-independent projection.
 pub mod projection;
+pub mod refresh;
 use crate::{Error, Result};
 use regex::Regex;
 use serde_json::Value;

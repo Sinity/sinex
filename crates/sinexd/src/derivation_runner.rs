@@ -368,6 +368,7 @@ impl DerivationRunner {
                     derivation: name.to_owned(),
                     scope: DerivedScope::Recompute {
                         keys: chunk.to_vec(),
+                        policy_refresh: None,
                     }
                     .to_value(),
                 },
@@ -445,12 +446,15 @@ impl DerivationRunner {
     /// work it did.
     pub(crate) async fn pass(&mut self) -> Result<usize, String> {
         let env = self.env();
+        let policy=sinex_store::privacy::projection::epoch(&mut self.read).await.map_err(|error|error.to_string())?;
+        if !policy.ready(){return Ok(0)}
+        let refreshed=self.refresh_policy(policy.active,&env).await?;
         self.passes = self.passes.wrapping_add(1);
         let every_rank = self.passes.is_multiple_of(EVERY_LEVEL_EVERY);
         let mut levels: Vec<u32> = self.ranks.values().copied().collect();
         levels.sort_unstable();
         levels.dedup();
-        let mut work = 0;
+        let mut work = refreshed;
         for level in levels {
             work += self.rank_pass(level, &env).await?;
             if work > 0 && !every_rank {
@@ -525,11 +529,13 @@ impl DerivationRunner {
         let position = derivations::position(&mut self.read, name)
             .await
             .map_err(|e| e.to_string())?;
-        let read = ReadMark::now(&mut self.read)
+        let mut snapshot=self.read.begin().await.map_err(|error|error.to_string())?;
+        sinex_store::query::read_one_snapshot(&mut snapshot).await.map_err(|error|error.to_string())?;
+        let read = ReadMark::now(&mut snapshot)
             .await
             .map_err(|e| e.to_string())?;
         let events = derivations::after_seq(
-            &mut self.read,
+            &mut snapshot,
             &types,
             position,
             EVENTS_PER_PASS,
@@ -537,12 +543,12 @@ impl DerivationRunner {
         )
         .await
         .map_err(|e| e.to_string())?;
-        let Some(last) = events.last().map(|c| c.commit_seq) else {
-            return Ok(0);
-        };
-        let head = derivations::head(&mut self.read)
+        let last=events.last().map(|c|c.commit_seq);
+        let head = derivations::head(&mut snapshot)
             .await
             .map_err(|e| e.to_string())?;
+        snapshot.commit().await.map_err(|error|error.to_string())?;
+        let Some(last)=last else{return Ok(0)};
         let reading_order = self
             .previous_orders
             .get(name)
@@ -555,6 +561,10 @@ impl DerivationRunner {
         let mut failed = 0;
         for c in &events {
             let reads = self.per_event[index].reads(&c.event);
+            if reads!=Reads::Nothing {
+                let Some(basis)=read.policy_epoch else{failed+=1;continue};
+                if !sinex_store::privacy::projection::raw_event_allowed(&mut self.read,c.event.id.0,basis).await.map_err(|error|error.to_string())? {failed+=1;continue;}
+            }
             let bytes = match self.bytes_of(reads, &c.event).await {
                 Ok(bytes) => bytes,
                 Err(reason) => {
@@ -686,7 +696,17 @@ impl DerivationRunner {
             if *stop.borrow() || stop.has_changed().is_err() {
                 break;
             }
-            let work = self.pass().await?;
+            let work = match self.pass().await {
+                Ok(work)=>work,
+                Err(error) if error.contains("privacy_projection_stale") || error.contains("derivation_policy_epoch_changed") || error.contains("policy_refresh_changed") => {
+                    tokio::select! {
+                        ()=tokio::time::sleep(idle)=>{}
+                        _=stop.changed()=>{}
+                    }
+                    continue;
+                },
+                Err(error)=>return Err(error),
+            };
             if *stop.borrow() || stop.has_changed().is_err() {
                 break;
             }
@@ -839,6 +859,7 @@ fn ranks(catalog: &[Derivation]) -> BTreeMap<&'static str, u32> {
 
 mod comparison;
 mod counts;
+mod policy;
 
 pub(crate) use comparison::{Change, Comparison};
 pub(crate) use counts::Counts;

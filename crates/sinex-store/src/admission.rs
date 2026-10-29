@@ -116,6 +116,7 @@ impl std::ops::AddAssign<&Outcome> for Outcome {
         self.older += other.older;
         self.hidden += other.hidden;
         self.superseded += other.superseded;
+        self.superseded_input += other.superseded_input;
         self.failures += other.failures;
         self.dirty_keys += other.dirty_keys;
         self.replay_archived += other.replay_archived;
@@ -250,9 +251,12 @@ pub(crate) async fn admit(
             let ids:Vec<_>=outcome.admitted_ids.iter().map(|id|id.0).collect();
             let rules=cache.load(conn).await?.clone();
             privacy::projection::admitted(conn,&ids,&rules).await?;
+
         }
         let rules=cache.load(conn).await?.clone();
-        privacy::projection::certify_basis(conn,batch,&events,&classified.resolved,&rules).await?;
+        let mut projected=privacy::projection::certify_basis(conn,batch,&events,&classified.resolved,&rules).await?;
+        projected.extend(outcome.admitted_ids.iter().map(|id|id.0));
+        if !projected.is_empty(){mark_projected_inputs_dirty(conn,&projected,keys,&mut outcome).await?;}
         resolved = classified.resolved;
     }
 
@@ -405,7 +409,7 @@ async fn removed_at_source(
 ) -> Result<()> {
     for request in &batch.archive {
         if let ArchiveRequest::RemovedAtSource { locations } = request {
-            for live in crate::derivations::live_at(conn, locations).await? {
+            for live in crate::derivations::live_originals_at(conn, locations).await? {
                 if live.record_state == sinex_model::RecordState::Removed {
                     continue;
                 }
@@ -431,3 +435,12 @@ async fn removed_at_source(
 
 #[cfg(test)]
 mod tests;
+
+/// New values can produce different keys after a configured field transform.
+/// Use the existing key functions on the one projection as well as old keys.
+async fn mark_projected_inputs_dirty(conn:&mut PgConnection,ids:&[Uuid],keys:&dyn DirtyKeys,outcome:&mut Outcome)->Result<()> {
+    let rows:Vec<(String,Option<time::OffsetDateTime>,Value,i64)>=sqlx::query_as("SELECT e.event_type,e.ts_orig,o.payload,e.commit_seq FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id JOIN privacy.policy_state p ON p.id WHERE e.id=ANY($1) AND o.epoch=p.desired_epoch AND o.state='complete'").bind(ids).fetch_all(&mut *conn).await?;
+    let seq=rows.iter().map(|row|row.3).max().unwrap_or(0);
+    let inputs:Vec<_>=rows.iter().map(|row|KeyInput{event_type:&row.0,ts_orig:row.1,payload:&row.2}).collect();
+    outcome.dirty_keys+=derived::mark_inputs_dirty(conn,&inputs,seq,keys).await?;Ok(())
+}
