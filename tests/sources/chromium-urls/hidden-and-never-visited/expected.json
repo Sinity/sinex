@@ -6,7 +6,7 @@
         "type": "browser.url",
         "ts": "2024-01-17T21:20:00Z",
         "time": "Intrinsic",
-        "key": "19fe6f2fc52a60c85d82d3e1244b337566fb877d6d4db1fbf4dbb7b6687ba6a7",
+        "key": "cee7542ce1e8b1a01648fd217c806214f7a8655794a593caacbc3660690f928b",
         "state": "Present",
         "payload": {
           "profile": "input",
@@ -16,7 +16,8 @@
           "visit_count": 3,
           "typed_count": 1,
           "last_visited_at": "2024-01-17T21:20:00Z",
-          "hidden": false
+          "hidden": false,
+          "database_generation": "golden-host:7:11"
         }
       }
     ]
@@ -28,7 +29,7 @@
         "type": "browser.url",
         "ts": null,
         "time": "Unknown",
-        "key": "f2ac1be8b52c6c62fade25a18d6124261275c6be869940d90e348681b36d235e",
+        "key": "9a004103ac65489e607fce65a85344036530504440049b0658fbf3c140ba39a6",
         "state": "Present",
         "payload": {
           "profile": "input",
@@ -38,7 +39,8 @@
           "visit_count": 0,
           "typed_count": 0,
           "last_visited_at": null,
-          "hidden": true
+          "hidden": true,
+          "database_generation": "golden-host:7:11"
         }
       }
     ]
