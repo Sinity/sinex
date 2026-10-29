@@ -117,11 +117,19 @@ async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::Tes
     assert_eq!(still_compressed, 1);
 
     assert_eq!(
-        total(&mut conn, "events where event_type = command.executed AND payload.native_id = \"k3\"").await,
+        total(
+            &mut conn,
+            "events where event_type = command.executed AND payload.native_id = \"k3\""
+        )
+        .await,
         1
     );
     assert_eq!(
-        total(&mut conn, "events where event_type = command.executed AND payload.native_id = \"k5\"").await,
+        total(
+            &mut conn,
+            "events where event_type = command.executed AND payload.native_id = \"k5\""
+        )
+        .await,
         0
     );
     assert_eq!(

@@ -184,7 +184,7 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     let secret = imported("secret", 0);
     let keep = imported("keep", 1);
     let excise_target = secret.id;
-    let keep_id=keep.id;
+    let keep_id = keep.id;
     let mut tx = connection.begin().await.unwrap();
     tx.admit(&api_batch(vec![secret, keep]), &sinex_store::NoDerivations)
         .await
@@ -198,10 +198,19 @@ async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     .await;
     let mut conn = PgConnection::connect(&url).await.unwrap();
     let page = commit_log::after(&mut conn, 0, 10, i64::MAX).await.unwrap();
-    let removed_at:i64=sqlx::query_scalar("SELECT commit_seq FROM core.event_tombstones WHERE event_id=$1").bind(excise_target.0).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(page.up_to,Some(removed_at),"the event reader covers the excision lifecycle position even though its removed payload is absent");
+    let removed_at: i64 =
+        sqlx::query_scalar("SELECT commit_seq FROM core.event_tombstones WHERE event_id=$1")
+            .bind(excise_target.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        page.up_to,
+        Some(removed_at),
+        "the event reader covers the excision lifecycle position even though its removed payload is absent"
+    );
     assert_eq!(page.events.len(), 1);
-    assert_eq!(page.events[0].id,keep_id.0);
+    assert_eq!(page.events[0].id, keep_id.0);
     assert_eq!(
         page.events[0].payload,
         json!({"command": "keep", "hostname": "h", "started_at": "2023-11-14T22:13:21Z", "header_elapsed": 0, "n": 0})
@@ -249,7 +258,10 @@ async fn search_failure_rolls_back_text_and_restart_covers_same_position(
     .unwrap();
     tx.commit().await.unwrap();
     // Exercise an empty rebuildable index, not admission's eager projection.
-    sqlx::query("DELETE FROM core.search_text").execute(&mut conn).await.unwrap();
+    sqlx::query("DELETE FROM core.search_text")
+        .execute(&mut conn)
+        .await
+        .unwrap();
     let page = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
         .await
         .unwrap();

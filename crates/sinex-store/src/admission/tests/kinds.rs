@@ -171,12 +171,37 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
         .unwrap();
     let schema_before = crate::test_schema::catalog(&mut *conn).await;
     admit_one(&mut conn, &batch(vec![keyed("example", 1, 1, 1)])).await;
-    let sample=Event::build(&sinex_model::event_types::telemetry::SinexTelemetry{
-        component:"writer".into(),name:String::new(),sampled_at:Timestamp::from_unix_secs(1_700_000_000).unwrap(),measures:[("events".into(),1.0)].into(),
-    },"sinex.telemetry",Origin::Record{location:RecordLocation{material:MaterialId::new(),anchor:0},output_index:0},ReadingOrder(1),[7;32],Class::Open).unwrap();
-    admit_one(&mut conn,&batch(vec![sample])).await;
-    let before:Vec<(uuid::Uuid,Value,Vec<u8>)>=sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id").fetch_all(&mut *conn).await.unwrap();
-    assert_eq!(before.len(),2,"ordinary telemetry and source readings have distinct retained IDs");
+    let sample = Event::build(
+        &sinex_model::event_types::telemetry::SinexTelemetry {
+            component: "writer".into(),
+            name: String::new(),
+            sampled_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+            measures: [("events".into(), 1.0)].into(),
+        },
+        "sinex.telemetry",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(1),
+        [7; 32],
+        Class::Open,
+    )
+    .unwrap();
+    admit_one(&mut conn, &batch(vec![sample])).await;
+    let before: Vec<(uuid::Uuid, Value, Vec<u8>)> =
+        sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        before.len(),
+        2,
+        "ordinary telemetry and source readings have distinct retained IDs"
+    );
     crate::test_schema::downgrade(&mut *conn).await;
     conn.execute("INSERT INTO registry.event_types (name,payload_schema,key_fields,replace_rule) VALUES ('historic..reading','{}',ARRAY[]::text[],'suppress_repeat')").await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version=3")
@@ -184,7 +209,10 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
         .unwrap();
     conn.execute("SELECT compress_chunk(format('%I.%I',chunk_schema,chunk_name)::regclass) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events'").await.unwrap();
     let compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut *conn).await.unwrap();
-    assert_eq!(compressed, 1,"both ordinary event types share the core event chunk");
+    assert_eq!(
+        compressed, 1,
+        "both ordinary event types share the core event chunk"
+    );
     assert_eq!(
         sinex_schema::apply(&mut *conn).await.unwrap(),
         sinex_schema::Applied::Upgraded {
@@ -195,17 +223,34 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
     assert_eq!(crate::test_schema::catalog(&mut *conn).await, schema_before);
     let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(still_compressed, compressed);
-    let after:Vec<(uuid::Uuid,Value,Vec<u8>)>=sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id").fetch_all(&mut *conn).await.unwrap();
+    let after: Vec<(uuid::Uuid, Value, Vec<u8>)> =
+        sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
     assert_eq!(after, before);
-    let metadata:Vec<(i64,String)>=sqlx::query_as("SELECT kind_version,validation FROM core.events ORDER BY id").fetch_all(&mut *conn).await.unwrap();
+    let metadata: Vec<(i64, String)> =
+        sqlx::query_as("SELECT kind_version,validation FROM core.events ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
     assert_eq!(metadata, vec![(1, "unvalidated".into()); 2]);
     let historical = sinex_schema::kinds::load(
         &mut *conn,
-        &[KindRef {name:"command.executed".into(),version:1},KindRef{name:"sinex.telemetry".into(),version:1}],
+        &[
+            KindRef {
+                name: "command.executed".into(),
+                version: 1,
+            },
+            KindRef {
+                name: "sinex.telemetry".into(),
+                version: 1,
+            },
+        ],
     )
     .await
     .unwrap();
-    assert_eq!(historical.len(),2);
+    assert_eq!(historical.len(), 2);
     assert!(
         historical
             .values()

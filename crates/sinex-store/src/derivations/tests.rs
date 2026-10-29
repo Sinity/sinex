@@ -52,12 +52,14 @@ async fn input_provenance_keeps_parser_versions_and_missing_manifests(
     .execute(&mut *conn)
     .await
     .unwrap();
-    let mut selected=Vec::new();
-    for (index,command) in ["pwd","ls"].into_iter().enumerate() {
-        let material=sinex_model::MaterialId::new();
+    let mut selected = Vec::new();
+    for (index, command) in ["pwd", "ls"].into_iter().enumerate() {
+        let material = sinex_model::MaterialId::new();
         sqlx::query!("INSERT INTO raw.materials (id,blob,length,manifest,parser,parser_version) VALUES ($1,$2,0,'{}','atuin-history',$3)",material.0,hash,i32::try_from(index+1).unwrap())
             .execute(&mut *conn).await.unwrap();
-        let at=sinex_model::Timestamp::from_unix_secs(1_800_000_000+i64::try_from(index).unwrap()).unwrap();
+        let at =
+            sinex_model::Timestamp::from_unix_secs(1_800_000_000 + i64::try_from(index).unwrap())
+                .unwrap();
         let observed=(sinex_model::event_types::find("command.executed").unwrap().build)(
             &serde_json::json!({"native_id":format!("provenance-{index}"),"command":command,"cwd":"/work","session":"synthetic","hostname":"synthetic-host","started_at":at,"duration_ns":null,"exit_code":null,"deleted_at":null,"author":null,"intent":null,"shell":null}),
             "terminal.atuin",sinex_model::Origin::Record{location:sinex_model::RecordLocation{material,anchor:0},output_index:0},sinex_model::ReadingOrder(1),[1;32],sinex_model::Class::Open,
@@ -69,9 +71,24 @@ async fn input_provenance_keeps_parser_versions_and_missing_manifests(
         selected.push(fused.id);
         // The source manifest belongs to the immutable reading on first append;
         // the derived reading deliberately has no run manifest.
-        for (event,event_run) in [(observed,run),(fused,sinex_model::RunId::new())] {
-            let mut tx=conn.begin().await.unwrap();
-            tx.admit(&sinex_model::Batch{run:event_run,kind:sinex_model::BatchKind::Api{actor:"synthetic".into()},records:vec![sinex_model::RecordOutcome::Events{location:None,events:vec![event]}],archive:vec![]},&crate::NoDerivations).await.unwrap();
+        for (event, event_run) in [(observed, run), (fused, sinex_model::RunId::new())] {
+            let mut tx = conn.begin().await.unwrap();
+            tx.admit(
+                &sinex_model::Batch {
+                    run: event_run,
+                    kind: sinex_model::BatchKind::Api {
+                        actor: "synthetic".into(),
+                    },
+                    records: vec![sinex_model::RecordOutcome::Events {
+                        location: None,
+                        events: vec![event],
+                    }],
+                    archive: vec![],
+                },
+                &crate::NoDerivations,
+            )
+            .await
+            .unwrap();
             tx.commit().await.unwrap();
         }
     }

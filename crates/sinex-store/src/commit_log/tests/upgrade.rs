@@ -150,14 +150,31 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         }
     );
     assert_eq!(pairs(&mut conn).await, before);
-    let mut other_after=other_rows(&mut conn).await;
-    other_after.retain(|name,_|other_before.contains_key(name));
-    assert_eq!(other_after,other_before,"every predecessor table preserves its stored values; new tables have no predecessor rows");
-    let unknown:(Option<i64>,Option<i64>,Option<String>)=sqlx::query_as("SELECT commit_seq,original_commit_seq,class FROM core.event_tombstones WHERE event_id=$1").bind(before[1000].0).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(unknown,(None,None,None),"a publication placement does not invent missing erasure history");
-    let edges:Vec<(Uuid,Uuid)>=sqlx::query_as("SELECT parent,child FROM core.event_children ORDER BY parent,child").fetch_all(&mut conn).await.unwrap();
+    let mut other_after = other_rows(&mut conn).await;
+    other_after.retain(|name, _| other_before.contains_key(name));
+    assert_eq!(
+        other_after, other_before,
+        "every predecessor table preserves its stored values; new tables have no predecessor rows"
+    );
+    let unknown: (Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
+        "SELECT commit_seq,original_commit_seq,class FROM core.event_tombstones WHERE event_id=$1",
+    )
+    .bind(before[1000].0)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        unknown,
+        (None, None, None),
+        "a publication placement does not invent missing erasure history"
+    );
+    let edges: Vec<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT parent,child FROM core.event_children ORDER BY parent,child")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     let retained:Vec<(Uuid,Uuid)>=sqlx::query_as("SELECT parent,id FROM core.events CROSS JOIN LATERAL unnest(parents) parent ORDER BY parent,id").fetch_all(&mut conn).await.unwrap();
-    assert_eq!(edges,retained);
+    assert_eq!(edges, retained);
     assert_eq!(
         consumer_position(&mut conn, "publisher").await.unwrap(),
         (4500, 150)

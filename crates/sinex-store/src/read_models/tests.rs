@@ -171,18 +171,74 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let mut declaration=sinex_model::KindDeclaration::schemaless(sinex_model::KindRef{name:"synthetic.search".into(),version:1},"synthetic".into());
-    declaration.search=sinex_model::kinds::Search::Words;
-    sinex_schema::kinds::register(&mut conn,"synthetic",std::slice::from_ref(&declaration)).await.unwrap();
-    let events=[(serde_json::json!({"text":"private"}),sinex_model::Class::Sealed),(serde_json::json!({"count":1}),sinex_model::Class::Open),(serde_json::json!({"text":"visible"}),sinex_model::Class::Open)]
-        .into_iter().map(|(payload,class)|sinex_model::Event::submitted(declaration.kind.clone(),payload,"synthetic".into(),sinex_model::Origin::Record{location:sinex_model::RecordLocation{material:sinex_model::MaterialId::new(),anchor:0},output_index:0},sinex_model::ReadingOrder(1),[1;32],class)).collect();
-    let mut tx=conn.begin().await.unwrap();
-    tx.admit(&sinex_model::Batch{run:sinex_model::RunId::new(),kind:sinex_model::BatchKind::Api{actor:"synthetic".into()},records:vec![sinex_model::RecordOutcome::Events{location:None,events}],archive:vec![]},&crate::NoDerivations).await.unwrap();
+    let mut declaration = sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef {
+            name: "synthetic.search".into(),
+            version: 1,
+        },
+        "synthetic".into(),
+    );
+    declaration.search = sinex_model::kinds::Search::Words;
+    sinex_schema::kinds::register(&mut conn, "synthetic", std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
+    let events = [
+        (
+            serde_json::json!({"text":"private"}),
+            sinex_model::Class::Sealed,
+        ),
+        (serde_json::json!({"count":1}), sinex_model::Class::Open),
+        (
+            serde_json::json!({"text":"visible"}),
+            sinex_model::Class::Open,
+        ),
+    ]
+    .into_iter()
+    .map(|(payload, class)| {
+        sinex_model::Event::submitted(
+            declaration.kind.clone(),
+            payload,
+            "synthetic".into(),
+            sinex_model::Origin::Record {
+                location: sinex_model::RecordLocation {
+                    material: sinex_model::MaterialId::new(),
+                    anchor: 0,
+                },
+                output_index: 0,
+            },
+            sinex_model::ReadingOrder(1),
+            [1; 32],
+            class,
+        )
+    })
+    .collect();
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(
+        &sinex_model::Batch {
+            run: sinex_model::RunId::new(),
+            kind: sinex_model::BatchKind::Api {
+                actor: "synthetic".into(),
+            },
+            records: vec![sinex_model::RecordOutcome::Events {
+                location: None,
+                events,
+            }],
+            archive: vec![],
+        },
+        &crate::NoDerivations,
+    )
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
     // Rebuilding the read model starts empty, while canonical policy outputs
     // retain the actual sealed class and payload with no searchable text.
-    sqlx::query("DELETE FROM core.search_text").execute(&mut conn).await.unwrap();
-    let page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX).await.unwrap();
+    sqlx::query("DELETE FROM core.search_text")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
+        .await
+        .unwrap();
     let mut tx = conn.begin().await.unwrap();
     apply_search_text(&mut tx, &page.events).await.unwrap();
     crate::commit_log::set_consumer_position(&mut tx, SEARCH_TEXT, page.up_to.unwrap(), 0)
