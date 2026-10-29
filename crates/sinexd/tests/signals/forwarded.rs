@@ -9,6 +9,234 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+#[derive(Clone, serde::Serialize)]
+struct PeerCheck {
+    delivery_id: String,
+    requested_at_ms: i64,
+    received_at_ms: i64,
+    matching: bool,
+    finished_at_ms: Option<i64>,
+    published: Option<bool>,
+}
+type PeerChecks = Arc<std::sync::Mutex<Vec<PeerCheck>>>;
+
+#[derive(serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum Observation<T> {
+    Available { value: T },
+    Unavailable { reason: String },
+}
+fn observation<T, E: std::fmt::Display>(result: Result<T, E>) -> Observation<T> {
+    match result {
+        Ok(value) => Observation::Available { value },
+        Err(error) => Observation::Unavailable {
+            reason: error.to_string(),
+        },
+    }
+}
+fn observed_ms() -> i64 {
+    i64::try_from(sinex_model::Timestamp::now().unix_ns() / 1_000_000).unwrap()
+}
+
+// Project typed state rather than serializing private rules, notice bodies or configuration.
+fn checkpoint_metadata(saved: sinex_store::signals::Saved) -> Value {
+    use ::signals::notifications::Route;
+    let state = saved.checkpoint;
+    let outbox = state.outbox.iter().map(|(id, pending)| json!({
+        "delivery_id":id, "channel":pending.delivery.channel,
+        "downgrade":pending.delivery.downgrade, "trigger":pending.delivery.trigger,
+        "handed_at":pending.handed_at, "producer":pending.producer,
+        "settings_identity":pending.settings_identity, "parents":pending.parents,
+        "imported":pending.import.is_some(), "rule_version":pending.rule.as_ref().map(|rule| &rule.version),
+    })).collect::<Vec<_>>();
+    let attempts = state
+        .notifications
+        .attempts()
+        .iter()
+        .map(|(id, attempt)| {
+            json!({
+                "delivery_id":id,"product":attempt.notice.product,"rule":attempt.notice.rule,
+                "occurrence":attempt.notice.occurrence,"interrupt":attempt.notice.interrupt,
+                "current":attempt.notice.current,"dbus":attempt.dbus,"command":attempt.command,
+                "retried":attempt.retried,"active":attempt.active,"shown":attempt.shown,
+                "notification_id":attempt.notification_id,"server_owner":attempt.server_owner,
+                "held_dbus":state.notifications.held_until(id,Route::Dbus),
+                "held_command":state.notifications.held_until(id,Route::Command),
+            })
+        })
+        .collect::<Vec<_>>();
+    let forwarded = state
+        .forwarded
+        .iter()
+        .map(|(id, peer)| {
+            json!({
+                "delivery_id":id,"kind":peer.kind,"available":peer.available,
+                "producer":peer.producer,"event":peer.event,"author":peer.intent.author,
+            })
+        })
+        .collect::<Vec<_>>();
+    let basis = state.match_basis.iter().map(|(id, basis)| json!({
+        "delivery_id":id,"parents":basis.parents,"read":basis.read,"settings_identity":basis.settings_identity,
+    })).collect::<Vec<_>>();
+    json!({"revision":saved.revision,"settings_identity":state.settings_identity,
+        "evaluator_now_ms":state.evaluator.now(),"observed_seq":state.observed_seq,
+        "budget":state.host_policy.budget,"outbox":outbox,"notifications":attempts,
+        "forwarded":forwarded,"match_basis":basis,"effect_receipts":state.attempts})
+}
+
+fn retain_signal_failure(report: &Value, root: &Path) -> Result<std::path::PathBuf, String> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let base = std::env::var_os("TEST_DURABLE_TMPDIR")
+        .map(std::path::PathBuf::from)
+        .ok_or("TEST_DURABLE_TMPDIR is not configured")?;
+    if !base.is_absolute() {
+        return Err("TEST_DURABLE_TMPDIR is not absolute".into());
+    }
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&base)
+        .map_err(|e| e.to_string())?;
+    let base = base.canonicalize().map_err(|e| e.to_string())?;
+    if let Ok(disposable) = std::env::temp_dir().canonicalize()
+        && base.starts_with(disposable)
+    {
+        return Err("TEST_DURABLE_TMPDIR is inside disposable TMPDIR".into());
+    }
+    let directory = base.join(format!("forwarded-signal-{}", uuid::Uuid::now_v7()));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&directory)
+        .map_err(|e| e.to_string())?;
+    let write = |name: &str, value: &Value| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(directory.join(name))
+            .map_err(|e| format!("{}: {e}", directory.display()))?;
+        let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+        file.write_all(text.as_bytes())
+            .map_err(|e| format!("{}: {e}", directory.display()))?;
+        file.sync_all()
+            .map_err(|e| format!("{}: {e}", directory.display()))
+    };
+    write("state.json", report)?;
+    let mut files = serde_json::Map::new();
+    for (artifact, input) in [
+        ("command-sink.jsonl", "notices.jsonl"),
+        ("daemon.log", "daemon.log"),
+    ] {
+        let copied = std::fs::File::open(root.join(input)).and_then(|mut source| {
+            let mut target = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(directory.join(artifact))?;
+            let bytes = std::io::copy(&mut source, &mut target)?;
+            target.sync_all()?;
+            Ok(json!({"file":artifact,"bytes":bytes}))
+        });
+        files.insert(
+            artifact.into(),
+            serde_json::to_value(observation(copied)).unwrap(),
+        );
+    }
+    write("files.json", &Value::Object(files))?;
+    std::fs::File::open(&directory)
+        .and_then(|file| file.sync_all())
+        .map_err(|e| e.to_string())?;
+    Ok(directory)
+}
+
+async fn wait_forwarded_receipts(conn: &mut PgConnection, root: &Path, peer: &PeerChecks) {
+    const SQL: &str = "SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='delivered'";
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let count: i64 = sqlx::query_scalar(SQL).fetch_one(&mut *conn).await.unwrap();
+        if count >= 2 {
+            return;
+        }
+        if Instant::now() >= deadline {
+            // Freeze the original failure before diagnostics: later progress cannot turn it into success.
+            let mut report = json!({"failure_observed_at_ms":observed_ms(),"expected":2,"delivered":count,
+                "readings":{"state":"unavailable","reason":"capture_not_completed"},
+                "checkpoint":{"state":"unavailable","reason":"capture_not_completed"},
+                "policy":{"state":"unavailable","reason":"capture_not_completed"}});
+            let diagnostic_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            let capture = async {
+                let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
+                sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                report["snapshot_observed_at_ms"] = json!(observed_ms());
+                let readings: Result<Vec<Value>,_> = sqlx::query_scalar(
+                    "SELECT jsonb_build_object('event',e.id,'kind',e.event_type,'delivery_id',e.payload->>'delivery_id',
+                     'commit_seq',e.commit_seq,'class',e.class,'parents',e.parents,'run',e.run_id,
+                     'channel',e.payload->'delivery'->'channel','downgrade',e.payload->'delivery'->'downgrade',
+                     'trigger',e.payload->'delivery'->'trigger','handed_at',e.payload->'handed_at',
+                     'recorded_at',e.payload->'recorded_at','route',e.payload->'route','receipt',e.payload->'receipt',
+                     'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id),
+                     'projection',o.state,'projection_epoch',o.epoch,'projection_changed',o.changed)
+                     FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id
+                     WHERE e.event_type IN ('signal.delivery','signal.handoff','signal.receipt','signal.desktop_receipt')
+                     ORDER BY e.commit_seq,e.id"
+                ).fetch_all(&mut *tx).await;
+                report["readings"] = serde_json::to_value(observation(readings.map(|rows| {
+                    let distinct = rows
+                        .iter()
+                        .filter(|row| row["kind"] == "signal.delivery")
+                        .filter_map(|row| row["delivery_id"].as_str())
+                        .collect::<std::collections::BTreeSet<_>>();
+                    json!({"distinct_delivery_ids":distinct,"rows":rows})
+                })))
+                .unwrap();
+                let saved = sinex_store::signals::load(&mut tx, "fixture")
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|saved| {
+                        saved
+                            .map(checkpoint_metadata)
+                            .ok_or("host checkpoint is missing".into())
+                    });
+                report["checkpoint"] = serde_json::to_value(observation(saved)).unwrap();
+                let policy: Result<Value,_> = sqlx::query_scalar("SELECT jsonb_build_object('desired_epoch',desired_epoch,'active_epoch',active_epoch,'commit_seq',(SELECT value FROM core.counters WHERE name='commit_seq')) FROM privacy.policy_state WHERE id")
+                    .fetch_one(&mut *tx).await;
+                report["policy"] = serde_json::to_value(observation(policy)).unwrap();
+                tx.rollback().await.map_err(|e| e.to_string())
+            };
+            report["database_capture"] =
+                json!(
+                    match tokio::time::timeout(Duration::from_secs(4), capture).await {
+                        Ok(result) => observation(result),
+                        Err(_) => Observation::Unavailable {
+                            reason: "diagnostic_snapshot_timeout".into()
+                        },
+                    }
+                );
+            report["peer_checks"] = serde_json::to_value(observation(
+                peer.lock()
+                    .map(|checks| checks.clone())
+                    .map_err(|_| "peer trace lock poisoned"),
+            ))
+            .unwrap();
+            report["capture_finished_at_ms"] = json!(observed_ms());
+            let root = root.to_owned();
+            let retained =
+                tokio::task::spawn_blocking(move || retain_signal_failure(&report, &root));
+            let location = match tokio::time::timeout_at(diagnostic_deadline,retained).await {
+                Ok(Ok(Ok(path))) => path.display().to_string(),
+                Ok(Ok(Err(error))) => format!("unavailable: {error}"),
+                Ok(Err(error)) => format!("unavailable: diagnostic file task: {error}"),
+                Err(_) => "unavailable: diagnostic file capture timed out (TEST_DURABLE_TMPDIR may contain partial evidence)".into(),
+            };
+            panic!("expected 2: {SQL}, got {count}; private diagnostic artifact: {location}");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 fn url(server: &devkit::nats::Server, user: &str) -> String {
     server
         .url()
@@ -288,6 +516,8 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
         .await
         .unwrap();
     client.flush().await.unwrap();
+    let peer_checks: PeerChecks = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let peer_trace = peer_checks.clone();
     let matching = Arc::new(AtomicBool::new(false));
     let checks = Arc::new(AtomicUsize::new(0));
     let observed = matching.clone();
@@ -296,7 +526,8 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
     let inbox = subjects.inbox_prefix("polylogue");
     let replies = tokio::spawn(async move {
         while let Some(message) = conditions.next().await {
-            let _: SignalCondition = serde_json::from_slice(&message.payload).unwrap();
+            let request: SignalCondition = serde_json::from_slice(&message.payload).unwrap();
+            let received_at_ms = observed_ms();
             let reply = message.reply.unwrap().to_string();
             assert!(reply.starts_with(&format!("{inbox}.")));
             count.fetch_add(1, Ordering::SeqCst);
@@ -305,7 +536,20 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
             } else {
                 ::signals::Condition::Incomplete
             };
-            sinex_transport::replies::publish_json(
+            let trace_index = {
+                let mut trace = peer_trace.lock().unwrap();
+                let index = trace.len();
+                trace.push(PeerCheck {
+                    delivery_id: request.delivery_id,
+                    requested_at_ms: request.at,
+                    received_at_ms,
+                    matching: condition == ::signals::Condition::Matching,
+                    finished_at_ms: None,
+                    published: None,
+                });
+                index
+            };
+            let published = sinex_transport::replies::publish_json(
                 &responder,
                 reply,
                 SignalConditionReply {
@@ -314,8 +558,13 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
                 },
                 Duration::from_secs(10),
             )
-            .await
-            .unwrap();
+            .await;
+            {
+                let mut trace = peer_trace.lock().unwrap();
+                trace[trace_index].finished_at_ms = Some(observed_ms());
+                trace[trace_index].published = Some(published.is_ok());
+            }
+            published.unwrap();
         }
     });
     let mut acks = client.subscribe(subjects.ack("polylogue")).await.unwrap();
@@ -451,7 +700,7 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
         json!({"method":"mark","text":"synthetic common host decision"}),
     );
     wait_deliveries(&mut conn, &mut process, 2).await;
-    wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",2).await;
+    wait_forwarded_receipts(&mut conn, root, &peer_checks).await;
     let channels:Vec<String>=sqlx::query_scalar("SELECT payload->'delivery'->>'channel' FROM core.events WHERE event_type='signal.delivery' ORDER BY payload->'delivery'->>'channel'").fetch_all(&mut conn).await.unwrap();
     assert_eq!(channels, ["interrupt", "notice"]);
     let PublicContext::Available {
