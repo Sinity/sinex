@@ -129,6 +129,7 @@ pub(super) fn retain_signal_failure(
     for (artifact, input) in [
         ("command-sink.jsonl", "notices.jsonl"),
         ("daemon.log", "daemon.log"),
+        ("daemon-before-restart.log", "daemon-before-restart.log"),
     ] {
         let copied = std::fs::File::open(root.join(input)).and_then(|mut source| {
             let mut target = std::fs::OpenOptions::new()
@@ -152,6 +153,52 @@ pub(super) fn retain_signal_failure(
     Ok(directory)
 }
 
+pub(super) async fn capture_signal_snapshot(
+    conn: &mut PgConnection,
+    report: &mut Value,
+) -> Result<(), String> {
+    let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    report["snapshot_observed_at_ms"] = json!(observed_ms());
+    let readings: Result<Vec<Value>,_> = sqlx::query_scalar(
+        "SELECT jsonb_build_object('event',e.id,'kind',e.event_type,'delivery_id',e.payload->>'delivery_id',
+         'commit_seq',e.commit_seq,'class',e.class,'parents',e.parents,'run',e.run_id,
+         'channel',e.payload->'delivery'->'channel','downgrade',e.payload->'delivery'->'downgrade',
+         'trigger',e.payload->'delivery'->'trigger','handed_at',e.payload->'handed_at',
+         'recorded_at',e.payload->'recorded_at','route',e.payload->'route','receipt',e.payload->'receipt',
+         'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id),
+         'projection',o.state,'projection_epoch',o.epoch,'projection_changed',o.changed)
+         FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id
+         WHERE e.event_type IN ('signal.delivery','signal.handoff','signal.receipt','signal.desktop_receipt')
+         ORDER BY e.commit_seq,e.id"
+    ).fetch_all(&mut *tx).await;
+    report["readings"] = serde_json::to_value(observation(readings.map(|rows| {
+        let distinct = rows
+            .iter()
+            .filter(|row| row["kind"] == "signal.delivery")
+            .filter_map(|row| row["delivery_id"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        json!({"distinct_delivery_ids":distinct,"rows":rows})
+    })))
+    .unwrap();
+    let saved = sinex_store::signals::load(&mut tx, "fixture")
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|saved| {
+            saved
+                .map(checkpoint_metadata)
+                .ok_or("host checkpoint is missing".into())
+        });
+    report["checkpoint"] = serde_json::to_value(observation(saved)).unwrap();
+    let policy: Result<Value,_> = sqlx::query_scalar("SELECT jsonb_build_object('desired_epoch',desired_epoch,'active_epoch',active_epoch,'commit_seq',(SELECT value FROM core.counters WHERE name='commit_seq')) FROM privacy.policy_state WHERE id")
+        .fetch_one(&mut *tx).await;
+    report["policy"] = serde_json::to_value(observation(policy)).unwrap();
+    tx.rollback().await.map_err(|e| e.to_string())
+}
+
 async fn wait_forwarded_receipts(conn: &mut PgConnection, root: &Path, peer: &PeerChecks) {
     const SQL: &str = "SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='delivered'";
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -167,48 +214,7 @@ async fn wait_forwarded_receipts(conn: &mut PgConnection, root: &Path, peer: &Pe
                 "checkpoint":{"state":"unavailable","reason":"capture_not_completed"},
                 "policy":{"state":"unavailable","reason":"capture_not_completed"}});
             let diagnostic_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-            let capture = async {
-                let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
-                sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                report["snapshot_observed_at_ms"] = json!(observed_ms());
-                let readings: Result<Vec<Value>,_> = sqlx::query_scalar(
-                    "SELECT jsonb_build_object('event',e.id,'kind',e.event_type,'delivery_id',e.payload->>'delivery_id',
-                     'commit_seq',e.commit_seq,'class',e.class,'parents',e.parents,'run',e.run_id,
-                     'channel',e.payload->'delivery'->'channel','downgrade',e.payload->'delivery'->'downgrade',
-                     'trigger',e.payload->'delivery'->'trigger','handed_at',e.payload->'handed_at',
-                     'recorded_at',e.payload->'recorded_at','route',e.payload->'route','receipt',e.payload->'receipt',
-                     'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id),
-                     'projection',o.state,'projection_epoch',o.epoch,'projection_changed',o.changed)
-                     FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id
-                     WHERE e.event_type IN ('signal.delivery','signal.handoff','signal.receipt','signal.desktop_receipt')
-                     ORDER BY e.commit_seq,e.id"
-                ).fetch_all(&mut *tx).await;
-                report["readings"] = serde_json::to_value(observation(readings.map(|rows| {
-                    let distinct = rows
-                        .iter()
-                        .filter(|row| row["kind"] == "signal.delivery")
-                        .filter_map(|row| row["delivery_id"].as_str())
-                        .collect::<std::collections::BTreeSet<_>>();
-                    json!({"distinct_delivery_ids":distinct,"rows":rows})
-                })))
-                .unwrap();
-                let saved = sinex_store::signals::load(&mut tx, "fixture")
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|saved| {
-                        saved
-                            .map(checkpoint_metadata)
-                            .ok_or("host checkpoint is missing".into())
-                    });
-                report["checkpoint"] = serde_json::to_value(observation(saved)).unwrap();
-                let policy: Result<Value,_> = sqlx::query_scalar("SELECT jsonb_build_object('desired_epoch',desired_epoch,'active_epoch',active_epoch,'commit_seq',(SELECT value FROM core.counters WHERE name='commit_seq')) FROM privacy.policy_state WHERE id")
-                    .fetch_one(&mut *tx).await;
-                report["policy"] = serde_json::to_value(observation(policy)).unwrap();
-                tx.rollback().await.map_err(|e| e.to_string())
-            };
+            let capture = capture_signal_snapshot(conn, &mut report);
             report["database_capture"] =
                 json!(
                     match tokio::time::timeout(Duration::from_secs(4), capture).await {

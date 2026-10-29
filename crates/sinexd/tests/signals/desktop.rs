@@ -127,21 +127,12 @@ async fn issued_desktop_handoff_releases_policy_fence_and_next_effect_rechecks_c
         json!({"method":"mark","text":"synthetic controlled desktop handoff"}),
     );
     if let Err(elapsed) = tokio::time::timeout(Duration::from_secs(30), entered.notified()).await {
-        // The original failure is fixed before retention; diagnostics cannot turn it into success.
-        let report = json!({"phase":"first_desktop_notify", "timeout_seconds":30,
-            "failure_observed_at_ms":i64::try_from(sinex_model::Timestamp::now().unix_ns()/1_000_000).unwrap(),
-            "fake_server_calls":calls.load(Ordering::SeqCst)});
-        let root = root.to_owned();
-        let capture = tokio::task::spawn_blocking(move || {
-            super::forwarded::retain_signal_failure(&report, &root)
-        });
-        let location = match tokio::time::timeout(Duration::from_secs(5), capture).await {
-            Ok(Ok(Ok(path))) => path.display().to_string(),
-            Ok(Ok(Err(error))) => format!("unavailable: {error}"),
-            Ok(Err(_)) => "unavailable: diagnostic file task failed".into(),
-            Err(_) => "unavailable: diagnostic file capture timed out (TEST_DURABLE_TMPDIR may contain partial evidence)".into(),
-        };
-        panic!("first desktop Notify: {elapsed}; private diagnostic artifact: {location}");
+        // Freeze the observed boundary before taking the shared bounded diagnostic snapshot.
+        let observed_calls = calls.load(Ordering::SeqCst);
+        let location = retain_receipt_state(&mut conn, root, "first_desktop_notify").await;
+        panic!(
+            "first desktop Notify: {elapsed}; observed calls: {observed_calls}; private diagnostic artifact: {location}"
+        );
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // The issued platform operation shares no admission or policy lock.
@@ -165,7 +156,7 @@ async fn issued_desktop_handoff_releases_policy_fence_and_next_effect_rechecks_c
         .await
         .expect("an unanswered Notify must not block an operator policy change")
         .unwrap();
-    wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='unknown'",1).await;
+    wait_receipts(&mut conn,root,"SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='unknown'",1).await;
     let delivered:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='delivered'").fetch_one(&mut conn).await.unwrap();
     assert_eq!(delivered, 0, "timeout remains unknown");
     assert_eq!(
@@ -254,6 +245,7 @@ async fn no_server_retry_keeps_frozen_input_parents_across_an_unchanged_evaluati
         matched["total"], 1,
         "the exact watched payload creates one group: {matched}"
     );
+    let no_server = std::panic::AssertUnwindSafe(async {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'reason'='no_notification_server'")
@@ -273,6 +265,8 @@ async fn no_server_retry_keeps_frozen_input_parents_across_an_unchanged_evaluati
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    }).catch_unwind().await;
+    resume_receipt_failure(&mut conn, root, no_server).await;
     let decision: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM core.events WHERE event_type='signal.delivery'")
             .fetch_one(&mut conn)
@@ -361,7 +355,7 @@ async fn no_server_retry_keeps_frozen_input_parents_across_an_unchanged_evaluati
         .build()
         .await
         .unwrap();
-    wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",1).await;
+    wait_receipts(&mut conn,root,"SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",1).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let handoffs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.handoff'")

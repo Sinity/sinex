@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 #[path = "support/daemon.rs"]
 mod daemon;
+use futures::FutureExt;
 use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection};
 use std::{
@@ -49,6 +50,50 @@ async fn wait_scalar(conn: &mut PgConnection, sql: &str, minimum: i64) {
             "expected {minimum}: {sql}, got {count}"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+async fn retain_receipt_state(conn: &mut PgConnection, root: &Path, phase: &'static str) -> String {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut report = json!({"phase":phase,
+        "observed_at_ms":i64::try_from(sinex_model::Timestamp::now().unix_ns()/1_000_000).unwrap(),
+        "readings":{"state":"unavailable","reason":"capture_not_completed"},
+        "checkpoint":{"state":"unavailable","reason":"capture_not_completed"},
+        "policy":{"state":"unavailable","reason":"capture_not_completed"}});
+    report["database_capture"] = match tokio::time::timeout(
+        Duration::from_secs(4),
+        forwarded::capture_signal_snapshot(conn, &mut report),
+    )
+    .await
+    {
+        Ok(Ok(())) => json!({"state":"available"}),
+        Ok(Err(_)) => json!({"state":"unavailable","reason":"snapshot_failed"}),
+        Err(_) => json!({"state":"unavailable","reason":"snapshot_timeout"}),
+    };
+    let root = root.to_owned();
+    let capture =
+        tokio::task::spawn_blocking(move || forwarded::retain_signal_failure(&report, &root));
+    match tokio::time::timeout_at(deadline, capture).await {
+        Ok(Ok(Ok(path))) => path.display().to_string(),
+        Ok(Ok(Err(error))) => format!("unavailable: {error}"),
+        Ok(Err(_)) => "unavailable: diagnostic file task failed".into(),
+        Err(_) => "unavailable: diagnostic file capture timed out (TEST_DURABLE_TMPDIR may contain partial evidence)".into(),
+    }
+}
+async fn wait_receipts(conn: &mut PgConnection, root: &Path, sql: &str, minimum: i64) {
+    let result = std::panic::AssertUnwindSafe(wait_scalar(conn, sql, minimum))
+        .catch_unwind()
+        .await;
+    resume_receipt_failure(conn, root, result).await;
+}
+async fn resume_receipt_failure(
+    conn: &mut PgConnection,
+    root: &Path,
+    result: Result<(), Box<dyn std::any::Any + Send>>,
+) {
+    if let Err(original) = result {
+        let artifact = retain_receipt_state(conn, root, "receipt_wait_failed").await;
+        eprintln!("private signal diagnostic artifact: {artifact}");
+        std::panic::resume_unwind(original);
     }
 }
 fn start(
@@ -178,11 +223,16 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     std::fs::write(&release, b"released").unwrap();
     let before = std::fs::read_to_string(&action_log).unwrap();
     assert_eq!(before.lines().count(), 1);
+    std::fs::rename(
+        root.join("daemon.log"),
+        root.join("daemon-before-restart.log"),
+    )
+    .unwrap();
     let mut process = start(&database, &store, root, &nats);
     ready(&mut process, &socket).await;
     // The second, genuinely unseen occurrence executes; the unknown first
     // attempt remains terminal instead of being retried on process restart.
-    wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='action' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",1).await;
+    wait_receipts(&mut conn,root,"SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='action' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",1).await;
     let lines = std::fs::read_to_string(&action_log).unwrap();
     assert_eq!(
         lines.lines().count(),
@@ -193,7 +243,7 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     assert_eq!(refs.len(), 2, "unknown occurrence was not executed twice");
     // Action and value outlets finish independently. The action receipt does
     // not establish that either value handoff has reached its file yet.
-    wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='value' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",2).await;
+    wait_receipts(&mut conn,root,"SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='value' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",2).await;
     let value: Value = serde_json::from_slice(&std::fs::read(&value).unwrap()).unwrap();
     assert_eq!(value["channel"], "value");
     assert!(
@@ -222,6 +272,8 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     );
     let linked:i64=sqlx::query_scalar("SELECT count(*) FROM core.events decision WHERE decision.event_type='signal.delivery' AND decision.parents && ARRAY(SELECT handoff.id FROM core.events handoff WHERE handoff.event_type='signal.handoff')").fetch_one(&mut conn).await.unwrap();
     assert_eq!(linked, 4);
+    let artifact = retain_receipt_state(&mut conn, root, "completed").await;
+    eprintln!("private signal success diagnostic artifact: {artifact}");
     process.stop().await;
 }
 
