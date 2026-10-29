@@ -1,7 +1,7 @@
 //! Product query evidence feeds the shared evaluator without a second matcher.
 use super::*;
 use sinex_model::event_types::signal::{EvaluationRecorded, RuleWritten};
-use sinex_model::{Event, EventId, EventPayload, Origin, ReadingOrder};
+use sinex_model::{Event, EventPayload, Origin, ReadingOrder};
 use sinex_store::signals::Checkpoint;
 use std::collections::{BTreeMap, BTreeSet};
 

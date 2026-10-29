@@ -170,6 +170,7 @@ fn world() -> Vec<Event> {
             ));
             out.push(captured(
                 &BrowserVisit {
+                    database_generation: "fixture-host:1:10".into(),
                     profile: "chromium/Default".into(),
                     visit_id: base + i,
                     url: Some(format!("https://example.org/{day}/{i}")),

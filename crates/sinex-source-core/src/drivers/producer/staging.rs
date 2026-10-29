@@ -1,6 +1,6 @@
 //! A poll owns one encoded custody inode per material until the frame takes it.
 use super::*;
-use hashed_blobs::{EncodedBlob, Preparation, ReadLimits};
+use hashed_blobs::{EncodedBlob, Preparation};
 use std::io::Read;
 
 pub(super) struct Snapshots(tempfile::TempDir);
@@ -42,14 +42,6 @@ impl Snapshots {
         let bytes = std::fs::read(self.0.path().join(format!("{name}.descriptor")))
             .map_err(|error| Error::Local(error.to_string()))?;
         EncodedBlob::decode(&bytes).map_err(|error| Error::Local(error.to_string()))
-    }
-    pub(crate) fn open(&self, name: &str) -> Result<hashed_blobs::BlobReader, Error> {
-        let descriptor = self.descriptor(name)?;
-        let file = std::fs::File::open(self.0.path().join(descriptor.hash.hex()))
-            .map_err(|error| Error::Local(error.to_string()))?;
-        descriptor
-            .open(file, None, ReadLimits::default())
-            .map_err(|error| Error::Local(error.to_string()))
     }
     pub(super) fn handoff(
         &self,
