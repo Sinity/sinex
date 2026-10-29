@@ -850,6 +850,14 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
     consistent(&target).await;
 
     let committed = scalar(&mut c, "SELECT count(*) FROM core.commit_log").await;
+    let expected: std::collections::BTreeMap<sinex_model::EventId, i64> =
+        sqlx::query_as::<_, (uuid::Uuid, i64)>("SELECT event_id,commit_seq FROM core.commit_log")
+            .fetch_all(&mut c)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, seq)| (sinex_model::EventId(id), seq))
+            .collect();
     let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
     let mut stream = js
         .get_stream(sinex_protocol::Subjects::new(nats.prefix()).confirmed_stream())
@@ -877,9 +885,15 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
         while let Some(m) = futures::StreamExt::next(&mut messages).await {
             let m = m.unwrap();
             read += 1;
-            if let sinex_protocol::Confirmed::Event(e) = serde_json::from_slice(&m.payload).unwrap()
+            if let sinex_protocol::Confirmed::EventReference { event, commit_seq } =
+                serde_json::from_slice(&m.payload).unwrap()
             {
-                assert!(seen.insert(e.id), "event {} is on the stream twice", e.id);
+                assert_eq!(
+                    expected.get(&event),
+                    Some(&commit_seq),
+                    "reference names its exact committed event and position"
+                );
+                assert!(seen.insert(event), "event {event} is on the stream twice");
             }
         }
         assert!(
