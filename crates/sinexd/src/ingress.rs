@@ -694,13 +694,14 @@ impl Ingest {
         let declarations = sinex_schema::kinds::load(&mut self.conn, &references)
             .await
             .map_err(|error| Check::Unavailable(error.to_string()))?;
-        if references
+        if let Some(reference) = references
             .iter()
-            .any(|reference| !declarations.contains_key(reference))
+            .find(|reference| !declarations.contains_key(reference))
         {
-            return Err(Check::Refused(
-                "namespace_refused: exact kind declaration is not registered".into(),
-            ));
+            return Err(Check::Refused(format!(
+                "namespace_refused: exact kind declaration {}@{} is not registered",
+                reference.name, reference.version
+            )));
         }
         if declarations.values().any(|declaration| {
             declaration.declaring_producer != "sinex" && declaration.declaring_producer != family
@@ -1080,7 +1081,17 @@ impl Requests {
                     .iter()
                     .any(|kind| !authority::matches(&write.kind_prefixes, kind))
         }) {
-            Some("producer hello is outside its write kind or class capability".into())
+            let write = write.expect("capability branch requires a write grant");
+            let undelegated = hello
+                .event_types
+                .iter()
+                .filter(|kind| !authority::matches(&write.kind_prefixes, kind))
+                .collect::<Vec<_>>();
+            Some(format!(
+                "producer hello is outside its write kind or class capability: offered_class={:?}, class_authorized={}, undelegated_kinds={undelegated:?}",
+                hello.class,
+                write.classes.contains(&hello.class)
+            ))
         } else if hello.class == sinex_model::Class::Sealed || sealed(&privacy) {
             Some("producer bytes cannot be stored sealed".into())
         } else {

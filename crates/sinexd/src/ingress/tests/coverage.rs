@@ -628,7 +628,7 @@ async fn full_projection_replays_canonical_and_foreign_records_separately_from_r
 ) {
     let command = sinex_model::event_types::declarations()
         .iter()
-        .find(|kind| kind.kind.name == "command.executed")
+        .find(|kind| kind.kind.name == "command.imported")
         .unwrap()
         .clone();
     let (h, _, ids, snapshot) = setup_indexed_inputs(
