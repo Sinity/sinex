@@ -106,3 +106,16 @@ fn status_data_is_structured_without_losing_the_data_notice() {
     );
     assert_eq!(encoded["isError"], false);
 }
+
+#[devkit::test]
+fn array_results_keep_their_text_without_invalid_structured_content() {
+    let data = json!([{ "n": 2 }]);
+    let reply = success_result(data.clone());
+    assert!(reply.structured_content.is_none());
+    let encoded = serde_json::to_value(reply).unwrap();
+    let text = encoded["content"][0]["text"].as_str().unwrap();
+    assert_eq!(
+        text.strip_prefix(DATA_NOTICE).unwrap().trim(),
+        serde_json::to_string_pretty(&data).unwrap()
+    );
+}
