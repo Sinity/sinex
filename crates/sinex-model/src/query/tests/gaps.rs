@@ -64,12 +64,18 @@ fn saved_parameters_cannot_introduce_conditions_or_change_the_question_shape() {
         &definitions,
     )
     .unwrap();
-    let Some(Expr::And(a, _)) = bound.filter else {
+    let Some(Expr::And(a, b)) = bound.filter else {
         panic!()
     };
-    assert!(
-        matches!(*a, Expr::Compare { rhs:Value::Text(ref s),.. } if s == "x\" or source exists")
-    );
+    let terms = [*a, *b];
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
+        if field.name == "cwd" && value == "x\" or source exists"
+    )));
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Ge, rhs: Value::Integer(1) }
+        if field.name == "exit_code"
+    )));
     for text in [
         "query:by-directory(root=x)",
         "query:by-directory(root=x,code=no)",
@@ -381,8 +387,11 @@ fn saved_queries_can_invoke_an_author_qualified_definition() {
 
 #[devkit::test]
 fn capitalized_words_with_colons_are_search_text() {
-    assert!(matches!(q("TODO:").filter, Some(Expr::Words(_))));
-    assert!(bind("events where Source:synthetic", &ctx()).is_ok());
+    assert!(matches!(q(r#""TODO:""#).filter, Some(Expr::Words(_))));
+    assert!(bind("TODO:", &ctx()).is_err());
+    let error = err("events where Source:synthetic");
+    assert!(error.message.contains("unknown field `Source`"), "{error}");
+    assert!(bind("events where source:synthetic", &ctx()).is_ok());
 }
 
 #[devkit::test]
