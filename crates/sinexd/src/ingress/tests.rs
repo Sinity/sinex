@@ -569,7 +569,7 @@ async fn producers_are_limited_to_their_own_subjects() {
     let config = subjects.authorization(
         ("daemon", &hash("dpw")),
         &[("kitty", &hash("kpw")), ("phone", &hash("ppw"))],
-        &["kitty"],
+        &[("kitty","kitty-scope".into())],
     );
     assert!(!config.contains("dpw") && !config.contains("kpw"));
     let server = devkit::nats::Server::start_with(&devkit::nats::Options { config }).unwrap();
@@ -608,9 +608,9 @@ async fn producers_are_limited_to_their_own_subjects() {
         "the forged message on another producer's subject was not delivered"
     );
     let mut api=daemon.subscribe("$JS.API.>").await.unwrap();daemon.flush().await.unwrap();
-    for subject in ["$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign","$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone","$JS.API.STREAM.MSG.GET.SX_CONFIRMED","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty"] {kitty.publish(subject,"{}".into()).await.unwrap();}
+    for subject in ["$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign","$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-old-scope","$JS.API.STREAM.MSG.GET.SX_CONFIRMED","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope"] {kitty.publish(subject,"{}".into()).await.unwrap();}
     kitty.flush().await.unwrap();
-    let allowed=tokio::time::timeout(Duration::from_secs(5),api.next()).await.unwrap().unwrap();assert_eq!(allowed.subject.as_str(),"$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty");
+    let allowed=tokio::time::timeout(Duration::from_secs(5),api.next()).await.unwrap().unwrap();assert_eq!(allowed.subject.as_str(),"$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope");
     assert!(tokio::time::timeout(Duration::from_millis(300),api.next()).await.is_err(),"foreign/admin/raw-message API requests must not reach the daemon");
     let mut foreign_inbox=kitty.subscribe("_INBOX.phone.>").await.unwrap();kitty.flush().await.unwrap();
     daemon.publish("_INBOX.phone.synthetic","private response".into()).await.unwrap();daemon.flush().await.unwrap();

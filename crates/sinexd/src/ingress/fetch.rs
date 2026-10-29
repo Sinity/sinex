@@ -14,6 +14,23 @@ pub(crate) struct Grants {
 }
 pub(crate) type ProducerGrants=BTreeMap<String,Grants>;
 impl Grants {
+    pub(crate) fn consumer_scope(&self,producer:&str,subjects:&Subjects)->(Vec<String>,String) {
+        let mut prefixes=self.kind_prefixes.iter().map(|prefix|prefix.trim_end_matches('*').trim_end_matches('.').to_owned()).collect::<Vec<_>>();
+        prefixes.sort();prefixes.dedup();let all=prefixes.clone();
+        prefixes.retain(|prefix|!all.iter().any(|other|other!=prefix&&prefix.starts_with(&format!("{other}."))));
+        let mut filters=vec![subjects.confirmed_control()];
+        for class in &self.classes {
+            let class=serde_json::to_value(class).expect("class serializes");let class=class.as_str().expect("class string");
+            for prefix in &prefixes {
+                for subject in [subjects.confirmed_event(class,prefix),subjects.confirmed_lifecycle(class,prefix)] {
+                    filters.push(format!("{subject}.>"));filters.push(subject);
+                }
+            }
+        }
+        filters.sort();filters.dedup();
+        let scope=blake3::hash(&serde_json::to_vec(&(producer,&filters)).expect("scope serializes")).to_hex().to_string();
+        (filters,scope)
+    }
     fn kind(&self,name:&str)->bool {
         self.kind_prefixes.iter().any(|prefix| {
             let prefix=prefix.trim_end_matches('*').trim_end_matches('.');
@@ -156,3 +173,6 @@ impl Requests {
         result.unwrap_or_else(|error|FetchMaterialReply{refusal:Some(error.reason),refusal_kind:Some(error.kind),..Default::default()})
     }
 }
+
+#[cfg(test)]
+mod tests;

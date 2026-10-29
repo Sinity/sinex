@@ -143,8 +143,9 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
                 .map(|(name, hash)| (name.as_str(), hash.as_str()))
                 .collect();
             let grants=crate::ingress::fetch::load(producer_grants.as_deref())?;
-            let consumers=grants.iter().filter(|(_,grant)|!grant.kind_prefixes.is_empty()&&!grant.classes.is_empty()).map(|(producer,_)|producer.as_str()).collect::<Vec<_>>();
-            println!("{}",sinex_protocol::Subjects::new(subject_root).authorization((&daemon_user,&daemon_hash),&users,&consumers));
+            let subjects=sinex_protocol::Subjects::new(subject_root);
+            let consumers=grants.iter().filter(|(_,grant)|!grant.kind_prefixes.is_empty()&&!grant.classes.is_empty()).map(|(producer,grant)|(producer.as_str(),grant.consumer_scope(producer,&subjects).1)).collect::<Vec<_>>();
+            println!("{}",subjects.authorization((&daemon_user,&daemon_hash),&users,&consumers));
             Ok(())
         }
     }

@@ -11,8 +11,8 @@
 //! | `<root>.recorded.<producer>` | the producer, as a request | [`RecordedQuery`]: what Sinex recorded for these frames |
 //! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
 //! | `<root>.excise.<producer>` | the producer, as a request | [`Excise`]: excise whole materials it registered |
-//! | `<root>.confirmed.event.<event type>` | `sinexd` | a [`Confirmed::Event`] |
-//! | `<root>.confirmed.archive` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Unhidden`] or [`Confirmed::Excised`] message |
+//! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::Event`] |
+//! | `<root>.confirmed.lifecycle.<class>.<event type>` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Unhidden`] or [`Confirmed::Excised`] message |
 //!
 //! Each producer's credentials allow only its own subjects
 //! ([`Subjects::producer_permissions`]), so the producer named in a subject is
@@ -71,7 +71,7 @@ impl Subjects {
     pub fn confirmed_control(&self)->String {format!("{}.confirmed.control",self.root)}
     pub fn confirmed_consumer(&self,producer:&str)->String {format!("{}.confirmed_consumer.{producer}",self.root)}
     pub fn confirmed_consumer_all(&self)->String {format!("{}.confirmed_consumer.*",self.root)}
-    pub fn consumer_name(&self,producer:&str)->String {format!("sinex-{producer}")}
+    pub fn consumer_name(&self,scope:&str)->String {format!("sinex-{scope}")}
     pub fn inbox_prefix(&self,producer:&str)->String {format!("_INBOX.{producer}")}
 
     /// Every confirmed-stream subject.
@@ -175,7 +175,7 @@ impl Subjects {
     /// What a producer's NATS user may publish and subscribe to: its own
     /// ingress, have, materials and excise subjects, its acknowledgments, and
     /// reply inboxes.
-    pub fn producer_permissions(&self, producer: &str, confirmed:bool) -> (Vec<String>, Vec<String>) {
+    pub fn producer_permissions(&self, producer: &str, scope:Option<&str>) -> (Vec<String>, Vec<String>) {
         let mut publish=vec![
                 self.ingress(producer),
                 self.connect(producer),
@@ -188,8 +188,8 @@ impl Subjects {
                 self.fetch_material(producer),
                 self.confirmed_consumer(producer),
             ];
-        if confirmed {
-            let stream=self.confirmed_stream();let consumer=self.consumer_name(producer);
+        if let Some(scope)=scope {
+            let stream=self.confirmed_stream();let consumer=self.consumer_name(scope);
             publish.extend([
                 format!("$JS.API.STREAM.INFO.{stream}"),
                 format!("$JS.API.CONSUMER.INFO.{stream}.{consumer}"),
@@ -204,7 +204,7 @@ impl Subjects {
     /// and one user per producer limited to its own subjects, each given as
     /// its name and the bcrypt hash of its password, which the server checks
     /// passwords against.
-    pub fn authorization(&self, daemon: (&str, &str), producers: &[(&str, &str)],consumers:&[&str]) -> String {
+    pub fn authorization(&self, daemon: (&str, &str), producers: &[(&str, &str)],consumers:&[(&str,String)]) -> String {
         let quote = |s: &str| serde_json::to_string(s).expect("strings serialize");
         let list = |items: &[String]| {
             items
@@ -219,7 +219,7 @@ impl Subjects {
             quote(daemon.1)
         )];
         for (producer, password) in producers {
-            let (publish, subscribe) = self.producer_permissions(producer,consumers.contains(producer));
+            let (publish, subscribe) = self.producer_permissions(producer,consumers.iter().find(|(identity,_)|identity==producer).map(|(_,scope)|scope.as_str()));
             users.push(format!(
                 "{{ user: {}, password: {}, permissions: {{ publish: {{ allow: [{}] }}, subscribe: {{ allow: [{}] }} }} }}",
                 quote(producer),

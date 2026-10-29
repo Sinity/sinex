@@ -7,26 +7,13 @@ impl Requests {
         let result:Result<_,String>=async {
             if request.after<0 || request.cache.is_empty() {return Err("consumer needs a nonnegative position and an index cache identity".into());}
             let grant=self.grants(producer).map_err(|_|"producer has no confirmed read grants".to_owned())?;
-            let mut prefixes=grant.kind_prefixes.iter().map(|prefix|prefix.trim_end_matches('*').trim_end_matches('.').to_owned()).collect::<Vec<_>>();
-            prefixes.sort();prefixes.dedup();
-            let all=prefixes.clone();prefixes.retain(|prefix|!all.iter().any(|other|other!=prefix&&prefix.starts_with(&format!("{other}."))));
-            let mut filters=vec![self.subjects.confirmed_control()];
-            for class in &grant.classes {
-                let class=serde_json::to_value(class).expect("class serializes");let class=class.as_str().expect("class string");
-                for prefix in &prefixes {
-                    for subject in [self.subjects.confirmed_event(class,prefix),self.subjects.confirmed_lifecycle(class,prefix)] {
-                        filters.push(format!("{subject}.>"));filters.push(subject);
-                    }
-                }
-            }
-            filters.sort();filters.dedup();
-            let scope=blake3::hash(&serde_json::to_vec(&filters).expect("filters serialize")).to_hex().to_string();
+            let (filters,scope)=grant.consumer_scope(producer,&self.subjects);
             let cache=blake3::hash(request.cache.as_bytes()).to_hex().to_string();
             let mut conn=self.reads.acquire().await.map_err(|error|error.to_string())?;
             let head=sqlx::query_scalar!("SELECT value FROM core.counters WHERE name='commit_seq'").fetch_one(&mut *conn).await.map_err(|error|error.to_string())?;
             drop(conn);
             if request.after>head {return Ok(ConfirmedConsumerReply{scope,gap:Some("requested position exceeds durable commit history".into()),..Default::default()});}
-            let stream_name=self.subjects.confirmed_stream();let name=self.subjects.consumer_name(producer);
+            let stream_name=self.subjects.confirmed_stream();let name=self.subjects.consumer_name(&scope);
             let _guard=self.consumer_admin.lock().await;
             let js=jetstream::new(self.client.clone());crate::publisher::ensure_stream(&js,&self.subjects).await?;
             let stream=js.get_stream(&stream_name).await.map_err(|error|error.to_string())?;

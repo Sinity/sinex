@@ -105,7 +105,7 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 
 ## Outside consumers and handlers
 
-**An outside consumer is declared in configuration.** Each one (Polylogue, an outside derivation, an agent runner or any other handler) has an identity and a credential that may create its own durable consumer on `confirmed.>` and publish to its own ingress subject. Its token's grants decide what it sees, under the same output rules as every other caller ([grants](privacy.md#rules-classes-grants-and-actions)). A producer's consumer normally holds the grants for its own kinds, so it fetches its own payloads complete.
+**An outside consumer is declared in configuration.** Each one (Polylogue, an outside derivation, an agent runner or any other handler) has an identity and a credential that may request its daemon-provisioned, grant-scoped durable consumer and publish to its own ingress subject. Its token's grants decide what it sees, under the same output rules as every other caller ([grants](privacy.md#rules-classes-grants-and-actions)). A producer's consumer normally holds the grants for its own kinds, so it fetches its own payloads complete.
 
 An outside handler declares:
 
@@ -170,7 +170,7 @@ Producer read grants are operator-configured kind prefixes and classes, with no 
 
 ### Provisioned consumers
 
-A configured reader requests its native durable on its own `confirmed_consumer.<producer>` subject with `{after, cache}`. `cache` identifies the persistent local index. The daemon chooses the consumer identity and filters event and lifecycle subjects by configured kind prefixes and classes; global position-complete and gap controls remain visible. The reply names the stream, consumer and scope hash. A changed scope is explicit in that hash.
+A configured reader requests its native durable on its own `confirmed_consumer.<producer>` subject with `{after, cache}`. `cache` identifies the persistent local index. The daemon binds the consumer identity and NATS capability to a canonical hash of its configured scope. Narrowing grants therefore removes permission to pull the previous broader durable. It filters event and lifecycle subjects by configured kind prefixes and classes; global position-complete and gap controls remain visible. The reply names the stream, consumer and scope hash. A changed scope is explicit in that hash.
 
 Clients may pull, acknowledge and inspect only their exact durable. They cannot create or delete consumers or fetch raw stream messages. Authenticated RPC inboxes are restricted to `_INBOX.<producer>.>`. Shared-stream payloads require an authenticated fetch even for open events.
 

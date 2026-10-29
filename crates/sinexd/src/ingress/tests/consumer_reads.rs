@@ -20,7 +20,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(db:devk
     let head=sqlx::query_scalar!("SELECT value FROM core.counters WHERE name='commit_seq'").fetch_one(&mut conn).await.unwrap();
     js.publish(h.subjects.confirmed_event("open","foreign.kind"),serde_json::to_vec(&json!({"private":"foreign metadata"})).unwrap().into()).await.unwrap().await.unwrap();
     let denied=provision(&h,"unconfigured",0).await;assert!(denied.refusal.is_some());
-    let declared=provision(&h,"replica",0).await;assert_eq!(declared.refusal,None);assert_eq!(declared.gap,None);assert_eq!(declared.consumer,h.subjects.consumer_name("replica"));
+    let declared=provision(&h,"replica",0).await;assert_eq!(declared.refusal,None);assert_eq!(declared.gap,None);assert_eq!(declared.consumer,h.subjects.consumer_name(&declared.scope));
     let stream=js.get_stream(&declared.stream).await.unwrap();let mut consumer:jetstream::consumer::PullConsumer=stream.get_consumer(&declared.consumer).await.unwrap();
     let mut batch=consumer.fetch().max_messages(100).expires(Duration::from_millis(300)).messages().await.unwrap();let mut events=Vec::new();let mut complete=0;
     while let Some(message)=batch.next().await {
