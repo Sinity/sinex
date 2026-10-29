@@ -2,8 +2,8 @@
 //! material) and the acknowledgment of an ingress frame.
 use super::*;
 use crate::Error;
-use std::collections::BTreeSet;
 use sinex_model::{InputId, ObservationId, RevisionChange, RevisionId, SourceProgress, Timestamp};
+use std::collections::BTreeSet;
 
 /// Upsert the input, record the observation, open a revision when the content
 /// changed in a way that is not a plain append, and register the material.
