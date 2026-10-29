@@ -259,7 +259,7 @@ async fn policy_label_is_inert_until_an_internal_operator_authorization_commits(
     else {
         panic!("authorized configured budget must reserve")
     };
-    assert_eq!(decision.reserved_units, 30);
+    assert_eq!(decision.reserved_units, Some(30));
 }
 
 #[devkit::test]
@@ -317,7 +317,7 @@ async fn crash_boundaries_never_duplicate_or_release_a_model_reservation(
         panic!("durable reserve missing")
     };
     assert!(decision.reused);
-    assert_eq!(decision.reserved_units, 30);
+    assert_eq!(decision.reserved_units, Some(30));
     act(
         &mut conn,
         Action::Uncertain {
@@ -1173,6 +1173,160 @@ async fn actual_unbound_overrun_is_recorded_and_blocks_future_reservations(
             refusal: Refusal::InsufficientConfiguredBudget { .. }
         }
     ));
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM derivation.model_calls")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap(),
+        Some(1)
+    );
+}
+
+async fn overflow_fixture(
+    db: &devkit::pg::TestDatabase,
+) -> (AdmissionContext, Event, ModelRequest, Event) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let target = input("overflow quote input");
+    let mut configured = policy("1", 35, 10);
+    configured.policy.routes[0].prices.input_byte = u64::MAX;
+    let configured = captured(&configured);
+    admit(&mut conn, vec![target.clone(), configured.clone()]).await;
+    act(
+        &mut conn,
+        Action::AuthorizePolicy {
+            policy: configured.id,
+            at: at(200),
+        },
+    )
+    .await;
+    let request = requested(configured.id, &target);
+    let event = captured(&request);
+    admit(&mut conn, vec![event.clone()]).await;
+    (conn, configured, request, event)
+}
+#[devkit::test]
+async fn unknown_quote_refuses_new_reservation_but_never_discards_incurred_actual(
+    db: devkit::pg::TestDatabase,
+) {
+    let (mut conn, _, request, event) = overflow_fixture(&db).await;
+    let result = act(
+        &mut conn,
+        Action::Reserve {
+            request: event.id,
+            at: at(200),
+        },
+    )
+    .await;
+    assert!(
+        matches!(result,Outcome::Refused{refusal:Refusal::Invalid{detail}} if detail.contains("estimate exceeds"))
+    );
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM derivation.model_calls")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap(),
+        Some(0)
+    );
+    let output = json!({"text":"known incurred output"});
+    let response = captured(&RecordedResponse {
+        request_id: request.request_id.clone(),
+        request: request.request,
+        output_hash: OutputHash::for_value(&output),
+        output,
+        actual: Charge {
+            currency: "TEST".into(),
+            unit: "fixture-unit".into(),
+            units: 7,
+        },
+        provider_receipt: Some("unrepresentable-quote-fixture".into()),
+        received_at: at(1200),
+    });
+    admit(&mut conn, vec![response.clone()]).await;
+    for (observed, reused) in [(1200, false), (1300, true)] {
+        let Outcome::Accepted { decision } = act(
+            &mut conn,
+            Action::Reconcile {
+                request: event.id,
+                response: response.id,
+                at: at(observed),
+            },
+        )
+        .await
+        else {
+            panic!("exact incurred actual is not an estimate")
+        };
+        assert_eq!(decision.reserved_units, None);
+        assert_eq!(decision.actual_units, Some(7));
+        assert_eq!(decision.state, State::Recorded);
+        assert_eq!(decision.reused, reused);
+    }
+    let row=sqlx::query!("SELECT reserved_units::text AS reserved,actual_units::text AS actual,period_start,period_end,reason FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    assert_eq!(row.reserved, None);
+    assert_eq!(row.actual.as_deref(), Some("7"));
+    assert!(row.reason.as_deref().unwrap().contains("estimate exceeds"));
+    assert_eq!(
+        (Timestamp(row.period_start), Timestamp(row.period_end)),
+        (at(0), at(1000))
+    );
+}
+#[devkit::test]
+async fn an_unbound_actual_can_bind_with_an_unrepresentable_quote_without_moving_charge(
+    db: devkit::pg::TestDatabase,
+) {
+    let (mut conn, policy, request, event) = overflow_fixture(&db).await;
+    let actual = receipt(policy.id, 7);
+    let source = captured(&actual);
+    admit(&mut conn, vec![source.clone()]).await;
+    act_with(
+        &mut conn,
+        Action::RecordActual {
+            receipt: source.id,
+            at: at(1200),
+        },
+        receipt_capability(),
+    )
+    .await;
+    let native = actual.receipt.identity();
+    let entry = sqlx::query_scalar!(
+        "SELECT entry_id FROM derivation.model_calls WHERE receipt_hash=decode($1,'hex')",
+        native
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    let output = json!({"text":"known unbound output"});
+    let response = captured(&RecordedResponse {
+        request_id: request.request_id,
+        request: request.request,
+        output_hash: OutputHash::for_value(&output),
+        output,
+        actual: actual.receipt.actual,
+        provider_receipt: Some(actual.receipt.provider_receipt),
+        received_at: at(1201),
+    });
+    admit(&mut conn, vec![response.clone()]).await;
+    let Outcome::Accepted { decision } = act(
+        &mut conn,
+        Action::Reconcile {
+            request: event.id,
+            response: response.id,
+            at: at(1201),
+        },
+    )
+    .await
+    else {
+        panic!("known actual must bind independently of an unavailable estimate")
+    };
+    assert_eq!(decision.reserved_units, None);
+    assert_eq!(decision.actual_units, Some(7));
+    assert!(decision.reused);
+    let row=sqlx::query!("SELECT entry_id,period_start,period_end,actual_units::text AS actual FROM derivation.model_calls").fetch_one(&mut *conn).await.unwrap();
+    assert_eq!(row.entry_id, entry);
+    assert_eq!(row.actual.as_deref(), Some("7"));
+    assert_eq!(
+        (Timestamp(row.period_start), Timestamp(row.period_end)),
+        (at(0), at(1000))
+    );
     assert_eq!(
         sqlx::query_scalar!("SELECT count(*) FROM derivation.model_calls")
             .fetch_one(&mut *conn)

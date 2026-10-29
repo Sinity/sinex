@@ -34,7 +34,7 @@ pub(crate) const CALLS: &str = "CREATE TABLE derivation.model_calls (
   updated_at timestamptz NOT NULL,
   CHECK ((state = 'actual_unbound' AND request_hash IS NULL AND reserved_units IS NULL AND actual_units IS NOT NULL
       AND receipt_hash IS NOT NULL AND receipt_event IS NOT NULL AND response_event IS NULL AND output_hash IS NULL)
-    OR (state = 'recorded' AND request_hash IS NOT NULL AND reserved_units IS NOT NULL AND actual_units IS NOT NULL
+    OR (state = 'recorded' AND request_hash IS NOT NULL AND actual_units IS NOT NULL
       AND response_event IS NOT NULL AND output_hash IS NOT NULL)
     OR (state IN ('reserved', 'uncertain') AND request_hash IS NOT NULL AND reserved_units IS NOT NULL
       AND actual_units IS NULL AND response_event IS NULL AND output_hash IS NULL AND receipt_hash IS NULL AND receipt_event IS NULL)),

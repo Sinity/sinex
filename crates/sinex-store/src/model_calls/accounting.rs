@@ -98,6 +98,38 @@ async fn pending(
       entry,request.request_id,id.0,hash,policy.policy.name,policy.policy.version,request.request.operation,budget.scope,bucket,budget.currency,budget.unit,budget.period_start.0,budget.period_end.0,limit,estimate,at.0).execute(conn).await?;
     Ok(entry)
 }
+/// An incurred response may have no representable quote. Its actual amount,
+/// source and frozen basis are still facts; NULL never invents a zero hold.
+async fn recorded(
+    conn: &mut PgConnection,
+    request: &ModelRequest,
+    policy: &ModelPolicy,
+    response_event: EventId,
+    response: &RecordedResponse,
+    at: Timestamp,
+) -> Result<Uuid> {
+    let entry = Uuid::now_v7();
+    let budget = &policy.policy.budget;
+    let quote = request.request.usage().and_then(|usage| {
+        policy
+            .policy
+            .route(&request.request.operation)?
+            .prices
+            .estimate(&usage)
+    });
+    let estimate = quote.as_ref().ok().map(ToString::to_string);
+    let reason = quote.err();
+    let hash = definition(policy);
+    let bucket = budget.bucket();
+    let limit = budget.limit_units.to_string();
+    let actual = response.actual.units.to_string();
+    let receipt = response.receipt_identity();
+    sqlx::query!(r#"INSERT INTO derivation.model_calls(entry_id,request_hash,policy_event,policy_definition_hash,policy_name,policy_version,operation,account_scope,bucket_hash,currency,unit,period_start,period_end,limit_units,reserved_units,actual_units,state,response_event,output_hash,receipt_hash,reason,created_at,updated_at)
+      VALUES($1,decode($2,'hex'),$3,decode($4,'hex'),$5,$6,$7,$8,decode($9,'hex'),$10,$11,$12,$13,$14::text::numeric,$15::text::numeric,$16::text::numeric,'recorded',$17,decode($18,'hex'),decode($19,'hex'),$20,$21,$21)"#,
+      entry,request.request_id,request.policy.0,hash,policy.policy.name,policy.policy.version,request.request.operation,budget.scope,bucket,budget.currency,budget.unit,budget.period_start.0,budget.period_end.0,limit,estimate,actual,response_event.0,response.output_hash.0,receipt,reason,at.0).execute(conn).await?;
+    Ok(entry)
+}
+
 async fn mark_overrun(conn: &mut PgConnection, id: Uuid) -> Result<()> {
     sqlx::query!(r#"UPDATE derivation.model_calls c SET overrun=overrun OR coalesce(actual_units>reserved_units,false) OR
       (SELECT coalesce(sum(coalesce(other.actual_units,other.reserved_units)),0) FROM derivation.model_calls other WHERE other.bucket_hash=c.bucket_hash)>limit_units WHERE entry_id=$1"#,id).execute(conn).await?;
@@ -304,6 +336,11 @@ pub(super) async fn reconcile(
     {
         return Ok(contradiction());
     }
+    let quote = request
+        .request
+        .usage()
+        .and_then(|usage| route.prices.estimate(&usage));
+    let quote_reason = quote.as_ref().err().cloned();
     let actual_entry = match &receipt_hash {
         Some(hash) => find(conn, hash, false).await?,
         None => None,
@@ -327,29 +364,26 @@ pub(super) async fn reconcile(
         // the source request facts; eliminate its hold before attaching identity.
         let reserved = if let Some(pending) = pending_entry {
             sqlx::query!("DELETE FROM derivation.model_calls WHERE entry_id=$1 AND state IN ('reserved','uncertain')",pending.id).execute(&mut *conn).await?;
-            pending
-                .reserved
-                .expect("pending shape requires reservation")
+            pending.reserved
         } else {
-            route
-                .prices
-                .estimate(&request.request.usage().map_err(Error::Invalid)?)
-                .map_err(Error::Invalid)?
+            quote.ok()
         };
-        let reserved = reserved.to_string();
-        (actual.id, true, Some(reserved))
+        (actual.id, true, reserved.map(|value| value.to_string()))
     } else if let Some(pending) = pending_entry {
         (pending.id, false, None)
     } else {
-        (
-            pending(conn, request.policy, &request, &policy, at).await?,
+        let entry = recorded(conn, &request, &policy, response_event, &response, at).await?;
+        mark_overrun(conn, entry).await?;
+        return Ok(accepted(
+            decision(conn, &request.request_id)
+                .await?
+                .expect("recorded incurred response"),
             false,
-            None,
-        )
+        ));
     };
     let units = response.actual.units.to_string();
-    sqlx::query!("UPDATE derivation.model_calls SET actual_units=$2::text::numeric,state='recorded',response_event=$3,output_hash=decode($4,'hex'),receipt_hash=decode($5,'hex'),updated_at=$6,reserved_units=coalesce($7::text::numeric,reserved_units),request_hash=decode($8,'hex') WHERE entry_id=$1",
-      entry,units,response_event.0,response.output_hash.0,receipt_hash,at.0,reservation,request.request_id).execute(&mut *conn).await?;
+    sqlx::query!("UPDATE derivation.model_calls SET actual_units=$2::text::numeric,state='recorded',response_event=$3,output_hash=decode($4,'hex'),receipt_hash=decode($5,'hex'),updated_at=$6,reserved_units=coalesce($7::text::numeric,reserved_units),request_hash=decode($8,'hex'),reason=coalesce(reason,$9) WHERE entry_id=$1",
+      entry,units,response_event.0,response.output_hash.0,receipt_hash,at.0,reservation,request.request_id,quote_reason).execute(&mut *conn).await?;
     mark_overrun(conn, entry).await?;
     Ok(accepted(
         decision(conn, &request.request_id)

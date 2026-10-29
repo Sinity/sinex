@@ -455,7 +455,7 @@ pub struct Decision {
     pub unit: String,
     pub state: State,
     pub reused: bool,
-    pub reserved_units: u64,
+    pub reserved_units: Option<u64>,
     pub actual_units: Option<u64>,
     pub response: Option<EventId>,
     pub output_hash: Option<OutputHash>,

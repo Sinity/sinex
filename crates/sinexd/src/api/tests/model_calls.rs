@@ -368,3 +368,72 @@ async fn public_actual_unbound_receipt_later_binds_once_without_creating_a_fake_
         Some(1)
     );
 }
+
+#[devkit::test]
+async fn public_incurred_response_records_actual_with_an_absent_overflowing_quote(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let input = command("neutral overflow quote input", 0);
+    admit_events(&w, vec![input.clone()]).await;
+    let mut configured = policy();
+    configured.routes[0].prices.input_byte = u64::MAX;
+    let (status, configured_reply) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"model-policy","definition":serde_json::to_string(&configured).unwrap()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{configured_reply}");
+    let reference = configured_reply["result"]["policy"].as_str().unwrap();
+    let route = &configured.routes[0];
+    let request = InputRequest {
+        operation: route.operation.clone(),
+        provider: route.provider.clone(),
+        provider_account: route.provider_account.clone(),
+        model: route.model.clone(),
+        revision: route.revision.clone(),
+        instructions: route.instructions.clone(),
+        maximum_output_units: route.maximum_output_units,
+        inputs: vec![InputTarget {
+            event: input.id,
+            identity: InputIdentity::for_event(
+                &input,
+                InputSelection::Text {
+                    pointer: "/command".into(),
+                },
+                None,
+            )
+            .unwrap(),
+        }],
+    };
+    let output = json!({"text":"known output with unrepresentable quote"});
+    let response = RecordedResponse {
+        request_id: request.identity(),
+        request,
+        output_hash: OutputHash::for_value(&output),
+        output,
+        actual: Charge {
+            currency: "TEST".into(),
+            unit: "fixture-unit".into(),
+            units: 7,
+        },
+        provider_receipt: Some("public-overflow-quote-receipt".into()),
+        received_at: Timestamp::now(),
+    };
+    let request = json!({"method":"model-record","policy":reference,"definition":serde_json::to_string(&response).unwrap()});
+    for (reused, status_expected) in [(false, StatusCode::OK), (true, StatusCode::OK)] {
+        let (status, body) = call(&w, Some(OPERATOR), request.clone()).await;
+        assert_eq!(status, status_expected, "{body}");
+        let decision = &body["result"]["model_call"]["decision"];
+        assert_eq!(
+            body["result"]["model_call"]["outcome"], "accepted",
+            "{body}"
+        );
+        assert!(decision["reserved_units"].is_null());
+        assert_eq!(decision["actual_units"], 7);
+        assert_eq!(decision["reused"], reused);
+    }
+    let row=sqlx::query!("SELECT count(*) AS \"calls!\",sum(actual_units)::text AS actual FROM derivation.model_calls").fetch_one(&w.reads).await.unwrap();
+    assert_eq!((row.calls, row.actual.as_deref()), (1, Some("7")));
+}

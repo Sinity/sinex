@@ -107,6 +107,7 @@ day setting, operation, failure kind, deadline class) are named in common's
 - **model policy** (`model.policy`): an operator-authored route, instructions and explicit operating budget, effective only with the writer's authorization mark.
 - **model request** (`model.request`): retained instructions and verified typed input identities with their exact current reading references.
 - **recorded model response** (`model.response`): acquired response content, its separate output hash, provider receipt and reported actual charge; receiving it does not execute a model.
+- **actual model receipt** (`model.receipt`): acquired provider/account receipt, explicit charge and accounting basis. Authorized accounting may remain unbound to a request; this fact grants no input, effect or execution authority.
 - **forecast**: a probability on a stated outcome with a horizon and an information cutoff.
 - **context pack**: a stored selection of evidence assembled for one purpose; a **narrative** is a written account over a period.
 

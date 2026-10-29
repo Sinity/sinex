@@ -335,7 +335,7 @@ async fn policy(
 pub async fn decision(conn: &mut PgConnection, request: &str) -> Result<Option<Decision>> {
     sinex_model::model_calls::digest(request).map_err(Error::Invalid)?;
     let row=sqlx::query!(r#"SELECT policy_event,encode(bucket_hash,'hex') AS "bucket!",currency,unit,state,
-      reserved_units::text AS "reserved!",actual_units::text AS actual,response_event,encode(output_hash,'hex') AS output_hash,
+      reserved_units::text AS reserved,actual_units::text AS actual,response_event,encode(output_hash,'hex') AS output_hash,
       overrun AS "overrun!"
       FROM derivation.model_calls c WHERE request_hash=decode($1,'hex')"#,request).fetch_optional(&mut *conn).await?;
     let Some(row) = row else { return Ok(None) };
@@ -353,7 +353,7 @@ pub async fn decision(conn: &mut PgConnection, request: &str) -> Result<Option<D
         state: serde_json::from_value(serde_json::Value::String(row.state))
             .map_err(|_| Error::Invalid("stored model accounting state is invalid".into()))?,
         reused: false,
-        reserved_units: quantity(&row.reserved)?,
+        reserved_units: row.reserved.as_deref().map(quantity).transpose()?,
         actual_units: row.actual.as_deref().map(quantity).transpose()?,
         response: row.response_event.map(EventId),
         output_hash: row.output_hash.map(OutputHash),
