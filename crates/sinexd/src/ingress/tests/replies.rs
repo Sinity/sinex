@@ -25,6 +25,7 @@ async fn sixty_five_thousand_outputs_have_one_complete_verified_producer_receipt
         .map(|index| {
             let mut event = imported(material, 0, "synthetic");
             event.output_index = index as u64;
+            event.payload["n"] = json!(index);
             event
         })
         .collect();
