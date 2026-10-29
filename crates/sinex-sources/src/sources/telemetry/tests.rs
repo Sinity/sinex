@@ -29,3 +29,33 @@ fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
             .is_err()
     );
 }
+
+#[devkit::test]
+fn telemetry_discovery_reads_the_supplied_spool_without_starting_a_capture() {
+    use sinex_source_core::discovery::{DiscoveryContext, SourceConfig};
+    let mut context = DiscoveryContext::default();
+    context.host = "fixture".into();
+    let initial = (FORMAT.discover)(&FORMAT, &context);
+    assert!(
+        initial
+            .iter()
+            .all(|input| input.bindings.is_empty() && !input.capture)
+    );
+    let spool = tempfile::tempdir().unwrap();
+    context.sources.insert(
+        SPEC.name.into(),
+        SourceConfig {
+            paths: vec![spool.path().display().to_string()],
+            ..Default::default()
+        },
+    );
+    let discovered = (FORMAT.discover)(&FORMAT, &context);
+    let bindings: Vec<_> = discovered
+        .iter()
+        .flat_map(|input| &input.bindings)
+        .collect();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].input, spool.path());
+    assert!(discovered.iter().all(|input| !input.capture));
+    assert!(FORMAT.capture.is_none(), "sampling belongs to the daemon");
+}

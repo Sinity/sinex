@@ -137,39 +137,65 @@ pub(crate) async fn request(
     binding: &str,
     acquired: drivers::Acquired,
 ) -> Result<Submission, String> {
-    if let Some(reason) = &acquired.observation.unavailable {
-        return Err(format!("request records are unavailable: {reason}"));
-    }
-    bindings::save(
+    let spec = source.spec();
+    let version = spec.parser_version.to_string();
+    let run = sinex_store::runs::start(
         conn,
-        &bindings::Stored {
-            binding: binding.to_owned(),
-            source: source.spec().name.into(),
-            input: acquired.input.locator.clone(),
-            settings: serde_json::json!({"host": acquired.input.host}),
+        &sinex_store::runs::Manifest {
+            name: spec.parser,
+            kind: "source",
+            version: &version,
+            build: crate::build_identity::current()?,
+            emits: spec.event_types,
         },
+        &acquired.input.host,
     )
     .await
-    .map_err(|e| e.to_string())?;
-    let class = request_class(conn, source.as_ref()).await?;
-    let material = crate::material_access::MaterialAccess::new(
-        blobs.clone(),
-        class,
-        crate::material_access::Access::default(),
-    )?;
-    Intake {
-        writer,
-        source,
-        binding,
-        run: RunId::new(),
-        material,
-        check: Arc::new(|| Ok(())),
-        priority: Priority::Live,
-        atomic: true,
-        registered: None,
+    .map_err(|error| format!("starting request run: {error}"))?;
+    let result = async {
+        if let Some(reason) = &acquired.observation.unavailable {
+            return Err(format!("request records are unavailable: {reason}"));
+        }
+        bindings::save(
+            conn,
+            &bindings::Stored {
+                binding: binding.to_owned(),
+                source: source.spec().name.into(),
+                input: acquired.input.locator.clone(),
+                settings: serde_json::json!({"host": acquired.input.host}),
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let class = request_class(conn, source.as_ref()).await?;
+        let material = crate::material_access::MaterialAccess::new(
+            blobs.clone(),
+            class,
+            crate::material_access::Access::default(),
+        )?;
+        Intake {
+            writer,
+            source,
+            binding,
+            run,
+            material,
+            check: Arc::new(|| Ok(())),
+            priority: Priority::Live,
+            atomic: true,
+            registered: None,
+        }
+        .submit(acquired, Value::Null, &mut Totals::default())
+        .await
     }
-    .submit(acquired, Value::Null, &mut Totals::default())
-    .await
+    .await;
+    let ended = sinex_store::runs::end(conn, run)
+        .await
+        .map_err(|error| format!("ending request run {run}: {error}"));
+    match (result, ended) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(ending)) => Err(format!("{error}; {ending}")),
+    }
 }
 
 /// API requests refuse sealed storage.
