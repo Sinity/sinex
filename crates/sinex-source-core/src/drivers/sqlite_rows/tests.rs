@@ -400,3 +400,57 @@ fn a_partly_admitted_page_resumes_after_its_last_admitted_row() {
     let retry = d.poll(&after_first, &mut state).unwrap();
     assert_eq!(retry.material.as_ref().unwrap().id, m.id);
 }
+
+#[devkit::test]
+fn a_replaced_database_restarts_the_row_namespace_and_material_chain() {
+    let path = db();
+    let d = driver(path.clone());
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let m = first.material.as_ref().unwrap();
+    let cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
+    let old_generation = m.manifest.detail("database_generation").clone();
+    let replacement = db();
+    std::fs::rename(&replacement, &path).unwrap();
+    let next = d.poll(&cursor, &mut state).unwrap();
+    let material = next
+        .material
+        .as_ref()
+        .expect("equal rows in a new database are captured");
+    assert_eq!(lines(&next).len(), 2);
+    assert_ne!(
+        material.manifest.detail("database_generation"),
+        &old_generation
+    );
+    assert_eq!(material.previous_part, None);
+    assert_eq!(material.part_index, 0);
+    let next_cursor = (material.cursor_at)(material_bytes(material).len()).unwrap();
+    let mut restored = RowState::default();
+    restored.remember_rows(&material_bytes(material));
+    assert!(
+        d.poll(&next_cursor, &mut restored)
+            .unwrap()
+            .material
+            .is_none()
+    );
+}
+
+#[devkit::test]
+fn vacuum_keeps_the_observed_database_generation() {
+    let path = db();
+    let d = driver(path.clone());
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let m = first.material.as_ref().unwrap();
+    let cursor = (m.cursor_at)(material_bytes(m).len()).unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("VACUUM")
+        .unwrap();
+    let next = d.poll(&cursor, &mut state).unwrap();
+    assert!(next.material.is_none());
+    assert_eq!(
+        next.cursor_without_material["database_generation"],
+        cursor["database_generation"]
+    );
+}
