@@ -410,6 +410,7 @@ pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]
 /// An excised event whose message is still on the confirmed stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExcisedOnStream {
+    pub commit_seq:Option<i64>,
     pub event_id: Uuid,
     pub stream_seq: i64,
     pub operation_id: Uuid,
@@ -422,7 +423,7 @@ pub async fn excised_on_stream(
 ) -> Result<Vec<ExcisedOnStream>> {
     Ok(sqlx::query_as!(
         ExcisedOnStream,
-        r#"SELECT p.event_id, p.stream_seq, t.operation_id
+        r#"SELECT p.event_id, p.stream_seq, t.operation_id,t.commit_seq
            FROM core.event_tombstones t
            JOIN core.published p ON p.event_id = t.event_id
            ORDER BY p.stream_seq, p.event_id LIMIT $1"#,

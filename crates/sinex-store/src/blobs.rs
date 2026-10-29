@@ -151,14 +151,10 @@ impl Blobs {
         Ok(())
     }
     fn extent(&self, name: &str) -> Result<Extent> {
+        let hash=parse(name)?;
+        if let Some(extent)=self.state()?.extents.get(&hash).cloned() {return Ok(extent);}
         self.sync_pending()?;
-        self.state()?
-            .extents
-            .get(&parse(name)?)
-            .cloned()
-            .ok_or_else(|| {
-                crate::Error::Invalid(format!("blob {name} has no committed or pending extent"))
-            })
+        self.state()?.extents.get(&hash).cloned().ok_or_else(||crate::Error::Invalid(format!("blob {name} has no committed or pending extent")))
     }
     /// Encoded descriptors are the portable read authority carried in producer acknowledgments.
     pub fn descriptors(&self, name: &str) -> Result<Vec<Vec<u8>>> {

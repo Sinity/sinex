@@ -24,6 +24,7 @@
 //! materials the producer registered, and `<root>.excise.<producer>` excises
 //! whole materials the producer registered.
 mod bytes;
+pub(crate) mod fetch;
 pub(crate) mod replay;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
@@ -654,6 +655,8 @@ const REQUESTS_AT_ONCE: usize = 4;
 /// consumer from reading its stream.
 #[derive(Clone)]
 pub(crate) struct Requests {
+    pub read_grants:std::sync::Arc<fetch::ProducerGrants>,
+    pub max_payload:u64,
     pub subjects: Subjects,
     pub writer: WriterHandle,
     pub reads: sqlx::PgPool,
@@ -789,6 +792,21 @@ impl Requests {
                 },
             };
             serde_json::json!(welcome)
+        } else if subject == self.subjects.fetch_event(&producer) {
+            match serde_json::from_slice::<sinex_protocol::FetchEvent>(payload) {
+                Ok(request)=>serde_json::json!(self.fetch_event(&producer,&request).await),
+                Err(error)=>serde_json::json!(sinex_protocol::FetchEventReply{refusal:Some(error.to_string()),refusal_kind:Some(sinex_protocol::FetchRefusalKind::Invalid),..Default::default()}),
+            }
+        } else if subject == self.subjects.fetch_payload(&producer) {
+            match serde_json::from_slice::<sinex_protocol::FetchPayload>(payload) {
+                Ok(request)=>serde_json::json!(self.fetch_payload(&producer,&request).await),
+                Err(error)=>serde_json::json!(sinex_protocol::FetchPayloadReply{refusal:Some(error.to_string()),refusal_kind:Some(sinex_protocol::FetchRefusalKind::Invalid),..Default::default()}),
+            }
+        } else if subject == self.subjects.fetch_material(&producer) {
+            match serde_json::from_slice::<sinex_protocol::FetchMaterial>(payload) {
+                Ok(request)=>serde_json::json!(self.fetch_material(&producer,&request).await),
+                Err(error)=>serde_json::json!(sinex_protocol::FetchMaterialReply{refusal:Some(error.to_string()),refusal_kind:Some(sinex_protocol::FetchRefusalKind::Invalid),..Default::default()}),
+            }
         } else if subject == self.subjects.recorded(&producer) {
             match serde_json::from_slice::<RecordedQuery>(payload) {
                 Ok(query) => match self.recorded(&producer, &query).await {
@@ -939,6 +957,9 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
         subscribe(requests.subjects.materials_all()).await?,
         subscribe(requests.subjects.excise_all()).await?,
         subscribe(requests.subjects.replay_scope_all()).await?,
+        subscribe(requests.subjects.fetch_event_all()).await?,
+        subscribe(requests.subjects.fetch_payload_all()).await?,
+        subscribe(requests.subjects.fetch_material_all()).await?,
     ]);
     client.flush().await.map_err(|e| e.to_string())?;
     let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(REQUESTS_AT_ONCE));

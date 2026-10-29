@@ -344,7 +344,10 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
             .any(|m| matches!(m, Confirmed::Event(e) if e.id == secret_id)),
         "the excised event's message is gone"
     );
+    let removed_seq:Option<i64>=sqlx::query_scalar("SELECT commit_seq FROM core.event_tombstones WHERE event_id=$1").bind(secret_id.0).fetch_one(&mut conn).await.unwrap();
+    assert!(removed_seq.is_some());
     assert!(messages.contains(&Confirmed::Excised {
+        commit_seq:removed_seq,
         event: secret_id,
         operation
     }));

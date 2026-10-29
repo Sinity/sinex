@@ -284,11 +284,12 @@ pub async fn apply(
     remove_live(conn, &ids).await?;
 
     sqlx::query!(
-        r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, operation_id)
-           SELECT id, source, event_type, ts_orig, $2 FROM core.events WHERE id = ANY($1)
+        r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, operation_id,commit_seq)
+           SELECT id, source, event_type, ts_orig, $2,$3 FROM core.events WHERE id = ANY($1)
            ON CONFLICT DO NOTHING"#,
         &ids,
         operation.0,
+        seq,
     )
     .execute(&mut *conn)
     .await?;

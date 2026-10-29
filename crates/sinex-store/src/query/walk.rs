@@ -109,6 +109,7 @@ pub async fn show(conn: &mut PgConnection, reference: &Reference) -> Result<Json
              'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
              'archived', a.archived_at, 'archive_reason', a.reason,
              'record_state', e.record_state, 'class', e.class, 'key', e.equivalence_key,
+             'reading_order',e.reading_order,'record_hash',encode(e.record_hash,'hex'),
              'material', e.material_id, 'offset', e.anchor, 'output', e.output_index,
              'parents', to_jsonb(e.parents), 'run', e.run_id, 'producer', r.name, 'host', r.host,
              'parser', m.parser, 'parser_version', m.parser_version, 'blob', m.blob,
@@ -216,6 +217,19 @@ pub(crate) async fn walk(
 
 /// What each source recorded in a recall window, and which sources had no
 /// data there: "no data", never "nothing happened".
+pub(super) fn recall_rows(rows: &sinex_model::query::Query) -> sinex_model::query::Query {
+    use sinex_model::query::Stage;
+    let mut selector = rows.clone();
+    selector.stages = rows
+        .stages
+        .iter()
+        .take_while(|stage| !matches!(stage, Stage::Group(_)))
+        .filter(|stage| !matches!(stage, Stage::Fields(_)))
+        .cloned()
+        .collect();
+    selector
+}
+
 pub(crate) async fn recall_summary(
     conn: &mut PgConnection,
     from: jiff::Timestamp,
@@ -225,16 +239,9 @@ pub(crate) async fn recall_summary(
     rows: &sinex_model::query::Query,
     ctx: &sinex_model::query::Context,
 ) -> Result<Json> {
-    use sinex_model::query::{AggFn, Aggregate, FieldRef, Group, Operand, Stage, Table};
+    use sinex_model::query::{AggFn, Aggregate, FieldRef, Group, Operand, Table};
     let field = |name| FieldRef::Field(Table::Events.field(name).expect("event field declared"));
-    let mut selector = rows.clone();
-    selector.stages = rows
-        .stages
-        .iter()
-        .take_while(|s| !matches!(s, Stage::Group(_)))
-        .filter(|s| !matches!(s, Stage::Fields(_)))
-        .cloned()
-        .collect();
+    let selector = recall_rows(rows);
     let mut summary = selector.clone();
     summary.stages.push(Stage::Group(Group {
         keys: vec![Operand::Field(field("source"))],
@@ -280,9 +287,15 @@ pub(crate) async fn recall_summary(
             .fetch_all(&mut *conn)
             .await?
     };
+    let presentation_types:Vec<String> = super::recall::presentation_types().iter().map(|kind| (*kind).into()).collect();
     let known = sqlx::query_scalar!(
-        r#"SELECT source AS "name!" FROM core.source_counts
-           UNION SELECT name FROM registry.sources ORDER BY 1"#
+        r#"SELECT c.source AS "name!" FROM core.source_counts c
+           WHERE EXISTS (SELECT 1 FROM core.events e WHERE e.source=c.source
+             AND NOT e.event_type = ANY($1))
+           UNION SELECT name FROM registry.sources
+           WHERE NOT event_types <@ $1::text[]
+           ORDER BY 1"#,
+        &presentation_types,
     )
     .fetch_all(&mut *conn)
     .await?;

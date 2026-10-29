@@ -11,6 +11,7 @@ mod request;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
+    FetchEvent,FetchEventReply,FetchPayload,FetchPayloadReply,FetchMaterial,FetchMaterialReply,FetchRefusalKind,PayloadReference,
     Acknowledgment, Archived, Confirmed, ConfirmedEvent, DeclarationHash, Excise, ExciseReply,
     Ingress, MaterialFrame, Materials, PRODUCER_VERSION, ProducerEvent, ProducerFailure,
     ProducerHello, ProducerMaterial, ProducerReplay, ProducerWelcome, RecordedQuery, ReplayBatch,

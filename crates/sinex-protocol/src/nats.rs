@@ -143,9 +143,21 @@ impl Subjects {
             .or_else(|| rest.strip_prefix("recorded."))
             .or_else(|| rest.strip_prefix("materials."))
             .or_else(|| rest.strip_prefix("excise."))
-            .or_else(|| rest.strip_prefix("replay_scope."))?;
+            .or_else(|| rest.strip_prefix("replay_scope."))
+            .or_else(|| rest.strip_prefix("fetch_event."))
+            .or_else(|| rest.strip_prefix("fetch_payload."))
+            .or_else(|| rest.strip_prefix("fetch_material."))?;
         valid_producer(producer).then_some(producer)
     }
+
+    pub fn fetch_event(&self, producer:&str)->String {format!("{}.fetch_event.{producer}",self.root)}
+    pub fn fetch_event_all(&self)->String {format!("{}.fetch_event.*",self.root)}
+
+    pub fn fetch_payload(&self, producer:&str)->String {format!("{}.fetch_payload.{producer}",self.root)}
+    pub fn fetch_payload_all(&self)->String {format!("{}.fetch_payload.*",self.root)}
+
+    pub fn fetch_material(&self, producer:&str)->String {format!("{}.fetch_material.{producer}",self.root)}
+    pub fn fetch_material_all(&self)->String {format!("{}.fetch_material.*",self.root)}
 
     /// What a producer's NATS user may publish and subscribe to: its own
     /// ingress, have, materials and excise subjects, its acknowledgments, and
@@ -159,6 +171,9 @@ impl Subjects {
                 self.materials(producer),
                 self.excise(producer),
                 self.replay_scope(producer),
+                self.fetch_event(producer),
+                self.fetch_payload(producer),
+                self.fetch_material(producer),
             ],
             vec![self.ack(producer), "_INBOX.>".into()],
         )
@@ -412,6 +427,40 @@ impl Acknowledgment {
     }
 }
 
+/// Payload reads use the authenticated subject identity, never an identity from the body.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FetchEvent {pub event:EventId}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PayloadReference {pub event:EventId,pub length:u64,pub hash:String}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all="snake_case")]
+pub enum FetchRefusalKind {Denied,Missing,Locked,Invalid,Changed,Unavailable}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct FetchEventReply {
+    pub event:Option<ConfirmedEvent>,
+    pub payload_ref:Option<PayloadReference>,
+    pub refusal:Option<String>,
+    pub refusal_kind:Option<FetchRefusalKind>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FetchPayload {pub event:EventId,pub offset:u64,pub length:u64,pub hash:String}
+/// One transfer unit. Decode `data` as base64; continue until offset plus decoded bytes equals total.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FetchPayloadReply {
+    pub offset:u64,pub total:u64,pub hash:String,pub data:String,
+    pub refusal:Option<String>,pub refusal_kind:Option<FetchRefusalKind>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FetchMaterial {pub material:MaterialId}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct FetchMaterialReply {
+    pub material:Option<MaterialFrame>,pub extents:Vec<Vec<u8>>,
+    pub refusal:Option<String>,pub refusal_kind:Option<FetchRefusalKind>,
+}
+
 pub const PRODUCER_VERSION: u32 = 2;
 
 /// Checked before any material or events are sent. Event declarations can
@@ -501,6 +550,9 @@ pub enum Confirmed {
     /// The event was excised: its message has been erased from the stream,
     /// and a consumer drops anything it kept of it.
     Excised {
+        /// Historical tombstones may predate recorded commit boundaries.
+        #[serde(default)]
+        commit_seq:Option<i64>,
         event: EventId,
         operation: sinex_model::OperationId,
     },

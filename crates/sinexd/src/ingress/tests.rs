@@ -24,6 +24,9 @@ struct Harness {
 
 impl Harness {
     async fn start(db: devkit::pg::TestDatabase) -> Self {
+        Self::start_with_grants(db,Default::default()).await
+    }
+    async fn start_with_grants(db:devkit::pg::TestDatabase,grants:crate::ingress::fetch::ProducerGrants)->Self {
         let nats = devkit::nats::test_nats().unwrap();
         let subjects = Subjects::new(nats.prefix());
         let client = async_nats::connect(nats.url()).await.unwrap();
@@ -49,6 +52,8 @@ impl Harness {
             .await
             .unwrap();
         let requests = Requests {
+            read_grants:Arc::new(grants),
+            max_payload:client.server_info().max_payload as u64,
             subjects: subjects.clone(),
             writer: handle.clone(),
             reads: reads.clone(),
@@ -1541,3 +1546,5 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
     assert!(!directory.exists());
     assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 0);
 }
+
+mod fetch_reads;

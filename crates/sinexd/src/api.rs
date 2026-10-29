@@ -2,7 +2,7 @@
 //! endpoint takes every request of the command table; `follow` streams new
 //! matching events as server-sent events. Three fixed tokens grant read, agent
 //! and operator access.
-mod mask;
+pub(crate) mod mask;
 mod methods;
 
 pub(crate) use methods::Api;

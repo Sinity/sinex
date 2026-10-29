@@ -284,6 +284,7 @@ async fn erase_excised(
                     subjects.confirmed_archive(),
                     format!("excised-{}", e.event_id),
                     &Confirmed::Excised {
+                        commit_seq:e.commit_seq,
                         event: EventId(e.event_id),
                         operation: OperationId(e.operation_id),
                     },
