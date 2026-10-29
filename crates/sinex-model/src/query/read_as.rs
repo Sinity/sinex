@@ -166,7 +166,7 @@ fn expr(e: &Expr) -> String {
                 Op::Contains => "contains",
                 Op::Prefix => "starts with",
             };
-            format!("{} {verb} {}", operand(lhs), value(rhs))
+            format!("{} {verb} {}", operand(lhs), comparison_value(rhs, lhs))
         }
         Expr::Exists(o) => format!("{} is known", operand(o)),
         Expr::Words(w) => {
@@ -222,6 +222,36 @@ fn field_phrase(f: &FieldRef) -> String {
         FieldRef::Field(field) => field.phrase.to_string(),
         other => other.name(),
     }
+}
+
+fn comparison_value(v: &Value, lhs: &Operand) -> String {
+    let ty = match lhs {
+        Operand::Field(FieldRef::Field(field)) => Some(field.ty),
+        Operand::Field(FieldRef::TypedPayload { ty, .. }) => Some(*ty),
+        Operand::Field(FieldRef::TypedGroup(column)) => column.field_type(),
+        Operand::TimeFn(TimeFn::Hour, _) => Some(super::FieldType::Integer),
+        _ => None,
+    };
+    if matches!(
+        ty,
+        Some(super::FieldType::Integer | super::FieldType::Number)
+    ) {
+        match v {
+            Value::Text(raw) => return raw.clone(),
+            Value::List(items) => {
+                return format!(
+                    "[{}]",
+                    items
+                        .iter()
+                        .map(|value| comparison_value(value, lhs))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            _ => {}
+        }
+    }
+    value(v)
 }
 
 fn value(v: &Value) -> String {

@@ -5,19 +5,19 @@ use std::collections::BTreeMap;
 #[devkit::test]
 fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
     for text in [
-        "events where event_type = command.executed and payload.exit_code > x",
-        "events where payload.exit_code > 0 and event_type = command.executed sum(payload.command)",
-        "events where event_type = command.executed and payload.no_such_field exists",
-        "events where event_type = command.executed and payload.exit_code ~ x",
+        "events where event_type = command.executed AND payload.exit_code > x",
+        "events where payload.exit_code > 0 AND event_type = command.executed sum(payload.command)",
+        "events where event_type = command.executed AND payload.no_such_field exists",
+        "events where event_type = command.executed AND payload.exit_code ~ x",
         "events where event_type = command.executed group by day(payload.exit_code)",
     ] {
         assert!(!err(text).not_built, "{text}");
     }
     let query = q(
-        "events where payload.exit_code >= 0 and event_type = command.executed sum(payload.duration_ns)",
+        "events where payload.exit_code >= 0 AND event_type = command.executed sum(payload.duration_ns)",
     );
     assert!(matches!(query.stages[0], Stage::Group(_)));
-    let completions = complete("events where event_type = command.executed and payload.dur");
+    let completions = complete("events where event_type = command.executed AND payload.dur");
     assert_eq!(
         completions
             .iter()
@@ -27,8 +27,8 @@ fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
     );
     assert_eq!(completions[0].field_type, "integer");
     for text in [
-        "events where event_type = command.* and payload.dur",
-        "events where event_type = [command.executed, command.fused] and payload.dur",
+        "events where event_type = command.* AND payload.dur",
+        "events where event_type = [command.executed, command.fused] AND payload.dur",
     ] {
         assert!(
             complete(text)
@@ -44,7 +44,7 @@ fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
 fn saved_parameters_cannot_introduce_conditions_or_change_the_question_shape() {
     let saved = SavedQuery {
         name: "by-directory".into(),
-        query: "commands where cwd = $root and exit_code >= $code".into(),
+        query: "commands where cwd = $root AND exit_code >= $code".into(),
         parameters: vec![
             Parameter {
                 name: "root".into(),
@@ -64,12 +64,18 @@ fn saved_parameters_cannot_introduce_conditions_or_change_the_question_shape() {
         &definitions,
     )
     .unwrap();
-    let Some(Expr::And(a, _)) = bound.filter else {
+    let Some(Expr::And(a, b)) = bound.filter else {
         panic!()
     };
-    assert!(
-        matches!(*a, Expr::Compare { rhs:Value::Text(ref s),.. } if s == "x\" or source exists")
-    );
+    let terms = [*a, *b];
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
+        if field.name == "cwd" && value == "x\" or source exists"
+    )));
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Ge, rhs: Value::Text(value) }
+        if field.name == "exit_code" && field.ty == FieldType::Integer && value == "1"
+    )));
     for text in [
         "query:by-directory(root=x)",
         "query:by-directory(root=x,code=no)",
@@ -171,16 +177,16 @@ fn unrepresentable_time_ranges_are_errors_without_panicking() {
 
 #[devkit::test]
 fn each_boolean_branch_uses_its_selected_event_schema() {
-    let text = "events where (event_type = metric.figure and payload.value > 0) or (event_type = library.assignment and payload.value = synthetic)";
+    let text = "events where (event_type = metric.figure AND payload.value > 0) OR (event_type = library.assignment AND payload.value = synthetic)";
     assert!(bind(text, &ctx()).is_ok());
-    assert!(err("events where (event_type = metric.figure and payload.value = synthetic) or (event_type = library.assignment and payload.value = synthetic)").message.contains("number"));
+    assert!(err("events where (event_type = metric.figure AND payload.value = synthetic) OR (event_type = library.assignment AND payload.value = synthetic)").message.contains("number"));
 }
 
 #[devkit::test]
 fn event_type_globs_select_the_schemas_used_for_payload_fields() {
     assert!(
         bind(
-            "events where event_type = metric.* and payload.value > 0",
+            "events where event_type = metric.* AND payload.value > 0",
             &ctx()
         )
         .is_ok()
@@ -226,7 +232,7 @@ fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
     ] {
         assert!(
             bind(
-                &format!("events where event_type = shell.session and {condition}"),
+                &format!("events where event_type = shell.session AND {condition}"),
                 &ctx()
             )
             .is_ok(),
@@ -234,11 +240,11 @@ fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
         );
     }
     assert!(
-        err("events where event_type = shell.session and payload.cwds > x")
+        err("events where event_type = shell.session AND payload.cwds > x")
             .message
             .contains("ordered")
     );
-    let choices = complete("events where event_type = shell.session and payload.cw");
+    let choices = complete("events where event_type = shell.session AND payload.cw");
     assert_eq!(choices[0].field_type, "textlist");
 }
 
@@ -256,7 +262,7 @@ fn min_and_max_refuse_payload_values_without_an_ordered_scalar_aggregate() {
 fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
     let saved = SavedQuery {
         name: "bad".into(),
-        query: "events where source = $source and when < not-a-time".into(),
+        query: "events where source = $source AND when < not-a-time".into(),
         parameters: vec![Parameter {
             name: "source".into(),
             field_type: ParameterType::Text,
@@ -274,7 +280,7 @@ fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
 #[devkit::test]
 fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
     let query = q(
-        "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z and when < 2026-09-15T04:00:00Z group by day(when) count fill",
+        "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z AND when < 2026-09-15T04:00:00Z group by day(when) count fill",
     );
     let Stage::Group(group) = query.stages.last().unwrap() else {
         panic!()
@@ -314,8 +320,8 @@ fn saved_definitions_check_fields_and_stages_before_arguments_are_supplied() {
         "events where source = $value fields nonexistent",
         "events where source = $value sort nonexistent",
         "events where source = $value group by nonexistent count",
-        "events where event_type = command.executed and payload.nonexistent = $value",
-        "events where event_type = command.executed and payload.exit_code = $value",
+        "events where event_type = command.executed AND payload.nonexistent = $value",
+        "events where event_type = command.executed AND payload.exit_code = $value",
         "events where source = $value group by source count where nonexistent > 0",
     ] {
         let saved = SavedQuery {
@@ -330,7 +336,7 @@ fn saved_definitions_check_fields_and_stages_before_arguments_are_supplied() {
     }
     let saved = SavedQuery {
         name: "between".into(),
-        query: "events where when >= $start and when < $end".into(),
+        query: "events where when >= $start AND when < $end".into(),
         parameters: vec![
             Parameter {
                 name: "start".into(),
@@ -381,8 +387,11 @@ fn saved_queries_can_invoke_an_author_qualified_definition() {
 
 #[devkit::test]
 fn capitalized_words_with_colons_are_search_text() {
-    assert!(matches!(q("TODO:").filter, Some(Expr::Words(_))));
-    assert!(bind("events where Source:synthetic", &ctx()).is_ok());
+    assert!(matches!(q(r#""TODO:""#).filter, Some(Expr::Words(_))));
+    assert!(bind("TODO:", &ctx()).is_err());
+    let error = err("events where Source:synthetic");
+    assert!(error.message.contains("unknown field `Source`"), "{error}");
+    assert!(bind("events where source:synthetic", &ctx()).is_ok());
 }
 
 #[devkit::test]
@@ -398,7 +407,7 @@ fn saved_text_parameters_validate_in_constrained_scalar_positions() {
         "events where month(when) = $value",
         "events where month_day(when) = $value",
         "events where event_type = $value fields payload.command",
-        "events where event_type = metric.figure and payload.grain = $value",
+        "events where event_type = metric.figure AND payload.grain = $value",
     ] {
         let saved = SavedQuery {
             name: "constrained".into(),
@@ -482,10 +491,10 @@ fn nested_parameters_take_examples_from_the_field_that_uses_them() {
 #[devkit::test]
 fn event_type_parameters_use_fields_from_their_own_question() {
     for query in [
-        r#"events where event_type = $kind and payload.command ~ "payload.absent""#,
-        "events where event_type = $kind and payload.command ~ payload.absent",
-        "events where event_type = $kind and payload.command exists near (events where event_type = state.interval and payload.subject_id exists) within 1h",
-        "events where event_type = command.executed and payload.command exists near (events where event_type = $kind and payload.subject_id exists) within 1h",
+        r#"events where event_type = $kind AND payload.command ~ "payload.absent""#,
+        "events where event_type = $kind AND payload.command ~ payload.absent",
+        "events where event_type = $kind AND payload.command exists near (events where event_type = state.interval AND payload.subject_id exists) within 1h",
+        "events where event_type = command.executed AND payload.command exists near (events where event_type = $kind AND payload.subject_id exists) within 1h",
     ] {
         let saved = SavedQuery {
             name: "by-kind".into(),
@@ -505,12 +514,12 @@ fn event_type_parameters_use_fields_from_their_own_question() {
 fn typed_saved_arguments_keep_their_type_when_quoted() {
     for (query, declaration, value) in [
         (
-            "events where event_type = command.executed and payload.exit_code = $value",
+            "events where event_type = command.executed AND payload.exit_code = $value",
             ParameterType::Integer,
             "1",
         ),
         (
-            "events where event_type = browser.url and payload.hidden = $value",
+            "events where event_type = browser.url AND payload.hidden = $value",
             ParameterType::Bool,
             "true",
         ),
@@ -534,7 +543,7 @@ fn typed_saved_arguments_keep_their_type_when_quoted() {
 fn event_type_parameters_check_each_invocation_and_require_one_coherent_schema() {
     let saved = SavedQuery {
         name: "by-kind".into(),
-        query: "events where event_type = $kind and payload.command ~ synthetic".into(),
+        query: "events where event_type = $kind AND payload.command ~ synthetic".into(),
         parameters: vec![Parameter {
             name: "kind".into(),
             field_type: ParameterType::Text,
@@ -545,7 +554,7 @@ fn event_type_parameters_check_each_invocation_and_require_one_coherent_schema()
     assert!(bind_saved("query:by-kind(kind=command.executed)", &ctx(), &definitions).is_ok());
     assert!(bind_saved("query:by-kind(kind=window.focused)", &ctx(), &definitions).is_err());
     let invalid = SavedQuery {
-        query: "events where event_type = $kind and payload.never_declared exists".into(),
+        query: "events where event_type = $kind AND payload.never_declared exists".into(),
         ..saved
     };
     assert!(invalid.validate(&ctx()).is_err());

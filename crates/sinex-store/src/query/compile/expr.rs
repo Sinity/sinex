@@ -26,10 +26,22 @@ impl Compiler<'_> {
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
             ))),
-            // A group column, or a column a time join added.
-            (Cols::Named { r, .. }, FieldRef::Group(name)) => Ok((
-                SqlFragment::text(format!("{r}.{}", quote(name))),
-                Kind::Untyped,
+            (Cols::Base { .. }, FieldRef::TypedGroup(column)) => Err(invalid(format!(
+                "`{}` names a group column outside a grouping",
+                column.name()
+            ))),
+            (Cols::Named { .. }, FieldRef::Group(name)) => {
+                Err(invalid(format!("`{name}` has no bound output column type")))
+            }
+            // Shared binding supplies column lineage; the product resolves its
+            // physical scalar type against the current declaration snapshot.
+            (Cols::Named { r, .. }, FieldRef::TypedGroup(column)) => Ok((
+                SqlFragment::text(format!("{r}.{}", quote(column.name()))),
+                Kind::Typed(
+                    column
+                        .field_type()
+                        .ok_or_else(|| invalid("bound output column type is unavailable"))?,
+                ),
             )),
             (Cols::Named { r, .. }, FieldRef::Field(field)) => Ok((
                 SqlFragment::text(format!("{r}.{}", quote(field.name))),
@@ -138,6 +150,52 @@ impl Compiler<'_> {
         Self::typed_json(raw, ty)
     }
 
+    /// A schemaless comparison gets its scalar type from the current projected
+    /// JSON value. The query spelling remains exact until that row is known.
+    fn compare_json_scalar(&self, lhs: SqlFragment, op: Op, raw: &str) -> Result<SqlFragment> {
+        let string = self.compare(
+            Self::typed_json(lhs.clone(), FieldType::Text),
+            Kind::Typed(FieldType::Text),
+            op,
+            &Value::Text(raw.into()),
+        )?;
+        let mut number = Self::typed_json(lhs.clone(), FieldType::Number);
+        number.push(" ").push(op_sql(op)).push(" (CASE WHEN ")
+            .param(V::String(Some(raw.into())))
+            .push(" ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$' AND pg_input_is_valid(")
+            .param(V::String(Some(raw.into()))).push(", 'numeric') THEN ")
+            .param(V::String(Some(raw.into()))).push("::numeric END)");
+        let boolean = if matches!(op, Op::Eq | Op::Ne) {
+            match raw {
+                "true" => self.compare(
+                    Self::typed_json(lhs.clone(), FieldType::Bool),
+                    Kind::Typed(FieldType::Bool),
+                    op,
+                    &Value::Bool(true),
+                )?,
+                "false" => self.compare(
+                    Self::typed_json(lhs.clone(), FieldType::Bool),
+                    Kind::Typed(FieldType::Bool),
+                    op,
+                    &Value::Bool(false),
+                )?,
+                _ => SqlFragment::text("NULL::boolean"),
+            }
+        } else {
+            SqlFragment::text("NULL::boolean")
+        };
+        let mut out = SqlFragment::text("(CASE jsonb_typeof(");
+        out.append(lhs)
+            .push(") WHEN 'string' THEN ")
+            .append(string)
+            .push(" WHEN 'number' THEN ")
+            .append(number)
+            .push(" WHEN 'boolean' THEN ")
+            .append(boolean)
+            .push(" ELSE NULL::boolean END)");
+        Ok(out)
+    }
+
     pub(super) fn compare(
         &self,
         lhs: SqlFragment,
@@ -184,6 +242,27 @@ impl Compiler<'_> {
                 .push(") AS member(value) WHERE ")
                 .append(comparison)
                 .push(") END)");
+            return Ok(out);
+        }
+        if kind == Kind::Typed(FieldType::Json)
+            && !matches!(op, Op::Contains | Op::Prefix)
+            && let Value::Text(raw) = v
+        {
+            return self.compare_json_scalar(lhs, op, raw);
+        }
+        if matches!(kind, Kind::Typed(FieldType::Integer | FieldType::Number))
+            && let Value::Text(raw) = v
+        {
+            if matches!(op, Op::Contains | Op::Prefix) {
+                return Err(invalid("~ and ^ require text"));
+            }
+            let mut out = SqlFragment::text("(");
+            out.append(lhs)
+                .push(" ")
+                .push(op_sql(op))
+                .push(" ")
+                .param(V::String(Some(raw.clone())))
+                .push("::numeric)");
             return Ok(out);
         }
         let l = if kind == Kind::Typed(FieldType::Json) {

@@ -57,8 +57,6 @@ enum Cols {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Typed(FieldType),
-    /// A grouped column: the database knows its type.
-    Untyped,
     /// A time function's text or number.
     Derived,
 }
@@ -287,7 +285,7 @@ impl<'c> Compiler<'c> {
                 _ => {}
             }
         }
-        needed.retain(|f| !matches!(f, FieldRef::Group(_)));
+        needed.retain(|f| !matches!(f, FieldRef::Group(_) | FieldRef::TypedGroup(_)));
         let mut seen = std::collections::HashSet::new();
         needed.retain(|f| seen.insert(column_name(f)));
 

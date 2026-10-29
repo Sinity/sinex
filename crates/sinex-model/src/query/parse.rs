@@ -3,128 +3,95 @@
 use super::*;
 use jiff::{SignedDuration, Timestamp};
 use query_language::ast as syntax;
+use query_language::scope::{FieldInfo, NodePath, Origin, Scope, Typing};
 
 pub fn bind(text: &str, ctx: &Context) -> Result<Query, QueryError> {
     bind_syntax(super::syntax::parse(text, ctx)?, ctx)
 }
 pub fn parse(text: &str, ctx: &Context) -> Result<Query, QueryError> {
-    lower(super::syntax::parse(text, ctx)?, ctx)
+    lower(
+        shared_bound(super::syntax::parse(text, ctx)?, ctx)?,
+        ctx,
+        false,
+    )
+}
+fn shared_bound(
+    input: syntax::Query,
+    ctx: &Context,
+) -> Result<query_language::bind::BoundQuery, QueryError> {
+    query_language::bind::bind(&input, &super::syntax::catalog(ctx)).map_err(super::syntax::error)
 }
 pub(super) fn bind_syntax(input: syntax::Query, ctx: &Context) -> Result<Query, QueryError> {
-    let input = query_language::bind::bind(&input, &super::syntax::catalog(ctx))
-        .map_err(super::syntax::error)?
-        .into_query();
-    let mut q = lower(input, ctx)?;
+    let mut q = lower(shared_bound(input, ctx)?, ctx, false)?;
     super::typed::check(&mut q, ctx)?;
     super::fill::bind(&mut q, ctx)?;
     Ok(q)
 }
 pub(super) fn validate_syntax(input: syntax::Query, ctx: &Context) -> Result<Query, QueryError> {
-    ctx.clock()?;
-    let mut q = Binder {
-        ctx,
-        validating: true,
-    }
-    .query(input)?;
+    let mut q = lower(shared_bound(input, ctx)?, ctx, true)?;
     super::typed::check(&mut q, ctx)?;
     super::fill::bind(&mut q, ctx)?;
     Ok(q)
 }
-pub(super) fn lower(input: syntax::Query, ctx: &Context) -> Result<Query, QueryError> {
+fn lower(
+    bound: query_language::bind::BoundQuery,
+    ctx: &Context,
+    validating: bool,
+) -> Result<Query, QueryError> {
     ctx.clock()?;
+    let (input, typing) = bound.into_parts();
     Binder {
         ctx,
-        validating: false,
+        validating,
+        typing: &typing,
     }
-    .query(input)
-}
-#[derive(Clone)]
-enum Scope {
-    Rows {
-        table: Table,
-        alias: Option<&'static Alias>,
-        columns: Vec<String>,
-    },
-    Grouped(Vec<String>),
-}
-impl Scope {
-    fn rows(table: Table, alias: Option<&'static Alias>) -> Self {
-        Self::Rows {
-            table,
-            alias,
-            columns: vec![],
-        }
-    }
+    .query(input, &NodePath::default())
 }
 struct Binder<'a> {
     ctx: &'a Context,
     validating: bool,
+    typing: &'a Typing,
 }
 impl Binder<'_> {
+    fn resolve_info(&self, info: &FieldInfo, at: usize) -> Result<FieldRef, QueryError> {
+        if let Origin::Catalog { unit, field } = &info.origin {
+            let alias = Alias::from_name(unit);
+            let table = Table::from_name(unit)
+                .or(alias.map(|_| Table::Events))
+                .ok_or_else(|| {
+                    QueryError::at(at, format!("unsupported bound row domain {unit}"))
+                })?;
+            if let Some(path) = field.strip_prefix("payload.") {
+                if !table.is_events() {
+                    return Err(QueryError::at(at, "bound relation has no payload"));
+                }
+                return Ok(FieldRef::Payload(
+                    path.split('.').map(str::to_owned).collect(),
+                ));
+            }
+            return alias
+                .and_then(|alias| alias.field(field))
+                .or_else(|| table.field(field))
+                .map(FieldRef::Field)
+                .ok_or_else(|| {
+                    QueryError::at(
+                        at,
+                        format!("bound catalog field {unit}.{field} has no execution adapter"),
+                    )
+                });
+        }
+        Ok(FieldRef::TypedGroup(BoundColumn::new(info.clone())))
+    }
     pub(super) fn resolve(
         &self,
         name: &str,
         scope: &Scope,
         at: usize,
     ) -> Result<FieldRef, QueryError> {
-        match scope {
-            Scope::Grouped(columns) => {
-                if columns.iter().any(|c| c == name) {
-                    Ok(FieldRef::Group(name.to_string()))
-                } else {
-                    Err(QueryError::at(
-                        at,
-                        format!(
-                            "`{name}` is not a column of the grouped rows; they have: {}",
-                            columns.join(", ")
-                        ),
-                    ))
-                }
-            }
-            Scope::Rows {
-                table,
-                alias,
-                columns,
-            } => {
-                if columns.iter().any(|c| c == name) {
-                    return Ok(FieldRef::Group(name.to_string()));
-                }
-                if let Some(path) = name.strip_prefix("payload.") {
-                    if !table.is_events() {
-                        return Err(QueryError::at(
-                            at,
-                            format!("{} have no payload", table.name()),
-                        ));
-                    }
-                    let path: Vec<String> = path.split('.').map(str::to_string).collect();
-                    if path.iter().any(String::is_empty) {
-                        return Err(QueryError::at(
-                            at,
-                            format!("`{name}` is not a payload path"),
-                        ));
-                    }
-                    return Ok(FieldRef::Payload(path));
-                }
-                if let Some(f) = alias
-                    .and_then(|a| a.field(name))
-                    .or_else(|| table.field(name))
-                {
-                    return Ok(FieldRef::Field(f));
-                }
-                let mut names: Vec<&str> = alias
-                    .map(|a| a.fields.iter().map(|f| f.name).collect())
-                    .unwrap_or_default();
-                names.extend(table.fields().iter().map(|f| f.name));
-                let what = alias.map_or(table.name(), |a| a.name);
-                Err(QueryError::at(
-                    at,
-                    format!(
-                        "`{name}` is not a field of {what}; fields: {}",
-                        names.join(", ")
-                    ),
-                ))
-            }
-        }
+        let info = scope
+            .field(name)
+            .ok_or_else(|| QueryError::at(at, format!("{name} is absent from its bound scope")))?;
+        self.resolve_info(info, at)
     }
 
     pub(super) fn time_field(
@@ -133,10 +100,20 @@ impl Binder<'_> {
         scope: &Scope,
         at: usize,
     ) -> Result<(), QueryError> {
-        match (field, scope) {
-            (FieldRef::Field(f), _) if f.ty == FieldType::Time => Ok(()),
-            (FieldRef::Group(_), Scope::Grouped(_)) => Ok(()),
-            (FieldRef::Payload(path), _) if self.payload_time(path) => Ok(()),
+        match field {
+            FieldRef::Field(f) if f.ty == FieldType::Time => Ok(()),
+            FieldRef::TypedGroup(column)
+                if scope.field(column.name()).is_some_and(|field| {
+                    matches!(
+                        field.field.kind,
+                        query_language::catalog::FieldKind::Time
+                            | query_language::catalog::FieldKind::Json
+                    )
+                }) =>
+            {
+                Ok(())
+            }
+            FieldRef::Payload(path) if self.payload_time(path) => Ok(()),
             _ => Err(QueryError::at(
                 at,
                 format!("`{}` is not a time", field.name()),
@@ -163,62 +140,7 @@ impl Binder<'_> {
         raw: &str,
         at: usize,
     ) -> Result<Value, QueryError> {
-        let today = self.ctx.today();
-        let date_word = |w: &str| -> Option<jiff::civil::Date> {
-            match w {
-                "today" => Some(today),
-                "yesterday" => today.yesterday().ok(),
-                _ => time::date(w),
-            }
-        };
-        let bad = |what: &str| QueryError::at(at, format!("{}() takes {what}", func.name()));
-        Ok(match func {
-            TimeFn::Day => Value::Text(date_word(raw).ok_or_else(|| bad("a date"))?.to_string()),
-            TimeFn::Week => {
-                let d = date_word(raw).ok_or_else(|| bad("a date"))?;
-                let monday = d
-                    .checked_sub(jiff::Span::new().days(d.weekday().to_monday_zero_offset() as i64))
-                    .map_err(|_| bad("a date in range"))?;
-                Value::Text(monday.to_string())
-            }
-            TimeFn::Hour => {
-                let h: i64 = raw.parse().map_err(|_| bad("an hour, 0 to 23"))?;
-                if !(0..=23).contains(&h) {
-                    return Err(bad("an hour, 0 to 23"));
-                }
-                Value::Integer(h)
-            }
-            TimeFn::Weekday => {
-                const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-                let short: String = raw.to_ascii_lowercase().chars().take(3).collect();
-                if !DAYS.contains(&short.as_str()) {
-                    return Err(bad("a weekday: mon, tue, wed, thu, fri, sat, sun"));
-                }
-                Value::Text(short)
-            }
-            TimeFn::Month => {
-                if raw == "today" || raw == "now" {
-                    Value::Text(format!("{:04}-{:02}", today.year(), today.month()))
-                } else {
-                    let (y, m) = time::month(raw).ok_or_else(|| bad("a month: 2026-08"))?;
-                    Value::Text(format!("{y:04}-{m:02}"))
-                }
-            }
-            TimeFn::MonthDay => {
-                if let Some(d) = date_word(raw) {
-                    Value::Text(format!("{:02}-{:02}", d.month(), d.day()))
-                } else {
-                    let ok = raw.len() == 5
-                        && raw.as_bytes()[2] == b'-'
-                        && raw[..2].parse::<u8>().is_ok_and(|m| (1..=12).contains(&m))
-                        && raw[3..].parse::<u8>().is_ok_and(|d| (1..=31).contains(&d));
-                    if !ok {
-                        return Err(bad("a calendar day: 09-14, or a date"));
-                    }
-                    Value::Text(raw.to_string())
-                }
-            }
-        })
+        time_fn_value(self.ctx, func, raw, at)
     }
 
     fn instant(&self, value: &syntax::Value, at: usize) -> Result<Timestamp, QueryError> {
@@ -314,7 +236,6 @@ impl Binder<'_> {
             };
         }
         let raw = self.scalar(value, at)?;
-        let quoted = matches!(value, syntax::Value::Scalar { quoted: true, .. });
         if matches!(value, syntax::Value::Parameter { .. }) {
             return Err(QueryError::at(at, "unbound saved query parameter"));
         }
@@ -328,20 +249,14 @@ impl Binder<'_> {
                 }
                 self.time_fn_value(*func, raw, at)
             }
-            Operand::Field(FieldRef::Group(_)) => Ok(infer(raw, quoted, op)),
-            Operand::Field(FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. }) => {
-                if self
-                    .ctx
-                    .catalog
-                    .as_ref()
-                    .and_then(|c| c.field(path))
-                    .is_some_and(|f| f.ty == catalog::DataType::Time)
-                {
-                    Ok(Value::Time(self.instant(value, at)?))
-                } else {
-                    Ok(infer(raw, quoted, op))
-                }
-            }
+            // The typed pass knows the selected payload kinds and output columns.
+            // Keep the scalar spelling until that declaration chooses its type.
+            Operand::Field(
+                FieldRef::Group(_)
+                | FieldRef::TypedGroup(_)
+                | FieldRef::Payload(_)
+                | FieldRef::TypedPayload { .. },
+            ) => Ok(Value::Text(raw.to_owned())),
             Operand::Field(FieldRef::Field(f)) => {
                 let text_like = matches!(
                     f.ty,
@@ -366,16 +281,7 @@ impl Binder<'_> {
                 }
                 Ok(match f.ty {
                     FieldType::Time => Value::Time(self.instant(value, at)?),
-                    FieldType::Integer => Value::Integer(
-                        raw.parse()
-                            .map_err(|_| QueryError::at(at, "expected an integer"))?,
-                    ),
-                    FieldType::Number => Value::Number(
-                        raw.parse::<f64>()
-                            .ok()
-                            .filter(|n| n.is_finite())
-                            .ok_or_else(|| QueryError::at(at, "expected a finite number"))?,
-                    ),
+                    FieldType::Integer | FieldType::Number => Value::Text(raw.to_owned()),
                     FieldType::Bool => Value::Bool(
                         raw.parse()
                             .map_err(|_| QueryError::at(at, "expected true or false"))?,
@@ -408,7 +314,10 @@ impl Binder<'_> {
                         {
                             return Err(QueryError::at(at, "path prefix must be absolute"));
                         }
-                        if !quoted && raw.contains('*') && matches!(op, Op::Eq | Op::Ne) {
+                        if matches!(f.name, "source" | "event_type")
+                            && raw.contains('*')
+                            && matches!(op, Op::Eq | Op::Ne)
+                        {
                             Value::Glob(raw.into())
                         } else {
                             Value::Text(raw.into())
@@ -563,7 +472,12 @@ impl Binder<'_> {
         })
     }
 
-    fn query(&mut self, input: syntax::Query) -> Result<Query, QueryError> {
+    fn query(&mut self, input: syntax::Query, path: &NodePath) -> Result<Query, QueryError> {
+        let typing = self
+            .typing
+            .query(path)
+            .cloned()
+            .ok_or_else(|| QueryError::new("bound query scope is missing"))?;
         if !input.attach.is_empty() {
             return Err(QueryError::not_built(0, "attached relations are not built"));
         }
@@ -577,7 +491,7 @@ impl Binder<'_> {
                     .ok_or_else(|| QueryError::new(format!("unknown table {unit}")))?;
                 let filter = condition
                     .as_ref()
-                    .map(|c| self.condition(c, &Scope::rows(table, alias)))
+                    .map(|c| self.condition(c, &typing.source))
                     .transpose()?;
                 (Source::Table { table, alias }, filter)
             }
@@ -596,11 +510,11 @@ impl Binder<'_> {
                 None,
             ),
             syntax::Source::RecallLast { unit, condition } => {
-                let alias = Alias::from_name(&unit)
+                Alias::from_name(&unit)
                     .ok_or_else(|| QueryError::new("missing recorded session relation"))?;
                 let filter = condition
                     .as_ref()
-                    .map(|c| self.condition(c, &Scope::rows(Table::Events, Some(alias))))
+                    .map(|c| self.condition(c, &typing.source))
                     .transpose()?;
                 (Source::RecallLast { filter }, None)
             }
@@ -663,15 +577,19 @@ impl Binder<'_> {
                 ));
             }
         };
-        let mut scope = Scope::rows(source.table(), source.alias());
         let mut stages = Vec::new();
-        let mut group_input: Option<Scope> = None;
-        for stage in input.stages {
+        for (index, stage) in input.stages.into_iter().enumerate() {
+            let stage_path = path.field("stages").index(index).field("kind");
+            let scope = typing
+                .stages
+                .get(index)
+                .map(|stage| &stage.before)
+                .ok_or_else(|| QueryError::new("bound stage scope is missing"))?;
             use syntax::StageKind as S;
             let at = stage.span.start;
             match stage.kind {
                 S::Where { condition } => {
-                    stages.push(Stage::Where(self.condition(&condition, &scope)?))
+                    stages.push(Stage::Where(self.condition(&condition, scope)?))
                 }
                 S::AsOf { value, sequence } => stages.push(Stage::AsOf(if sequence {
                     AsOf::Seq(
@@ -683,25 +601,23 @@ impl Binder<'_> {
                     AsOf::Time(self.instant(&value, at)?)
                 })),
                 S::Group { keys } => {
-                    group_input = Some(scope.clone());
                     let keys = keys
                         .iter()
-                        .map(|k| self.operand(k, &scope, at))
+                        .map(|k| self.operand(k, scope, at))
                         .collect::<Result<Vec<_>, _>>()?;
                     let group = Group {
                         keys,
                         aggregates: vec![],
                         fill: None,
                     };
-                    scope = Scope::Grouped(group_columns(&group));
                     stages.push(Stage::Group(group));
                 }
                 S::Aggregate { aggregates } => {
                     // Aggregate fields refer to the relation entering a group.
-                    let rows = group_input.take().unwrap_or_else(|| scope.clone());
                     let aggregates = aggregates
                         .into_iter()
-                        .map(|a| {
+                        .enumerate()
+                        .map(|(aggregate_index, a)| {
                             let function = match a.function {
                                 syntax::AggregateFunction::Count => AggFn::Count,
                                 syntax::AggregateFunction::Sum => AggFn::Sum,
@@ -719,11 +635,21 @@ impl Binder<'_> {
                             if a.fields.len() > 1 {
                                 return Err(QueryError::at(at, "aggregate takes one field"));
                             }
-                            let field = a
-                                .fields
-                                .first()
-                                .map(|f| self.resolve(f, &rows, at))
-                                .transpose()?;
+                            let field =
+                                a.fields
+                                    .first()
+                                    .map(|_| {
+                                        let operand_path = stage_path
+                                            .field("aggregates")
+                                            .index(aggregate_index)
+                                            .field("fields")
+                                            .index(0);
+                                        let info = self.typing.operand(&operand_path).ok_or_else(
+                                            || QueryError::new("bound aggregate input is missing"),
+                                        )?;
+                                        self.resolve_info(&info.result, at)
+                                    })
+                                    .transpose()?;
                             if matches!(function, AggFn::Sum | AggFn::Avg)
                                 && let Some(FieldRef::Field(f)) = &field
                                 && !matches!(f.ty, FieldType::Integer | FieldType::Number)
@@ -737,14 +663,12 @@ impl Binder<'_> {
                         && g.aggregates.is_empty()
                     {
                         g.aggregates = aggregates;
-                        scope = Scope::Grouped(group_columns(g));
                     } else {
                         let g = Group {
                             keys: vec![],
                             aggregates,
                             fill: None,
                         };
-                        scope = Scope::Grouped(group_columns(&g));
                         stages.push(Stage::Group(g));
                     }
                 }
@@ -756,11 +680,10 @@ impl Binder<'_> {
                         from: self.ctx.now,
                         to: self.ctx.now,
                     });
-                    scope = Scope::Grouped(group_columns(g));
                 }
                 S::Sort { keys } => {
                     let keys=keys.into_iter().map(|k| {
-                    let key=if matches!(&k.operand,syntax::Operand::Field{name} if name=="rank") {SortBy::Rank} else {SortBy::Operand(self.operand(&k.operand,&scope,at)?)};
+                    let key=if matches!(&k.operand,syntax::Operand::Field{name} if name=="rank") {SortBy::Rank} else {SortBy::Operand(self.operand(&k.operand,scope,at)?)};
                     Ok(SortKey{key,descending:k.descending})
                 }).collect::<Result<Vec<_>,QueryError>>()?;
                     stages.push(Stage::Sort(keys));
@@ -774,7 +697,7 @@ impl Binder<'_> {
                 S::Fields { fields } => stages.push(Stage::Fields(
                     fields
                         .iter()
-                        .map(|f| self.resolve(f, &scope, at))
+                        .map(|f| self.resolve(f, scope, at))
                         .collect::<Result<Vec<_>, _>>()?,
                 )),
                 S::Temporal {
@@ -790,10 +713,8 @@ impl Binder<'_> {
                             "all temporal matches are not built",
                         ));
                     }
-                    let Scope::Rows { columns, .. } = &mut scope else {
-                        return Err(QueryError::at(at, "time joins apply before grouping"));
-                    };
-                    let inner = self.query(*query)?;
+                    let inner_path = stage_path.field("query");
+                    let inner = self.query(*query, &inner_path)?;
                     if !matches!(inner.source, Source::Table { .. })
                         || inner.stages.iter().any(|s| matches!(s, Stage::Group(_)))
                     {
@@ -812,25 +733,6 @@ impl Binder<'_> {
                     {
                         return Err(QueryError::at(at, "time join needs within duration"));
                     }
-                    let n = columns
-                        .iter()
-                        .filter(|c| {
-                            ["near", "during", "containing"].iter().any(|base| {
-                                c.as_str() == *base || c.starts_with(&format!("{base}_"))
-                            })
-                        })
-                        .count();
-                    let suffix = if n == 0 {
-                        String::new()
-                    } else {
-                        format!("_{}", n + 1)
-                    };
-                    let names: &[&str] = match kind {
-                        JoinKind::Near | JoinKind::Before | JoinKind::After => &["near", "offset"],
-                        JoinKind::During => &["during"],
-                        JoinKind::Containing => &["containing"],
-                    };
-                    columns.extend(names.iter().map(|name| format!("{name}{suffix}")));
                     stages.push(Stage::Join(Join {
                         kind,
                         inner: Box::new(inner),
@@ -874,20 +776,6 @@ impl Binder<'_> {
         Ok(q)
     }
 }
-fn group_columns(group: &Group) -> Vec<String> {
-    let aggregates = if group.aggregates.is_empty() {
-        vec!["count".to_owned()]
-    } else {
-        group.aggregates.iter().map(Aggregate::column).collect()
-    };
-    group
-        .keys
-        .iter()
-        .map(Operand::column)
-        .chain(aggregates)
-        .chain(group.fill.iter().map(|_| "coverage".into()))
-        .collect()
-}
 fn has_words(e: &Expr) -> bool {
     match e {
         Expr::Words(_) => true,
@@ -895,22 +783,67 @@ fn has_words(e: &Expr) -> bool {
         _ => false,
     }
 }
-pub(super) fn infer(raw: &str, quoted: bool, op: Op) -> Value {
-    if quoted {
-        return Value::Text(raw.to_string());
-    }
-    if let Ok(i) = raw.parse::<i64>() {
-        return Value::Integer(i);
-    }
-    if let Ok(n) = raw.parse::<f64>()
-        && n.is_finite()
-    {
-        return Value::Number(n);
-    }
-    match raw {
-        "true" => Value::Bool(true),
-        "false" => Value::Bool(false),
-        _ if raw.contains('*') && matches!(op, Op::Eq | Op::Ne) => Value::Glob(raw.to_string()),
-        _ => Value::Text(raw.to_string()),
-    }
+
+pub(super) fn time_fn_value(
+    ctx: &Context,
+    func: TimeFn,
+    raw: &str,
+    at: usize,
+) -> Result<Value, QueryError> {
+    let today = ctx.today();
+    let date_word = |w: &str| -> Option<jiff::civil::Date> {
+        match w {
+            "today" => Some(today),
+            "yesterday" => today.yesterday().ok(),
+            _ => time::date(w),
+        }
+    };
+    let bad = |what: &str| QueryError::at(at, format!("{}() takes {what}", func.name()));
+    Ok(match func {
+        TimeFn::Day => Value::Text(date_word(raw).ok_or_else(|| bad("a date"))?.to_string()),
+        TimeFn::Week => {
+            let d = date_word(raw).ok_or_else(|| bad("a date"))?;
+            let monday = d
+                .checked_sub(jiff::Span::new().days(d.weekday().to_monday_zero_offset() as i64))
+                .map_err(|_| bad("a date in range"))?;
+            Value::Text(monday.to_string())
+        }
+        TimeFn::Hour => {
+            let h: i64 = raw.parse().map_err(|_| bad("an hour, 0 to 23"))?;
+            if !(0..=23).contains(&h) {
+                return Err(bad("an hour, 0 to 23"));
+            }
+            Value::Integer(h)
+        }
+        TimeFn::Weekday => {
+            const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+            let short: String = raw.to_ascii_lowercase().chars().take(3).collect();
+            if !DAYS.contains(&short.as_str()) {
+                return Err(bad("a weekday: mon, tue, wed, thu, fri, sat, sun"));
+            }
+            Value::Text(short)
+        }
+        TimeFn::Month => {
+            if raw == "today" || raw == "now" {
+                Value::Text(format!("{:04}-{:02}", today.year(), today.month()))
+            } else {
+                let (y, m) = time::month(raw).ok_or_else(|| bad("a month: 2026-08"))?;
+                Value::Text(format!("{y:04}-{m:02}"))
+            }
+        }
+        TimeFn::MonthDay => {
+            if let Some(d) = date_word(raw) {
+                Value::Text(format!("{:02}-{:02}", d.month(), d.day()))
+            } else {
+                let ok = raw.len() == 5
+                    && raw.as_bytes()[2] == b'-'
+                    && raw[..2].parse::<u8>().is_ok_and(|m| (1..=12).contains(&m))
+                    && raw[3..].parse::<u8>().is_ok_and(|d| (1..=31).contains(&d));
+                if !ok {
+                    return Err(bad("a calendar day: 09-14, or a date"));
+                }
+                Value::Text(raw.to_string())
+            }
+        }
+    })
 }

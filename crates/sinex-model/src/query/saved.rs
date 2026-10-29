@@ -76,8 +76,8 @@ fn check_value(value: &syntax::Value, ty: ParameterType) -> Result<(), QueryErro
         .ok_or_else(|| QueryError::new("parameter needs one scalar value"))?;
     let valid = match ty {
         ParameterType::Text => true,
-        ParameterType::Integer => raw.parse::<i64>().is_ok(),
-        ParameterType::Number => raw.parse::<f64>().is_ok_and(f64::is_finite),
+        ParameterType::Integer => query_language::number::is_integer(raw),
+        ParameterType::Number => query_language::number::is_decimal(raw),
         ParameterType::Bool => matches!(raw, "true" | "false"),
         ParameterType::Time => raw.parse::<jiff::Timestamp>().is_ok(),
         ParameterType::Duration => time::duration(raw).is_some(),

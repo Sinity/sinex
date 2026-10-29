@@ -167,7 +167,9 @@ impl Requests {
         if !epoch.ready() {
             return Err(unavailable("current privacy projection is not ready"));
         }
-        let tombstone=sinex_store::commit_log::erased_reading(&mut conn,id).await.map_err(unavailable)?;
+        let tombstone = sinex_store::commit_log::erased_reading(&mut conn, id)
+            .await
+            .map_err(unavailable)?;
         if let Some(erased) = tombstone {
             if !grant.kind(&erased.event_type) {
                 return Err(denied());

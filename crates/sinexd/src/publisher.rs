@@ -338,7 +338,13 @@ async fn publish_chunk(
     for entry in entries {
         let (message, subject, id, event) = match &entry.change {
             commit_log::Change::Event(event) => {
-                let class=sinex_store::privacy::projection::publication_class(&mut tx,event.id,policy.active).await.map_err(|error|error.to_string())?;
+                let class = sinex_store::privacy::projection::publication_class(
+                    &mut tx,
+                    event.id,
+                    policy.active,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
                 let class = class.ok_or("privacy_projection_unavailable")?;
                 (
                     Confirmed::EventReference {
@@ -362,7 +368,13 @@ async fn publish_chunk(
                         operation: change.operation_id.map(OperationId),
                     })
                 };
-                let class=sinex_store::privacy::projection::lifecycle_publication_class(&mut tx,change.event_id,policy.active).await.map_err(|error|error.to_string())?;
+                let class = sinex_store::privacy::projection::lifecycle_publication_class(
+                    &mut tx,
+                    change.event_id,
+                    policy.active,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
                 let class = class.ok_or("privacy_projection_unavailable")?;
                 (
                     message,

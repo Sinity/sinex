@@ -583,7 +583,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#551657b3ceb9f5d4503639afd270a17edc794a4e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#199b5d27ca87f41628b7037c611a39149e5f7c53"
 dependencies = [
  "blake3",
  "clap",
@@ -601,7 +601,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#551657b3ceb9f5d4503639afd270a17edc794a4e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#199b5d27ca87f41628b7037c611a39149e5f7c53"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1041,7 +1041,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#551657b3ceb9f5d4503639afd270a17edc794a4e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#199b5d27ca87f41628b7037c611a39149e5f7c53"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -1909,7 +1909,7 @@ dependencies = [
 [[package]]
 name = "query-language"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#551657b3ceb9f5d4503639afd270a17edc794a4e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#199b5d27ca87f41628b7037c611a39149e5f7c53"
 dependencies = [
  "blake3",
  "jiff",
@@ -2418,7 +2418,7 @@ dependencies = [
 [[package]]
 name = "signals"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#551657b3ceb9f5d4503639afd270a17edc794a4e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#199b5d27ca87f41628b7037c611a39149e5f7c53"
 dependencies = [
  "blake3",
  "jiff",

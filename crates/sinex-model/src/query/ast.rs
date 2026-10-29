@@ -171,6 +171,34 @@ pub enum FieldRef {
     },
     /// A column of a grouped stage: a key or an aggregate.
     Group(String),
+    /// A shared-bound output column whose physical type is refreshed by binding.
+    TypedGroup(BoundColumn),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoundColumn {
+    info: std::sync::Arc<query_language::scope::FieldInfo>,
+    physical: Option<super::FieldType>,
+}
+impl BoundColumn {
+    pub(super) fn new(info: query_language::scope::FieldInfo) -> Self {
+        Self {
+            info: std::sync::Arc::new(info),
+            physical: None,
+        }
+    }
+    pub fn name(&self) -> &str {
+        &self.info.field.name
+    }
+    pub fn field_type(&self) -> Option<super::FieldType> {
+        self.physical
+    }
+    pub(super) fn info(&self) -> &query_language::scope::FieldInfo {
+        &self.info
+    }
+    pub(super) fn bind(&mut self, ty: super::FieldType) {
+        self.physical = Some(ty);
+    }
 }
 
 impl FieldRef {
@@ -181,6 +209,7 @@ impl FieldRef {
                 format!("payload.{}", path.join("."))
             }
             FieldRef::Group(name) => name.clone(),
+            FieldRef::TypedGroup(column) => column.name().to_owned(),
         }
     }
 }

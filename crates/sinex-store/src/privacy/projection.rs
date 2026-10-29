@@ -389,14 +389,22 @@ pub async fn raw_event_allowed(conn: &mut PgConnection, event: Uuid, basis: i64)
 
 /// The publisher routes references only through a complete projection at its
 /// pinned active epoch. Missing state never falls back to the original class.
-pub async fn publication_class(conn:&mut PgConnection,event:Uuid,epoch:i64)->Result<Option<String>>{
+pub async fn publication_class(
+    conn: &mut PgConnection,
+    event: Uuid,
+    epoch: i64,
+) -> Result<Option<String>> {
     Ok(sqlx::query_scalar!(r#"SELECT class AS "class?" FROM privacy.event_outputs WHERE event_id=$1 AND epoch=$2 AND state='complete'"#,event,epoch)
         .fetch_optional(conn).await?.flatten())
 }
 
 /// Lifecycle controls retain the erased reading's class when no event survives.
 /// A surviving reading still requires its current complete projection.
-pub async fn lifecycle_publication_class(conn:&mut PgConnection,event:Uuid,epoch:i64)->Result<Option<String>>{
+pub async fn lifecycle_publication_class(
+    conn: &mut PgConnection,
+    event: Uuid,
+    epoch: i64,
+) -> Result<Option<String>> {
     Ok(sqlx::query_scalar!(r#"SELECT CASE WHEN e.id IS NULL THEN t.class WHEN o.epoch=$2 AND o.state='complete' THEN o.class END AS "class?" FROM (SELECT $1::uuid AS id) wanted LEFT JOIN core.events e ON e.id=wanted.id LEFT JOIN privacy.event_outputs o ON o.event_id=wanted.id LEFT JOIN core.event_tombstones t ON t.event_id=wanted.id"#,event,epoch)
         .fetch_one(conn).await?)
 }

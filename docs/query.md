@@ -83,9 +83,16 @@ sinexctl 'events where event_type = command.executed sum(payload.duration_ns)'
   the query.
 - `sum` and `avg` need numbers; `min` and `max` need ordered scalar values. Numeric
   payload fields sort numerically.
-- Text, boolean, numeric and timestamp comparisons keep their declared types. A
-  comparison on a text list matches any member; `!=` excludes every matching member.
+- Text, boolean, numeric and timestamp comparisons keep their declared types. Quoting
+  changes token boundaries, not value types: text such as `001` retains its spelling.
+  Numeric literals retain exact decimal spelling through SQL binding.
+  Grouped columns and expanded saved queries retain the shared binder's output types.
+  A comparison on a text list matches any member; `!=` excludes every matching member.
   An empty list has no matching member.
+- `source` and `event_type` accept `*` identifier patterns with either quoted or unquoted
+  spelling. Payload equality treats `*` literally; `~` and `^` take literal operands.
+  A dynamic JSON field keeps the original scalar until execution knows the current
+  projected value's type; incompatible and absent values stay unknown.
 - An unknown value stays unknown (null), and an unknown list stays unknown.
 - Completion offers field names with their types at each position.
 
@@ -335,3 +342,6 @@ that route ([cross-system queries](https://github.com/Sinity/polylogue/blob/mast
   that context or is refused; it is never silently run at the outer context.
 - **sql-under-output-rules**: `sql` returns the same rule effects as every other surface
   and cannot read a withheld field or key.
+
+
+A scalar's quotes preserve its spelling, not a second comparison mode. Source and event-type identifier patterns use their declared wildcard semantics with either spelling; payload equality compares literal values, including a literal `*`. Contains and prefix operators take literal text. Declared scalar types govern conversion. A schemaless JSON field instead uses the scalar type of each current projected value: numeric rows compare numerically, strings preserve exact spelling such as `001`, and boolean equality uses canonical `true` or `false`. Missing, non-scalar or incompatible values produce unknown truth, including beneath `NOT`; no comparison reads the private original in place of a current projection.

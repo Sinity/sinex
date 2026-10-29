@@ -168,6 +168,8 @@ pub struct Configuration {
     pub project_attribution: serde_json::Value,
     #[serde(default)]
     pub rhythm: serde_json::Value,
+    pub signals: serde_json::Value,
+    pub model_accounting: serde_json::Value,
 }
 
 impl Configuration {
@@ -188,3 +190,6 @@ impl Configuration {
         context
     }
 }
+
+#[cfg(test)]
+mod tests;
