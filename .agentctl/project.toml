@@ -32,7 +32,9 @@ description = "All Rust tests under nextest; each database test clones the schem
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 pool = "bulk"
 result = "exit"
-timeout_seconds = 900
+# A measured 524s cold build plus a 512s complete runtime exceeds 900s.
+# This outer budget preserves the original 120s per-test deadlines.
+timeout_seconds = 1800
 scratch = "tmpfs"
 cache = "none"
 cap = "cargo"
