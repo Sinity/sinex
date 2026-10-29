@@ -572,75 +572,7 @@ async fn rows_that_change_are_read_to_their_final_values() {
         // Keep completed stage measurements available even if the child
         // never returns to the fixture's output collector.
         .stderr(Stdio::inherit());
-    let mut child = tokio::task::spawn_blocking(move || finish(&mut initial));
-    let observed_at = tokio::time::Instant::now();
-    let joined = if let Ok(mut observer) = PgConnection::connect(&t.url).await {
-        let mut seconds = 1u64;
-        loop {
-            tokio::select! {
-                joined = &mut child => break joined,
-                _ = tokio::time::sleep_until(observed_at + std::time::Duration::from_secs(seconds)) => {
-                    // Only this synthetic database is observed. Never emit SQL,
-                    // parameters or connection strings from pg_stat_activity.
-                    let sample = sqlx::query_scalar::<_, serde_json::Value>(r#"
-                        SELECT coalesce(jsonb_agg(jsonb_build_object(
-                            'pid',a.pid,'state',a.state,
-                            'wait_type',a.wait_event_type,'wait_event',a.wait_event,
-                            'blockers',pg_blocking_pids(a.pid),
-                            'writer_claim',EXISTS(SELECT 1 FROM pg_locks l
-                                WHERE l.pid=a.pid AND l.locktype='advisory' AND l.granted
-                                AND l.classid=(($1::bigint >> 32) & 4294967295)::oid
-                                AND l.objid=($1::bigint & 4294967295)::oid AND l.objsubid=1),
-                            'category',CASE
-                                WHEN a.query ~* '^[[:space:]]*COPY' THEN 'copy'
-                                WHEN a.query ~* '^[[:space:]]*INSERT' THEN 'insert'
-                                WHEN a.query ~* '^[[:space:]]*UPDATE' THEN 'update'
-                                WHEN a.query ~* '^[[:space:]]*DELETE' THEN 'delete'
-                                WHEN a.query ~* '^[[:space:]]*SELECT' THEN 'select'
-                                WHEN a.query ~* '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK)' THEN 'transaction'
-                                ELSE 'other' END,
-                            'relations',jsonb_build_object(
-                                'admission_stage',a.query ILIKE '%admission_stage%',
-                                'live_equivalence',a.query ILIKE '%live_equivalence%',
-                                'search_text',a.query ILIKE '%search_text%',
-                                'blob_extents',a.query ILIKE '%blob_extents%',
-                                'materials',a.query ILIKE '%raw.materials%',
-                                'dirty',a.query ILIKE '%derivation.dirty%',
-                                'event_outputs',a.query ILIKE '%event_outputs%',
-                                'kind_registry',a.query ILIKE '%registry.event_types%',
-                                'source_registry',a.query ILIKE '%source_declarations%'
-                            )
-                        ) ORDER BY a.pid),'[]'::jsonb)
-                        FROM pg_stat_activity a
-                        WHERE a.datname=current_database() AND a.pid<>pg_backend_pid()
-                    "#).bind(sinex_schema::WRITER_LOCK).fetch_one(&mut observer).await;
-                    match sample {
-                        Ok(backends) => eprintln!("{}",serde_json::json!({"native_writer_wait":{
-                            "sample_seconds":seconds,"backends":backends
-                        }})),
-                        Err(_) => {
-                            eprintln!("{}",serde_json::json!({"native_writer_wait":{
-                                "sample_seconds":seconds,"observer":"unavailable"
-                            }}));
-                            break child.await;
-                        }
-                    }
-                    seconds = if seconds < 4 {seconds + 1} else {seconds.saturating_mul(2)};
-                }
-            }
-        }
-    } else {
-        eprintln!(
-            "{}",
-            serde_json::json!({"native_writer_wait":{"observer":"unavailable"}})
-        );
-        child.await
-    };
-    match joined {
-        Ok(_) => {}
-        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-        Err(error) => panic!("initial backfill task stopped: {error}"),
-    }
+    finish(&mut initial);
     eprintln!("mutable rows: initial backfill committed");
 
     rows[0].2 = 7_000_000_000;
