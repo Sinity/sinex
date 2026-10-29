@@ -492,6 +492,8 @@ pub(super) async fn mark_inputs_dirty(
     let mut ranges = Vec::new();
     // No event/projection membership changes during this invocation. Separate
     // calls before and after projection each execute their own exact windows.
+    // keys.keys maps a selected input to every registered producer target;
+    // sharing a read never narrows that complete producer/version mapping.
     let mut nearby = std::collections::HashMap::<crate::derivations::Window, usize>::new();
     let mut repeated_marks = 0;
     let policy_ready = crate::privacy::projection::epoch(conn).await?.ready();

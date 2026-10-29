@@ -216,3 +216,62 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
         "direct trigger keys and all distinct-window unions are preserved without extra scopes"
     );
 }
+
+struct TwoProducers;
+const PRODUCERS: [(&str, u32); 2] = [("fixture.nearby_first", 2), ("fixture.nearby_second", 7)];
+impl DirtyKeys for TwoProducers {
+    fn keys(&self, input: &KeyInput<'_>) -> Vec<(String, Value)> {
+        PRODUCERS
+            .iter()
+            .map(|(name, version)| {
+                (
+                    (*name).into(),
+                    json!({"id":input.payload["native_id"],"producer_version":version}),
+                )
+            })
+            .collect()
+    }
+    fn nearby_inputs(&self, input: &KeyInput<'_>) -> Vec<Window> {
+        if input.payload["intent"] != "trigger" {
+            return vec![];
+        }
+        // Both selected producer versions offer this identical window. The
+        // store's global keys mapping must still mark both producer targets.
+        PRODUCERS.iter().map(|_| window("A", 0, 10)).collect()
+    }
+}
+
+#[devkit::test]
+async fn shared_neighbour_window_marks_every_producer_version_target(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_one(&mut conn, &batch(vec![command(1, "A", 4, false, false)])).await;
+    let mut tx = conn.begin().await.unwrap();
+    let outcome = tx
+        .admit(
+            &batch(vec![command(200, "trigger", 200, true, false)]),
+            &TwoProducers,
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT derivation,key->>'id',(key->>'producer_version')::bigint FROM derivation.dirty WHERE derivation=ANY($1) ORDER BY derivation,key->>'id'"
+    ).bind(PRODUCERS.iter().map(|(name,_)| *name).collect::<Vec<_>>())
+        .fetch_all(&mut *conn).await.unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("fixture.nearby_first".into(), "k1".into(), 2),
+            ("fixture.nearby_first".into(), "k200".into(), 2),
+            ("fixture.nearby_second".into(), "k1".into(), 7),
+            ("fixture.nearby_second".into(), "k200".into(), 7),
+        ],
+        "identical reads preserve both producer/version mappings and direct input keys"
+    );
+    assert_eq!(
+        outcome.dirty_keys, 12,
+        "before and after projection each retain two direct offers plus both producers' two neighbouring offers"
+    );
+}
