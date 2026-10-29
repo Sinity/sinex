@@ -8,6 +8,13 @@ fail-fast = false
 [test-groups]
 crash = { max-threads = 2 }
 
+# These scenarios own two complete histories and their backfill/replay
+# continuations. Reserve the shared test services globally while they run.
+[[profile.default.overrides]]
+filter = "binary_id(=sinexd::crash) & (test(=backfill_killed_between_atuin_batches) | test(=backfill_killed_between_zsh_batches))"
+test-group = "crash"
+threads-required = "num-test-threads"
+
 [[profile.default.overrides]]
 filter = "binary(crash)"
 test-group = "crash"
