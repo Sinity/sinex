@@ -684,6 +684,12 @@ impl Ingest {
         for event in events {
             authority::event(&self.grants, producer, &event.kind.name, event.class)
                 .map_err(Check::Configuration)?;
+            // A bad identifier is durable content failure, not a transient
+            // database outage. PostgreSQL text parameters cannot contain NUL.
+            if event.kind.name.contains('\0') {
+                return Err(Check::Refused("event kind name contains NUL".into()));
+            }
+            event.kind.database_version().map_err(Check::Refused)?;
         }
         let references = events
             .iter()

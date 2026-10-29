@@ -547,6 +547,16 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             },
             "polylogue".into(),
         );
+        if name == "session" {
+            // The public query resolves payload paths from this source's
+            // registered schema, independently of its payload values.
+            d.payload_schema = Some(json!({
+                "type":"object",
+                "properties":{"session":{"type":"string"},"origin":{"type":"string"}},
+                "required":["session","origin"],
+                "additionalProperties":true
+            }));
+        }
         d.key_rule = Some(sinex_model::kinds::KeyRule::Fields {
             fields: vec![key.into()],
         });
@@ -1539,6 +1549,20 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
         assert_eq!(ack.refusal_kind(), Some(expected), "{ack:?}");
         if name == "nul-type" {
             assert_eq!(ack.outcome["event_types"], json!(["not.\\0declared"]));
+            let mut repeated = imported(first, 0, "synthetic");
+            repeated.kind.name = "not.\0declared".into();
+            let retry = Ingress::Events {
+                source: Some(test_source("session")),
+                coverage: None,
+                frame: format!("a/events/{first}/{name}"),
+                events: vec![repeated],
+                failures: vec![],
+            };
+            assert_eq!(
+                h.send("session", &retry).await,
+                ack,
+                "durable malformed-content retry"
+            );
         }
         assert_eq!(
             ack.outcome["failures"],
@@ -1566,6 +1590,21 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
         0
     );
     assert_eq!(h.count("SELECT count(*) FROM core.events").await, 0);
+    let accepted = h
+        .send(
+            "session",
+            &Ingress::Events {
+                source: Some(test_source("session")),
+                coverage: None,
+                frame: "valid-after-malformed-content".into(),
+                events: vec![imported(second, 0, "valid registered content")],
+                failures: vec![],
+            },
+        )
+        .await;
+    assert_eq!(accepted.refusal, None, "{accepted:?}");
+    assert_eq!(accepted.admitted.len(), 1);
+    assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 4);
 }
 
 #[devkit::test]
@@ -1818,6 +1857,9 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
             .refusal_kind(),
         Some(FrameRefusal::Malformed)
     );
+    sinex_store::privacy::projection::ensure_current(&mut conn)
+        .await
+        .unwrap();
     let api = crate::api::Api {
         derivations: Default::default(),
         source_config: Default::default(),
@@ -1831,22 +1873,22 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         unlock: Default::default(),
         host: "test".into(),
     };
-    let sinex_protocol::Reply::Ok { result } = api
+    let status = api
         .call(
             sinex_protocol::Request::Status,
             sinex_protocol::Access::Read,
         )
-        .await
-    else {
-        panic!("status refused")
+        .await;
+    let sinex_protocol::Reply::Ok { result } = status else {
+        panic!("status refused: {status:?}")
     };
     assert_eq!(
         result["ingress_refusals_24h"],
         json!([
-            {"producer":"node","source":"a","event_type":"not.declared","refusal_kind":"content","frames":1},
-            {"producer":"node","source":"b","event_type":null,"refusal_kind":"bytes","frames":1},
-            {"producer":"node","source":"d","event_type":null,"refusal_kind":"configuration","frames":1},
-            {"producer":"other-node","source":"c","event_type":"command.imported","refusal_kind":"malformed","frames":1},
+            {"producer":"node","source":"node","event_type":"not.declared","refusal_kind":"content","frames":1},
+            {"producer":"node","source":"node","event_type":null,"refusal_kind":"configuration","frames":1},
+            {"producer":"node","source":null,"event_type":null,"refusal_kind":"bytes","frames":1},
+            {"producer":"other-node","source":"other-node","event_type":"command.imported","refusal_kind":"malformed","frames":1},
             {"producer":"unknown-node","source":null,"event_type":null,"refusal_kind":"malformed","frames":1},
         ])
     );

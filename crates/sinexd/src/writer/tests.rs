@@ -619,7 +619,25 @@ async fn reconnect_reclaims_and_reloads_privacy(db: devkit::pg::TestDatabase) {
         .fetch_one(&mut changes)
         .await
         .unwrap();
-    assert_eq!(class, "guarded");
+    assert_eq!(class, "open", "source originals retain their offered class");
+    let projected: String = sqlx::query_scalar("SELECT class FROM privacy.event_outputs WHERE event_id=$1 AND epoch=(SELECT desired_epoch FROM privacy.policy_state WHERE id)")
+        .bind(outcome.admitted_ids[0].0).fetch_one(&mut changes).await.unwrap();
+    assert_eq!(
+        projected, "guarded",
+        "reconnected writer loads the current source floor"
+    );
+    sinex_store::privacy::projection::ensure_current(&mut changes)
+        .await
+        .unwrap();
+    sinex_store::query::set_grants(&mut changes, "guarded")
+        .await
+        .unwrap();
+    let visible: String = sqlx::query_scalar("SELECT class FROM visible_events WHERE id=$1")
+        .bind(outcome.admitted_ids[0].0)
+        .fetch_one(&mut changes)
+        .await
+        .unwrap();
+    assert_eq!(visible, "guarded");
     assert!(outcome.timings.contains_key("queue"));
     assert!(outcome.timings.contains_key("commit"));
     drop(handle);
