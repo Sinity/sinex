@@ -110,6 +110,7 @@ fn activitywatch(app: &str, title: &str, from: f64, to: f64) -> Event {
 fn chromium(url: &str, secs: f64) -> Event {
     captured(
         &BrowserVisit {
+            database_generation: "fixture-host:1:10".into(),
             profile: "google-chrome/Default".into(),
             visit_id: secs as i64,
             url: Some(url.into()),

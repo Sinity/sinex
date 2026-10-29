@@ -93,10 +93,112 @@ fn profiles_are_named_from_their_path() {
     );
     let path = history();
     let root = path.parent().unwrap().parent().unwrap();
-    let names: Vec<String> = profiles(root).into_iter().map(|(n, _)| n).collect();
+    let names: Vec<String> = profiles(root)
+        .unwrap()
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     let browser = root.file_name().unwrap().to_string_lossy();
     assert_eq!(
         names,
         vec![format!("{browser}/Default"), format!("{browser}/Profile 7")]
     );
+}
+
+#[devkit::test]
+fn a_declared_history_file_keeps_the_same_profile_as_directory_discovery() {
+    let path = history();
+    let root = path.parent().unwrap().parent().unwrap();
+    let direct = profiles(&path).unwrap();
+    assert_eq!(direct.len(), 1);
+    assert!(profiles(root).unwrap().contains(&direct[0]));
+    let settings = sinex_source_core::Settings::new("fixture-host");
+    let bindings = (FORMAT.plan.unwrap())(&path, &settings).unwrap();
+    assert_eq!(bindings.len(), 2);
+    assert!(bindings.iter().all(|binding| binding.input == path));
+}
+
+#[devkit::test]
+fn an_unreadable_profile_roster_is_an_error_instead_of_empty_coverage() {
+    let missing = std::env::temp_dir().join(format!("absent-browser-{}", uuid::Uuid::now_v7()));
+    assert!(profiles(&missing).unwrap_err().contains("absent-browser"));
+    let path = history();
+    let invalid = path.with_file_name("not-a-history-database");
+    std::fs::write(&invalid, b"fixture").unwrap();
+    assert!(
+        profiles(&invalid)
+            .unwrap_err()
+            .contains("expected a Chromium History")
+    );
+}
+
+#[devkit::test]
+fn old_material_without_an_observed_database_generation_is_explicitly_unknown() {
+    let manifest = sinex_model::Manifest::from_json(json!({"path":"browser/Default/History"}));
+    let row = json!({"id":1,"visit_time":NOW_WEBKIT,"from_visit":0,"transition":0});
+    assert!(
+        VisitParser
+            .parse(row.as_object().unwrap(), &(), &context(&manifest))
+            .is_err()
+    );
+}
+
+#[devkit::test]
+fn committed_wal_visits_survive_restart_and_in_place_duration_updates() {
+    use std::os::unix::fs::FileExt;
+    let path = history();
+    let writer = Connection::open(&path).unwrap();
+    writer
+        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+        .unwrap();
+    writer
+        .execute_batch(&format!(
+            "INSERT INTO visits VALUES(12,1,{},11,0,0,0,0)",
+            NOW_WEBKIT + 2
+        ))
+        .unwrap();
+    let d = visits_driver(path, "fixture-host".into());
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let m = first.material.as_ref().unwrap();
+    let sinex_source_core::drivers::StoredBytes::FramedFile(file) = m.stored.as_ref().unwrap()
+    else {
+        panic!("stored row bytes")
+    };
+    let mut bytes = vec![0; file.metadata().unwrap().len() as usize];
+    file.read_exact_at(&mut bytes, 0).unwrap();
+    let row: Map<String, Value> =
+        serde_json::from_slice(&bytes[m.records[2].0..m.records[2].1]).unwrap();
+    let (visit, ()) = VisitParser.parse(&row, &(), &context(&m.manifest)).unwrap();
+    assert_eq!(visit[0].visit_id, 12);
+    assert_eq!(visit[0].url.as_deref(), Some("https://a.example/"));
+    let cursor = (m.cursor_at)(bytes.len()).unwrap();
+    let mut restored = RowState::default();
+    restored.remember_rows(&bytes);
+    writer
+        .execute_batch("BEGIN; UPDATE visits SET visit_duration=2500000 WHERE id=12")
+        .unwrap();
+    let unchanged = d.poll(&cursor, &mut restored).unwrap();
+    assert!(
+        unchanged.material.is_none(),
+        "uncommitted duration is not captured"
+    );
+    writer.execute_batch("COMMIT").unwrap();
+    let updated = d
+        .poll(&unchanged.cursor_without_material, &mut restored)
+        .unwrap();
+    let next = updated.material.as_ref().unwrap();
+    assert_eq!(next.records.len(), 1);
+    let sinex_source_core::drivers::StoredBytes::FramedFile(file) = next.stored.as_ref().unwrap()
+    else {
+        panic!("stored row bytes")
+    };
+    let mut bytes = vec![0; file.metadata().unwrap().len() as usize];
+    file.read_exact_at(&mut bytes, 0).unwrap();
+    let row: Map<String, Value> = serde_json::from_slice(&bytes[..bytes.len() - 1]).unwrap();
+    let (updated, ()) = VisitParser
+        .parse(&row, &(), &context(&next.manifest))
+        .unwrap();
+    assert_eq!(updated[0].duration_us, Some(2_500_000));
+    assert_eq!(updated[0].database_generation, visit[0].database_generation);
 }

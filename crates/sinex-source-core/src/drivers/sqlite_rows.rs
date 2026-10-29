@@ -74,6 +74,10 @@ pub const ROWS_PER_PART: usize = 50_000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cursor {
+    /// Observed file identity within the input host. A replacement database
+    /// starts a new row namespace even when its path and row IDs repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_generation: Option<String>,
     pub max_rowid: i64,
     pub last_full_pass_ns: i64,
     /// The highest reading order given out, so every later reading is newer:
@@ -184,7 +188,7 @@ impl SqliteRows {
     }
 
     pub fn poll(&self, cursor: &Value, state: &mut RowState) -> Result<Acquired, DriverError> {
-        let previous: Cursor = if cursor.is_null() {
+        let mut previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
             serde_json::from_value(cursor.clone())
@@ -215,6 +219,21 @@ impl SqliteRows {
             Ok(f) => f,
             Err(e) => return Ok(unavailable(format!("{}: {e}", self.path.display()))),
         };
+        let generation = format!(
+            "{}:{}:{}",
+            self.host,
+            facts.device.expect("file device"),
+            facts.inode.expect("file inode")
+        );
+        if previous.database_generation.as_deref() != Some(&generation) {
+            state.hashes.clear();
+            state.polled = false;
+            previous = Cursor {
+                database_generation: Some(generation.clone()),
+                last_order: previous.last_order,
+                ..Cursor::default()
+            };
+        }
         let now = Timestamp::now();
         let now_ns = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
         let connection = match open_for_read(&self.path) {
@@ -340,6 +359,14 @@ impl SqliteRows {
         }
         drop(stmt);
         connection.execute_batch("COMMIT").ok();
+        match file_facts(&self.path) {
+            Ok(after) if after.device == facts.device && after.inode == facts.inode => {}
+            _ => {
+                return Ok(unavailable(
+                    "database generation changed during the read".into(),
+                ));
+            }
+        }
 
         let last_full = if full {
             now_ns
@@ -373,7 +400,7 @@ impl SqliteRows {
         // (in this poll or a later one) is always newer.
         let base = now_ns.max(previous.last_order.saturating_add(1));
         let manifest = sinex_model::Manifest::from_json(
-            json!({"role": "records", "path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database"}),
+            json!({"role": "records", "path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database", "database_generation": generation}),
         );
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
@@ -397,6 +424,7 @@ impl SqliteRows {
             );
         let memory = due.then(|| state.memory_with(&hashes));
         let scanned = Cursor {
+            database_generation: Some(generation),
             max_rowid,
             last_full_pass_ns: last_full,
             last_order: base.saturating_add(length as i64),

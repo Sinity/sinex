@@ -25,7 +25,7 @@ pub const VISITS: SourceSpec = SourceSpec {
     purpose: "browsing recall and the attention stream",
     class: Class::Open,
     parser: "chromium-visits",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["browser.visit"],
     framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
@@ -37,7 +37,7 @@ pub const URLS: SourceSpec = SourceSpec {
     purpose: "browsing recall and page titles",
     class: Class::Open,
     parser: "chromium-urls",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["browser.url"],
     framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
@@ -63,6 +63,12 @@ fn profile(context: &RecordContext<'_>) -> Result<String, RecordError> {
         .path()
         .map(profile_of)
         .ok_or_else(|| RecordError::new("a Chromium row needs its History path"))
+}
+
+fn database_generation(context: &RecordContext<'_>) -> Result<String, RecordError> {
+    context.manifest.detail("database_generation").as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| RecordError::new("Chromium database generation is unknown; retain this material and establish its original generation before replay"))
 }
 
 const VISIT_KNOWN: &[&str] = &[
@@ -97,6 +103,7 @@ impl Parser for VisitParser {
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let payload = BrowserVisit {
+            database_generation: database_generation(context)?,
             profile: profile(context)?,
             visit_id: fields::int(row, "id")?,
             url: fields::optional_text(row, "_url"),
@@ -137,6 +144,7 @@ impl Parser for UrlParser {
     ) -> Result<(Vec<BrowserUrl>, ()), RecordError> {
         let last = fields::int(row, "last_visit_time")?;
         let payload = BrowserUrl {
+            database_generation: database_generation(context)?,
             profile: profile(context)?,
             url_id: fields::int(row, "id")?,
             url: fields::text(row, "url")?,
@@ -222,20 +230,43 @@ pub fn urls_driver(history: PathBuf, host: String) -> SqliteRows {
 /// Every profile under a browser's user-data directory
 /// (`~/.config/google-chrome`, `~/.config/chromium`): each directory holding
 /// a `History` database, named `<browser dir>/<profile dir>`.
-fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
-    let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(user_data)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let history = entry.path().join("History");
-            history
-                .is_file()
-                .then(|| (profile_of(&history.display().to_string()), history))
-        })
-        .collect();
+fn profiles(user_data: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    if user_data.is_file() {
+        if user_data.file_name().is_none_or(|name| name != "History") {
+            return Err(format!(
+                "{}: expected a Chromium History database",
+                user_data.display()
+            ));
+        }
+        return Ok(vec![(
+            profile_of(&user_data.display().to_string()),
+            user_data.to_owned(),
+        )]);
+    }
+    let entries = std::fs::read_dir(user_data)
+        .map_err(|error| format!("{}: {error}", user_data.display()))?;
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("{}: {error}", user_data.display()))?;
+        let history = entry.path().join("History");
+        match std::fs::metadata(&history) {
+            Ok(metadata) if metadata.is_file() => {
+                out.push((profile_of(&history.display().to_string()), history));
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "{}: History is not a regular database",
+                    history.display()
+                ));
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || error.kind() == std::io::ErrorKind::NotADirectory => {}
+            Err(error) => return Err(format!("{}: {error}", history.display())),
+        }
+    }
     out.sort();
-    out
+    Ok(out)
 }
 
 /// `--read chromium=PATH`: every profile under a browser's user-data
@@ -276,7 +307,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         discover: crate::discovery::discover_format,
         specs: || vec![&VISITS, &URLS],
         plan: Some(|input, settings| {
-            Ok(profiles(input)
+            Ok(profiles(input)?
                 .into_iter()
                 .flat_map(|(profile, history)| {
                     [&VISITS, &URLS].map(|spec| {

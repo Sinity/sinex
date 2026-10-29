@@ -10621,13 +10621,14 @@
       "key_rule": {
         "fields": [
           "profile",
+          "database_generation",
           "visit_id"
         ],
         "rule": "fields"
       },
       "kind": {
         "name": "browser.visit",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -10641,6 +10642,10 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "description": "One visit in a Chromium-family browser's `History` database (`visits`\njoined with `urls`). Chromium writes the visit when it starts and fills in\nits duration when the page is left, so a newer reading replaces the live\none.",
         "properties": {
+          "database_generation": {
+            "description": "Native file generation scoped by the event's host and profile.",
+            "type": "string"
+          },
           "duration_us": {
             "description": "How long the page stayed open; `None` while it is still open (0).",
             "format": "int64",
@@ -10694,6 +10699,7 @@
           }
         },
         "required": [
+          "database_generation",
           "profile",
           "visit_id",
           "visited_at",
@@ -10722,13 +10728,14 @@
       "key_rule": {
         "fields": [
           "profile",
+          "database_generation",
           "url_id"
         ],
         "rule": "fields"
       },
       "kind": {
         "name": "browser.url",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -10742,6 +10749,10 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "description": "One row of a Chromium-family browser's `urls` table: a page and its\nrunning counts, updated in place as it is visited again.",
         "properties": {
+          "database_generation": {
+            "description": "Native file generation scoped by the event's host and profile.",
+            "type": "string"
+          },
           "extra": {
             "additionalProperties": true,
             "type": "object"
@@ -10787,6 +10798,7 @@
           }
         },
         "required": [
+          "database_generation",
           "profile",
           "url_id",
           "url",
