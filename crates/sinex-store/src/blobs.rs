@@ -135,7 +135,7 @@ impl Blobs {
                 self.0.mode,
             )?);
         }
-        let prepared = std::mem::take(&mut state.prepared).into_values().collect();
+        let prepared = std::mem::take(&mut state.prepared).into_values().map(Ok);
         let State {
             writer,
             extents,
