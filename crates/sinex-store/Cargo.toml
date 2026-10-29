@@ -27,7 +27,6 @@ sea-query.workspace = true
 jiff.workspace = true
 
 [dev-dependencies]
-sinex-source-core.workspace = true
 tempfile = "3"
 proptest.workspace = true
 devkit.workspace = true

@@ -4408,7 +4408,6 @@ dependencies = [
  "sinex-model",
  "sinex-schema",
  "sinex-sealing",
- "sinex-source-core",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",
