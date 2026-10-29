@@ -39,21 +39,20 @@ pub struct ReadMark {
     pub changes: i64,
     /// How many events excision had removed.
     pub excised: i64,
+    /// Current transformed-input policy, captured in the input snapshot.
+    #[serde(default)]
+    pub policy_epoch: Option<i64>,
 }
 
 impl ReadMark {
     /// Where archiving and excision stand now.
     pub async fn now(conn: &mut PgConnection) -> Result<Self> {
-        let row = sqlx::query!(
-            r#"SELECT (SELECT coalesce(max(change_seq), 0) FROM audit.archive_changes) AS "changes!",
-                      (SELECT value FROM core.counters WHERE name = 'excised') AS "excised!""#
-        )
-        .fetch_one(&mut *conn)
-        .await?;
-        Ok(Self {
-            changes: row.changes,
-            excised: row.excised,
-        })
+        let (changes,excised,desired,active):(i64,i64,i64,i64)=sqlx::query_as(
+            "SELECT (SELECT coalesce(max(change_seq),0) FROM audit.archive_changes),
+             (SELECT value FROM core.counters WHERE name='excised'),desired_epoch,active_epoch
+             FROM privacy.policy_state WHERE id").fetch_one(conn).await?;
+        if desired!=active{return Err(Error::Invalid("privacy_projection_stale".into()))}
+        Ok(Self{changes,excised,policy_epoch:Some(active)})
     }
 }
 
@@ -268,6 +267,9 @@ pub(super) async fn without_superseded_inputs(
     };
     // Nothing archived or excised since the inputs were read: all still live.
     let now = ReadMark::now(conn).await?;
+    if read.policy_epoch.is_some() && read.policy_epoch!=now.policy_epoch {
+        return Err(Error::Invalid("derivation_policy_epoch_changed".into()));
+    }
     if now.changes <= read.changes && now.excised <= read.excised {
         return Ok(None);
     }

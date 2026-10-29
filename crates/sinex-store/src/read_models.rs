@@ -9,13 +9,15 @@ use sqlx::PgConnection;
 /// `core.consumer_positions`.
 pub const SEARCH_TEXT: &str = "read.search_text";
 
-/// Index committed events' payload text in `core.search_text`, inside the
+/// Index the active output projection's payload text in `core.search_text`, inside the
 /// caller's transaction. The commit-log reader calls this with the events of
 /// one maintenance batch and saves its position in the same transaction.
 ///
 /// Sealed events are not indexed: their sensitive fields are encrypted and
 /// their text must not reach the index in the clear.
 pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) -> Result<()> {
+    let transformed=crate::privacy::projection::transformed(conn,events).await?;
+    let events=&transformed;
     let mut ids = Vec::with_capacity(events.len());
     let mut texts = Vec::with_capacity(events.len());
     let mut trigram_indexed = Vec::with_capacity(events.len());

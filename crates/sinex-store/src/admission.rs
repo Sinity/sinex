@@ -2,7 +2,7 @@
 //! caller's transaction:
 //!
 //! 1. register the source's input, observation, revision and material;
-//! 2. apply privacy rules to each payload;
+//! 2. validate configured rules while preserving original payloads;
 //! 3. stage the events with one `COPY`;
 //! 4. classify every staged event in one set-based query against the live side
 //!    tables and the remembered removals: new, repeat, newer, older, hidden, or
@@ -151,6 +151,7 @@ pub(crate) async fn admit(
         && let Some(outcome)=register::recorded(conn,frame).await? {
         return Ok(outcome);
     }
+    privacy::projection::lock_epoch(conn).await?;
     let mut outcome = Outcome::default();
     let kept_batch;
     let batch = match derived::without_superseded_inputs(conn, batch).await? {
@@ -246,7 +247,12 @@ pub(crate) async fn admit(
         outcome.timings.insert("keep_known", started.elapsed());
         if !classified.admit.is_empty() {
             write::insert_admitted(conn, batch, &events, &classified, keys, &mut outcome).await?;
+            let ids:Vec<_>=outcome.admitted_ids.iter().map(|id|id.0).collect();
+            let rules=cache.load(conn).await?.clone();
+            privacy::projection::admitted(conn,&ids,&rules).await?;
         }
+        let rules=cache.load(conn).await?.clone();
+        privacy::projection::certify_basis(conn,batch,&events,&classified.resolved,&rules).await?;
         resolved = classified.resolved;
     }
 
@@ -273,8 +279,7 @@ pub(crate) async fn admit(
     Ok(outcome)
 }
 
-/// Apply the privacy rules to every event, once: reads never apply a rule
-/// again.
+/// Preserve source originals and validate the configured output transform.
 async fn apply_privacy(
     conn: &mut PgConnection,
     cache: &mut privacy::Cache,
@@ -331,7 +336,8 @@ async fn apply_privacy(
     }
     let rules = cache.load(conn).await?;
     for event in events.iter_mut() {
-        rules.apply(event)?;
+        // Validate sealing/rule configuration without changing the original.
+        rules.apply(&mut event.clone())?;
     }
     keep_removed_class(conn, events).await?;
     sqlx::query!(
@@ -391,7 +397,7 @@ async fn keep_removed_class(conn: &mut PgConnection, events: &mut [Event]) -> Re
 }
 
 /// Records the source dropped: a newer reading of each live one, removed.
-/// Built from the stored reading, whose privacy rules already applied.
+/// Built from the private original reading; output policy applies to its projection.
 async fn removed_at_source(
     conn: &mut PgConnection,
     batch: &Batch,

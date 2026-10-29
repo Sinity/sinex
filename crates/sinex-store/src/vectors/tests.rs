@@ -98,3 +98,18 @@ async fn vector_grants_and_projection_rollback_follow_the_source_parent(db:devki
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM core.visible_embedding_vectors").fetch_one(&mut conn).await.unwrap(),0);
     assert!(sqlx::query("SELECT projected FROM core.embedding_vectors").execute(&mut conn).await.is_err());
 }
+
+#[devkit::test]
+async fn policy_epoch_withholds_changed_target_vectors_and_restores_exact_originals(db:devkit::pg::TestDatabase){
+    let mut conn=AdmissionContext::connect(&db.url(None)).await.unwrap();let doc=target("vectorsecret",Class::Open);let id=doc.id;admit(&mut conn,vec![doc]).await;
+    let (reference,original)=embedding(&mut conn,id,vec![0.8,0.6]).await;initialize(&mut conn).await.unwrap();
+    let head=crate::query::current_seq(&mut conn).await.unwrap();validate_reference(&mut conn,reference.0,head).await.unwrap();
+    crate::privacy::add_rule(&mut conn,&crate::privacy::NewRule{name:"vector field".into(),source:"fixture.documents".into(),event_type:Some("operator_log.entry".into()),field:Some("/text".into()),matcher:"pattern".into(),matcher_arg:Some("vectorsecret".into()),class:Class::Open,action:crate::privacy::Action::Mask,author:"fixture".into()}).await.unwrap();
+    assert!(validate_reference(&mut conn,reference.0,head).await.is_err());
+    crate::privacy::projection::ensure_current(&mut conn).await.unwrap();
+    assert!(validate_reference(&mut conn,reference.0,head).await.is_err());
+    let visible:i64=sqlx::query_scalar("SELECT count(*) FROM core.visible_embedding_vectors WHERE embedding_id=$1").bind(reference.0).fetch_one(&mut *conn).await.unwrap();assert_eq!(visible,0);
+    let vector:serde_json::Value=sqlx::query_scalar("SELECT payload->'vector' FROM core.events WHERE id=$1").bind(reference.0).fetch_one(&mut *conn).await.unwrap();assert_eq!(vector,json!(original.vector));
+    crate::privacy::end_rule(&mut conn,"vector field","fixture").await.unwrap();crate::privacy::projection::ensure_current(&mut conn).await.unwrap();
+    validate_reference(&mut conn,reference.0,head).await.unwrap();assert_eq!(rank(&mut conn,id,reference,head).await,Some(1.0));
+}

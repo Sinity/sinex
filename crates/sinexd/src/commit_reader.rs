@@ -62,6 +62,7 @@ pub(crate) async fn run(
         if *stop.borrow() {
             return Ok(());
         }
+        sinex_store::privacy::projection::ensure_current(&mut conn).await.map_err(|error|error.to_string())?;
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
         let read_started = std::time::Instant::now();
@@ -71,6 +72,7 @@ pub(crate) async fn run(
         let Some(up_to) = page.up_to else {
             tokio::select! {
                 _ = commits.changed() => {}
+                _ = tokio::time::sleep(RETRY) => {}
                 _ = stop.changed() => {}
             }
             continue;

@@ -3,6 +3,7 @@ use super::*;
 /// Bring the search read model up to the newest commit without the daemon's
 /// reader, page by page with its position.
 pub(crate) async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64> {
+    crate::privacy::projection::ensure_current(conn).await?;
     let (mut position, _) = crate::commit_log::consumer_position(conn, SEARCH_TEXT).await?;
     loop {
         let page = crate::commit_log::after(conn, position, 2_000, i64::MAX).await?;

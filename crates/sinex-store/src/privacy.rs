@@ -1,14 +1,5 @@
-//! Privacy rules run in admission, once. A rule names a source, optionally an
-//! event type and a payload field by JSON Pointer, one matcher and one action.
-//! Rules are insert-only rows: a change inserts a new version and a removal
-//! inserts its end, so the rule set in force at any moment can be read back,
-//! and every admitted run records the rule-set position it was admitted under.
-//! Reads never apply a rule again; a new rule reaches old data by replay.
-//!
-//! Each source also has a class floor: the class its declaration gives, raised
-//! by the operator's per-source setting. No event is admitted below its
-//! source's floor, and a derived event is never below the highest class of its
-//! parents.
+//! Configured output rules and their atomic, grant-independent projection.
+pub mod projection;
 use crate::{Error, Result};
 use regex::Regex;
 use serde_json::Value;
@@ -331,7 +322,7 @@ impl RuleSet {
 
     /// Whether `rule` matched; applies its action.
     fn apply_rule(&self, rule: &Rule, event: &mut Event) -> bool {
-        if rule.field.is_none() && matches!(rule.matcher, Matcher::All) {
+        if rule.field.is_none() && matches!(rule.matcher, Matcher::All) && rule.action==Action::Classify {
             return true;
         }
         match &rule.field {
@@ -792,9 +783,7 @@ pub async fn list_rules(conn: &mut PgConnection, history: bool) -> Result<Vec<Ru
         .collect())
 }
 
-/// Events whose class is below what their source's floor or the rules in force
-/// now give them (admitted before a rule or floor changed): the class
-/// verification. A replay brings them up.
+/// Current projected class floor coverage. Original admission classes remain unchanged.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Verification {
     pub checked: u64,
@@ -803,13 +792,14 @@ pub struct Verification {
 }
 
 pub async fn verify_classes(conn: &mut PgConnection) -> Result<Verification> {
+    projection::ensure_current(conn).await?;
     let rows = sqlx::query!(
         r#"WITH floors AS (
              SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
              ORDER BY source, seq DESC),
            rank(c, r) AS (VALUES ('open', 0), ('guarded', 1), ('sealed', 2))
            SELECT e.source AS "source!", count(*) AS "n!"
-           FROM core.events e
+           FROM core.visible_events e
            JOIN (SELECT event_id FROM core.live_locations
                  UNION SELECT event_id FROM core.live_equivalence) lk ON lk.event_id = e.id
            JOIN floors f ON f.source = e.source

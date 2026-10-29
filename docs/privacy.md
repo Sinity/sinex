@@ -90,9 +90,17 @@ A class is a named outcome the operator defines: an action plus the grants that 
 ### Evaluation
 
 - **At output**, the rules in force map each field's hints and stored hits to an action for the caller's grants.
-- **A rule edit takes effect on the next read**; nothing is reclassified, replayed or rewritten. Record hashes do not change with rules, because they are computed from stored content ([record hash](events.md#identity)).
+- **A rule edit invalidates the output epoch immediately**. Reads report pending until the transformed projection activates; original events and materials remain unchanged. Record hashes do not change with rules, because they are computed from stored content ([record hash](events.md#identity)).
 - **Inheritance.** A derived field that copies a parent field declares its parent pointer and inherits the parent's hints and hits. A value carried into a newer reading (an omitted field kept from the previous reading) keeps its hits.
 - **Explanation.** `privacy explain <event>` shows, per field, its hints, the detectors that hit, the rule that applied and the resulting action for the caller.
+
+## Policy epochs and original retention
+
+The configured Rust rule set produces one grant-independent output projection. SQL views apply caller grants to that projection; payload reads, text search and vector visibility use the same active policy epoch. The database invalidates the desired epoch in the transaction that changes a rule or source floor. Until the desired epoch is fully projected, reads report `privacy_projection_stale` rather than returning an older policy result.
+
+A rebuild transfers retained events in bounded pages and transactions while admission continues. Admission preserves the original payload and source key in private storage, records an original-preservation marker and projects the new reading under the desired epoch in the same transaction. The final activation compares the completed position with the current commit head under a short policy lock. Interrupted builds resume from their stored position; no caller receives a partly activated epoch.
+
+Rows admitted by the predecessor may already have lost values to admission-time masking. Such a row is `unavailable_original` when historical rules or floors prevent proving its original state. Ending a rule restores new preserved originals; it does not invent missing historical content. Controlled source re-derivation is required for lost originals. Descendants whose input transformation cannot be established are explicitly unavailable. A controlled re-derivation reads the current transformed inputs and records that policy epoch with its read mark. Admission certifies a repeated identity only when its complete offered payload, content hash, kind, source and exact parents equal the retained original. Thus a safe recomputation can restore unchanged identities without treating suppression alone as evidence. Their payload and search text are excluded, and vector visibility also excludes changed or unavailable targets, embeddings and ancestors. Original vector components remain private and unchanged.
 
 ## Output parity
 

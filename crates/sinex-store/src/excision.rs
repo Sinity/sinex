@@ -246,8 +246,9 @@ pub async fn apply(
     actor: &str,
     keys: &dyn DirtyKeys,
 ) -> Result<Applied> {
-    // The allocation is the transaction's first statement and serializes this
-    // lifecycle transition with event admission.
+    // Exclude epoch pages before allocating the lifecycle position. The
+    // counter still orders this transition with event admission.
+    sqlx::query("SELECT desired_epoch FROM privacy.policy_state WHERE id FOR UPDATE").execute(&mut *conn).await?;
     let seq = crate::commit_log::allocate_position(conn).await?;
     if self::plan(conn, target).await? != *plan {
         return Err(Error::Invalid(
@@ -332,6 +333,8 @@ pub async fn apply(
     )
     .fetch_one(&mut *conn)
     .await?;
+    sqlx::query("DELETE FROM privacy.original_events WHERE event_id=ANY($1)").bind(&ids).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM privacy.event_outputs WHERE event_id=ANY($1)").bind(&ids).execute(&mut *conn).await?;
     let deleted = sqlx::query!("DELETE FROM core.events WHERE id = ANY($1)", &ids)
         .execute(&mut *conn)
         .await?;
