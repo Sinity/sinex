@@ -153,10 +153,11 @@ pub(crate) async fn transformed(conn:&mut PgConnection,events:&[crate::commit_lo
     }
     Ok(out)
 }
-#[cfg(test)] mod tests;
 
 /// A derivation that reads source bytes cannot certify transformed input when
 /// this reading's configured output differs. Caller grants are a separate gate.
 pub async fn raw_event_allowed(conn:&mut PgConnection,event:Uuid,basis:i64)->Result<bool>{
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM privacy.event_outputs o JOIN privacy.policy_state p ON p.id WHERE o.event_id=$1 AND o.epoch=$2 AND p.desired_epoch=$2 AND p.active_epoch=$2 AND o.state='complete' AND NOT o.changed)").bind(event).bind(basis).fetch_one(conn).await?)
 }
+
+#[cfg(test)] mod tests;

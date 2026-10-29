@@ -37,3 +37,13 @@ async fn policy_refresh_marks_transformed_and_old_keys_and_new_admission_keeps_t
     w.admit(vec![zsh("second leafsecret",1,2)]).await;runner.catch_up().await.unwrap();
     let mut commands:Vec<_>=w.live::<CommandFused>().await.into_iter().map(|row|row.command).collect();commands.sort();assert_eq!(commands,["[masked]","second [masked]"]);
 }
+
+#[devkit::test]
+async fn live_comparison_applies_configured_output_rules_and_enforces_input_grants(db:devkit::pg::TestDatabase){
+    let w=World::with_keys(db,vec![]).await;let mut source=zsh("leafsecret",0,1);source.class=Class::Guarded;w.admit(vec![source]).await;
+    let mut runner=w.driver_with(vec![],vec![Box::new(Echo)]).await;
+    let error=runner.compare("test.echo",None,5).await.unwrap_err();assert!(error.contains("comparison_grants_unavailable"));assert_eq!(w.count("SELECT count(*) FROM derivation.comparisons").await,0);
+    let mut conn=PgConnection::connect(&w.url).await.unwrap();privacy::add_rule(&mut conn,&NewRule{name:"configured candidate".into(),source:"test.echo".into(),event_type:Some("command.fused".into()),field:Some("/command".into()),matcher:"pattern".into(),matcher_arg:Some("LEAFSECRET".into()),class:Class::Open,action:Action::Mask,author:"fixture".into()}).await.unwrap();privacy::projection::ensure_current(&mut conn).await.unwrap();
+    sinex_store::query::set_grants(&mut runner.read,"guarded").await.unwrap();let comparison=runner.compare("test.echo",None,5).await.unwrap();let summary=comparison.to_string();assert!(summary.contains("[masked]"));assert!(!summary.contains("LEAFSECRET"));
+    sinex_store::query::set_grants(&mut conn,"guarded").await.unwrap();let kept=derivations::comparisons(&mut conn,Some("test.echo"),20).await.unwrap();assert!(kept[0].examples.to_string().contains("[masked]"));assert!(!kept[0].examples.to_string().contains("LEAFSECRET"));
+}

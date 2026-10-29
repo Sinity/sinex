@@ -161,7 +161,7 @@ Producer replay frames are described under [the ingress](#producer-replay).
 - **reader-and-stream-sequences-identical**: for any filter, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences.
 - **consumer-credential-scope**: a configured reader pulls only its provisioned kind-and-class-scoped durable and global position controls; it cannot subscribe to unfiltered confirmed subjects, pull a foreign or revoked-scope consumer, or read another identity's reply inbox.
 - **rebuilt-stream-keeps-positions**: a stream rebuilt from PostgreSQL carries the same commit positions, tombstoned events as skeleton notices, and a consumer resumes from its saved position on it.
-- **stream-withholds-and-fetch-matches**: with a rule in force, the field is marked withheld on the confirmed stream, and the fetch by event ID under the consumer's grants returns what every other surface returns for those grants.
+- **stream-withholds-and-fetch-matches**: the shared stream carries only references, and the fetch by event ID applies the same current policy and grants as every other output.
 - **handler-one-effective-output**: an outside handler crashed before processing, after its output was admitted, and after acknowledgment yields one effective output per input and version; an archived input archives the handler's outputs.
 - **kind-conflict-refused**: a kind registration that conflicts with the registry is refused and changes nothing.
 - **lifecycle-request-matches-cli**: a lifecycle request on the wire gives the same cascade, outcome and refusals as the same operation through the CLI, and records the producer as actor.
