@@ -3,7 +3,7 @@
 //! readings were admitted after original preservation became an invariant.
 use crate::{Error,Result,privacy};
 use serde_json::{Value,json};
-use sinex_model::{Event,EventId,KindRef,Origin,ReadingOrder,Class,EquivalenceKey};
+use sinex_model::{DbCheck,Event,EventId,KindRef,Origin,ReadingOrder,Class,EquivalenceKey};
 use sqlx::{Connection,PgConnection};
 use uuid::Uuid;
 
@@ -84,8 +84,8 @@ pub(crate) async fn certify_basis(conn:&mut PgConnection,batch:&sinex_model::Bat
         let Some(id)=resolved else{continue};
         let sinex_model::Origin::Derived{parents}=&event.origin else{continue};
         let parents:Vec<_>=parents.iter().map(|id|id.0).collect();
-        let proof=sqlx::query("UPDATE privacy.original_events o SET basis_epoch=$2 FROM core.events e WHERE o.event_id=e.id AND e.id=$1 AND e.payload=$3 AND e.record_hash=$4 AND e.parents=$5 AND e.source=$6 AND e.event_type=$7 AND e.kind_version=$8")
-          .bind(id).bind(basis).bind(&event.payload).bind(event.record_hash.as_slice()).bind(&parents).bind(&event.source).bind(&event.event_type).bind(event.kind_version as i64).execute(&mut *conn).await?;
+        let proof=sqlx::query("UPDATE privacy.original_events o SET basis_epoch=$2 FROM core.events e WHERE o.event_id=e.id AND e.id=$1 AND e.payload=$3 AND e.record_hash=$4 AND e.parents=$5 AND e.source=$6 AND e.event_type=$7 AND e.kind_version=$8 AND e.record_state=$9 AND e.equivalence_key IS NOT DISTINCT FROM $10")
+          .bind(id).bind(basis).bind(&event.payload).bind(event.record_hash.as_slice()).bind(&parents).bind(&event.source).bind(&event.event_type).bind(event.kind_version as i64).bind(event.record_state.as_db()).bind(event.equivalence_key.as_ref().map(|key|key.0.as_str())).execute(&mut *conn).await?;
         if proof.rows_affected()>0 {
             let sql=format!("{INPUT} WHERE e.id=$1");let input=sqlx::query_as::<_,Input>(&sql).bind(id).fetch_one(&mut *conn).await?;
             project(conn,&input,rules,basis).await?;
