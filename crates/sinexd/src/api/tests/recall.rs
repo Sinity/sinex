@@ -455,7 +455,25 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
     .await;
     assert_eq!(context["outcome"], "ok", "{context}");
     assert_activity_context(&w, &context, &activity_ids).await;
+    assert_eq!(
+        context["result"]["recall"]["to"], context["result"]["resolved"]["now"],
+        "an open-ended window and its cursor share one evaluation clock"
+    );
     let cursor = context["result"]["page"]["cursor"].as_str().unwrap();
+    for changed in [
+        json!({"method":"context","since":"2026-09-14T00:00:01Z","page":1,"cursor":cursor}),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","until":context["result"]["recall"]["to"],"page":1,"cursor":cursor}),
+    ] {
+        let (_, refused) = call(&w, Some(READ), changed).await;
+        assert_eq!(refused["outcome"], "refused", "{refused}");
+    }
+    let (_, changed_grants) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1,"cursor":cursor}),
+    )
+    .await;
+    assert_eq!(changed_grants["outcome"], "refused", "{changed_grants}");
     let (_, next) = call(
         &w,
         Some(READ),

@@ -173,11 +173,13 @@ impl Api {
         if start >= end {
             return refused("context end must follow its start");
         }
+        // The absolute window, stored pack and continuation share this clock.
         self.recall_context(
             caller,
             &format!("recall sinex:window/{start}/{end}"),
             page,
             question,
+            ctx,
         )
         .await
     }

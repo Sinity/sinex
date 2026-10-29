@@ -11,7 +11,10 @@ struct PackSelection {
 
 impl Api {
     pub(super) async fn recall(&self, caller: &Caller, text: &str, page: Page) -> Reply {
-        match self.recall_answer(caller, text, page, None).await {
+        match self
+            .recall_answer(caller, text, page, None, self.context())
+            .await
+        {
             Ok(answer) => data(answer),
             Err(error) => refused(error),
         }
@@ -23,8 +26,12 @@ impl Api {
         text: &str,
         page: Page,
         question: Value,
+        ctx: Context,
     ) -> Reply {
-        match self.recall_answer(caller, text, page, Some(question)).await {
+        match self
+            .recall_answer(caller, text, page, Some(question), ctx)
+            .await
+        {
             Ok(answer) => data(answer),
             Err(error) => refused(error),
         }
@@ -35,8 +42,8 @@ impl Api {
         text: &str,
         page: Page,
         identity: Option<Value>,
+        mut ctx: Context,
     ) -> Result<Value, String> {
-        let mut ctx = self.context();
         let mut conn = self
             .acquire(caller)
             .await
