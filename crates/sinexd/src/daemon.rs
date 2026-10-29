@@ -322,7 +322,6 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         client: client.clone(),
         consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         read_grants: producer_grants.clone(),
-        max_payload: client.server_info().max_payload as u64,
         subjects: subjects.clone(),
         writer: handle.clone(),
         reads,
