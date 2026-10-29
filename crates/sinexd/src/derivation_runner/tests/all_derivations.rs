@@ -506,11 +506,15 @@ fn world() -> Vec<Event> {
     out
 }
 
+mod basis;
+
 /// The live derived events: type and payload, with IDs left out, counted.
+/// Physical read positions are mapped only after validating each complete basis.
 async fn derived_set(w: &World) -> BTreeMap<String, i64> {
+    basis::validate(w).await;
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let rows: Vec<(String, i64)> = sqlx::query_as(
-        r#"SELECT e.event_type || ' ' || regexp_replace(e.payload::text,
+        r#"SELECT e.event_type || ' ' || regexp_replace((CASE WHEN e.event_type='context.pack' THEN e.payload - 'read_as' ELSE e.payload END)::text,
                   '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '<id>', 'g'),
                   count(*)
            FROM core.events e
@@ -526,7 +530,8 @@ async fn derived_set(w: &World) -> BTreeMap<String, i64> {
 }
 
 /// Keep the equality oracle intact while naming exact payload differences.
-/// In particular, snapshot positions and producer provenance are compared.
+/// Physical snapshot positions are validated separately; every remaining
+/// payload path and producer provenance is compared here.
 fn pack_differences(expected: &BTreeMap<String, i64>, got: &BTreeMap<String, i64>) -> Vec<Value> {
     fn packs(rows: &BTreeMap<String, i64>) -> BTreeMap<String, (Value, i64)> {
         rows.iter()
