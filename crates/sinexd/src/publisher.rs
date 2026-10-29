@@ -338,8 +338,7 @@ async fn publish_chunk(
     for entry in entries {
         let (message, subject, id, event) = match &entry.change {
             commit_log::Change::Event(event) => {
-                let class:Option<String>=sqlx::query_scalar("SELECT class FROM privacy.event_outputs WHERE event_id=$1 AND epoch=$2 AND state='complete'")
-                  .bind(event.id).bind(policy.active).fetch_optional(&mut *tx).await.map_err(|error|error.to_string())?;
+                let class=sinex_store::privacy::projection::publication_class(&mut tx,event.id,policy.active).await.map_err(|error|error.to_string())?;
                 let class = class.ok_or("privacy_projection_unavailable")?;
                 (
                     Confirmed::EventReference {
@@ -363,8 +362,7 @@ async fn publish_chunk(
                         operation: change.operation_id.map(OperationId),
                     })
                 };
-                let class:Option<String>=sqlx::query_scalar("SELECT CASE WHEN e.id IS NULL THEN t.class WHEN o.epoch=$2 AND o.state='complete' THEN o.class END FROM (SELECT $1::uuid AS id) wanted LEFT JOIN core.events e ON e.id=wanted.id LEFT JOIN privacy.event_outputs o ON o.event_id=wanted.id LEFT JOIN core.event_tombstones t ON t.event_id=wanted.id")
-                  .bind(change.event_id).bind(policy.active).fetch_one(&mut *tx).await.map_err(|error|error.to_string())?;
+                let class=sinex_store::privacy::projection::lifecycle_publication_class(&mut tx,change.event_id,policy.active).await.map_err(|error|error.to_string())?;
                 let class = class.ok_or("privacy_projection_unavailable")?;
                 (
                     message,

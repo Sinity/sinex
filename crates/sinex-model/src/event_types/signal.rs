@@ -1,5 +1,5 @@
 //! Shared signal rules and their exact delivery identities are ordinary readings.
-use crate::{Payloads, Timestamp};
+use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

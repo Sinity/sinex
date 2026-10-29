@@ -36,6 +36,21 @@ pub(crate) async fn allocate_position(conn: &mut PgConnection) -> Result<i64> {
     Ok(position)
 }
 
+/// Payload-free retained erasure metadata. Historical missing values stay unknown.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub struct ErasedReading {
+    pub event_type:String,
+    pub class:Option<String>,
+    pub commit_seq:Option<i64>,
+    pub original_commit_seq:Option<i64>,
+}
+
+pub async fn erased_reading(conn:&mut PgConnection,event:EventId)->Result<Option<ErasedReading>>{
+    let row=sqlx::query!("SELECT event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=$1",event.0)
+        .fetch_optional(conn).await?;
+    Ok(row.map(|row|ErasedReading{event_type:row.event_type,class:row.class,commit_seq:row.commit_seq,original_commit_seq:row.original_commit_seq}))
+}
+
 /// One committed event as stored.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Committed {

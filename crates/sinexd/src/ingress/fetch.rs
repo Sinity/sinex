@@ -167,7 +167,7 @@ impl Requests {
         if !epoch.ready() {
             return Err(unavailable("current privacy projection is not ready"));
         }
-        let tombstone=sqlx::query!("SELECT event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=$1",id.0).fetch_optional(&mut *conn).await.map_err(unavailable)?;
+        let tombstone=sinex_store::commit_log::erased_reading(&mut conn,id).await.map_err(unavailable)?;
         if let Some(erased) = tombstone {
             if !grant.kind(&erased.event_type) {
                 return Err(denied());
