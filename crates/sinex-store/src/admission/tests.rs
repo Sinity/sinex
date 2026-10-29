@@ -828,6 +828,7 @@ mod kinds;
 mod cache;
 mod equivalence;
 mod known_fields;
+mod nearby;
 
 #[devkit::test]
 fn outcomes_add_all_counts_positions_and_ids() {
