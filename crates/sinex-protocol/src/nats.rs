@@ -320,7 +320,7 @@ pub enum Ingress {
     /// policy and effects are applied only by Sinex after durable admission.
     Signals {
         frame: String,
-        coverage:Option<crate::CoverageProof>,
+        coverage: Option<crate::CoverageProof>,
         signals: Vec<ForwardedSignal>,
         #[serde(default)]
         receipts: Vec<signals::DeliveryReceipt>,
@@ -382,9 +382,9 @@ impl Ingress {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ForwardedSignal {
-    pub active_rule:Option<signals::ActiveRule>,
+    pub active_rule: Option<signals::ActiveRule>,
     /// Exact owner-resolved canonical input readings, separate from product UI references.
-    pub inputs:Vec<sinex_model::EventId>,
+    pub inputs: Vec<sinex_model::EventId>,
     pub intent: signals::FiredIntent,
     pub notice: signals::notifications::Notice,
 }
@@ -536,7 +536,11 @@ pub struct Acknowledgment {
 }
 
 impl Acknowledgment {
-    pub fn content_hash(&self)->Option<&str>{self.outcome.get("frame_content_hash").and_then(Value::as_str)}
+    pub fn content_hash(&self) -> Option<&str> {
+        self.outcome
+            .get("frame_content_hash")
+            .and_then(Value::as_str)
+    }
     pub fn refusal_kind(&self) -> Option<sinex_model::FrameRefusal> {
         serde_json::from_value(self.outcome["refusal_kind"].clone()).ok()
     }
@@ -789,7 +793,7 @@ mod tests;
 #[serde(deny_unknown_fields)]
 pub struct ConfirmedConsumer {
     #[serde(default)]
-    pub basis:Option<crate::FullProjectionComplete>,
+    pub basis: Option<crate::FullProjectionComplete>,
     pub after: i64,
     pub cache: String,
     #[serde(default)]

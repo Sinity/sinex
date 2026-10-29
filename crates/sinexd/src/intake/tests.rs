@@ -153,8 +153,8 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
     let stopped = Arc::new(AtomicBool::new(false));
     let checked_stop = stopped.clone();
     let result = Intake {
-        host:None,
-writer: &ctx.writer,
+        host: None,
+        writer: &ctx.writer,
         source: Arc::new(forecast::request_source()),
         binding: "synthetic-check",
         run: RunId::new(),
@@ -292,8 +292,8 @@ async fn overlap(fail_first: bool) {
     let blobs = Blobs::open(dir.path()).unwrap();
     let (writer, _queues) = crate::writer::channels();
     let intake = Intake {
-        host:None,
-writer: &writer,
+        host: None,
+        writer: &writer,
         source: Arc::new(source),
         binding: "synthetic-overlap",
         run: RunId::new(),
@@ -473,8 +473,8 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
     };
     let mut submission = tokio::spawn(async move {
         let intake = Intake {
-            host:None,
-writer: &worker_writer,
+            host: None,
+            writer: &worker_writer,
             source: Arc::new(source),
             binding: "synthetic-queued",
             run: RunId::new(),

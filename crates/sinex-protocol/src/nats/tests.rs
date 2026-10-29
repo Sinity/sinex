@@ -77,7 +77,10 @@ fn frames_round_trip_with_defaults() {
 #[devkit::test]
 fn confirmed_readings_require_their_record_hash_and_order() {
     let event = ConfirmedEvent {
-        source_ref:None,source_fingerprint:None,producer_family:None,producer_identity:None,
+        source_ref: None,
+        source_fingerprint: None,
+        producer_family: None,
+        producer_identity: None,
         kind_version: 1,
         kind_definition_hash: "00".repeat(32),
         validation: sinex_model::Validation::Validated,

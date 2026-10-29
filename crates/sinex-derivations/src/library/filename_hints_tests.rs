@@ -29,7 +29,11 @@ fn hints_keep_content_and_parent_without_touching_authored_fields() {
                 event: &event,
                 bytes: None,
             },
-            &Env::at(Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+            &Env::at(
+                Timestamp::now(),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
         )
         .unwrap();
     assert_eq!(event.payload, before);
@@ -76,7 +80,11 @@ fn isolated_years_and_hex_hints_have_no_date_cutoff() {
                 event: &event,
                 bytes: None,
             },
-            &Env::at(Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+            &Env::at(
+                Timestamp::now(),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
         )
         .unwrap();
     for field in ["author_hint", "title_hint", "year_hint", "external_id_hint"] {
@@ -94,7 +102,11 @@ fn removed_copy_does_not_supply_current_hints() {
                     event: &event,
                     bytes: None
                 },
-                &Env::at(Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
+                &Env::at(
+                    Timestamp::now(),
+                    sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                        .expect("fixture day setting")
+                )
             )
             .unwrap()
             .is_empty()

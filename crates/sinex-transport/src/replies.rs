@@ -355,8 +355,8 @@ pub async fn request_bytes<T: DeserializeOwned + Send + 'static>(
                 .await
                 .map_err(|_| ReplyError::Idle)?
                 .ok_or(ReplyError::Closed)?;
-            if let Some(status)=message.status {
-                return Err(if status==async_nats::StatusCode::NO_RESPONDERS {
+            if let Some(status) = message.status {
+                return Err(if status == async_nats::StatusCode::NO_RESPONDERS {
                     transport("NATS request has no responders")
                 } else {
                     transport(format!("NATS request status {status}"))

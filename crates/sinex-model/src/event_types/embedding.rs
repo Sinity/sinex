@@ -14,14 +14,19 @@ pub struct EmbeddingSpace {
     pub dimensions: u64,
 }
 impl EmbeddingSpace {
-    pub fn id(&self)->String {
-        blake3::hash(&serde_json::to_vec(self).expect("embedding space serializes")).to_hex().to_string()
+    pub fn id(&self) -> String {
+        blake3::hash(&serde_json::to_vec(self).expect("embedding space serializes"))
+            .to_hex()
+            .to_string()
     }
-    pub fn validate(&self)->Result<(),String>{
-        if [&self.provider,&self.model,&self.revision].iter().any(|value|value.trim().is_empty()) {
-            return Err("embedding space needs provider, model and revision".into())
+    pub fn validate(&self) -> Result<(), String> {
+        if [&self.provider, &self.model, &self.revision]
+            .iter()
+            .any(|value| value.trim().is_empty())
+        {
+            return Err("embedding space needs provider, model and revision".into());
         }
-        validate_digest(&self.settings_hash,"settings hash")
+        validate_digest(&self.settings_hash, "settings hash")
     }
 }
 
@@ -39,8 +44,13 @@ pub struct SuppliedEmbedding {
     pub embedded_at: Option<Timestamp>,
 }
 impl SuppliedEmbedding {
-    pub fn validate(&self)->Result<(),String>{
-        validate_values(&self.space,&self.input_record,&self.input_hash,&self.vector)
+    pub fn validate(&self) -> Result<(), String> {
+        validate_values(
+            &self.space,
+            &self.input_record,
+            &self.input_hash,
+            &self.vector,
+        )
     }
 }
 
@@ -58,21 +68,37 @@ pub struct TextEmbedding {
     pub embedded_at: Option<Timestamp>,
 }
 impl TextEmbedding {
-    pub fn validate(&self)->Result<(),String>{
-        validate_values(&self.space,&self.input_record,&self.input_hash,&self.vector)
+    pub fn validate(&self) -> Result<(), String> {
+        validate_values(
+            &self.space,
+            &self.input_record,
+            &self.input_hash,
+            &self.vector,
+        )
     }
 }
-fn validate_values(space:&EmbeddingSpace,input_record:&str,input_hash:&str,vector:&[f64])->Result<(),String>{
+fn validate_values(
+    space: &EmbeddingSpace,
+    input_record: &str,
+    input_hash: &str,
+    vector: &[f64],
+) -> Result<(), String> {
     space.validate()?;
-    validate_digest(input_hash,"input hash")?;
-    if input_record.trim().is_empty(){return Err("embedding needs a stable input record".into())}
-    if vector.len()as u64!=space.dimensions{return Err("embedding dimension differs from supplied count".into())}
-    if vector.iter().any(|value|!value.is_finite()){return Err("embedding contains a non-finite element".into())}
+    validate_digest(input_hash, "input hash")?;
+    if input_record.trim().is_empty() {
+        return Err("embedding needs a stable input record".into());
+    }
+    if vector.len() as u64 != space.dimensions {
+        return Err("embedding dimension differs from supplied count".into());
+    }
+    if vector.iter().any(|value| !value.is_finite()) {
+        return Err("embedding contains a non-finite element".into());
+    }
     Ok(())
 }
-fn validate_digest(value:&str,name:&str)->Result<(),String>{
-    if value.len()!=64||!value.bytes().all(|value|value.is_ascii_hexdigit()) {
-        return Err(format!("embedding {name} must be a BLAKE3 digest"))
+fn validate_digest(value: &str, name: &str) -> Result<(), String> {
+    if value.len() != 64 || !value.bytes().all(|value| value.is_ascii_hexdigit()) {
+        return Err(format!("embedding {name} must be a BLAKE3 digest"));
     }
     Ok(())
 }

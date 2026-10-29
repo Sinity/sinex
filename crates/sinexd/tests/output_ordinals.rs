@@ -1,12 +1,15 @@
 //! One parser record retains every output through admission and citation reads.
-use serde_json::{Value,json};
-use sinex_model::{Batch,BatchKind,Class,MaterialId,ReadingOrder,RecordLocation,RecordOutcome,RunId,event_types::CommandImported};
-use sinex_source_core::{DrainInput,Limits,Parser,RecordContext,RecordError,drain};
-use sinex_store::{AdmissionContext,NoDerivations,Outcome};
+use serde_json::{Value, json};
+use sinex_model::{
+    Batch, BatchKind, Class, MaterialId, ReadingOrder, RecordLocation, RecordOutcome, RunId,
+    event_types::CommandImported,
+};
+use sinex_source_core::{DrainInput, Limits, Parser, RecordContext, RecordError, drain};
+use sinex_store::{AdmissionContext, NoDerivations, Outcome};
 
-async fn admit_one(conn:&mut AdmissionContext,batch:&Batch)->Outcome {
-    let mut tx=conn.begin().await.unwrap();
-    let outcome=tx.admit(batch,&NoDerivations).await.unwrap();
+async fn admit_one(conn: &mut AdmissionContext, batch: &Batch) -> Outcome {
+    let mut tx = conn.begin().await.unwrap();
+    let outcome = tx.admit(batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     outcome
 }
@@ -50,9 +53,7 @@ impl Parser for ArrayRecord {
 async fn one_record_keeps_more_than_65535_outputs_and_their_citations(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
     let count = 65_538_u64;
     let bytes = serde_json::to_vec(
         &json!({"commands":(0..count).map(|i|format!("command-{i}")).collect::<Vec<_>>()}),
@@ -102,7 +103,9 @@ async fn one_record_keeps_more_than_65535_outputs_and_their_citations(
     let ids: Vec<_> = events.iter().map(|e| e.id.0).collect();
     let b = Batch {
         run: RunId::new(),
-        kind: BatchKind::Api { actor: "fixture".into() },
+        kind: BatchKind::Api {
+            actor: "fixture".into(),
+        },
         records: std::mem::take(&mut outputs),
         archive: vec![],
     };
@@ -123,9 +126,13 @@ async fn one_record_keeps_more_than_65535_outputs_and_their_citations(
     for ordinal in [0, 32_767, 32_768, 65_535, 65_536, count - 1] {
         let text = format!("sinex:record/{}/0/command.imported/{ordinal}", material.0);
         let reference = sinex_model::query::parse_reference(&text).unwrap();
-        let id = sinex_store::query::resolve(&mut conn, &reference).await.unwrap();
+        let id = sinex_store::query::resolve(&mut conn, &reference)
+            .await
+            .unwrap();
         assert_eq!(id, ids[usize::try_from(ordinal).unwrap()]);
-        let shown = sinex_store::query::show(&mut conn, &reference).await.unwrap();
+        let shown = sinex_store::query::show(&mut conn, &reference)
+            .await
+            .unwrap();
         assert_eq!(shown["citation"], text);
         assert_eq!(shown["output"], ordinal);
         assert_eq!(shown["payload"]["command"], format!("command-{ordinal}"));
@@ -136,4 +143,3 @@ async fn one_record_keeps_more_than_65535_outputs_and_their_citations(
         "same coordinate slots are repeats"
     );
 }
-

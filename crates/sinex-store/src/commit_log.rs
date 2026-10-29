@@ -542,11 +542,11 @@ pub async fn record_replay_frame(
     operation: sinex_model::OperationId,
     ids: &[Uuid],
     last: Option<i64>,
-    number:i64,
-    content_hash:&str,
-    source:&sinex_model::SourceRef,
-    fingerprint:&str,
-    host:Option<&str>,
+    number: i64,
+    content_hash: &str,
+    source: &sinex_model::SourceRef,
+    fingerprint: &str,
+    host: Option<&str>,
 ) -> Result<()> {
     let outcome = serde_json::json!({"admitted":ids.len(),"replay":operation,"frame_content_hash":content_hash});
     sqlx::query("INSERT INTO core.ingress_frames (producer,frame,admitted,outcome,commit_seq,family,write_kind_prefixes,number,source_name,source_version,source_fingerprint,producer_host) OVERRIDING SYSTEM VALUE VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
@@ -558,6 +558,12 @@ pub async fn record_replay_frame(
 mod tests;
 
 /// Reserve the existing receipt identity inside the owning admission transaction.
-pub async fn reserve_frame_number(conn:&mut PgConnection)->Result<i64>{
-    Ok(sqlx::query_scalar("SELECT nextval(pg_get_serial_sequence('core.ingress_frames','number'))").fetch_one(conn).await?)
+pub async fn reserve_frame_number(conn: &mut PgConnection) -> Result<i64> {
+    Ok(
+        sqlx::query_scalar(
+            "SELECT nextval(pg_get_serial_sequence('core.ingress_frames','number'))",
+        )
+        .fetch_one(conn)
+        .await?,
+    )
 }

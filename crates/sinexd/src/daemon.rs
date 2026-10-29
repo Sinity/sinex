@@ -39,7 +39,7 @@ pub(crate) struct Options {
     pub nats: String,
     /// That user's password.
     pub nats_password_file: Option<PathBuf>,
-    pub producer_grants:ingress::fetch::ProducerGrants,
+    pub producer_grants: ingress::fetch::ProducerGrants,
     /// Subject root: `sinex` unless several deployments share a server.
     pub subject_root: String,
     pub host: String,
@@ -110,11 +110,20 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     sinex_store::registry::write_sources(&mut writer_conn, &crate::catalog::registry_sources())
         .await
         .map_err(|e| format!("writing the source registry: {e}"))?;
-    sinex_store::source_declarations::register(&mut writer_conn,&crate::catalog::source_declarations())
-        .await.map_err(|error|format!("registering native sources: {error}"))?;
-    for grant in o.producer_grants.values().filter_map(|grant|grant.write.as_ref()) {
-        sinex_store::source_declarations::register(&mut writer_conn,&grant.source_declarations)
-            .await.map_err(|error|format!("registering configured source catalog: {error}"))?;
+    sinex_store::source_declarations::register(
+        &mut writer_conn,
+        &crate::catalog::source_declarations(),
+    )
+    .await
+    .map_err(|error| format!("registering native sources: {error}"))?;
+    for grant in o
+        .producer_grants
+        .values()
+        .filter_map(|grant| grant.write.as_ref())
+    {
+        sinex_store::source_declarations::register(&mut writer_conn, &grant.source_declarations)
+            .await
+            .map_err(|error| format!("registering configured source catalog: {error}"))?;
     }
     // The configured derivations run in the runner, keyed and per-event
     // (screen text included).
@@ -125,7 +134,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     // The daemon reads its own telemetry spool, whatever is configured.
     let telemetry_spool = o.telemetry_spool.clone();
     // Discovery must see the configured spool before its first planning turn.
-    std::fs::create_dir_all(&telemetry_spool).map_err(|error| format!("telemetry spool: {error}"))?;
+    std::fs::create_dir_all(&telemetry_spool)
+        .map_err(|error| format!("telemetry spool: {error}"))?;
     sources.sources.insert(
         sinex_sources::sources::telemetry::SPEC.name.to_owned(),
         binding_runner::SourceConfig {
@@ -265,13 +275,40 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
                 .collect()
         },
     };
-    let public_context=crate::public_context::Provider::new(
-        reader_api.context().clock().map_err(|error|error.to_string())?.day.wire(),
-        o.host.clone(),reader_api.source_config.signals.as_ref(),
+    let public_context = crate::public_context::Provider::new(
+        reader_api
+            .context()
+            .clock()
+            .map_err(|error| error.to_string())?
+            .day
+            .wire(),
+        o.host.clone(),
+        reader_api.source_config.signals.as_ref(),
     )?;
-    if let Some(settings_identity)=public_context.settings_identity.clone() {
-        let (signals_api,signals_client,signals_subjects,signals_grants,c,s)=(reader_api.clone(),client.clone(),subjects.clone(),Arc::new(o.producer_grants.clone()),commits.clone(),stop.clone());
-        tasks.spawn(async move {("signals",crate::signals::run(signals_api,signals_client,signals_subjects,signals_grants,settings_identity,c,s).await)});
+    if let Some(settings_identity) = public_context.settings_identity.clone() {
+        let (signals_api, signals_client, signals_subjects, signals_grants, c, s) = (
+            reader_api.clone(),
+            client.clone(),
+            subjects.clone(),
+            Arc::new(o.producer_grants.clone()),
+            commits.clone(),
+            stop.clone(),
+        );
+        tasks.spawn(async move {
+            (
+                "signals",
+                crate::signals::run(
+                    signals_api,
+                    signals_client,
+                    signals_subjects,
+                    signals_grants,
+                    settings_identity,
+                    c,
+                    s,
+                )
+                .await,
+            )
+        });
     }
     let config = api::Config {
         socket: o.api.socket.clone(),
@@ -331,11 +368,12 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         )
     });
 
-    let producer_grants=Arc::new(o.producer_grants);
+    let producer_grants = Arc::new(o.producer_grants);
     let requests = ingress::Requests {
         public_context,
-            client:client.clone(),consumer_admin:std::sync::Arc::new(tokio::sync::Mutex::new(())),
-        read_grants:producer_grants.clone(),
+        client: client.clone(),
+        consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        read_grants: producer_grants.clone(),
         subjects: subjects.clone(),
         writer: handle.clone(),
         reads,

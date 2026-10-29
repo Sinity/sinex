@@ -34,7 +34,9 @@ fn compile_pack(
     let content = &pack.payload["analysis"];
     let sections: Vec<Section> = if content.is_object() {
         serde_json::from_value(content["sections"].clone()).map_err(|error| error.to_string())?
-    } else { resume_sections(&pack.payload)? };
+    } else {
+        resume_sections(&pack.payload)?
+    };
     let context = Presented {
         citation: Some(pack.citation.clone()),
         producer_versions: pack.payload.get("producer_versions").cloned(),
@@ -42,15 +44,30 @@ fn compile_pack(
             .as_str()
             .map(str::to_owned)
             .unwrap_or_else(|| {
-                content["day"]
-                    .as_str()
-                    .map_or_else(|| pack.payload["episode"].as_str().filter(|episode| !episode.is_empty()).map_or_else(|| "Recall".into(), |episode| format!("Resume card for {episode}")), |day| format!("Brief for {day}"))
+                content["day"].as_str().map_or_else(
+                    || {
+                        pack.payload["episode"]
+                            .as_str()
+                            .filter(|episode| !episode.is_empty())
+                            .map_or_else(
+                                || "Recall".into(),
+                                |episode| format!("Resume card for {episode}"),
+                            )
+                    },
+                    |day| format!("Brief for {day}"),
+                )
             }),
-        evaluated_at: pack.payload["evaluated_at"].as_str().unwrap_or("evaluation time not recorded").into(),
+        evaluated_at: pack.payload["evaluated_at"]
+            .as_str()
+            .unwrap_or("evaluation time not recorded")
+            .into(),
         as_of: pack.payload["read_as"]
             .as_i64()
             .ok_or("stored context pack has no selected read context")?,
-        day_setting: pack.payload["day_setting"].as_str().ok_or("stored context pack has no logical-day setting")?.into(),
+        day_setting: pack.payload["day_setting"]
+            .as_str()
+            .ok_or("stored context pack has no logical-day setting")?
+            .into(),
     };
     Ok((
         presentation::compile(context, sections, budget),
@@ -60,25 +77,92 @@ fn compile_pack(
 
 fn resume_sections(payload: &serde_json::Value) -> Result<Vec<Section>, String> {
     use sinex_model::event_types::{activity::ActivityEvidence, work::ContextPack};
-    let pack: ContextPack = serde_json::from_value(payload.clone()).map_err(|error| error.to_string())?;
+    let pack: ContextPack =
+        serde_json::from_value(payload.clone()).map_err(|error| error.to_string())?;
     let reference = |evidence: &ActivityEvidence, description: String| Finding {
-        template: Template::Observation { event_type: evidence.event_type.clone(), source: evidence.source.clone(), when: None, description },
-        caveats: Vec::new(), evidence: vec![format!("sinex:ev/{}", evidence.event)],
+        template: Template::Observation {
+            event_type: evidence.event_type.clone(),
+            source: evidence.source.clone(),
+            when: None,
+            description,
+        },
+        caveats: Vec::new(),
+        evidence: vec![format!("sinex:ev/{}", evidence.event)],
     };
-    let goal = pack.stated_goal.as_ref().map(|evidence| reference(evidence, "Stated goal reference".into())).into_iter().collect();
-    let trail = pack.trail.iter().enumerate().map(|(index, evidence)| reference(evidence, format!("Recorded work act {}", index + 1))).collect();
-    let mut machine: Vec<_> = pack.last_edit.as_ref().map(|evidence| reference(evidence,
-        pack.last_edit_path.as_ref().map_or_else(|| "Last edit reference; path not recorded".into(), |path| format!("Last recorded edit: {path}")))).into_iter().collect();
-    machine.extend(pack.open_failures.iter().map(|evidence| reference(evidence, "Unresolved recorded check failure".into())));
-    let quality = pack.coverage.iter().map(|description| Finding {
-        template: Template::Observation { event_type: "context.pack".into(), source: "context.packs".into(), when: None, description: description.clone() },
-        caveats: Vec::new(), evidence: Vec::new(),
-    }).collect();
+    let goal = pack
+        .stated_goal
+        .as_ref()
+        .map(|evidence| reference(evidence, "Stated goal reference".into()))
+        .into_iter()
+        .collect();
+    let trail = pack
+        .trail
+        .iter()
+        .enumerate()
+        .map(|(index, evidence)| reference(evidence, format!("Recorded work act {}", index + 1)))
+        .collect();
+    let mut machine: Vec<_> = pack
+        .last_edit
+        .as_ref()
+        .map(|evidence| {
+            reference(
+                evidence,
+                pack.last_edit_path.as_ref().map_or_else(
+                    || "Last edit reference; path not recorded".into(),
+                    |path| format!("Last recorded edit: {path}"),
+                ),
+            )
+        })
+        .into_iter()
+        .collect();
+    machine.extend(
+        pack.open_failures
+            .iter()
+            .map(|evidence| reference(evidence, "Unresolved recorded check failure".into())),
+    );
+    let quality = pack
+        .coverage
+        .iter()
+        .map(|description| Finding {
+            template: Template::Observation {
+                event_type: "context.pack".into(),
+                source: "context.packs".into(),
+                when: None,
+                description: description.clone(),
+            },
+            caveats: Vec::new(),
+            evidence: Vec::new(),
+        })
+        .collect();
     Ok(vec![
-        Section { title: "Data quality".into(), findings: quality, absent: None },
-        Section { title: "Resume card".into(), findings: goal, absent: pack.stated_goal.is_none().then(|| "stated goal was not recorded".into()) },
-        Section { title: "Trail".into(), findings: trail, absent: pack.trail.is_empty().then(|| "work acts were not recorded".into()) },
-        Section { title: "Machine".into(), absent: machine.is_empty().then(|| "edit and unresolved-check references were not recorded".into()), findings: machine },
+        Section {
+            title: "Data quality".into(),
+            findings: quality,
+            absent: None,
+        },
+        Section {
+            title: "Resume card".into(),
+            findings: goal,
+            absent: pack
+                .stated_goal
+                .is_none()
+                .then(|| "stated goal was not recorded".into()),
+        },
+        Section {
+            title: "Trail".into(),
+            findings: trail,
+            absent: pack
+                .trail
+                .is_empty()
+                .then(|| "work acts were not recorded".into()),
+        },
+        Section {
+            title: "Machine".into(),
+            absent: machine
+                .is_empty()
+                .then(|| "edit and unresolved-check references were not recorded".into()),
+            findings: machine,
+        },
     ])
 }
 
@@ -211,26 +295,86 @@ pub(super) fn sections(
     Ok(sections)
 }
 
-fn source_read_findings(panel: &super::panel::Panel, settings: &Settings) -> Result<Vec<Finding>, String> {
+fn source_read_findings(
+    panel: &super::panel::Panel,
+    settings: &Settings,
+) -> Result<Vec<Finding>, String> {
     use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
-    let mut observations = panel.evidence.iter().map(|evidence| {
-        let row: SourceCoverage = serde_json::from_value(evidence["observation"].clone()).map_err(|error| error.to_string())?;
-        let citation = evidence["citation"].as_str().ok_or("coverage evidence has no citation")?.to_owned();
-        Ok((row,citation))
-    }).collect::<Result<Vec<_>,String>>()?;
-    let rank = |state: CoverageState| match state { CoverageState::Missing=>0, CoverageState::Partial=>1, CoverageState::RecordedUnknownCoverage=>2, CoverageState::Observed=>3 };
-    observations.sort_by(|(a,_),(b,_)| (rank(a.state),&a.observed_source,&a.binding,&a.host,a.ended_at,&a.observation)
-        .cmp(&(rank(b.state),&b.observed_source,&b.binding,&b.host,b.ended_at,&b.observation)));
-    let zone=jiff::tz::TimeZone::get(settings.time_settings.zone_name()).map_err(|error|error.to_string())?;
-    observations.into_iter().filter(|(row,_)|row.state!=CoverageState::Observed).map(|(row,citation)| {
-        let state=match row.state {CoverageState::Observed=>"observed",CoverageState::Partial=>"partial",CoverageState::RecordedUnknownCoverage=>"recorded_unknown_coverage",CoverageState::Missing=>"missing"};
-        let when=jiff::Timestamp::from_nanosecond(row.ended_at.unix_ns()).map_err(|error|error.to_string())?.to_zoned(zone.clone()).to_string();
-        Ok(Finding {template:Template::Observation {
-            event_type:"source.coverage".into(),source:row.observed_source.clone(),when:Some(when),
-            description:format!("{} read outcome {} ({}, {}){}",row.observed_source,state,row.binding,row.host,
-                row.reason.as_ref().map(|reason|format!(": {reason}")).unwrap_or_default()),
-        },caveats:Vec::new(),evidence:vec![citation]})
-    }).collect()
+    let mut observations = panel
+        .evidence
+        .iter()
+        .map(|evidence| {
+            let row: SourceCoverage = serde_json::from_value(evidence["observation"].clone())
+                .map_err(|error| error.to_string())?;
+            let citation = evidence["citation"]
+                .as_str()
+                .ok_or("coverage evidence has no citation")?
+                .to_owned();
+            Ok((row, citation))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let rank = |state: CoverageState| match state {
+        CoverageState::Missing => 0,
+        CoverageState::Partial => 1,
+        CoverageState::RecordedUnknownCoverage => 2,
+        CoverageState::Observed => 3,
+    };
+    observations.sort_by(|(a, _), (b, _)| {
+        (
+            rank(a.state),
+            &a.observed_source,
+            &a.binding,
+            &a.host,
+            a.ended_at,
+            &a.observation,
+        )
+            .cmp(&(
+                rank(b.state),
+                &b.observed_source,
+                &b.binding,
+                &b.host,
+                b.ended_at,
+                &b.observation,
+            ))
+    });
+    let zone = jiff::tz::TimeZone::get(settings.time_settings.zone_name())
+        .map_err(|error| error.to_string())?;
+    observations
+        .into_iter()
+        .filter(|(row, _)| row.state != CoverageState::Observed)
+        .map(|(row, citation)| {
+            let state = match row.state {
+                CoverageState::Observed => "observed",
+                CoverageState::Partial => "partial",
+                CoverageState::RecordedUnknownCoverage => "recorded_unknown_coverage",
+                CoverageState::Missing => "missing",
+            };
+            let when = jiff::Timestamp::from_nanosecond(row.ended_at.unix_ns())
+                .map_err(|error| error.to_string())?
+                .to_zoned(zone.clone())
+                .to_string();
+            Ok(Finding {
+                template: Template::Observation {
+                    event_type: "source.coverage".into(),
+                    source: row.observed_source.clone(),
+                    when: Some(when),
+                    description: format!(
+                        "{} read outcome {} ({}, {}){}",
+                        row.observed_source,
+                        state,
+                        row.binding,
+                        row.host,
+                        row.reason
+                            .as_ref()
+                            .map(|reason| format!(": {reason}"))
+                            .unwrap_or_default()
+                    ),
+                },
+                caveats: Vec::new(),
+                evidence: vec![citation],
+            })
+        })
+        .collect()
 }
 
 fn completeness_name(c: Completeness) -> String {
@@ -298,6 +442,8 @@ pub(crate) async fn why_not(
             evidence["citation"].as_str().unwrap_or_default()
         ));
     }
-    if let Some(citation) = &p.citation { out.push_str(&format!("Stored panel: {citation}\n")); }
+    if let Some(citation) = &p.citation {
+        out.push_str(&format!("Stored panel: {citation}\n"));
+    }
     Ok(out)
 }

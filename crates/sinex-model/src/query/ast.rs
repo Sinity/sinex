@@ -87,9 +87,14 @@ pub enum Reference {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
-    Truth { value:query_language::semantics::Truth, operand:Operand },
+    Truth {
+        value: query_language::semantics::Truth,
+        operand: Operand,
+    },
     /// A supplied vector reference ranks the filtered relation; it is not a predicate.
-    Similar { reference: Uuid },
+    Similar {
+        reference: Uuid,
+    },
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
@@ -217,9 +222,13 @@ impl TimeFn {
 }
 
 pub use query_language::ast::Op;
-pub trait OrderingOp { fn ordering(self) -> bool; }
+pub trait OrderingOp {
+    fn ordering(self) -> bool;
+}
 impl OrderingOp for Op {
-    fn ordering(self) -> bool { matches!(self,Self::Lt|Self::Le|Self::Gt|Self::Ge) }
+    fn ordering(self) -> bool {
+        matches!(self, Self::Lt | Self::Le | Self::Gt | Self::Ge)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -375,37 +384,69 @@ pub enum SortBy {
 }
 
 impl Query {
-    pub fn finite_time_bounds(&self,field:&FieldRef)->Option<(Timestamp,Timestamp)> {super::fill::finite_time_bounds(self,field)}
-    pub fn similar_reference(&self)->Result<Option<Uuid>,super::QueryError> {
-        fn visit(e:&Expr,allowed:bool,found:&mut Option<Uuid>)->Result<(),super::QueryError> {
+    pub fn finite_time_bounds(&self, field: &FieldRef) -> Option<(Timestamp, Timestamp)> {
+        super::fill::finite_time_bounds(self, field)
+    }
+    pub fn similar_reference(&self) -> Result<Option<Uuid>, super::QueryError> {
+        fn visit(
+            e: &Expr,
+            allowed: bool,
+            found: &mut Option<Uuid>,
+        ) -> Result<(), super::QueryError> {
             match e {
-                Expr::Similar{reference}=>{
-                    if !allowed {return Err(super::QueryError::new("similar is a ranking directive and cannot appear under OR or NOT"));}
-                    if found.is_some_and(|old|old!=*reference) {return Err(super::QueryError::new("a query must choose one supplied similarity vector"));}
-                    *found=Some(*reference);
+                Expr::Similar { reference } => {
+                    if !allowed {
+                        return Err(super::QueryError::new(
+                            "similar is a ranking directive and cannot appear under OR or NOT",
+                        ));
+                    }
+                    if found.is_some_and(|old| old != *reference) {
+                        return Err(super::QueryError::new(
+                            "a query must choose one supplied similarity vector",
+                        ));
+                    }
+                    *found = Some(*reference);
                 }
-                Expr::And(a,b)=>{visit(a,allowed,found)?;visit(b,allowed,found)?;}
-                Expr::Or(a,b)=>{visit(a,false,found)?;visit(b,false,found)?;}
-                Expr::Not(e)=>visit(e,false,found)?,_=>{}
-            } Ok(())
+                Expr::And(a, b) => {
+                    visit(a, allowed, found)?;
+                    visit(b, allowed, found)?;
+                }
+                Expr::Or(a, b) => {
+                    visit(a, false, found)?;
+                    visit(b, false, found)?;
+                }
+                Expr::Not(e) => visit(e, false, found)?,
+                _ => {}
+            }
+            Ok(())
         }
-        let mut found=None;
-        if let Some(e)=&self.filter {visit(e,true,&mut found)?;}
-        for stage in &self.stages {if let Stage::Where(e)=stage {visit(e,true,&mut found)?;}}
-        if found.is_some() && self.stages.iter().any(|s|matches!(s,Stage::Group(_))) {return Err(super::QueryError::new("similar ranks event rows before grouping"));}
+        let mut found = None;
+        if let Some(e) = &self.filter {
+            visit(e, true, &mut found)?;
+        }
+        for stage in &self.stages {
+            if let Stage::Where(e) = stage {
+                visit(e, true, &mut found)?;
+            }
+        }
+        if found.is_some() && self.stages.iter().any(|s| matches!(s, Stage::Group(_))) {
+            return Err(super::QueryError::new(
+                "similar ranks event rows before grouping",
+            ));
+        }
         Ok(found)
     }
 }
 impl Expr {
     /// Remove rank directives structurally before compiling the predicate.
-    pub fn predicate(&self)->Option<Expr> {
+    pub fn predicate(&self) -> Option<Expr> {
         match self {
-            Self::Similar{..}=>None,
-            Self::And(a,b)=>match (a.predicate(),b.predicate()) {
-                (Some(a),Some(b))=>Some(Self::And(Box::new(a),Box::new(b))),
-                (a,b)=>a.or(b),
+            Self::Similar { .. } => None,
+            Self::And(a, b) => match (a.predicate(), b.predicate()) {
+                (Some(a), Some(b)) => Some(Self::And(Box::new(a), Box::new(b))),
+                (a, b) => a.or(b),
             },
-            _=>Some(self.clone()),
+            _ => Some(self.clone()),
         }
     }
 }

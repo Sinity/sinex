@@ -1,8 +1,8 @@
 //! Stored non-model input, rhythm and mark products.
-use crate::Timestamp;
 use super::activity::ActivityEvidence;
+use crate::Timestamp;
 use schemars::JsonSchema;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type="input.bout",key=["bout"],replace=newer,time=started_at,quality=intrinsic)]
@@ -31,7 +31,7 @@ pub struct InputWorkload {
     pub supported_seconds: f64,
     pub coverage_seconds: f64,
     pub missing_seconds: f64,
-    pub typing_intervals: Vec<(Timestamp,Timestamp)>,
+    pub typing_intervals: Vec<(Timestamp, Timestamp)>,
     pub typing_seconds: Option<f64>,
     pub estimation: String,
     pub coverage: String,

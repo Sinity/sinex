@@ -56,7 +56,11 @@ fn weeks_start_on_monday() {
 
 #[devkit::test]
 fn shared_day_start_in_a_dst_gap_resolves_to_the_transition() {
-    let ctx=Context::new("2026-03-29T12:00:00Z".parse().unwrap(),TimeZone::get("Europe/Warsaw").unwrap(),Time::constant(2,30,0,0));
-    let (start,_)=ctx.day("2026-03-29".parse().unwrap()).unwrap();
-    assert_eq!(start.to_string(),"2026-03-29T01:00:00Z");
+    let ctx = Context::new(
+        "2026-03-29T12:00:00Z".parse().unwrap(),
+        TimeZone::get("Europe/Warsaw").unwrap(),
+        Time::constant(2, 30, 0, 0),
+    );
+    let (start, _) = ctx.day("2026-03-29".parse().unwrap()).unwrap();
+    assert_eq!(start.to_string(), "2026-03-29T01:00:00Z");
 }

@@ -76,11 +76,20 @@ pub enum OfflineEmergencyRoute {
 impl OfflineEmergency {
     /// The host calls this with its trusted actual Invocation time, before the
     /// effect. A replay or evaluation clock cannot authorize an offline effect.
-    pub fn permits(&self, producer: &str, host: &str, settings: &str, invoked_at: Timestamp) -> bool {
-        self.producer == producer && self.host == host && self.settings_identity == settings
+    pub fn permits(
+        &self,
+        producer: &str,
+        host: &str,
+        settings: &str,
+        invoked_at: Timestamp,
+    ) -> bool {
+        self.producer == producer
+            && self.host == host
+            && self.settings_identity == settings
             && self.rule == crate::signals::emergency_rule()
             && self.route == OfflineEmergencyRoute::Desktop
-            && self.issued_at <= invoked_at && invoked_at < self.expires_at
+            && self.issued_at <= invoked_at
+            && invoked_at < self.expires_at
             && self.issued_at < self.expires_at
     }
 }
@@ -102,9 +111,15 @@ pub enum PublicContext {
         #[serde(default)]
         offline_emergency: Option<OfflineEmergency>,
     },
-    Pending { reason: String },
-    Unavailable { reason: String },
-    Refused { reason: String },
+    Pending {
+        reason: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+    Refused {
+        reason: String,
+    },
 }
 
 #[cfg(test)]

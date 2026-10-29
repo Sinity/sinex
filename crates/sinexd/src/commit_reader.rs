@@ -63,7 +63,10 @@ pub(crate) async fn run(
         if *stop.borrow() {
             return Ok(());
         }
-        if sinex_store::privacy::projection::ensure_current(&mut conn).await.is_err() {
+        if sinex_store::privacy::projection::ensure_current(&mut conn)
+            .await
+            .is_err()
+        {
             // Output views remain unavailable until a complete epoch activates.
             // A transient database failure must not retire the maintainer.
             eprintln!("sinexd: privacy output projection unavailable; retrying");
@@ -147,8 +150,8 @@ pub(crate) trait ReadModel: Send + Sync {
     fn name(&self) -> &'static str;
     fn wants(&self, event_type: &str) -> bool;
     /// Initialize from retained events before following a possibly pruned log.
-    fn initialize<'a>(&'a self,_:&'a mut PgConnection)->BoxFuture<'a,Result<(),String>> {
-        Box::pin(async {Ok(())})
+    fn initialize<'a>(&'a self, _: &'a mut PgConnection) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Ok(()) })
     }
     /// Apply `events` inside the open transaction `tx`.
     fn apply<'a>(
@@ -160,7 +163,7 @@ pub(crate) trait ReadModel: Send + Sync {
 
 /// Every read model, in one list.
 pub(crate) fn read_models() -> Vec<Box<dyn ReadModel>> {
-    vec![Box::new(SearchText),Box::new(EmbeddingVectors)]
+    vec![Box::new(SearchText), Box::new(EmbeddingVectors)]
 }
 
 /// The full-text read model `core.search_text`: every event's payload text,
@@ -192,13 +195,29 @@ impl ReadModel for SearchText {
 /// Vector projection and per-space pgvector indexes over stored embeddings.
 struct EmbeddingVectors;
 impl ReadModel for EmbeddingVectors {
-    fn name(&self)->&'static str {sinex_store::vectors::CONSUMER}
-    fn wants(&self,kind:&str)->bool {kind=="text.embedding"}
-    fn initialize<'a>(&'a self,conn:&'a mut PgConnection)->BoxFuture<'a,Result<(),String>> {
-        Box::pin(async move {sinex_store::vectors::initialize(conn).await.map_err(|error|error.to_string())})
+    fn name(&self) -> &'static str {
+        sinex_store::vectors::CONSUMER
     }
-    fn apply<'a>(&'a self,events:&'a [Committed],tx:&'a mut PgConnection)->BoxFuture<'a,Result<(),String>> {
-        Box::pin(async move {sinex_store::vectors::apply(tx,events).await.map_err(|error|error.to_string())})
+    fn wants(&self, kind: &str) -> bool {
+        kind == "text.embedding"
+    }
+    fn initialize<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            sinex_store::vectors::initialize(conn)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+    fn apply<'a>(
+        &'a self,
+        events: &'a [Committed],
+        tx: &'a mut PgConnection,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            sinex_store::vectors::apply(tx, events)
+                .await
+                .map_err(|error| error.to_string())
+        })
     }
 }
 

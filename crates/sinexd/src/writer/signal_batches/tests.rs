@@ -161,7 +161,12 @@ async fn uncertified_completion_cannot_borrow_another_deliverys_current_material
         .execute(&mut *conn)
         .await
         .unwrap();
-    assert!(sinex_store::signals::material_read_mark(&mut conn,material,"another-certified-delivery").await.unwrap().is_some());
+    assert!(
+        sinex_store::signals::material_read_mark(&mut conn, material, "another-certified-delivery")
+            .await
+            .unwrap()
+            .is_some()
+    );
     let outcome = write(&mut conn, &offered).await;
     assert_eq!(outcome.admitted, 1);
     assert_eq!(outcome.superseded_input, 1);
@@ -171,7 +176,10 @@ async fn uncertified_completion_cannot_borrow_another_deliverys_current_material
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-    assert!(!copied, "the shared material's valid epoch cannot certify this completion");
+    assert!(
+        !copied,
+        "the shared material's valid epoch cannot certify this completion"
+    );
 }
 #[devkit::test]
 async fn copied_delivery_follows_input_policy_while_physical_handoff_remains(

@@ -32,14 +32,17 @@ pub(crate) struct Config {
     #[serde(default)]
     pub project_attribution: sinex_derivations::attribution::AttributionProfile,
     pub rhythm: sinex_derivations::portfolio::rhythm::RhythmProfile,
-    pub signals:Option<crate::signals::Config>,
+    pub signals: Option<crate::signals::Config>,
     pub model_accounting: ModelAccountingConfig,
 }
 impl Config {
     pub(crate) fn load(path: &std::path::Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-        let config:Self=serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
-        if let Some(signals)=&config.signals {signals.validate()?;}
+        let config: Self = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if let Some(signals) = &config.signals {
+            signals.validate()?;
+        }
         Ok(config)
     }
     pub(crate) fn runs(&self, name: &str) -> bool {

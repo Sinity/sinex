@@ -4,46 +4,114 @@ use sinex_model::{MaterialId, RecordLocation, Timestamp};
 #[devkit::test]
 fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
     let at = Timestamp::from_unix_secs(1_000).unwrap();
-    let selection = QuerySelection {query:"recall last".into(),now:at,read_as:None,zone:"UTC".into(),
-        day_start:"04:00:00".into(),grants:vec![],selected:json!({"kind":"window","from":at,"to":at}),declarations:json!([])};
-    let request = AnalysisRequest {request:"synthetic-question".into(),operation:"recall".into(),recipe:None,
-        from:"1970-01-01".into(),to:"1970-01-01".into(),metrics:vec![],min_observed_fraction:None,
-        zone:"UTC".into(),day_start:"04:00:00".into(),grants:vec![],started_at:at,ended_at:at,
-        by:"synthetic".into(),requested_at:at,selection:Some(selection)};
-    let input = Event::build(&request,"analysis.request",Origin::Record {location:RecordLocation {material:MaterialId::new(),anchor:0},output_index:0},ReadingOrder(0),[0;32],Class::Open).unwrap();
-    let parents:Vec<EventId> = (0..10_001).map(|_| EventId::new()).collect();
+    let selection = QuerySelection {
+        query: "recall last".into(),
+        now: at,
+        read_as: None,
+        zone: "UTC".into(),
+        day_start: "04:00:00".into(),
+        grants: vec![],
+        selected: json!({"kind":"window","from":at,"to":at}),
+        declarations: json!([]),
+    };
+    let request = AnalysisRequest {
+        request: "synthetic-question".into(),
+        operation: "recall".into(),
+        recipe: None,
+        from: "1970-01-01".into(),
+        to: "1970-01-01".into(),
+        metrics: vec![],
+        min_observed_fraction: None,
+        zone: "UTC".into(),
+        day_start: "04:00:00".into(),
+        grants: vec![],
+        started_at: at,
+        ended_at: at,
+        by: "synthetic".into(),
+        requested_at: at,
+        selection: Some(selection),
+    };
+    let input = Event::build(
+        &request,
+        "analysis.request",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let parents: Vec<EventId> = (0..10_001).map(|_| EventId::new()).collect();
     let parent = parents[0];
     let rows:Vec<Value> = parents.iter().enumerate().map(|(index,parent)| json!({"id":parent,"event_type":"command.executed","source":"synthetic.shell","when":at,"payload":{"command":format!("synthetic command {index}")}})).collect();
     let answer = json!({"rows":rows,"total":10_001,"resolved":{"commit_seq":42},"recall":{"from":at,"to":at}});
-    let selected = SelectedInputs {value:answer.clone(),parents,class:Class::Guarded,read_as:42,signature:"synthetic-inputs".into()};
-    let result = compute(&json!(request),std::slice::from_ref(&input),&selected).unwrap();
-    assert_eq!(result.payload["analysis"]["answer"],answer);
-    assert_eq!(result.class,Class::Guarded);
-    assert_eq!(result.payload["read_as"],42);
-    let Origin::Derived {parents} = result.origin else {panic!("recall pack has no derived provenance")};
-    assert_eq!(parents.len(),10_002);
+    let selected = SelectedInputs {
+        value: answer.clone(),
+        parents,
+        class: Class::Guarded,
+        read_as: 42,
+        signature: "synthetic-inputs".into(),
+    };
+    let result = compute(&json!(request), std::slice::from_ref(&input), &selected).unwrap();
+    assert_eq!(result.payload["analysis"]["answer"], answer);
+    assert_eq!(result.class, Class::Guarded);
+    assert_eq!(result.payload["read_as"], 42);
+    let Origin::Derived { parents } = result.origin else {
+        panic!("recall pack has no derived provenance")
+    };
+    assert_eq!(parents.len(), 10_002);
     assert!(parents.contains(&parent) && parents.contains(&input.id));
-    let sections:Vec<Section> = serde_json::from_value(result.payload["analysis"]["sections"].clone()).unwrap();
-    assert_eq!(sections.iter().map(|section| section.findings.len()).sum::<usize>(),10_001);
+    let sections: Vec<Section> =
+        serde_json::from_value(result.payload["analysis"]["sections"].clone()).unwrap();
+    assert_eq!(
+        sections
+            .iter()
+            .map(|section| section.findings.len())
+            .sum::<usize>(),
+        10_001
+    );
 }
 
 #[devkit::test]
 fn recall_descriptions_keep_recorded_objectives_checks_and_source_states() {
     let episode = json!({"event_type":"work.episode","payload":{"label":"Recorded branch label","objective":{"reference":"task:example","repository":"/synthetic/repo"},"state":"suspended","trail":[{"text":"retained detail"}]}});
-    assert_eq!(description(&episode),"Recorded branch label; objective task:example; repository /synthetic/repo; state suspended");
+    assert_eq!(
+        description(&episode),
+        "Recorded branch label; objective task:example; repository /synthetic/repo; state suspended"
+    );
     let act = json!({"event_type":"work.act","payload":{"action":"check","label":"Recorded branch label","check_name":"unit tests","check_passed":false,"revision":"abc123","failed":true}});
-    assert_eq!(description(&act),"check; Recorded branch label; check unit tests: failed; revision abc123");
+    assert_eq!(
+        description(&act),
+        "check; Recorded branch label; check unit tests: failed; revision abc123"
+    );
     let coverage = json!({"event_type":"source.coverage","payload":{"observed_source":"synthetic.source","state":"recorded_unknown_coverage","reason":"input checked successfully; no new events","binding":"retained-binding"}});
-    assert_eq!(description(&coverage),"synthetic.source; state recorded_unknown_coverage; input checked successfully; no new events");
+    assert_eq!(
+        description(&coverage),
+        "synthetic.source; state recorded_unknown_coverage; input checked successfully; no new events"
+    );
 }
 
 #[devkit::test]
 fn recall_presentation_uses_its_selected_zone_and_keeps_raw_utc_rows() {
     let parent = EventId::new();
     let answer = json!({"resolved":{"zone":"Europe/Warsaw"},"rows":[{"id":parent,"event_type":"command.executed","source":"synthetic.shell","when":"2026-09-14T08:00:00Z","payload":{"command":"synthetic command"}}]});
-    let sections = sections(&answer,&[parent],None);
-    let finding = &sections.iter().find(|section| section.title=="Machine").unwrap().findings[0];
-    let Template::Observation {when:Some(when),..} = &finding.template else {panic!("recorded time is absent")};
-    assert!(when.starts_with("2026-09-14T10:00:00+02:00"),"{when}");
-    assert_eq!(answer["rows"][0]["when"],"2026-09-14T08:00:00Z");
+    let sections = sections(&answer, &[parent], None);
+    let finding = &sections
+        .iter()
+        .find(|section| section.title == "Machine")
+        .unwrap()
+        .findings[0];
+    let Template::Observation {
+        when: Some(when), ..
+    } = &finding.template
+    else {
+        panic!("recorded time is absent")
+    };
+    assert!(when.starts_with("2026-09-14T10:00:00+02:00"), "{when}");
+    assert_eq!(answer["rows"][0]["when"], "2026-09-14T08:00:00Z");
 }

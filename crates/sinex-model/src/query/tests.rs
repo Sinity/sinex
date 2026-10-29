@@ -449,37 +449,82 @@ fn record_citations_preserve_wide_unsigned_output_ordinals() {
 
 #[devkit::test]
 fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
-    let until=q("events until 2026-09-14");
-    let before=q("events where when < 2026-09-14");
-    let get=|q:Query|match q.filter.or_else(||q.stages.into_iter().find_map(|s|if let Stage::Where(e)=s{Some(e)}else{None})) {
-        Some(Expr::Compare{op:Op::Lt,rhs:Value::Time(t),..})=>t,_=>panic!("exclusive upper time bound"),
+    let until = q("events until 2026-09-14");
+    let before = q("events where when < 2026-09-14");
+    let get = |q: Query| match q.filter.or_else(|| {
+        q.stages.into_iter().find_map(|s| {
+            if let Stage::Where(e) = s {
+                Some(e)
+            } else {
+                None
+            }
+        })
+    }) {
+        Some(Expr::Compare {
+            op: Op::Lt,
+            rhs: Value::Time(t),
+            ..
+        }) => t,
+        _ => panic!("exclusive upper time bound"),
     };
-    assert_eq!(get(until),ts("2026-09-15T02:00:00Z"));
-    assert_eq!(get(before),ts("2026-09-14T02:00:00Z"));
-    assert_eq!(get(q("events until 2026-09-14T10:00:00Z")),ts("2026-09-14T10:00:00Z"));
+    assert_eq!(get(until), ts("2026-09-15T02:00:00Z"));
+    assert_eq!(get(before), ts("2026-09-14T02:00:00Z"));
+    assert_eq!(
+        get(q("events until 2026-09-14T10:00:00Z")),
+        ts("2026-09-14T10:00:00Z")
+    );
 }
 #[devkit::test]
 fn shared_similarity_directives_cannot_change_filter_membership() {
-    let id="00000000-0000-0000-0000-000000000001";
-    let query=q(&format!("events where source = synthetic and similar:sinex:ev/{id}"));
+    let id = "00000000-0000-0000-0000-000000000001";
+    let query = q(&format!(
+        "events where source = synthetic and similar:sinex:ev/{id}"
+    ));
     assert!(query.ranked);
-    assert_eq!(query.similar_reference().unwrap(),Some(id.parse().unwrap()));
-    assert!(matches!(query.filter.unwrap().predicate(),Some(Expr::Compare{..})));
-    for text in [format!("events where source = synthetic or similar:sinex:ev/{id}"),format!("events where not similar:sinex:ev/{id}"),"events where similar:unprovided-text".into()] {
-        assert!(bind(&text,&ctx()).is_err(),"{text}");
+    assert_eq!(
+        query.similar_reference().unwrap(),
+        Some(id.parse().unwrap())
+    );
+    assert!(matches!(
+        query.filter.unwrap().predicate(),
+        Some(Expr::Compare { .. })
+    ));
+    for text in [
+        format!("events where source = synthetic or similar:sinex:ev/{id}"),
+        format!("events where not similar:sinex:ev/{id}"),
+        "events where similar:unprovided-text".into(),
+    ] {
+        assert!(bind(&text, &ctx()).is_err(), "{text}");
     }
 }
 
 #[devkit::test]
 fn shared_repeated_groups_bind_aggregates_to_their_incoming_relation() {
-    let query=q("events group by source count group by count sum(count)");
-    let Stage::Group(group)=&query.stages[1] else {panic!("second group")};
+    let query = q("events group by source count group by count sum(count)");
+    let Stage::Group(group) = &query.stages[1] else {
+        panic!("second group")
+    };
     assert!(matches!(&group.aggregates[0].field,Some(FieldRef::Group(name)) if name=="count"));
 }
 
 #[devkit::test]
 fn shared_match_unknown_and_any_keep_their_explicit_predicate_meanings() {
-    assert!(matches!(q("events where when:unknown").filter,Some(Expr::Not(_))));
-    assert!(matches!(q("events where when:*").filter,Some(Expr::Truth{value:query_language::semantics::Truth::True,..})));
-    assert!(matches!(q("events where when = unknown").filter,Some(Expr::Compare{rhs:Value::Unknown,..})));
+    assert!(matches!(
+        q("events where when:unknown").filter,
+        Some(Expr::Not(_))
+    ));
+    assert!(matches!(
+        q("events where when:*").filter,
+        Some(Expr::Truth {
+            value: query_language::semantics::Truth::True,
+            ..
+        })
+    ));
+    assert!(matches!(
+        q("events where when = unknown").filter,
+        Some(Expr::Compare {
+            rhs: Value::Unknown,
+            ..
+        })
+    ));
 }

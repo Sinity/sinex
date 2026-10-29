@@ -1,12 +1,12 @@
 //! One grant-independent output projection, atomically activated per policy.
-pub(crate) const STATE:&str="CREATE TABLE privacy.policy_state (
+pub(crate) const STATE: &str = "CREATE TABLE privacy.policy_state (
   id boolean PRIMARY KEY CHECK (id),
   desired_epoch bigint NOT NULL CHECK (desired_epoch >= 0),
   active_epoch bigint NOT NULL CHECK (active_epoch >= 0)
 )";
-pub(crate) const INIT:&str="INSERT INTO privacy.policy_state(id,desired_epoch,active_epoch) SELECT true,CASE WHEN EXISTS(SELECT 1 FROM core.events) THEN 1 ELSE 0 END,0";
-pub(crate) const BUILDS:&str="CREATE TABLE privacy.output_builds (\n  epoch bigint PRIMARY KEY,\n  after_seq bigint NOT NULL,\n  after_id uuid\n)";
-pub(crate) const ORIGINALS:&str="CREATE TABLE privacy.original_events (
+pub(crate) const INIT: &str = "INSERT INTO privacy.policy_state(id,desired_epoch,active_epoch) SELECT true,CASE WHEN EXISTS(SELECT 1 FROM core.events) THEN 1 ELSE 0 END,0";
+pub(crate) const BUILDS: &str = "CREATE TABLE privacy.output_builds (\n  epoch bigint PRIMARY KEY,\n  after_seq bigint NOT NULL,\n  after_id uuid\n)";
+pub(crate) const ORIGINALS: &str = "CREATE TABLE privacy.original_events (
   event_id uuid PRIMARY KEY,
   baseline_class text NOT NULL,
   recoverable boolean NOT NULL,
@@ -23,15 +23,26 @@ pub(crate) const OUTPUTS:&str="CREATE TABLE privacy.event_outputs (
   trace jsonb NOT NULL,
   state text NOT NULL CHECK (state IN ('complete','unavailable_original','unavailable_dependency','pending_dependency'))
 )";
-pub(crate) const GUARD:&str=r#"CREATE OR REPLACE FUNCTION privacy.require_active_epoch() RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,privacy AS $$
+pub(crate) const GUARD: &str = r#"CREATE OR REPLACE FUNCTION privacy.require_active_epoch() RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,privacy AS $$
 DECLARE desired bigint; active bigint;
 BEGIN
  SELECT desired_epoch,active_epoch INTO STRICT desired,active FROM privacy.policy_state WHERE id;
  IF desired<>active THEN RAISE EXCEPTION 'privacy_projection_stale' USING ERRCODE='55000'; END IF;
  RETURN active;
 END $$"#;
-pub(crate) fn tables()->Vec<String>{vec![STATE.into(),INIT.into(),BUILDS.into(),DERIVATION_EPOCHS.into(),CONTRACTS.into(),ORIGINALS.into(),OUTPUTS.into()]}
-pub(crate) fn hooks()->Vec<String>{vec![
+pub(crate) fn tables() -> Vec<String> {
+    vec![
+        STATE.into(),
+        INIT.into(),
+        BUILDS.into(),
+        DERIVATION_EPOCHS.into(),
+        CONTRACTS.into(),
+        ORIGINALS.into(),
+        OUTPUTS.into(),
+    ]
+}
+pub(crate) fn hooks() -> Vec<String> {
+    vec![
  "INSERT INTO core.counters(name,value) VALUES('privacy_outputs',0)".into(),
  r#"CREATE OR REPLACE FUNCTION privacy.invalidate_outputs() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM value FROM core.counters WHERE name='commit_seq' FOR UPDATE; UPDATE privacy.policy_state SET desired_epoch=desired_epoch+1 WHERE id; RETURN NULL; END $$"#.into(),
  "CREATE TRIGGER rules_policy_epoch AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON privacy.rules FOR EACH STATEMENT EXECUTE FUNCTION privacy.invalidate_outputs()".into(),
@@ -40,15 +51,32 @@ pub(crate) fn hooks()->Vec<String>{vec![
  "REVOKE ALL ON FUNCTION privacy.require_active_epoch() FROM PUBLIC".into(),
  "REVOKE ALL ON FUNCTION privacy.invalidate_outputs() FROM PUBLIC, sinex_reader".into(),
  "GRANT EXECUTE ON FUNCTION privacy.require_active_epoch() TO sinex_reader, sinex_writer".into(),
-]}
-pub(crate) fn statements()->Vec<String>{let mut out=tables();out.extend(hooks());out.extend([
+]
+}
+pub(crate) fn statements() -> Vec<String> {
+    let mut out = tables();
+    out.extend(hooks());
+    out.extend([
  "GRANT SELECT,INSERT,UPDATE,DELETE ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.derivation_contracts,privacy.original_events,privacy.event_outputs TO sinex_writer".into(),
  "REVOKE ALL ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.derivation_contracts,privacy.original_events,privacy.event_outputs FROM sinex_reader".into(),
-]);out}
-pub(crate) fn before(statement:&str)->bool{!statement.contains("privacy_outputs")&&!statement.contains("privacy.derivation_contracts")&&!statement.contains("privacy.derivation_epochs")&&!statement.contains("core.derivation_events")&&!statement.contains("privacy.output_builds")&&!statement.contains("privacy.policy_state")&&!statement.contains("privacy.original_events")&&!statement.contains("privacy.event_outputs")&&!statement.contains("privacy.invalidate_outputs")&&!statement.contains("privacy.require_active_epoch")}
+]);
+    out
+}
+pub(crate) fn before(statement: &str) -> bool {
+    !statement.contains("privacy_outputs")
+        && !statement.contains("privacy.derivation_contracts")
+        && !statement.contains("privacy.derivation_epochs")
+        && !statement.contains("core.derivation_events")
+        && !statement.contains("privacy.output_builds")
+        && !statement.contains("privacy.policy_state")
+        && !statement.contains("privacy.original_events")
+        && !statement.contains("privacy.event_outputs")
+        && !statement.contains("privacy.invalidate_outputs")
+        && !statement.contains("privacy.require_active_epoch")
+}
 
 /// The boundary owner composes these views with its privilege declarations.
-pub(crate) const VISIBLE_EVENTS:&str=r#"CREATE VIEW core.visible_events AS SELECT
+pub(crate) const VISIBLE_EVENTS: &str = r#"CREATE VIEW core.visible_events AS SELECT
  e.id,e.event_type,e.source,e.run_id,e.material_id,e.anchor,e.output_index,e.parents,
  e.ts_orig,e.ts_quality,e.ts_coided,e.ts_persisted,e.commit_seq,
  CASE WHEN o.event_id IS NULL THEN jsonb_build_object('unavailable','privacy_projection_pending')
@@ -58,10 +86,10 @@ pub(crate) const VISIBLE_EVENTS:&str=r#"CREATE VIEW core.visible_events AS SELEC
  e.reading_order,e.record_hash,e.record_state,coalesce(o.class,e.class) AS class,e.kind_version,e.validation,e.producer_family,e.producer_identity,e.source_version,e.source_fingerprint
  FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id AND o.epoch=privacy.require_active_epoch()
  WHERE privacy.require_active_epoch()>=0"#;
-pub(crate) const VISIBLE_SEARCH:&str=r#"CREATE VIEW core.visible_search_text AS SELECT s.event_id,s.text,s.tsv,s.trigram_indexed
+pub(crate) const VISIBLE_SEARCH: &str = r#"CREATE VIEW core.visible_search_text AS SELECT s.event_id,s.text,s.tsv,s.trigram_indexed
  FROM core.search_text s JOIN privacy.event_outputs o ON o.event_id=s.event_id
  WHERE o.epoch=privacy.require_active_epoch() AND o.state='complete' AND core.class_visible(o.class)"#;
-pub(crate) const VISIBLE_VECTORS:&str=r#"CREATE VIEW core.visible_embedding_vectors AS SELECT v.embedding_id,v.target_id,v.space,v.dimensions,v.projected,v.coverage,v.reason
+pub(crate) const VISIBLE_VECTORS: &str = r#"CREATE VIEW core.visible_embedding_vectors AS SELECT v.embedding_id,v.target_id,v.space,v.dimensions,v.projected,v.coverage,v.reason
  FROM core.embedding_vectors v JOIN privacy.event_outputs o ON o.event_id=v.embedding_id
  JOIN privacy.event_outputs target ON target.event_id=v.target_id
  LEFT JOIN privacy.original_events basis ON basis.event_id=v.embedding_id
@@ -75,15 +103,15 @@ pub(crate) const VISIBLE_VECTORS:&str=r#"CREATE VIEW core.visible_embedding_vect
  WHERE p.event_id IS NULL OR p.epoch<>o.epoch OR p.state<>'complete' OR p.changed OR NOT core.class_visible(p.class))))"#;
 
 /// Internal readers use transformed values without a caller-specific copy.
-pub(crate) const DERIVATION_EVENTS:&str=r#"CREATE VIEW core.derivation_events AS SELECT
+pub(crate) const DERIVATION_EVENTS: &str = r#"CREATE VIEW core.derivation_events AS SELECT
  e.id,e.event_type,e.source,e.run_id,e.material_id,e.anchor,e.output_index,e.parents,
  e.ts_orig,e.ts_quality,e.ts_coided,e.ts_persisted,e.commit_seq,o.payload,o.equivalence_key,
  e.reading_order,e.record_hash,e.record_state,o.class,e.kind_version,e.validation,e.producer_family,e.producer_identity,e.source_version,e.source_fingerprint
  FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id
  WHERE o.epoch=privacy.require_active_epoch() AND o.state='complete'"#;
-pub(crate) const DERIVATION_EPOCHS:&str="CREATE TABLE privacy.derivation_epochs (\n  derivation text PRIMARY KEY,\n  epoch bigint NOT NULL,\n  cursor jsonb NOT NULL\n)";
+pub(crate) const DERIVATION_EPOCHS: &str = "CREATE TABLE privacy.derivation_epochs (\n  derivation text PRIMARY KEY,\n  epoch bigint NOT NULL,\n  cursor jsonb NOT NULL\n)";
 
-pub(crate) const CONTRACTS:&str="CREATE TABLE privacy.derivation_contracts (
+pub(crate) const CONTRACTS: &str = "CREATE TABLE privacy.derivation_contracts (
   derivation text NOT NULL,
   version bigint NOT NULL,
   build text NOT NULL,

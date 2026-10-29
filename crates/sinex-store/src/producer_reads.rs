@@ -57,16 +57,34 @@ pub async fn extent(conn: &mut PgConnection, hash: &str) -> Result<Option<Vec<u8
 
 /// Source authority captured with the original material receipt, never inferred
 /// from a current parser or a producer-controlled input label.
-pub async fn material_sources(conn:&mut PgConnection,ids:&[uuid::Uuid])->crate::Result<Vec<(uuid::Uuid,Option<String>,Option<i64>)>> {
+pub async fn material_sources(
+    conn: &mut PgConnection,
+    ids: &[uuid::Uuid],
+) -> crate::Result<Vec<(uuid::Uuid, Option<String>, Option<i64>)>> {
     Ok(sqlx::query_as("SELECT material_id,source_name,source_version FROM core.ingress_frames WHERE material_id=ANY($1)")
         .bind(ids).fetch_all(conn).await?)
 }
 
-pub async fn event_source(conn:&mut PgConnection,id:Uuid)->Result<Option<(String,Option<i64>,Option<String>,Option<String>,Option<String>)>> {
+pub async fn event_source(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<
+    Option<(
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )>,
+> {
     Ok(sqlx::query_as("SELECT source,source_version,source_fingerprint,producer_family,producer_identity FROM core.events WHERE id=$1").bind(id).fetch_optional(conn).await?)
 }
 
-pub async fn materials_registered_by(conn:&mut PgConnection,producer:&str,ids:&[Uuid])->Result<Vec<Uuid>>{
+pub async fn materials_registered_by(
+    conn: &mut PgConnection,
+    producer: &str,
+    ids: &[Uuid],
+) -> Result<Vec<Uuid>> {
     Ok(sqlx::query_scalar("SELECT material_id FROM core.ingress_frames WHERE producer=$1 AND material_id=ANY($2) AND refusal IS NULL")
         .bind(producer).bind(ids).fetch_all(conn).await?)
 }

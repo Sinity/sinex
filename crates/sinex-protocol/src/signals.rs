@@ -2,61 +2,115 @@
 pub use sinex_model::event_types::signal::EmergencyCompleted as EmergencyCompletion;
 /// Deployment authority is scoped by the authenticated producer's configured
 /// family. Merely publishing canonical facts grants no privileged author role.
-#[derive(Clone,Debug,Default,PartialEq,Eq,serde::Serialize,serde::Deserialize,schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorAttestation {
-    pub operator:bool,
-    pub shipped:Vec<ShippedRule>,
+    pub operator: bool,
+    pub shipped: Vec<ShippedRule>,
 }
-#[derive(Clone,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize,schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct ShippedRule {
-    pub id:String,
-    pub revision:u64,
-    pub fingerprint:String,
+    pub id: String,
+    pub revision: u64,
+    pub fingerprint: String,
 }
-pub fn rule_fingerprint(active:&::signals::ActiveRule)->String {
-    sinex_model::json_identity::hash(&serde_json::json!({"version":active.version,"rule":active.rule,"live":active.live}))
+pub fn rule_fingerprint(active: &::signals::ActiveRule) -> String {
+    sinex_model::json_identity::hash(
+        &serde_json::json!({"version":active.version,"rule":active.rule,"live":active.live}),
+    )
 }
-pub fn authorize_author(intent:&::signals::FiredIntent,active:Option<&::signals::ActiveRule>,family:&str,capability:Option<&AuthorAttestation>)->Result<(),String> {
-    if intent.delivery.trigger.rule.product!=family {return Err("signal author belongs to another authenticated family".into());}
-    let prefix=match intent.author{::signals::Author::Shipped=>"shipped:",_=>"authored:"};
-    if intent.delivery.trigger.rule.id.strip_prefix(prefix).is_none_or(str::is_empty){return Err("signal rule identity is outside its author namespace".into());}
-
-    let channel=|active:&::signals::ActiveRule|match active.rule.deliver {
-        ::signals::Deliver::Notice if active.rule.interrupt=>::signals::Channel::Interrupt,
-        ::signals::Deliver::Notice=>::signals::Channel::Notice,
-        ::signals::Deliver::Value=>::signals::Channel::Value,
-        ::signals::Deliver::Action=>::signals::Channel::Action,
+pub fn authorize_author(
+    intent: &::signals::FiredIntent,
+    active: Option<&::signals::ActiveRule>,
+    family: &str,
+    capability: Option<&AuthorAttestation>,
+) -> Result<(), String> {
+    if intent.delivery.trigger.rule.product != family {
+        return Err("signal author belongs to another authenticated family".into());
+    }
+    let prefix = match intent.author {
+        ::signals::Author::Shipped => "shipped:",
+        _ => "authored:",
     };
-    if let Some(active)=active && (active.version!=intent.delivery.trigger.rule || active.author!=intent.author || active.current()!=intent.current || active.rule.quiet_hours!=intent.quiet_hours || active.rule.rate_limit!=intent.rate_limit || channel(active)!=intent.delivery.channel || active.rule.scope!=intent.delivery.scope || intent.delivery.downgrade.is_some() || !active.rule.enabled) {
+    if intent
+        .delivery
+        .trigger
+        .rule
+        .id
+        .strip_prefix(prefix)
+        .is_none_or(str::is_empty)
+    {
+        return Err("signal rule identity is outside its author namespace".into());
+    }
+
+    let channel = |active: &::signals::ActiveRule| match active.rule.deliver {
+        ::signals::Deliver::Notice if active.rule.interrupt => ::signals::Channel::Interrupt,
+        ::signals::Deliver::Notice => ::signals::Channel::Notice,
+        ::signals::Deliver::Value => ::signals::Channel::Value,
+        ::signals::Deliver::Action => ::signals::Channel::Action,
+    };
+    if let Some(active) = active
+        && (active.version != intent.delivery.trigger.rule
+            || active.author != intent.author
+            || active.current() != intent.current
+            || active.rule.quiet_hours != intent.quiet_hours
+            || active.rule.rate_limit != intent.rate_limit
+            || channel(active) != intent.delivery.channel
+            || active.rule.scope != intent.delivery.scope
+            || intent.delivery.downgrade.is_some()
+            || !active.rule.enabled)
+    {
         return Err("signal active rule differs from its frozen intent".into());
     }
-    if matches!(intent.author,::signals::Author::Agent(_)){return Ok(());}
-    let capability=capability.ok_or("forwarded elevated author lacks configured attestation")?;
-    let active=active.ok_or("forwarded elevated author lacks its frozen active rule")?;
+    if matches!(intent.author, ::signals::Author::Agent(_)) {
+        return Ok(());
+    }
+    let capability = capability.ok_or("forwarded elevated author lacks configured attestation")?;
+    let active = active.ok_or("forwarded elevated author lacks its frozen active rule")?;
     match intent.author {
-        ::signals::Author::Operator if capability.operator=>Ok(()),
-        ::signals::Author::Shipped if capability.shipped.iter().any(|rule|rule.id==active.version.id && rule.revision==active.version.revision && rule.fingerprint==rule_fingerprint(active))=>Ok(()),
-        _=>Err("forwarded elevated author is outside its configured attestation".into()),
+        ::signals::Author::Operator if capability.operator => Ok(()),
+        ::signals::Author::Shipped
+            if capability.shipped.iter().any(|rule| {
+                rule.id == active.version.id
+                    && rule.revision == active.version.revision
+                    && rule.fingerprint == rule_fingerprint(active)
+            }) =>
+        {
+            Ok(())
+        }
+        _ => Err("forwarded elevated author is outside its configured attestation".into()),
     }
 }
 
-pub const EMERGENCY_PRODUCT:&str="polylogue";
+pub const EMERGENCY_PRODUCT: &str = "polylogue";
 pub const EMERGENCY_RULE_ID: &str = "shipped:sinex-blocked";
 pub const EMERGENCY_RULE_REVISION: u64 = 1;
-pub const EMERGENCY_OCCURRENCE_ID:&str="sinex-blocked";
+pub const EMERGENCY_OCCURRENCE_ID: &str = "sinex-blocked";
 
 /// Mint the episode once when an outage is actually observed and persist it
 /// with the ordinary signal checkpoint. Polls and restarts reuse that identity.
-pub fn emergency_trigger(episode:sinex_model::EventId)->::signals::Trigger {
-    ::signals::Trigger{rule: ::signals::RuleVersion{product:EMERGENCY_PRODUCT.into(),id:EMERGENCY_RULE_ID.into(),revision:EMERGENCY_RULE_REVISION},occurrence: ::signals::Occurrence{id:EMERGENCY_OCCURRENCE_ID.into(),episode:episode.to_string()}}
+pub fn emergency_trigger(episode: sinex_model::EventId) -> ::signals::Trigger {
+    ::signals::Trigger {
+        rule: ::signals::RuleVersion {
+            product: EMERGENCY_PRODUCT.into(),
+            id: EMERGENCY_RULE_ID.into(),
+            revision: EMERGENCY_RULE_REVISION,
+        },
+        occurrence: ::signals::Occurrence {
+            id: EMERGENCY_OCCURRENCE_ID.into(),
+            episode: episode.to_string(),
+        },
+    }
 }
-
 
 /// The compiled outage alert carries no dynamic error, path or captured work.
 /// Products use this one builder before the shared desktop worker freezes it.
-pub fn emergency_notice(delivery_id:&str)->::signals::notifications::Notice {
+pub fn emergency_notice(delivery_id: &str) -> ::signals::notifications::Notice {
     ::signals::notifications::Notice {
         delivery_id:delivery_id.into(),product:EMERGENCY_PRODUCT.into(),icon:"polylogue".into(),
         rule:"Sinex blocked".into(),occurrence:delivery_id.into(),summary:"Sinex blocked".into(),
@@ -64,7 +118,6 @@ pub fn emergency_notice(delivery_id:&str)->::signals::notifications::Notice {
         reference:"status".into(),command_hint:"polylogue status".into(),interrupt:true,current:true,data_loss:false,budget_passive_count:None,
     }
 }
-
 
 /// Exact compiled contract identity, including its static nonsensitive notice
 /// and sole permitted local route. Authored rules cannot inherit this identity.
@@ -87,14 +140,26 @@ pub fn emergency_rule() -> ShippedRule {
 /// This checks only the shared immutable completion identity.
 pub fn validate_emergency(completion: &EmergencyCompletion, family: &str) -> Result<(), String> {
     let intent = &completion.intent;
-    let episode=serde_json::from_value::<sinex_model::EventId>(serde_json::Value::String(intent.delivery.trigger.occurrence.episode.clone())).ok();
-    if episode.is_none_or(|episode|episode.0.get_version_num()!=7 || intent.delivery.trigger!=emergency_trigger(episode)) {
+    let episode = serde_json::from_value::<sinex_model::EventId>(serde_json::Value::String(
+        intent.delivery.trigger.occurrence.episode.clone(),
+    ))
+    .ok();
+    if episode.is_none_or(|episode| {
+        episode.0.get_version_num() != 7 || intent.delivery.trigger != emergency_trigger(episode)
+    }) {
         return Err("emergency occurrence is not an opaque compiled outage episode".into());
     }
 
-    if completion.notice!=emergency_notice(&completion.delivery_id)
-        || !intent.current || intent.quiet_hours.is_some() || intent.rate_limit.is_some()
-        || !completion.inputs.is_empty() || !intent.delivery.basis.is_empty() || intent.delivery.change.is_some() || intent.delivery.value.is_some() || intent.delivery.scope.is_some() || intent.delivery.downgrade.is_some()
+    if completion.notice != emergency_notice(&completion.delivery_id)
+        || !intent.current
+        || intent.quiet_hours.is_some()
+        || intent.rate_limit.is_some()
+        || !completion.inputs.is_empty()
+        || !intent.delivery.basis.is_empty()
+        || intent.delivery.change.is_some()
+        || intent.delivery.value.is_some()
+        || intent.delivery.scope.is_some()
+        || intent.delivery.downgrade.is_some()
         || intent.delivery.trigger.rule.product != family
         || intent.delivery.trigger.rule.id != EMERGENCY_RULE_ID
         || intent.delivery.trigger.rule.revision != EMERGENCY_RULE_REVISION

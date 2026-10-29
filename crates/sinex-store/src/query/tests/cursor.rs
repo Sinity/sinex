@@ -1,7 +1,7 @@
 use super::*;
 
 async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) -> Result<Answer> {
-    let fixed = context_for_page(conn,ctx,&page,text).await?;
+    let fixed = context_for_page(conn, ctx, &page, text).await?;
     let bound = bind(text, &fixed).unwrap();
     run(conn, text, Some(&bound), &fixed, &page).await
 }
@@ -92,7 +92,11 @@ async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast(
             jiff::civil::Time::constant(6, 0, 0, 0),
         ),
     ] {
-        assert!(context_for_page(&mut conn,&changed,&page,text).await.is_err());
+        assert!(
+            context_for_page(&mut conn, &changed, &page, text)
+                .await
+                .is_err()
+        );
     }
     let mut changed = bind(text, &ctx).unwrap();
     changed.stages.push(Stage::Limit(1));
@@ -236,10 +240,23 @@ async fn cursor_authentication_and_page_sizes_are_checked_before_integer_convers
     .await
     .unwrap();
     let raw = first.page.cursor.unwrap();
-    for index in [0,raw.len()/2,raw.len()-1] {
-        let mut bytes=raw.as_bytes().to_vec();bytes[index]=if bytes[index]==b'0'{b'1'}else{b'0'};
-        let token=String::from_utf8(bytes).unwrap();
-        assert!(ask_at(&mut conn,"commands",&ctx(),Page{size:Some(1),cursor:Some(token)}).await.is_err());
+    for index in [0, raw.len() / 2, raw.len() - 1] {
+        let mut bytes = raw.as_bytes().to_vec();
+        bytes[index] = if bytes[index] == b'0' { b'1' } else { b'0' };
+        let token = String::from_utf8(bytes).unwrap();
+        assert!(
+            ask_at(
+                &mut conn,
+                "commands",
+                &ctx(),
+                Page {
+                    size: Some(1),
+                    cursor: Some(token)
+                }
+            )
+            .await
+            .is_err()
+        );
     }
     assert!(
         ask_at(
@@ -401,38 +418,94 @@ async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg
 }
 
 #[devkit::test]
-async fn cursor_secret_is_not_public_sql_and_open_paging_needs_no_unlock(db:devkit::pg::TestDatabase) {
-    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+async fn cursor_secret_is_not_public_sql_and_open_paging_needs_no_unlock(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     world(&mut conn).await;
-    assert!(read_sql::run(&mut conn,"SELECT secret FROM core.query_cursor_key").await.is_err());
-    let first=ask_at(&mut conn,"commands sort exit_code desc fields command",&ctx(),Page{size:Some(2),cursor:None}).await.unwrap();
-    let next=ask_at(&mut conn,"commands sort exit_code desc fields command",&ctx(),Page{size:Some(3),cursor:first.page.cursor}).await.unwrap();
-    assert_eq!(first.rows.len()+next.rows.len(),5);
-    assert_eq!(first.total,next.total);
+    assert!(
+        read_sql::run(&mut conn, "SELECT secret FROM core.query_cursor_key")
+            .await
+            .is_err()
+    );
+    let first = ask_at(
+        &mut conn,
+        "commands sort exit_code desc fields command",
+        &ctx(),
+        Page {
+            size: Some(2),
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    let next = ask_at(
+        &mut conn,
+        "commands sort exit_code desc fields command",
+        &ctx(),
+        Page {
+            size: Some(3),
+            cursor: first.page.cursor,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.rows.len() + next.rows.len(), 5);
+    assert_eq!(first.total, next.total);
 }
 #[devkit::test]
-async fn canonical_equivalent_questions_keep_one_keyset(db:devkit::pg::TestDatabase) {
-    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();world(&mut conn).await;
-    let a="commands where exit_code >= 0 and cwd exists sort when fields command";
-    let b="commands where cwd exists and exit_code >= 0 sort when fields command";
-    let first=ask_at(&mut conn,a,&ctx(),Page{size:Some(1),cursor:None}).await.unwrap();
-    let next=ask_at(&mut conn,b,&ctx(),Page{size:Some(50),cursor:first.page.cursor}).await.unwrap();
-    assert_eq!(first.total,next.total);
-    assert_eq!(first.rows.len()+next.rows.len(),first.total as usize);
+async fn canonical_equivalent_questions_keep_one_keyset(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    world(&mut conn).await;
+    let a = "commands where exit_code >= 0 and cwd exists sort when fields command";
+    let b = "commands where cwd exists and exit_code >= 0 sort when fields command";
+    let first = ask_at(
+        &mut conn,
+        a,
+        &ctx(),
+        Page {
+            size: Some(1),
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    let next = ask_at(
+        &mut conn,
+        b,
+        &ctx(),
+        Page {
+            size: Some(50),
+            cursor: first.page.cursor,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.total, next.total);
+    assert_eq!(first.rows.len() + next.rows.len(), first.total as usize);
 }
 
 #[devkit::test]
-async fn sql_matches_shared_unknown_and_wildcard_predicates(db:devkit::pg::TestDatabase) {
-    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();world(&mut conn).await;
-    for (text,total) in [
-        ("commands where exit_code:unknown",1),
-        ("commands where exit_code:*",5),
-        ("commands where exit_code = unknown",0),
-        ("commands where not exit_code = unknown",0),
-        ("commands where exit_code = [unknown,0]",2),
-        ("commands where exit_code != [unknown,0]",0),
+async fn sql_matches_shared_unknown_and_wildcard_predicates(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    world(&mut conn).await;
+    for (text, total) in [
+        ("commands where exit_code:unknown", 1),
+        ("commands where exit_code:*", 5),
+        ("commands where exit_code = unknown", 0),
+        ("commands where not exit_code = unknown", 0),
+        ("commands where exit_code = [unknown,0]", 2),
+        ("commands where exit_code != [unknown,0]", 0),
     ] {
-        let answer=ask_at(&mut conn,text,&ctx(),Page::default()).await.unwrap();
-        assert_eq!(answer.total,total,"{text}");
+        let answer = ask_at(&mut conn, text, &ctx(), Page::default())
+            .await
+            .unwrap();
+        assert_eq!(answer.total, total, "{text}");
     }
 }

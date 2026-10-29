@@ -8,7 +8,7 @@ use sinex_model::{
     Class, EquivalenceKey, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordState, ReplaceRule, TimeQuality, Timestamp, TsOrig,
 };
-use sqlx::{Connection,PgConnection};
+use sqlx::{Connection, PgConnection};
 use std::collections::HashSet;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -882,7 +882,10 @@ pub async fn after_seq(
 
 /// The live readings at these record locations, of any event type and output
 /// number.
-pub(crate) async fn live_originals_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> Result<Vec<Event>> {
+pub(crate) async fn live_originals_at(
+    conn: &mut PgConnection,
+    locations: &[RecordLocation],
+) -> Result<Vec<Event>> {
     let materials: Vec<Uuid> = locations.iter().map(|l| l.material.0).collect();
     let anchors: Vec<i64> = locations
         .iter()
@@ -1052,10 +1055,15 @@ pub async fn producer_versions(
            ORDER BY e.source,m.name,m.version,m.build,material.parser,material.parser_version"#,
         &ids
     ).fetch_all(conn).await?;
-    Ok(serde_json::json!(rows.into_iter().map(|row|
-        serde_json::json!({"producer":row.producer,"manifest":row.manifest,
+    Ok(serde_json::json!(
+        rows.into_iter()
+            .map(
+                |row| serde_json::json!({"producer":row.producer,"manifest":row.manifest,
             "version":row.version,"build":row.build,"parser":row.parser,
-            "parser_version":row.parser_version,"events":row.events})).collect::<Vec<_>>()))
+            "parser_version":row.parser_version,"events":row.events})
+            )
+            .collect::<Vec<_>>()
+    ))
 }
 
 /// Where a per-event derivation has read to.
@@ -1101,10 +1109,12 @@ pub struct StoredComparison {
 /// Keep a comparison. Comparisons are operations records, not events; they are
 /// written by the command that made them.
 pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> Result<i64> {
-    let mut tx=conn.begin().await?;
-    sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE").execute(&mut *tx).await?;
+    let mut tx = conn.begin().await?;
+    sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE")
+        .execute(&mut *tx)
+        .await?;
     crate::privacy::projection::lock_epoch(&mut tx).await?;
-    crate::privacy::comparisons::require_scope(&mut tx,&c.context).await?;
+    crate::privacy::comparisons::require_scope(&mut tx, &c.context).await?;
     let (from, until) = c.range.unwrap_or((None, None));
     let id=sqlx::query_scalar!(
         r#"INSERT INTO derivation.comparisons
@@ -1124,7 +1134,8 @@ pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> 
     )
     .fetch_one(&mut *tx)
     .await?;
-    tx.commit().await?;Ok(id)
+    tx.commit().await?;
+    Ok(id)
 }
 
 /// Stored comparisons, newest first, optionally of one derivation.
@@ -1133,7 +1144,7 @@ pub async fn comparisons(
     derivation: Option<&str>,
     limit: i64,
 ) -> Result<Vec<StoredComparison>> {
-    let mut tx=conn.begin().await?;
+    let mut tx = conn.begin().await?;
     crate::query::read_one_snapshot(&mut tx).await?;
     let rows = sqlx::query!(
         r#"SELECT id, derivation, version, range_from, range_until, made_at, keys, unchanged,
@@ -1146,7 +1157,9 @@ pub async fn comparisons(
     )
     .fetch_all(&mut *tx)
     .await?;
-    for row in &rows{crate::privacy::comparisons::require_scope(&mut tx,&row.context).await?;}
+    for row in &rows {
+        crate::privacy::comparisons::require_scope(&mut tx, &row.context).await?;
+    }
     tx.commit().await?;
     Ok(rows
         .into_iter()

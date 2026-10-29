@@ -98,7 +98,9 @@ impl Blobs {
     }
     /// Prepared external encodings have already passed common identity verification.
     /// The segment append checks encoded bytes again before they can commit.
-    pub fn put_prepared(&self,prepared:Prepared)->Result<String>{self.prepare(prepared)}
+    pub fn put_prepared(&self, prepared: Prepared) -> Result<String> {
+        self.prepare(prepared)
+    }
     /// Compression and hashing happen outside the writer lock; admission syncs all waiting bytes together.
     pub fn put(&self, bytes: &[u8]) -> Result<String> {
         self.prepare(self.preparation()?.plain(bytes, 3)?)
@@ -154,10 +156,14 @@ impl Blobs {
         Ok(())
     }
     fn extent(&self, name: &str) -> Result<Extent> {
-        let hash=parse(name)?;
-        if let Some(extent)=self.state()?.extents.get(&hash).cloned() {return Ok(extent);}
+        let hash = parse(name)?;
+        if let Some(extent) = self.state()?.extents.get(&hash).cloned() {
+            return Ok(extent);
+        }
         self.sync_pending()?;
-        self.state()?.extents.get(&hash).cloned().ok_or_else(||crate::Error::Invalid(format!("blob {name} has no committed or pending extent")))
+        self.state()?.extents.get(&hash).cloned().ok_or_else(|| {
+            crate::Error::Invalid(format!("blob {name} has no committed or pending extent"))
+        })
     }
     /// Encoded descriptors are the portable read authority carried in producer acknowledgments.
     pub fn descriptors(&self, name: &str) -> Result<Vec<Vec<u8>>> {

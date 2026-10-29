@@ -4,18 +4,21 @@
 //! changed visible ordered answer requires a fresh query. Rows use the table's
 //! field names; times are UTC.
 mod compile;
-mod cursor;
 pub mod continuation;
+mod cursor;
 mod fields;
 mod follow;
+mod products;
 mod recall;
+mod saved;
 mod selected;
 pub mod signals;
-mod saved;
-mod products;
-pub use products::{current_grants, key_dirty, live_payload,event_payload};
-pub use saved::{saved_records, saved_definitions};
-pub use selected::{SelectedAnswer, resolve_recall, selected_query, selected_query_in_snapshot, check_selected_question, selected_page};
+pub use products::{current_grants, event_payload, key_dirty, live_payload};
+pub use saved::{saved_definitions, saved_records};
+pub use selected::{
+    SelectedAnswer, check_selected_question, resolve_recall, selected_page, selected_query,
+    selected_query_in_snapshot,
+};
 mod source_views;
 pub(crate) mod sql;
 mod walk;
@@ -136,9 +139,13 @@ async fn run_inner(
     capture_selection: bool,
     in_snapshot: bool,
 ) -> Result<selected::SelectedPage> {
-    if !in_snapshot {initialize_calendar(conn).await?;}
+    if !in_snapshot {
+        initialize_calendar(conn).await?;
+    }
     let mut tx = conn.begin().await?;
-    if !in_snapshot { read_one_snapshot(&mut tx).await?; }
+    if !in_snapshot {
+        read_one_snapshot(&mut tx).await?;
+    }
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
         .execute(&mut *tx)
         .await?;
@@ -146,13 +153,24 @@ async fn run_inner(
     if size > i64::MAX as u64 {
         return Err(Error::Invalid("page size is out of range".into()));
     }
-    let mut ctx=ctx.clone();
-    if ctx.catalog.is_none() {ctx.catalog=Some(sinex_model::query::QueryCatalog::new(sinex_schema::kinds::all(&mut tx).await?.into_values()));}
-    let grants=current_grants(&mut tx).await?;
-    let question_id=continuation::identity("query",&continuation::query_identity(text,&ctx)?,&grants)?;
-    let seal=continuation::seal_key(&mut tx).await?;
-    let pinned=page.cursor.as_deref().map(|raw|cursor::Cursor::decode(&seal,raw,question_id,&ctx)).transpose()?;
-    if let Some(pinned)=&pinned {ctx.now=pinned.ctx.now;}
+    let mut ctx = ctx.clone();
+    if ctx.catalog.is_none() {
+        ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
+            sinex_schema::kinds::all(&mut tx).await?.into_values(),
+        ));
+    }
+    let grants = current_grants(&mut tx).await?;
+    let question_id =
+        continuation::identity("query", &continuation::query_identity(text, &ctx)?, &grants)?;
+    let seal = continuation::seal_key(&mut tx).await?;
+    let pinned = page
+        .cursor
+        .as_deref()
+        .map(|raw| cursor::Cursor::decode(&seal, raw, question_id, &ctx))
+        .transpose()?;
+    if let Some(pinned) = &pinned {
+        ctx.now = pinned.ctx.now;
+    }
     let declarations = match &pinned {
         Some(cursor) => {
             let refs: Vec<_> = cursor.declarations.iter().map(|d| d.0.clone()).collect();
@@ -193,21 +211,30 @@ async fn run_inner(
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
         declarations.into_values(),
     ));
-    let programmatic=query.and_then(|q|{
-        let parsed=sinex_model::query::bind(text,&ctx).ok();
-        (parsed.as_ref()!=Some(q)).then(||format!("{q:?}"))
+    let programmatic = query.and_then(|q| {
+        let parsed = sinex_model::query::bind(text, &ctx).ok();
+        (parsed.as_ref() != Some(q)).then(|| format!("{q:?}"))
     });
     let mut saved_context = None;
     let mut bound = match query {
         Some(query) => query.clone(),
-        None => if let Some(name) = sinex_model::query::saved::reference_name(text) {
-            let definitions = if let Some(snapshot) = retained.and_then(|retained| retained.selected.get("_saved")) {
-                serde_json::from_value(snapshot.clone()).map_err(|error| Error::Invalid(error.to_string()))?
-            } else { saved::saved_definitions(&mut tx,&name).await? };
-            let bound = sinex_model::query::saved::bind_saved(text,&ctx,&definitions)?;
-            saved_context = Some(definitions);
-            bound
-        } else {sinex_model::query::bind(text,&ctx)?},
+        None => {
+            if let Some(name) = sinex_model::query::saved::reference_name(text) {
+                let definitions = if let Some(snapshot) =
+                    retained.and_then(|retained| retained.selected.get("_saved"))
+                {
+                    serde_json::from_value(snapshot.clone())
+                        .map_err(|error| Error::Invalid(error.to_string()))?
+                } else {
+                    saved::saved_definitions(&mut tx, &name).await?
+                };
+                let bound = sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?;
+                saved_context = Some(definitions);
+                bound
+            } else {
+                sinex_model::query::bind(text, &ctx)?
+            }
+        }
     };
     ctx.catalog
         .as_ref()
@@ -221,12 +248,20 @@ async fn run_inner(
     .fetch_one(&mut *tx)
     .await?;
     let scope = (scope.user, scope.grants);
-    let question = cursor::question(text,programmatic,saved_context.as_ref(),&ctx,&scope)?;
+    let question = cursor::question(text, programmatic, saved_context.as_ref(), &ctx, &scope)?;
     let current = current_seq(&mut tx).await?;
-    let prior=pinned;
-    let mut seq=match &prior {
-        Some(cursor)=>{cursor.check_question(&question)?;if cursor.seq>current {return Err(Error::Invalid("query cursor is ahead of the archive".into()));}cursor.seq},
-        None=>current,
+    let prior = pinned;
+    let mut seq = match &prior {
+        Some(cursor) => {
+            cursor.check_question(&question)?;
+            if cursor.seq > current {
+                return Err(Error::Invalid(
+                    "query cursor is ahead of the archive".into(),
+                ));
+            }
+            cursor.seq
+        }
+        None => current,
     };
     if page.cursor.is_none() {
         for stage in &query.stages {
@@ -247,7 +282,9 @@ async fn run_inner(
             "as-of position is outside the known archive".into(),
         ));
     }
-    if let Some(reference)=query.similar_reference()? {crate::vectors::validate_reference(&mut tx,reference,seq).await?;}
+    if let Some(reference) = query.similar_reference()? {
+        crate::vectors::validate_reference(&mut tx, reference, seq).await?;
+    }
     if matches!(query.source, Source::Walk { .. })
         && (query.filter.is_some() || !query.stages.is_empty())
     {
@@ -255,7 +292,7 @@ async fn run_inner(
             "provenance walks do not support query stages; use a separate event query".into(),
         ));
     }
-    let availability=availability(&mut tx,query).await?;
+    let availability = availability(&mut tx, query).await?;
     let mut read = ReadPage {
         question,
         ctx,
@@ -280,7 +317,8 @@ async fn run_inner(
     let mut answer = match &query.source {
         Source::Walk { walk, reference } => {
             let rows = walk::walk(&mut tx, *walk, reference).await?;
-            read.availability["graph"]=serde_json::json!(cursor::digest(&serde_json::json!(rows))?);
+            read.availability["graph"] =
+                serde_json::json!(cursor::digest(&serde_json::json!(rows))?);
             read.check_availability()?;
             let total = rows.len() as i64;
             let columns = rows
@@ -289,21 +327,63 @@ async fn run_inner(
                 .map(|o| o.keys().cloned().collect())
                 .unwrap_or_default();
             let reading = read_as(query);
-            use continuation::{Position,Direction,compare_positions};
-            let position=|row:&Json|Position {values:vec![row["depth"].clone(),if matches!(query.source,Source::Walk{walk:sinex_model::query::Walk::Trace,..}){Json::Null}else{row["when"].clone()}],row_identity:row["id"].as_str().unwrap_or("").to_owned()};
-            let directions=[Direction::Ascending,Direction::Ascending];
-            let mut chosen=Vec::new();let mut more=false;
+            use continuation::{Direction, Position, compare_positions};
+            let position = |row: &Json| Position {
+                values: vec![
+                    row["depth"].clone(),
+                    if matches!(
+                        query.source,
+                        Source::Walk {
+                            walk: sinex_model::query::Walk::Trace,
+                            ..
+                        }
+                    ) {
+                        Json::Null
+                    } else {
+                        row["when"].clone()
+                    },
+                ],
+                row_identity: row["id"].as_str().unwrap_or("").to_owned(),
+            };
+            let directions = [Direction::Ascending, Direction::Ascending];
+            let mut chosen = Vec::new();
+            let mut more = false;
             for row in rows {
-                if let Some(prior)=&read.prior && !compare_positions(&position(&row),&prior.after,&directions).map_err(|e|Error::Invalid(e.to_string()))?.is_gt(){continue;}
-                if chosen.len() as u64==read.size {more=true;break;}chosen.push(row);
+                if let Some(prior) = &read.prior
+                    && !compare_positions(&position(&row), &prior.after, &directions)
+                        .map_err(|e| Error::Invalid(e.to_string()))?
+                        .is_gt()
+                {
+                    continue;
+                }
+                if chosen.len() as u64 == read.size {
+                    more = true;
+                    break;
+                }
+                chosen.push(row);
             }
-            let last=chosen.last().map(|row|(position(row),vec!["numeric".into(),"timestamp with time zone".into()]));
-            Answer{table,query:text.into(),read_as:reading,resolved:read.resolved(),columns,total,page:read.info(total,more,last)?,rows:chosen,recall:None}
+            let last = chosen.last().map(|row| {
+                (
+                    position(row),
+                    vec!["numeric".into(), "timestamp with time zone".into()],
+                )
+            });
+            Answer {
+                table,
+                query: text.into(),
+                read_as: reading,
+                resolved: read.resolved(),
+                columns,
+                total,
+                page: read.info(total, more, last)?,
+                rows: chosen,
+                recall: None,
+            }
         }
         Source::Table { .. } => {
             read.check_availability()?;
             let rendered = render_page(
-                compile_query(&mut tx,&read.ctx,read.seq,query).await?,
+                compile_query(&mut tx, &read.ctx, read.seq, query).await?,
                 &read,
             )?;
             page_of(&mut tx, rendered, table, text, query, &read, None).await?
@@ -327,7 +407,7 @@ async fn run_inner(
                 ranked: query.ranked,
             };
             let rendered = render_page(
-                compile_query(&mut tx,&read.ctx,read.seq,&as_events).await?,
+                compile_query(&mut tx, &read.ctx, read.seq, &as_events).await?,
                 &read,
             )?;
             let account = selection
@@ -335,11 +415,15 @@ async fn run_inner(
                 .await?;
             if capture_selection {
                 let (context, parents, class) = selected::capture(
-                    &mut tx, text, query, &read.ctx, read.seq, &scope.1, &selection, &as_events, &account,
+                    &mut tx, text, query, &read.ctx, read.seq, &scope.1, &selection, &as_events,
+                    &account,
                 )
                 .await?;
                 let mut context = context;
-                if let Some(definitions) = &saved_context { context.selected["_saved"] = serde_json::to_value(definitions).map_err(|error| Error::Invalid(error.to_string()))?; }
+                if let Some(definitions) = &saved_context {
+                    context.selected["_saved"] = serde_json::to_value(definitions)
+                        .map_err(|error| Error::Invalid(error.to_string()))?;
+                }
                 captured = Some(context);
                 selected_parents = parents;
                 selected_class = class;
@@ -360,87 +444,245 @@ async fn run_inner(
 /// Current policies can make an otherwise reconstructable read unavailable.
 /// Mutable metadata has one atomic write epoch; event rows use their commit
 /// position and only privacy/excision changes invalidate their continuations.
-async fn availability(conn:&mut PgConnection,query:&Query)->Result<Json> {
+async fn availability(conn: &mut PgConnection, query: &Query) -> Result<Json> {
     let mut policy:Json=sqlx::query_scalar("SELECT jsonb_build_object('policy_epoch',privacy.require_active_epoch(),'privacy_outputs',coalesce((SELECT value FROM core.counters WHERE name='privacy_outputs'),0),'rules',coalesce((SELECT max(seq) FROM privacy.rules),0),'floors',coalesce((SELECT max(seq) FROM privacy.source_classes),0),'excised',coalesce((SELECT value FROM core.counters WHERE name='excised'),0))").fetch_one(&mut *conn).await?;
     if matches!(query.source,Source::Table{table,..} if !table.is_events()) {
         let metadata:Json=sqlx::query_scalar("SELECT jsonb_build_object('epoch',(SELECT value FROM core.counters WHERE name='query_metadata'),'head',(SELECT value FROM core.counters WHERE name='commit_seq'))").fetch_one(conn).await?;
-        policy["metadata"]=metadata;
+        policy["metadata"] = metadata;
     }
     Ok(policy)
 }
 
 /// One authenticated question and immutable read position.
 struct ReadPage {
-    question:String,question_id:query_language::identity::QuestionId,
-    seal:query_language::cursor::CursorSeal,ctx:Context,seq:i64,size:u64,prior:Option<cursor::Cursor>,availability:Json,
+    question: String,
+    question_id: query_language::identity::QuestionId,
+    seal: query_language::cursor::CursorSeal,
+    ctx: Context,
+    seq: i64,
+    size: u64,
+    prior: Option<cursor::Cursor>,
+    availability: Json,
 }
 impl ReadPage {
-    fn check_availability(&self)->Result<()> {
-        if self.prior.as_ref().is_some_and(|prior|prior.availability!=self.availability) {return Err(Error::StaleCursor);}Ok(())
+    fn check_availability(&self) -> Result<()> {
+        if self
+            .prior
+            .as_ref()
+            .is_some_and(|prior| prior.availability != self.availability)
+        {
+            return Err(Error::StaleCursor);
+        }
+        Ok(())
     }
-    fn resolved(&self)->Resolved {Resolved{now:self.ctx.now.to_string(),zone:self.ctx.zone_name(),day_start:self.ctx.day_start.to_string(),commit_seq:self.seq}}
-    fn info(&self,total:i64,more:bool,last:Option<(query_language::cursor::OrderPosition,Vec<String>)>)->Result<PageInfo> {
-        let cursor=if more {
-            let (position,types)=last.ok_or_else(||Error::Invalid("query page did not advance".into()))?;
-            Some(cursor::Cursor::encode(&self.seal,self.question_id,&self.question,&self.ctx,self.seq,total,types,position,self.availability.clone())?)
-        }else{None};
-        Ok(PageInfo{size:self.size,cursor})
+    fn resolved(&self) -> Resolved {
+        Resolved {
+            now: self.ctx.now.to_string(),
+            zone: self.ctx.zone_name(),
+            day_start: self.ctx.day_start.to_string(),
+            commit_seq: self.seq,
+        }
+    }
+    fn info(
+        &self,
+        total: i64,
+        more: bool,
+        last: Option<(query_language::cursor::OrderPosition, Vec<String>)>,
+    ) -> Result<PageInfo> {
+        let cursor = if more {
+            let (position, types) =
+                last.ok_or_else(|| Error::Invalid("query page did not advance".into()))?;
+            Some(cursor::Cursor::encode(
+                &self.seal,
+                self.question_id,
+                &self.question,
+                &self.ctx,
+                self.seq,
+                total,
+                types,
+                position,
+                self.availability.clone(),
+            )?)
+        } else {
+            None
+        };
+        Ok(PageInfo {
+            size: self.size,
+            cursor,
+        })
     }
 }
 struct Rendered {
-    total:Option<(String,Vec<sql::Param>)>,rows:(String,Vec<sql::Param>),columns:Vec<String>,
+    total: Option<(String, Vec<sql::Param>)>,
+    rows: (String, Vec<sql::Param>),
+    columns: Vec<String>,
 }
-fn typed_boundary(value:&Json,ty:&str)->Result<SqlFragment> {
-    let cast=match ty {
-        "smallint"|"integer"|"bigint"|"numeric"|"real"|"double precision"|"boolean"|"uuid"|"timestamp with time zone"|"timestamp without time zone"|"date"|"text"|"character varying"=>ty,
-        _=>return Err(Error::Invalid(format!("{ty} cannot be used as a scalar page key"))),
+fn typed_boundary(value: &Json, ty: &str) -> Result<SqlFragment> {
+    let cast = match ty {
+        "smallint"
+        | "integer"
+        | "bigint"
+        | "numeric"
+        | "real"
+        | "double precision"
+        | "boolean"
+        | "uuid"
+        | "timestamp with time zone"
+        | "timestamp without time zone"
+        | "date"
+        | "text"
+        | "character varying" => ty,
+        _ => {
+            return Err(Error::Invalid(format!(
+                "{ty} cannot be used as a scalar page key"
+            )));
+        }
     };
-    let mut f=SqlFragment::text("(");f.param(sea_query::Value::String(Some(value.to_string()))).push("::jsonb #>> '{}')::").push(cast);
+    let mut f = SqlFragment::text("(");
+    f.param(sea_query::Value::String(Some(value.to_string())))
+        .push("::jsonb #>> '{}')::")
+        .push(cast);
     Ok(f)
 }
-fn render_page(compiled:Compiled,read:&ReadPage)->Result<Rendered> {
-    let object=json_object(&compiled.columns);
-    let values=compiled.keys.iter().map(|(name,_)|format!("q.\"{name}\"")).collect::<Vec<_>>();
-    let order=compiled.keys.iter().map(|(name,desc)|format!("q.\"{name}\" {} NULLS LAST",if *desc {"DESC"}else{"ASC"})).collect::<Vec<_>>().join(", ");
-    let total=read.prior.is_none().then(||compiled.count.render());
-    let mut rows=SqlFragment::text(format!("SELECT jsonb_build_object('row',({object}),'keys',jsonb_build_array({}),'types',q.\"_key_types\",'id',q.\"_row_identity\") FROM (",values.join(", ")));
+fn render_page(compiled: Compiled, read: &ReadPage) -> Result<Rendered> {
+    let object = json_object(&compiled.columns);
+    let values = compiled
+        .keys
+        .iter()
+        .map(|(name, _)| format!("q.\"{name}\""))
+        .collect::<Vec<_>>();
+    let order = compiled
+        .keys
+        .iter()
+        .map(|(name, desc)| {
+            format!(
+                "q.\"{name}\" {} NULLS LAST",
+                if *desc { "DESC" } else { "ASC" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let total = read.prior.is_none().then(|| compiled.count.render());
+    let mut rows = SqlFragment::text(format!(
+        "SELECT jsonb_build_object('row',({object}),'keys',jsonb_build_array({}),'types',q.\"_key_types\",'id',q.\"_row_identity\") FROM (",
+        values.join(", ")
+    ));
     rows.append(compiled.answer).push(") q");
-    if let Some(prior)=&read.prior {
-        if prior.after.values.len()!=compiled.keys.len() || prior.key_types.len()!=compiled.keys.len() {return Err(Error::StaleCursor);}
-        let mut disjunction=Vec::new();
-        let mut equals=Vec::new();
-        for (i,((name,desc),value)) in compiled.keys.iter().zip(&prior.after.values).enumerate() {
-            let key=format!("q.\"{name}\"");
-            if !value.is_null() {
-                let mut next=SqlFragment::text(format!("({key} IS NULL OR {key} {} ",if *desc {"<"}else{">"}));
-                next.append(typed_boundary(value,&prior.key_types[i])?).push(")");
-                let mut chain=equals.clone();chain.push(next);disjunction.push(SqlFragment::join(chain," AND "));
-            }
-            let mut equal=SqlFragment::text(format!("{key} IS NOT DISTINCT FROM "));
-            equal.append(typed_boundary(value,&prior.key_types[i])?);equals.push(equal);
+    if let Some(prior) = &read.prior {
+        if prior.after.values.len() != compiled.keys.len()
+            || prior.key_types.len() != compiled.keys.len()
+        {
+            return Err(Error::StaleCursor);
         }
-        rows.push(" WHERE (").append(if disjunction.is_empty(){SqlFragment::text("false")}else{SqlFragment::join(disjunction," OR ")}).push(")");
+        let mut disjunction = Vec::new();
+        let mut equals = Vec::new();
+        for (i, ((name, desc), value)) in compiled.keys.iter().zip(&prior.after.values).enumerate()
+        {
+            let key = format!("q.\"{name}\"");
+            if !value.is_null() {
+                let mut next = SqlFragment::text(format!(
+                    "({key} IS NULL OR {key} {} ",
+                    if *desc { "<" } else { ">" }
+                ));
+                next.append(typed_boundary(value, &prior.key_types[i])?)
+                    .push(")");
+                let mut chain = equals.clone();
+                chain.push(next);
+                disjunction.push(SqlFragment::join(chain, " AND "));
+            }
+            let mut equal = SqlFragment::text(format!("{key} IS NOT DISTINCT FROM "));
+            equal.append(typed_boundary(value, &prior.key_types[i])?);
+            equals.push(equal);
+        }
+        rows.push(" WHERE (")
+            .append(if disjunction.is_empty() {
+                SqlFragment::text("false")
+            } else {
+                SqlFragment::join(disjunction, " OR ")
+            })
+            .push(")");
     }
-    rows.push(format!(" ORDER BY {order} LIMIT ")).param(sea_query::Value::BigInt(Some(i64::try_from(read.size.checked_add(1).ok_or_else(||Error::Invalid("page size overflow".into()))?).map_err(|_|Error::Invalid("page size overflow".into()))?)));
-    Ok(Rendered{total,rows:rows.render(),columns:compiled.columns})
+    rows.push(format!(" ORDER BY {order} LIMIT "))
+        .param(sea_query::Value::BigInt(Some(
+            i64::try_from(
+                read.size
+                    .checked_add(1)
+                    .ok_or_else(|| Error::Invalid("page size overflow".into()))?,
+            )
+            .map_err(|_| Error::Invalid("page size overflow".into()))?,
+        )));
+    Ok(Rendered {
+        total,
+        rows: rows.render(),
+        columns: compiled.columns,
+    })
 }
-async fn page_of(tx:&mut PgConnection,rendered:Rendered,table:String,text:&str,query:&Query,read:&ReadPage,recall:Option<Json>)->Result<Answer> {
-    let total=match (rendered.total,&read.prior) {
-        (Some((sql,values)),_)=>sql::bind_scalar(sqlx::query_scalar::<_,i64>(&sql),values).fetch_one(&mut *tx).await?,
-        (None,Some(cursor))=>cursor.total,_=>unreachable!("first page counts the result"),
+async fn page_of(
+    tx: &mut PgConnection,
+    rendered: Rendered,
+    table: String,
+    text: &str,
+    query: &Query,
+    read: &ReadPage,
+    recall: Option<Json>,
+) -> Result<Answer> {
+    let total = match (rendered.total, &read.prior) {
+        (Some((sql, values)), _) => {
+            sql::bind_scalar(sqlx::query_scalar::<_, i64>(&sql), values)
+                .fetch_one(&mut *tx)
+                .await?
+        }
+        (None, Some(cursor)) => cursor.total,
+        _ => unreachable!("first page counts the result"),
     };
-    let (sql,values)=rendered.rows;
-    let mut selected:Vec<Json>=sql::bind_scalar(sqlx::query_scalar(&sql),values).fetch_all(&mut *tx).await?;
-    let more=selected.len() as u64>read.size;if more {selected.pop();}
-    let last=selected.last().map(|row|->Result<_>{
-        let values=row["keys"].as_array().ok_or_else(||Error::Invalid("missing page keys".into()))?.clone();
-        if values.iter().any(|v|v.is_array()||v.is_object()) {return Err(Error::Invalid("page keys must be scalar".into()));}
-        let types=serde_json::from_value(row["types"].clone()).map_err(|e|Error::Invalid(e.to_string()))?;
-        let identity=row["id"].as_str().ok_or_else(||Error::Invalid("missing row identity".into()))?.into();
-        Ok((query_language::cursor::OrderPosition{values,row_identity:identity},types))
-    }).transpose()?;
-    let page=read.info(total,more,last)?;
-    Ok(Answer{table,query:text.into(),read_as:read_as(query),resolved:read.resolved(),columns:rendered.columns,rows:selected.into_iter().map(|mut row|row["row"].take()).collect(),total,page,recall})
+    let (sql, values) = rendered.rows;
+    let mut selected: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql), values)
+        .fetch_all(&mut *tx)
+        .await?;
+    let more = selected.len() as u64 > read.size;
+    if more {
+        selected.pop();
+    }
+    let last = selected
+        .last()
+        .map(|row| -> Result<_> {
+            let values = row["keys"]
+                .as_array()
+                .ok_or_else(|| Error::Invalid("missing page keys".into()))?
+                .clone();
+            if values.iter().any(|v| v.is_array() || v.is_object()) {
+                return Err(Error::Invalid("page keys must be scalar".into()));
+            }
+            let types = serde_json::from_value(row["types"].clone())
+                .map_err(|e| Error::Invalid(e.to_string()))?;
+            let identity = row["id"]
+                .as_str()
+                .ok_or_else(|| Error::Invalid("missing row identity".into()))?
+                .into();
+            Ok((
+                query_language::cursor::OrderPosition {
+                    values,
+                    row_identity: identity,
+                },
+                types,
+            ))
+        })
+        .transpose()?;
+    let page = read.info(total, more, last)?;
+    Ok(Answer {
+        table,
+        query: text.into(),
+        read_as: read_as(query),
+        resolved: read.resolved(),
+        columns: rendered.columns,
+        rows: selected
+            .into_iter()
+            .map(|mut row| row["row"].take())
+            .collect(),
+        total,
+        page,
+        recall,
+    })
 }
 
 /// `jsonb_build_object` over the columns, in order, in chunks the function's

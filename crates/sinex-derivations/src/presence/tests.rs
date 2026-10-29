@@ -31,7 +31,11 @@ fn physical(seconds: i64) -> Event {
     )
 }
 fn intervals(inputs: &[Event]) -> Vec<PresenceInterval> {
-    let env = Env::at(at(86400), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        at(86400),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let key = json!({"hour":at(0)});
     let spans = Keyed::compute(&ActivitySpans, &key, inputs, &env).outputs;
     Keyed::compute(&Presence, &key, &spans, &env)

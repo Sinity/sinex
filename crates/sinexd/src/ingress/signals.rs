@@ -65,25 +65,33 @@ impl Ingest {
                 "sealed producer intents require an unlocked acquisition path".into(),
             ));
         }
-        let optional=signals.is_empty()&&!emergency.is_empty();
-        let certified=if let Some(proof)=coverage {
-            match sinex_store::read_coverage::open(&mut self.conn,&proof.stamp).await {
-                Ok(claims)=>Some(claims),
-                Err(sinex_store::Error::Invalid(_)) if optional=>None,
-                Err(sinex_store::Error::Invalid(reason))=>return Err(Check::Refused(reason)),
-                Err(error)=>return Err(Check::Unavailable(error.to_string())),
+        let optional = signals.is_empty() && !emergency.is_empty();
+        let certified = if let Some(proof) = coverage {
+            match sinex_store::read_coverage::open(&mut self.conn, &proof.stamp).await {
+                Ok(claims) => Some(claims),
+                Err(sinex_store::Error::Invalid(_)) if optional => None,
+                Err(sinex_store::Error::Invalid(reason)) => return Err(Check::Refused(reason)),
+                Err(error) => return Err(Check::Unavailable(error.to_string())),
             }
-        }else{None};
-        if let Some(claims)=&certified {
-            let grant=self.grants.get(producer).ok_or_else(||Check::Configuration("signal input read grants are unavailable".into()))?;
-            let epoch=sinex_store::privacy::projection::epoch(&mut self.conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
-            for id in signals.iter().flat_map(|signal|&signal.inputs) {
-                if !readable_input(&mut self.conn,*id,claims,grant,epoch).await? {
-                    return Err(Check::Refused("signal input is outside its certified readable basis".into()));
+        } else {
+            None
+        };
+        if let Some(claims) = &certified {
+            let grant = self.grants.get(producer).ok_or_else(|| {
+                Check::Configuration("signal input read grants are unavailable".into())
+            })?;
+            let epoch = sinex_store::privacy::projection::epoch(&mut self.conn)
+                .await
+                .map_err(|error| Check::Unavailable(error.to_string()))?;
+            for id in signals.iter().flat_map(|signal| &signal.inputs) {
+                if !readable_input(&mut self.conn, *id, claims, grant, epoch).await? {
+                    return Err(Check::Refused(
+                        "signal input is outside its certified readable basis".into(),
+                    ));
                 }
             }
         }
-        let mut uncertified_signals=Vec::new();
+        let mut uncertified_signals = Vec::new();
         for completion in emergency {
             if authority.emergency_sinex_blocked_host.as_deref() != Some(completion.host.as_str())
                 || completion.host != self.host
@@ -103,10 +111,13 @@ impl Ingest {
             )
             .await
             .map_err(Check::Refused)?;
-            let settings_identity = emergency_policy(
-                completion, producer, &self.host, &context, Timestamp::now(),
-            ).map_err(Check::Refused)?;
-            if certified.as_ref().is_none_or(|claims|claims.settings_identity!=settings_identity) {
+            let settings_identity =
+                emergency_policy(completion, producer, &self.host, &context, Timestamp::now())
+                    .map_err(Check::Refused)?;
+            if certified
+                .as_ref()
+                .is_none_or(|claims| claims.settings_identity != settings_identity)
+            {
                 uncertified_signals.push(completion.delivery_id.clone());
             }
         }
@@ -159,7 +170,7 @@ impl Ingest {
                                 .map_err(|error| Check::Unavailable(error.to_string()))?;
                         if previous.intent != incoming.intent
                             || previous.notice != incoming.notice
-                            || previous.active_rule!=incoming.active_rule
+                            || previous.active_rule != incoming.active_rule
                             || !sinex_store::signals::same_input_lineage(
                                 &mut self.conn,
                                 &previous.inputs,
@@ -340,16 +351,39 @@ fn prepare(
     Ok((blob, length, *hasher.finalize().as_bytes()))
 }
 
-
-async fn readable_input(conn:&mut sqlx::PgConnection,id:sinex_model::EventId,claims:&sinex_store::read_coverage::Claims,grant:&super::fetch::Grants,epoch:sinex_store::privacy::projection::Epoch)->Result<bool,Check> {
-    let Some(input)=sinex_store::producer_reads::event_output(conn,id.0).await.map_err(|error|Check::Unavailable(error.to_string()))?else{return Ok(false);};
-    let class=input.class.and_then(|class|serde_json::from_value::<sinex_model::Class>(Value::String(class)).ok());
-    let position=sinex_store::signals::input_position(conn,id).await.map_err(|error|Check::Unavailable(error.to_string()))?;
-    Ok(epoch.ready() && input.epoch==Some(epoch.active) && input.epoch==Some(claims.policy_epoch) && input.state.as_deref()==Some("complete") && input.changed==Some(false)
-        && class.is_some_and(|class|class!=sinex_model::Class::Sealed && grant.allows(&input.kind,class))
-        && claims.indexed_kinds.iter().any(|(kind,_)|kind.name==input.kind) && position.is_some_and(|position|position<=claims.position))
+async fn readable_input(
+    conn: &mut sqlx::PgConnection,
+    id: sinex_model::EventId,
+    claims: &sinex_store::read_coverage::Claims,
+    grant: &super::fetch::Grants,
+    epoch: sinex_store::privacy::projection::Epoch,
+) -> Result<bool, Check> {
+    let Some(input) = sinex_store::producer_reads::event_output(conn, id.0)
+        .await
+        .map_err(|error| Check::Unavailable(error.to_string()))?
+    else {
+        return Ok(false);
+    };
+    let class = input
+        .class
+        .and_then(|class| serde_json::from_value::<sinex_model::Class>(Value::String(class)).ok());
+    let position = sinex_store::signals::input_position(conn, id)
+        .await
+        .map_err(|error| Check::Unavailable(error.to_string()))?;
+    Ok(epoch.ready()
+        && input.epoch == Some(epoch.active)
+        && input.epoch == Some(claims.policy_epoch)
+        && input.state.as_deref() == Some("complete")
+        && input.changed == Some(false)
+        && class.is_some_and(|class| {
+            class != sinex_model::Class::Sealed && grant.allows(&input.kind, class)
+        })
+        && claims
+            .indexed_kinds
+            .iter()
+            .any(|(kind, _)| kind.name == input.kind)
+        && position.is_some_and(|position| position <= claims.position))
 }
-
 
 /// The signed context attests deployment authority. Invocation and receipt
 /// times remain authenticated producer observations, not physical execution proof.
@@ -361,24 +395,36 @@ fn emergency_policy(
     now: Timestamp,
 ) -> Result<String, String> {
     let sinex_protocol::PublicContext::Available {
-        day, quiet_hours, observed_at, settings_identity, offline_emergency, ..
-    } = context else {
+        day,
+        quiet_hours,
+        observed_at,
+        settings_identity,
+        offline_emergency,
+        ..
+    } = context
+    else {
         return Err("emergency completion lacks an available owner policy context".into());
     };
-    let capability = offline_emergency.as_ref().ok_or("emergency completion lacks signed offline authority")?;
+    let capability = offline_emergency
+        .as_ref()
+        .ok_or("emergency completion lacks signed offline authority")?;
     if !capability.permits(producer, host, settings_identity, completion.invoked_at) {
         return Err("emergency invocation is outside its signed offline authority".into());
     }
-    if *observed_at > completion.invoked_at || completion.invoked_at > completion.completed_at
+    if *observed_at > completion.invoked_at
+        || completion.invoked_at > completion.completed_at
         || completion.completed_at > now
     {
         return Err("emergency observation clocks contradict invocation and receipt order".into());
     }
-    let zone = jiff::tz::TimeZone::get(&day.zone).map_err(|error|error.to_string())?;
-    let calendar = ::signals::DayCalendar::new(day.resolve(zone).map_err(|error|error.to_string())?);
-    let at = i64::try_from(completion.invoked_at.unix_ns()/1_000_000)
-        .map_err(|_|"emergency invocation clock exceeds milliseconds")?;
-    if quiet_hours.is_some_and(|hours|::signals::Calendar::quiet_until(&calendar,at,hours).is_some()) {
+    let zone = jiff::tz::TimeZone::get(&day.zone).map_err(|error| error.to_string())?;
+    let calendar =
+        ::signals::DayCalendar::new(day.resolve(zone).map_err(|error| error.to_string())?);
+    let at = i64::try_from(completion.invoked_at.unix_ns() / 1_000_000)
+        .map_err(|_| "emergency invocation clock exceeds milliseconds")?;
+    if quiet_hours
+        .is_some_and(|hours| ::signals::Calendar::quiet_until(&calendar, at, hours).is_some())
+    {
         return Err("emergency invocation contradicts its cached owner quiet policy".into());
     }
     Ok(settings_identity.clone())

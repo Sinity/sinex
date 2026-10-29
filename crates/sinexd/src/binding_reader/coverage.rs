@@ -111,19 +111,42 @@ async fn record(
         .map(|spec| spec.class)
         .max()
         .unwrap_or_default();
-    let settings = bindings::load(conn, &observation.binding).await.map_err(|error| error.to_string())?
-        .map(|saved| serde_json::from_value::<sinex_source_core::Settings>(saved.settings)
-            .map_err(|error| format!("binding {} has invalid settings: {error}", observation.binding)))
-        .transpose()?.and_then(|settings| settings.class).unwrap_or_default();
-    let class = Class::Open.max(floor).max(declared).max(settings).max(observation.observed_class.unwrap_or_default());
+    let settings = bindings::load(conn, &observation.binding)
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|saved| {
+            serde_json::from_value::<sinex_source_core::Settings>(saved.settings).map_err(|error| {
+                format!(
+                    "binding {} has invalid settings: {error}",
+                    observation.binding
+                )
+            })
+        })
+        .transpose()?
+        .and_then(|settings| settings.class)
+        .unwrap_or_default();
+    let class = Class::Open
+        .max(floor)
+        .max(declared)
+        .max(settings)
+        .max(observation.observed_class.unwrap_or_default());
     let material = crate::material_access::MaterialAccess::new(blobs.clone(), class, access)?;
     let version = coverage::OBSERVATION.parser_version.to_string();
-    let run = sinex_store::runs::start(conn, &sinex_store::runs::Manifest {
-        name: coverage::OBSERVATION.name, kind: "source", version: &version,
-        build: crate::build_identity::current()?, emits: coverage::OBSERVATION.event_types,
-    }, &observation.host).await.map_err(|error| error.to_string())?;
+    let run = sinex_store::runs::start(
+        conn,
+        &sinex_store::runs::Manifest {
+            name: coverage::OBSERVATION.name,
+            kind: "source",
+            version: &version,
+            build: crate::build_identity::current()?,
+            emits: coverage::OBSERVATION.event_types,
+        },
+        &observation.host,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     let result = crate::intake::Intake {
-        host:Some(&observation.host),
+        host: Some(&observation.host),
         writer,
         source: Arc::new(coverage::observation_source()),
         binding: &binding,
@@ -136,7 +159,9 @@ async fn record(
     }
     .submit(acquired, serde_json::Value::Null, &mut Totals::default())
     .await;
-    let ended = sinex_store::runs::end(conn, run).await.map_err(|error| error.to_string());
+    let ended = sinex_store::runs::end(conn, run)
+        .await
+        .map_err(|error| error.to_string());
     let admitted = result?;
     ended?;
     if admitted.outcome.failures != 0 || admitted.outcome.admitted != 1 {

@@ -154,8 +154,14 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
     );
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     conn.execute("SET ROLE sinex_reader").await.unwrap();
-    let stale=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM core.visible_search_text").fetch_one(&mut conn).await.unwrap_err();
-    assert_eq!(stale.as_database_error().unwrap().code().as_deref(),Some("55000"));
+    let stale = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.visible_search_text")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        stale.as_database_error().unwrap().code().as_deref(),
+        Some("55000")
+    );
     assert!(
         sqlx::query("SELECT text FROM core.search_text")
             .execute(&mut conn)

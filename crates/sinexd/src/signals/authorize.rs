@@ -220,15 +220,31 @@ impl Authorizer {
                     else {
                         continue;
                     };
-                    let Some(grant)=self.grants.get(&forwarded.producer)else{continue;};
-                    let Some(write)=grant.write.as_ref().filter(|write|write.forward_signals && !write.canonical_prefixes.is_empty() && write.family==forwarded.intent.delivery.trigger.rule.product)else{continue;};
+                    let Some(grant) = self.grants.get(&forwarded.producer) else {
+                        continue;
+                    };
+                    let Some(write) = grant.write.as_ref().filter(|write| {
+                        write.forward_signals
+                            && !write.canonical_prefixes.is_empty()
+                            && write.family == forwarded.intent.delivery.trigger.rule.product
+                    }) else {
+                        continue;
+                    };
                     let inputs = match forwarded.kind {
                         ForwardedKind::Intent => serde_json::from_value::<
                             sinex_model::event_types::signal::IntentRecorded,
                         >(visible)
                         .ok()
                         .filter(|reading| {
-                            reading.intent == forwarded.intent && reading.notice == forwarded.notice && sinex_protocol::signals::authorize_author(&reading.intent,reading.active_rule.as_ref(),&write.family,write.author_attestation.as_ref()).is_ok()
+                            reading.intent == forwarded.intent
+                                && reading.notice == forwarded.notice
+                                && sinex_protocol::signals::authorize_author(
+                                    &reading.intent,
+                                    reading.active_rule.as_ref(),
+                                    &write.family,
+                                    write.author_attestation.as_ref(),
+                                )
+                                .is_ok()
                         })
                         .map(|reading| reading.inputs),
                         ForwardedKind::Emergency => serde_json::from_value::<
@@ -243,7 +259,14 @@ impl Authorizer {
                     let Some(inputs) = inputs else {
                         continue;
                     };
-                    if matches!(forwarded.kind,ForwardedKind::Emergency) && (write.emergency_sinex_blocked_host.as_deref()!=Some(self.api.host.as_str()) || write.host.as_deref()!=Some(self.api.host.as_str()) || write.emergency_lease_seconds.is_none()){continue;}
+                    if matches!(forwarded.kind, ForwardedKind::Emergency)
+                        && (write.emergency_sinex_blocked_host.as_deref()
+                            != Some(self.api.host.as_str())
+                            || write.host.as_deref() != Some(self.api.host.as_str())
+                            || write.emergency_lease_seconds.is_none())
+                    {
+                        continue;
+                    }
                     let mut readable = true;
                     for input in inputs {
                         let Some(output) =

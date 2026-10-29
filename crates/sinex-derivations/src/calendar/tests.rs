@@ -55,7 +55,15 @@ fn stored(payload: &CalendarEvent) -> Event {
 
 fn compute(inputs: &[Event], now: &str) -> Vec<CalendarInstance> {
     let mut out: Vec<CalendarInstance> = Instances
-        .compute(&Value::Null, inputs, &Env::at(at(now), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")))
+        .compute(
+            &Value::Null,
+            inputs,
+            &Env::at(
+                at(now),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
+        )
         .outputs
         .iter()
         .map(|e| e.payload_as::<CalendarInstance>().unwrap())
@@ -139,7 +147,15 @@ fn excluded_added_and_changed_instances() {
     assert_eq!(changed.start, at("2024-04-02T15:00:00Z"));
     assert_eq!(changed.summary.as_deref(), Some("Moved"));
     let parents = |i: usize| match &Instances
-        .compute(&Value::Null, &inputs, &Env::at(at("2024-03-01T00:00:00Z"), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")))
+        .compute(
+            &Value::Null,
+            &inputs,
+            &Env::at(
+                at("2024-03-01T00:00:00Z"),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
+        )
         .outputs[i]
         .origin
     {
@@ -218,7 +234,11 @@ fn a_cancelled_series_plans_nothing() {
 #[devkit::test]
 fn a_series_is_one_key_read_whole() {
     let e = stored(&weekly("FREQ=DAILY"));
-    let env = Env::at(at("2024-03-01T00:00:00Z"), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        at("2024-03-01T00:00:00Z"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let keys = Instances.keys_for(
         &KeyView {
             event_type: e.event_type.as_str(),

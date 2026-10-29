@@ -104,7 +104,10 @@ async fn binding_reads_store_empty_unchanged_and_failed_evidence_with_bytes(
         assert_eq!(payload["observed_run"], serde_json::to_value(run).unwrap());
         let identity: (String, String) = sqlx::query_as("SELECT m.name,m.kind FROM core.events e JOIN core.runs r ON r.id=e.run_id JOIN core.manifests m ON m.id=r.manifest_id WHERE e.material_id=$1")
             .bind(material.unwrap()).fetch_one(&mut context.read_conn).await.unwrap();
-        assert_eq!(identity, (coverage::OBSERVATION.name.into(), "source".into()));
+        assert_eq!(
+            identity,
+            (coverage::OBSERVATION.name.into(), "source".into())
+        );
     }
     context.close().await.unwrap();
 }
@@ -113,17 +116,42 @@ async fn binding_reads_store_empty_unchanged_and_failed_evidence_with_bytes(
 async fn invalid_saved_binding_settings_do_not_publish_open_coverage(db: devkit::pg::TestDatabase) {
     let root = tempfile::tempdir().unwrap();
     let url = db.url(None);
-    let mut context = crate::reader_context::ReaderContext::open(&url, &root.path().join("store"),
-        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw",4,0).unwrap()).await.unwrap();
+    let mut context = crate::reader_context::ReaderContext::open(
+        &url,
+        &root.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+    )
+    .await
+    .unwrap();
     let binding = binding();
-    bindings::save(&mut context.read_conn, &bindings::Stored {
-        binding:binding.name.clone(),source:binding.source.clone(),input:"synthetic".into(),
-        settings:serde_json::json!({"host":"synthetic","class":false}),
-    }).await.unwrap();
-    let observation = outcome(&binding,Timestamp::now(),&Ok(Totals::default()));
-    let error = record(&mut context.read_conn,&context.blobs,&context.writer,Access::default(),observation).await.unwrap_err();
+    bindings::save(
+        &mut context.read_conn,
+        &bindings::Stored {
+            binding: binding.name.clone(),
+            source: binding.source.clone(),
+            input: "synthetic".into(),
+            settings: serde_json::json!({"host":"synthetic","class":false}),
+        },
+    )
+    .await
+    .unwrap();
+    let observation = outcome(&binding, Timestamp::now(), &Ok(Totals::default()));
+    let error = record(
+        &mut context.read_conn,
+        &context.blobs,
+        &context.writer,
+        Access::default(),
+        observation,
+    )
+    .await
+    .unwrap_err();
     assert!(error.contains("invalid settings"));
-    let records = sinex_store::live::of_types(&mut context.read_conn,&["source.coverage".into()]).await.unwrap();
-    assert!(records.is_empty(),"invalid source privacy settings must refuse publication");
+    let records = sinex_store::live::of_types(&mut context.read_conn, &["source.coverage".into()])
+        .await
+        .unwrap();
+    assert!(
+        records.is_empty(),
+        "invalid source privacy settings must refuse publication"
+    );
     context.close().await.unwrap();
 }

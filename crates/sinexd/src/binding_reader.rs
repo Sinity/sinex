@@ -99,10 +99,10 @@ struct Results<'a> {
 }
 
 impl Results<'_> {
-    fn add(&mut self, binding: &Binding, run:Option<RunId>, result: Result<Totals, String>) {
+    fn add(&mut self, binding: &Binding, run: Option<RunId>, result: Result<Totals, String>) {
         (self.report)(&binding.name, &result);
-        let mut observation=coverage::outcome(binding,self.started_at,&result);
-        observation.observed_run=run;
+        let mut observation = coverage::outcome(binding, self.started_at, &result);
+        observation.observed_run = run;
         self.coverage.push(observation);
         self.list.push((binding.source.clone(), result));
     }
@@ -128,24 +128,53 @@ pub(crate) async fn read(
         list: Vec::new(),
         report,
     };
-    let mut native_runs=std::collections::BTreeMap::new();
-    let mut binding_runs=Vec::new();
+    let mut native_runs = std::collections::BTreeMap::new();
+    let mut binding_runs = Vec::new();
     for binding in readers.iter() {
-        let spec=binding.source.spec();
-        let key=(spec.name.to_owned(),spec.parser_version,binding.binding.settings.host.clone());
-        let run=if let Some(run)=native_runs.get(&key){Ok(*run)}else{
-            let version=spec.parser_version.to_string();
+        let spec = binding.source.spec();
+        let key = (
+            spec.name.to_owned(),
+            spec.parser_version,
+            binding.binding.settings.host.clone(),
+        );
+        let run = if let Some(run) = native_runs.get(&key) {
+            Ok(*run)
+        } else {
+            let version = spec.parser_version.to_string();
             match crate::build_identity::current() {
-                Ok(build)=>{
-                    let mut emits=spec.event_types.to_vec();
-                    emits.extend(sinex_sources::sources::specs().into_iter().filter(|other|other.name==spec.name&&other.parser_version==spec.parser_version).flat_map(|other|other.event_types.iter().copied()));
-                    emits.sort_unstable();emits.dedup();
-                    sinex_store::runs::start(conn,&sinex_store::runs::Manifest{name:spec.name,kind:"source",version:&version,build,emits:&emits},&binding.binding.settings.host).await.map_err(|error|error.to_string())
-                },
-                Err(error)=>Err(error),
+                Ok(build) => {
+                    let mut emits = spec.event_types.to_vec();
+                    emits.extend(
+                        sinex_sources::sources::specs()
+                            .into_iter()
+                            .filter(|other| {
+                                other.name == spec.name
+                                    && other.parser_version == spec.parser_version
+                            })
+                            .flat_map(|other| other.event_types.iter().copied()),
+                    );
+                    emits.sort_unstable();
+                    emits.dedup();
+                    sinex_store::runs::start(
+                        conn,
+                        &sinex_store::runs::Manifest {
+                            name: spec.name,
+                            kind: "source",
+                            version: &version,
+                            build,
+                            emits: &emits,
+                        },
+                        &binding.binding.settings.host,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+                }
+                Err(error) => Err(error),
             }
         };
-        if let Ok(run)=run {native_runs.insert(key,run);}
+        if let Ok(run) = run {
+            native_runs.insert(key, run);
+        }
         binding_runs.push(run);
     }
     let mut passes: Vec<SharedFileRead> = Vec::new();
@@ -160,7 +189,13 @@ pub(crate) async fn read(
         )
         .await;
         results.started_at = sinex_model::Timestamp::now();
-        let run=match &binding_runs[index] {Ok(run)=>*run,Err(error)=>{results.add(&b.binding,None,Err(format!("source run: {error}")));continue;}};
+        let run = match &binding_runs[index] {
+            Ok(run) => *run,
+            Err(error) => {
+                results.add(&b.binding, None, Err(format!("source run: {error}")));
+                continue;
+            }
+        };
         let init = async {
             if !b.remembered {
                 backfill::record(conn, &b.binding).await?;
@@ -223,7 +258,11 @@ pub(crate) async fn read(
                 Ok((SharedReadStart::Finished, _, _)) => {
                     results.add(&b.binding, Some(run), Ok(Totals::default()))
                 }
-                Err(e) => results.add(&b.binding, Some(run), Err(format!("{}: {e}", b.binding.name))),
+                Err(e) => results.add(
+                    &b.binding,
+                    Some(run),
+                    Err(format!("{}: {e}", b.binding.name)),
+                ),
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
             // Taken before the poll, so bytes appended during it change them.
@@ -299,13 +338,21 @@ pub(crate) async fn read(
         match outcome {
             Ok(per_route) => {
                 for (&i, r) in pass.indices.iter().zip(per_route) {
-                    results.add(&readers[i].binding,binding_runs[i].as_ref().ok().copied(), r);
+                    results.add(
+                        &readers[i].binding,
+                        binding_runs[i].as_ref().ok().copied(),
+                        r,
+                    );
                 }
             }
             Err(e) => {
                 for &i in &pass.indices {
                     let failed = Err(format!("{}: {e}", readers[i].binding.name));
-                    results.add(&readers[i].binding,binding_runs[i].as_ref().ok().copied(), failed);
+                    results.add(
+                        &readers[i].binding,
+                        binding_runs[i].as_ref().ok().copied(),
+                        failed,
+                    );
                 }
             }
         }
@@ -319,8 +366,12 @@ pub(crate) async fn read(
         &mut results.list,
     )
     .await;
-    for ((source,_,host),run) in native_runs {
-        if let Err(error)=sinex_store::runs::end(conn,run).await {results.list.push((source,Err(format!("ending source run on {host}: {error}"))));}
+    for ((source, _, host), run) in native_runs {
+        if let Err(error) = sinex_store::runs::end(conn, run).await {
+            results
+                .list
+                .push((source, Err(format!("ending source run on {host}: {error}"))));
+        }
     }
     results.list
 }

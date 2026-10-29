@@ -118,10 +118,20 @@ pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
                     kinds: kinds(selected),
                 }
             }
-            sinex_derivations::InputRange::StateTransitions { start, end, kinds: selected, scope_field, subject_fields } => {
-                derivations::InputRange::StateTransitions { start: start.0, end: end.0,
-                    kinds: kinds(selected), scope_field, subject_fields: subject_fields.clone(), now: now.0 }
-            }
+            sinex_derivations::InputRange::StateTransitions {
+                start,
+                end,
+                kinds: selected,
+                scope_field,
+                subject_fields,
+            } => derivations::InputRange::StateTransitions {
+                start: start.0,
+                end: end.0,
+                kinds: kinds(selected),
+                scope_field,
+                subject_fields: subject_fields.clone(),
+                now: now.0,
+            },
             sinex_derivations::InputRange::UntilNext {
                 start,
                 after,
@@ -129,7 +139,7 @@ pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
                 field,
             } => derivations::InputRange::UntilNext {
                 start: start.0,
-                after: after.map(|at|at.0),
+                after: after.map(|at| at.0),
                 kinds: kinds(selected),
                 field,
                 now: now.0,
@@ -172,10 +182,26 @@ impl DerivationRunner {
             }))
             .collect();
         for d in &keyed {
-            sinex_store::privacy::estimability::register(&mut read,d.name(),d.version_for(&time_settings),crate::build_identity::current()?,d.input_requirements().as_deref()).await.map_err(|e|e.to_string())?;
+            sinex_store::privacy::estimability::register(
+                &mut read,
+                d.name(),
+                d.version_for(&time_settings),
+                crate::build_identity::current()?,
+                d.input_requirements().as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
         }
         for d in &per_event {
-            sinex_store::privacy::estimability::register(&mut read,d.name(),d.version(),crate::build_identity::current()?,d.input_requirements().as_deref()).await.map_err(|e|e.to_string())?;
+            sinex_store::privacy::estimability::register(
+                &mut read,
+                d.name(),
+                d.version(),
+                crate::build_identity::current()?,
+                d.input_requirements().as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
         }
         let mut runs = BTreeMap::new();
         let mut previous_orders = BTreeMap::new();
@@ -373,7 +399,10 @@ impl DerivationRunner {
         if registry::selected(&mut self.read, name)
             .await
             .map_err(|e| e.to_string())?
-            != Some((i64::from(d.version_for(&self.time_settings)), crate::build_identity::current()?.to_owned()))
+            != Some((
+                i64::from(d.version_for(&self.time_settings)),
+                crate::build_identity::current()?.to_owned(),
+            ))
         {
             return Err(
                 "producer version changed; compare it and switch using its comparison ID".into(),
@@ -418,34 +447,67 @@ impl DerivationRunner {
         key: &Value,
         env: &Env,
     ) -> Result<sinex_derivations::Computed, String> {
-        sinex_store::query::initialize_calendar(&mut self.read).await.map_err(|e|e.to_string())?;
-        let mut snapshot=self.read.begin().await.map_err(|e|e.to_string())?;
-        sinex_store::query::read_one_snapshot(&mut snapshot).await.map_err(|e|e.to_string())?;
+        sinex_store::query::initialize_calendar(&mut self.read)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut snapshot = self.read.begin().await.map_err(|e| e.to_string())?;
+        sinex_store::query::read_one_snapshot(&mut snapshot)
+            .await
+            .map_err(|e| e.to_string())?;
         let d = &self.keyed[index];
         let name = d.name();
         let t = Instant::now();
-        let inputs=if let Some(ids)=d.exact_inputs(key,env) {
-            exact_inputs(&mut snapshot,ids).await?
-        }else{
-            let Some(q)=d.inputs(key,env) else{return Ok(sinex_derivations::Computed::default())};
-            derivations::read_window(&mut snapshot,&to_window(&q,env.now)).await.map_err(|error|error.to_string())?.into_iter().map(|input|input.event).collect()
+        let inputs = if let Some(ids) = d.exact_inputs(key, env) {
+            exact_inputs(&mut snapshot, ids).await?
+        } else {
+            let Some(q) = d.inputs(key, env) else {
+                return Ok(sinex_derivations::Computed::default());
+            };
+            derivations::read_window(&mut snapshot, &to_window(&q, env.now))
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|input| input.event)
+                .collect()
         };
-        sinex_store::privacy::comparisons::require_grants(&mut snapshot,&inputs).await.map_err(|error|error.to_string())?;
+        sinex_store::privacy::comparisons::require_grants(&mut snapshot, &inputs)
+            .await
+            .map_err(|error| error.to_string())?;
         let read = t.elapsed();
         let t = Instant::now();
-        let selected = selected::read(&mut snapshot,self.keyed[index].as_ref(),key,env,true).await?;
-        let issues=input_issues(&mut snapshot,&inputs,selected.as_ref(),self.keyed[index].input_requirements().as_deref()).await?;
-        if !issues.is_empty(){return Err("comparison_required_input_unavailable".into())}
+        let selected =
+            selected::read(&mut snapshot, self.keyed[index].as_ref(), key, env, true).await?;
+        let issues = input_issues(
+            &mut snapshot,
+            &inputs,
+            selected.as_ref(),
+            self.keyed[index].input_requirements().as_deref(),
+        )
+        .await?;
+        if !issues.is_empty() {
+            return Err("comparison_required_input_unavailable".into());
+        }
         let mut computed = match &selected {
-            Some(selected) => self.keyed[index].compute_selected(key,&inputs,selected,env),
-            None => self.keyed[index].compute(key,&inputs,env),
+            Some(selected) => self.keyed[index].compute_selected(key, &inputs, selected, env),
+            None => self.keyed[index].compute(key, &inputs, env),
         };
-        let position = derivations::head(&mut snapshot).await.map_err(|error| error.to_string())?;
-        selected::stamp(&mut snapshot,self.keyed[index].as_ref(),key,&inputs,selected.as_ref(),position,&mut computed).await?;
+        let position = derivations::head(&mut snapshot)
+            .await
+            .map_err(|error| error.to_string())?;
+        selected::stamp(
+            &mut snapshot,
+            self.keyed[index].as_ref(),
+            key,
+            &inputs,
+            selected.as_ref(),
+            position,
+            &mut computed,
+        )
+        .await?;
         if let Some(error) = &computed.error {
             return Err(error.to_string());
         }
-        snapshot.commit().await.map_err(|e|e.to_string())?;
+        snapshot.commit().await.map_err(|e| e.to_string())?;
         let c = self.counts.entry(name.to_owned()).or_default();
         c.read += read;
         c.compute += t.elapsed();
@@ -480,9 +542,13 @@ impl DerivationRunner {
     /// work it did.
     pub(crate) async fn pass(&mut self) -> Result<usize, String> {
         let env = self.env();
-        let policy=sinex_store::privacy::projection::epoch(&mut self.read).await.map_err(|error|error.to_string())?;
-        if !policy.ready(){return Ok(0)}
-        let refreshed=self.refresh_policy(policy.active,&env).await?;
+        let policy = sinex_store::privacy::projection::epoch(&mut self.read)
+            .await
+            .map_err(|error| error.to_string())?;
+        if !policy.ready() {
+            return Ok(0);
+        }
+        let refreshed = self.refresh_policy(policy.active, &env).await?;
         self.passes = self.passes.wrapping_add(1);
         let every_rank = self.passes.is_multiple_of(EVERY_LEVEL_EVERY);
         let mut levels: Vec<u32> = self.ranks.values().copied().collect();
@@ -566,9 +632,13 @@ impl DerivationRunner {
         let position = derivations::position(&mut self.read, name)
             .await
             .map_err(|e| e.to_string())?;
-        sinex_store::query::initialize_calendar(&mut self.read).await.map_err(|error|error.to_string())?;
-        let mut snapshot=self.read.begin().await.map_err(|error|error.to_string())?;
-        sinex_store::query::read_one_snapshot(&mut snapshot).await.map_err(|error|error.to_string())?;
+        sinex_store::query::initialize_calendar(&mut self.read)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut snapshot = self.read.begin().await.map_err(|error| error.to_string())?;
+        sinex_store::query::read_one_snapshot(&mut snapshot)
+            .await
+            .map_err(|error| error.to_string())?;
         let read = ReadMark::now(&mut snapshot)
             .await
             .map_err(|e| e.to_string())?;
@@ -581,13 +651,22 @@ impl DerivationRunner {
         )
         .await
         .map_err(|e| e.to_string())?;
-        let last=events.last().map(|c|c.commit_seq);
+        let last = events.last().map(|c| c.commit_seq);
         let head = derivations::head(&mut snapshot)
             .await
             .map_err(|e| e.to_string())?;
-        let issues=sinex_store::privacy::estimability::unavailable(&mut snapshot,&events.iter().map(|row|row.event.clone()).collect::<Vec<_>>(),d.input_requirements().as_deref()).await.map_err(|e|e.to_string())?;
-        snapshot.commit().await.map_err(|error|error.to_string())?;
-        let Some(last)=last else{return Ok(0)};
+        let issues = sinex_store::privacy::estimability::unavailable(
+            &mut snapshot,
+            &events
+                .iter()
+                .map(|row| row.event.clone())
+                .collect::<Vec<_>>(),
+            d.input_requirements().as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        snapshot.commit().await.map_err(|error| error.to_string())?;
+        let Some(last) = last else { return Ok(0) };
         let reading_order = self
             .previous_orders
             .get(name)
@@ -599,18 +678,51 @@ impl DerivationRunner {
         let mut computed_inputs = Vec::new();
         let mut failed = 0;
         for c in &events {
-            let unavailable:Vec<_>=issues.iter().filter(|issue|issue.event==c.event.id).cloned().collect();
-            if !unavailable.is_empty(){
-                match self.per_event[index].unavailable_inputs(Input{event:&c.event,bytes:None},&unavailable,env){
-                    Ok(derived)=>{computed_inputs.push(c.event.id.0);for mut e in derived{hash_version(&mut e,name,version);e.reading_order=ReadingOrder(reading_order);outputs.push(e);}},
-                    Err(_)=>{failed+=1;},
+            let unavailable: Vec<_> = issues
+                .iter()
+                .filter(|issue| issue.event == c.event.id)
+                .cloned()
+                .collect();
+            if !unavailable.is_empty() {
+                match self.per_event[index].unavailable_inputs(
+                    Input {
+                        event: &c.event,
+                        bytes: None,
+                    },
+                    &unavailable,
+                    env,
+                ) {
+                    Ok(derived) => {
+                        computed_inputs.push(c.event.id.0);
+                        for mut e in derived {
+                            hash_version(&mut e, name, version);
+                            e.reading_order = ReadingOrder(reading_order);
+                            outputs.push(e);
+                        }
+                    }
+                    Err(_) => {
+                        failed += 1;
+                    }
                 }
                 continue;
             }
             let reads = self.per_event[index].reads(&c.event);
-            if reads!=Reads::Nothing {
-                let Some(basis)=read.policy_epoch else{failed+=1;continue};
-                if !sinex_store::privacy::projection::raw_event_allowed(&mut self.read,c.event.id.0,basis).await.map_err(|error|error.to_string())? {failed+=1;continue;}
+            if reads != Reads::Nothing {
+                let Some(basis) = read.policy_epoch else {
+                    failed += 1;
+                    continue;
+                };
+                if !sinex_store::privacy::projection::raw_event_allowed(
+                    &mut self.read,
+                    c.event.id.0,
+                    basis,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                {
+                    failed += 1;
+                    continue;
+                }
             }
             let bytes = match self.bytes_of(reads, &c.event).await {
                 Ok(bytes) => bytes,
@@ -744,15 +856,19 @@ impl DerivationRunner {
                 break;
             }
             let work = match self.pass().await {
-                Ok(work)=>work,
-                Err(error) if error.contains("privacy_projection_stale") || error.contains("derivation_policy_epoch_changed") || error.contains("policy_refresh_changed") => {
+                Ok(work) => work,
+                Err(error)
+                    if error.contains("privacy_projection_stale")
+                        || error.contains("derivation_policy_epoch_changed")
+                        || error.contains("policy_refresh_changed") =>
+                {
                     tokio::select! {
                         ()=tokio::time::sleep(idle)=>{}
                         _=stop.changed()=>{}
                     }
                     continue;
-                },
-                Err(error)=>return Err(error),
+                }
+                Err(error) => return Err(error),
             };
             if *stop.borrow() || stop.has_changed().is_err() {
                 break;
@@ -802,7 +918,9 @@ impl DerivationRunner {
             .iter()
             .map(|kind| (*kind).to_owned())
             .collect();
-        let read_scope=sinex_store::privacy::comparisons::scope(&mut self.read).await.map_err(|error|error.to_string())?;
+        let read_scope = sinex_store::privacy::comparisons::scope(&mut self.read)
+            .await
+            .map_err(|error| error.to_string())?;
         let input_state = derivations::selection::input_state(&mut self.read, &input_types)
             .await
             .map_err(|e| e.to_string())?;
@@ -815,12 +933,24 @@ impl DerivationRunner {
         let version = self.keyed[index].version_for(&self.time_settings);
         for key in keys {
             let mut new = self.compute_key(index, &key, &env).await?.outputs;
-            let new_changed=sinex_store::privacy::comparisons::project_new(&mut self.read,&mut new).await.map_err(|error|error.to_string())?;
+            let new_changed =
+                sinex_store::privacy::comparisons::project_new(&mut self.read, &mut new)
+                    .await
+                    .map_err(|error| error.to_string())?;
             let old = derivations::outputs(&mut self.read, name, &key)
                 .await
                 .map_err(|e| e.to_string())?;
-            sinex_store::privacy::comparisons::require_grants(&mut self.read,&old).await.map_err(|error|error.to_string())?;
-            let key=sinex_store::privacy::comparisons::public_key(&mut self.read,&key,&old,new_changed).await.map_err(|error|error.to_string())?;
+            sinex_store::privacy::comparisons::require_grants(&mut self.read, &old)
+                .await
+                .map_err(|error| error.to_string())?;
+            let key = sinex_store::privacy::comparisons::public_key(
+                &mut self.read,
+                &key,
+                &old,
+                new_changed,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
             let by_key = |events: &[Event]| -> BTreeMap<String, Event> {
                 events
                     .iter()
@@ -970,7 +1100,9 @@ impl DerivationRunner {
             .map(|kind| (*kind).to_owned())
             .collect();
         let version = self.per_event[index].version();
-        let read_scope=sinex_store::privacy::comparisons::scope(&mut self.read).await.map_err(|error|error.to_string())?;
+        let read_scope = sinex_store::privacy::comparisons::scope(&mut self.read)
+            .await
+            .map_err(|error| error.to_string())?;
         let snapshot = derivations::selection::input_state(&mut self.read, &inputs)
             .await
             .map_err(|e| e.to_string())?;
@@ -990,11 +1122,34 @@ impl DerivationRunner {
             let Some(last) = page.last() else { break };
             after = last.commit_seq;
             for row in page {
-                sinex_store::privacy::comparisons::require_grants(&mut self.read,std::slice::from_ref(&row.event)).await.map_err(|error|error.to_string())?;
-                let issues=sinex_store::privacy::estimability::unavailable(&mut self.read,std::slice::from_ref(&row.event),self.per_event[index].input_requirements().as_deref()).await.map_err(|e|e.to_string())?;
-                if !issues.is_empty(){return Err("comparison_required_input_unavailable".into())}
+                sinex_store::privacy::comparisons::require_grants(
+                    &mut self.read,
+                    std::slice::from_ref(&row.event),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                let issues = sinex_store::privacy::estimability::unavailable(
+                    &mut self.read,
+                    std::slice::from_ref(&row.event),
+                    self.per_event[index].input_requirements().as_deref(),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                if !issues.is_empty() {
+                    return Err("comparison_required_input_unavailable".into());
+                }
                 let reads = self.per_event[index].reads(&row.event);
-                if reads!=Reads::Nothing&&!sinex_store::privacy::projection::raw_event_allowed(&mut self.read,row.event.id.0,read_scope.policy_epoch).await.map_err(|error|error.to_string())?{return Err("comparison_raw_input_unavailable".into())}
+                if reads != Reads::Nothing
+                    && !sinex_store::privacy::projection::raw_event_allowed(
+                        &mut self.read,
+                        row.event.id.0,
+                        read_scope.policy_epoch,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err("comparison_raw_input_unavailable".into());
+                }
                 let bytes = self.bytes_of(reads, &row.event).await?;
                 let mut new = self.per_event[index].derive(
                     Input {
@@ -1003,11 +1158,15 @@ impl DerivationRunner {
                     },
                     &env,
                 )?;
-                sinex_store::privacy::comparisons::project_new(&mut self.read,&mut new).await.map_err(|error|error.to_string())?;
+                sinex_store::privacy::comparisons::project_new(&mut self.read, &mut new)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let old = derivations::children_outputs(&mut self.read, name, row.event.id)
                     .await
                     .map_err(|e| e.to_string())?;
-                sinex_store::privacy::comparisons::require_grants(&mut self.read,&old).await.map_err(|error|error.to_string())?;
+                sinex_store::privacy::comparisons::require_grants(&mut self.read, &old)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 compare_outputs(
                     &mut cmp,
                     &serde_json::json!({"input": row.event.id}),
@@ -1119,8 +1278,8 @@ fn ranks(catalog: &[Derivation]) -> BTreeMap<String, u32> {
 mod comparison;
 mod counts;
 
-mod selected;
 mod policy;
+mod selected;
 pub(crate) use comparison::{Change, Comparison};
 pub(crate) use counts::Counts;
 
@@ -1168,9 +1327,13 @@ struct KeyComputation<'a> {
 
 impl KeyComputation<'_> {
     async fn compute(&mut self, work: Vec<KeyWork>, env: &Env) -> Result<(), String> {
-        sinex_store::query::initialize_calendar(&mut self.read).await.map_err(|error|error.to_string())?;
+        sinex_store::query::initialize_calendar(&mut self.read)
+            .await
+            .map_err(|error| error.to_string())?;
         let mut snapshot = self.read.begin().await.map_err(|error| error.to_string())?;
-        sinex_store::query::read_one_snapshot(&mut snapshot).await.map_err(|error| error.to_string())?;
+        sinex_store::query::read_one_snapshot(&mut snapshot)
+            .await
+            .map_err(|error| error.to_string())?;
         let result = KeyComputation {
             read: &mut snapshot,
             writer: self.writer,
@@ -1178,12 +1341,16 @@ impl KeyComputation<'_> {
             time_settings: self.time_settings.clone(),
             run: self.run,
             counts: &mut *self.counts,
-        }.compute_snapshot(work, env).await;
+        }
+        .compute_snapshot(work, env)
+        .await;
         match result {
             Ok(()) => snapshot.commit().await.map_err(|error| error.to_string()),
             Err(error) => match snapshot.rollback().await {
                 Ok(()) => Err(error),
-                Err(rollback) => Err(format!("{error}; rolling back the input snapshot: {rollback}")),
+                Err(rollback) => Err(format!(
+                    "{error}; rolling back the input snapshot: {rollback}"
+                )),
             },
         }
     }
@@ -1205,9 +1372,10 @@ impl KeyComputation<'_> {
         let mut windows: Vec<Window> = Vec::new();
         let mut window_keys: Vec<usize> = Vec::new();
         for (i, (key, _)) in work.iter().enumerate() {
-            if let Some(ids)=self.derivation.exact_inputs(key,env) {
-                let inputs=exact_inputs(self.read,ids).await?;
-                ready.push((i,inputs,true));continue;
+            if let Some(ids) = self.derivation.exact_inputs(key, env) {
+                let inputs = exact_inputs(self.read, ids).await?;
+                ready.push((i, inputs, true));
+                continue;
             }
             match self.derivation.inputs(key, env) {
                 Some(q) => {
@@ -1238,14 +1406,37 @@ impl KeyComputation<'_> {
             for (i, input, queried) in std::mem::take(&mut ready) {
                 let (key, dirty_seq) = &work[i];
                 let t = Instant::now();
-                let selected = selected::read(&mut *self.read,self.derivation,key,env,true).await?;
-                let issues=input_issues(self.read,&input,selected.as_ref(),self.derivation.input_requirements().as_deref()).await?;
-                let mut computed = if !issues.is_empty(){self.derivation.unavailable_inputs(key,&input,&issues,env)}else{match (&selected, queried) {
-                    (Some(selected), _) => self.derivation.compute_selected(key, &input, selected, env),
-                    (None, true) => self.derivation.compute(key, &input, env),
-                    (None, false) => sinex_derivations::Computed::default(),
-                }};
-                selected::stamp(&mut *self.read,self.derivation,key,&input,selected.as_ref(),input_position,&mut computed).await?;
+                let selected =
+                    selected::read(&mut *self.read, self.derivation, key, env, true).await?;
+                let issues = input_issues(
+                    self.read,
+                    &input,
+                    selected.as_ref(),
+                    self.derivation.input_requirements().as_deref(),
+                )
+                .await?;
+                let mut computed = if !issues.is_empty() {
+                    self.derivation
+                        .unavailable_inputs(key, &input, &issues, env)
+                } else {
+                    match (&selected, queried) {
+                        (Some(selected), _) => {
+                            self.derivation.compute_selected(key, &input, selected, env)
+                        }
+                        (None, true) => self.derivation.compute(key, &input, env),
+                        (None, false) => sinex_derivations::Computed::default(),
+                    }
+                };
+                selected::stamp(
+                    &mut *self.read,
+                    self.derivation,
+                    key,
+                    &input,
+                    selected.as_ref(),
+                    input_position,
+                    &mut computed,
+                )
+                .await?;
                 if let Some(error) = &computed.error {
                     return Err(error.to_string());
                 }
@@ -1341,19 +1532,53 @@ pub(crate) async fn compute_now(
     time_settings: TimeSettings,
 ) -> Result<Counts, String> {
     let available = Derivation {
-        name: derivation.name().to_owned(),kind: "keyed",version: i64::from(derivation.version_for(&time_settings)),
-        inputs: derivation.inputs_types().iter().map(|kind| (*kind).to_owned()).collect(),
-        outputs: derivation.output_types().iter().map(|kind| (*kind).to_owned()).collect(),
+        name: derivation.name().to_owned(),
+        kind: "keyed",
+        version: i64::from(derivation.version_for(&time_settings)),
+        inputs: derivation
+            .inputs_types()
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect(),
+        outputs: derivation
+            .output_types()
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect(),
     };
     let build = crate::build_identity::current()?;
-    registry::register_derivation(conn,&available,build).await.map_err(|error| error.to_string())?;
-    sinex_store::privacy::estimability::register(conn,derivation.name(),derivation.version_for(&time_settings),build,derivation.input_requirements().as_deref()).await.map_err(|e|e.to_string())?;
-    if registry::selected(conn,derivation.name()).await.map_err(|error| error.to_string())? != Some((available.version,build.to_owned())) {
+    registry::register_derivation(conn, &available, build)
+        .await
+        .map_err(|error| error.to_string())?;
+    sinex_store::privacy::estimability::register(
+        conn,
+        derivation.name(),
+        derivation.version_for(&time_settings),
+        build,
+        derivation.input_requirements().as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    if registry::selected(conn, derivation.name())
+        .await
+        .map_err(|error| error.to_string())?
+        != Some((available.version, build.to_owned()))
+    {
         let mut dirty = Vec::new();
         for key in keys {
-            if sinex_store::query::key_dirty(conn,derivation.name(),&key).await.map_err(|error| error.to_string())? {dirty.push(key);}
+            if sinex_store::query::key_dirty(conn, derivation.name(), &key)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                dirty.push(key);
+            }
         }
-        if dirty.is_empty() { return Err("producer history changed; compare and switch before recomputing unchanged keys".into()); }
+        if dirty.is_empty() {
+            return Err(
+                "producer history changed; compare and switch before recomputing unchanged keys"
+                    .into(),
+            );
+        }
         keys = dirty;
     }
     let version = available.version.to_string();
@@ -1393,18 +1618,47 @@ pub(crate) async fn compute_now(
 
 /// Exact targets use the same snapshot as the key's read mark, including
 /// unknown-time evidence. Transfer budgets never substitute a nearby record.
-async fn exact_inputs(conn:&mut PgConnection,ids:Vec<sinex_model::EventId>)->Result<Vec<Event>,String>{
-    let mut reader=derivations::ExactInputs::new(ids,ROWS_PER_PAGE,sinex_store::PAGE_BYTES).map_err(|error|error.to_string())?;
-    let mut inputs=Vec::new();while let Some(page)=reader.next(conn).await.map_err(|error|error.to_string())?{inputs.extend(page.into_iter().map(|row|row.event));}Ok(inputs)
+async fn exact_inputs(
+    conn: &mut PgConnection,
+    ids: Vec<sinex_model::EventId>,
+) -> Result<Vec<Event>, String> {
+    let mut reader = derivations::ExactInputs::new(ids, ROWS_PER_PAGE, sinex_store::PAGE_BYTES)
+        .map_err(|error| error.to_string())?;
+    let mut inputs = Vec::new();
+    while let Some(page) = reader.next(conn).await.map_err(|error| error.to_string())? {
+        inputs.extend(page.into_iter().map(|row| row.event));
+    }
+    Ok(inputs)
 }
 
-async fn input_issues(conn:&mut PgConnection,inputs:&[Event],selected:Option<&sinex_derivations::selected::SelectedInputs>,requirements:Option<&[sinex_model::InputRequirement]>)->Result<Vec<sinex_model::UnavailableInput>,String>{
-    let mut issues=sinex_store::privacy::estimability::unavailable(conn,inputs,requirements).await.map_err(|e|e.to_string())?;
-    if let Some(selected)=selected {
-        let ids:Vec<_>=selected.parents.iter().filter(|id|!inputs.iter().any(|event|event.id==**id)).copied().collect();
-        let parents=exact_inputs(conn,ids.clone()).await?;
-        if ids.iter().any(|id|!parents.iter().any(|event|event.id==*id)){return Err("selected_required_input_projection_unavailable".into())}
-        issues.extend(sinex_store::privacy::estimability::unavailable(conn,&parents,requirements).await.map_err(|e|e.to_string())?);
+async fn input_issues(
+    conn: &mut PgConnection,
+    inputs: &[Event],
+    selected: Option<&sinex_derivations::selected::SelectedInputs>,
+    requirements: Option<&[sinex_model::InputRequirement]>,
+) -> Result<Vec<sinex_model::UnavailableInput>, String> {
+    let mut issues = sinex_store::privacy::estimability::unavailable(conn, inputs, requirements)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(selected) = selected {
+        let ids: Vec<_> = selected
+            .parents
+            .iter()
+            .filter(|id| !inputs.iter().any(|event| event.id == **id))
+            .copied()
+            .collect();
+        let parents = exact_inputs(conn, ids.clone()).await?;
+        if ids
+            .iter()
+            .any(|id| !parents.iter().any(|event| event.id == *id))
+        {
+            return Err("selected_required_input_projection_unavailable".into());
+        }
+        issues.extend(
+            sinex_store::privacy::estimability::unavailable(conn, &parents, requirements)
+                .await
+                .map_err(|e| e.to_string())?,
+        );
     }
     Ok(issues)
 }

@@ -296,7 +296,9 @@ async fn no_server_retry_keeps_frozen_input_parents_across_an_unchanged_evaluati
         2,
     )
     .await;
-    sinex_store::query::set_grants(&mut conn,"guarded").await.unwrap();
+    sinex_store::query::set_grants(&mut conn, "guarded")
+        .await
+        .unwrap();
     let current:Value=sqlx::query_scalar("SELECT payload FROM core.visible_events e WHERE event_type='signal.delivery' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();
     let frozen: Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
         .bind(decision)

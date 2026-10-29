@@ -4,7 +4,7 @@ use ::signals::*;
 use sinex_model::Timestamp;
 
 fn completion() -> EmergencyCompletion {
-    let trigger=emergency_trigger(sinex_model::EventId::new());
+    let trigger = emergency_trigger(sinex_model::EventId::new());
     let id = trigger.delivery_id();
     let at = 1_800_000_000_000;
     let delivery = Delivery {
@@ -19,7 +19,7 @@ fn completion() -> EmergencyCompletion {
         value: None,
         scope: None,
     };
-    let notice=emergency_notice(&id);
+    let notice = emergency_notice(&id);
     let mut state = NotificationState::default();
     state.begin(notice.clone(), Route::Dbus);
     let attempt = state.attempt(&id).unwrap().clone();
@@ -93,7 +93,10 @@ fn emergency_transfer_preserves_desktop_retry_and_refuses_command_authority() {
     command.route = Route::Command;
     command.outcome = DeliveryOutcome::Delivered;
     value.receipts.push(command);
-    assert!(validate_emergency(&value, "polylogue").is_err(),"offline desktop authority cannot attest a command effect");
+    assert!(
+        validate_emergency(&value, "polylogue").is_err(),
+        "offline desktop authority cannot attest a command effect"
+    );
     value.receipts.pop();
     assert!(
         validate_emergency(&value, "polylogue").is_err(),
@@ -103,76 +106,151 @@ fn emergency_transfer_preserves_desktop_retry_and_refuses_command_authority() {
 
 #[devkit::test]
 fn emergency_keeps_invocation_separate_from_slow_receipt_observation() {
-    let mut value=completion();
-    value.completed_at=Timestamp::from_unix_secs(1_800_000_120).unwrap();
-    assert!(validate_emergency(&value,"polylogue").is_ok());
-    value.invoked_at=Timestamp::from_unix_secs(1_800_000_121).unwrap();
-    assert!(validate_emergency(&value,"polylogue").is_err());
-    let mut encoded=serde_json::to_value(completion()).unwrap();
+    let mut value = completion();
+    value.completed_at = Timestamp::from_unix_secs(1_800_000_120).unwrap();
+    assert!(validate_emergency(&value, "polylogue").is_ok());
+    value.invoked_at = Timestamp::from_unix_secs(1_800_000_121).unwrap();
+    assert!(validate_emergency(&value, "polylogue").is_err());
+    let mut encoded = serde_json::to_value(completion()).unwrap();
     encoded.as_object_mut().unwrap().remove("invoked_at");
-    assert!(serde_json::from_value::<EmergencyCompletion>(encoded).is_err(),"a receipt clock cannot stand in for missing invocation observation");
+    assert!(
+        serde_json::from_value::<EmergencyCompletion>(encoded).is_err(),
+        "a receipt clock cannot stand in for missing invocation observation"
+    );
 }
 
-
-fn attested_rule(intent:&::signals::FiredIntent)->::signals::ActiveRule {
+fn attested_rule(intent: &::signals::FiredIntent) -> ::signals::ActiveRule {
     serde_json::from_value(serde_json::json!({"version":intent.delivery.trigger.rule,"rule":{"name":"synthetic compiled display","query":"events","fires":"on_new","for":0,"min_change":1,"deliver":"notice","target":null,"command":null,"interrupt":true,"quiet_hours":null,"rate_limit":null,"scope":null,"enabled":true},"author":intent.author,"via":"compiled","live":true})).unwrap()
 }
 #[devkit::test]
 fn elevated_forwarded_authors_require_exact_configured_attestation() {
-    let mut intent=completion().intent;intent.author=::signals::Author::Operator;
-    intent.delivery.trigger.rule.id="authored:synthetic-operator".into();intent.delivery.id=intent.delivery.trigger.delivery_id();
-    let active=attested_rule(&intent);
-    assert!(authorize_author(&intent,Some(&active),"polylogue",None).is_err());
-    assert!(authorize_author(&intent,Some(&active),"polylogue",Some(&AuthorAttestation::default())).is_err());
-    let operator=AuthorAttestation{operator:true,shipped:vec![]};
-    assert!(authorize_author(&intent,None,"polylogue",Some(&operator)).is_err());
-    authorize_author(&intent,Some(&active),"polylogue",Some(&operator)).unwrap();
-    assert!(authorize_author(&intent,Some(&active),"another-family",Some(&operator)).is_err());
-    let mut changed=active.clone();changed.author=::signals::Author::Agent("same-name".into());
-    assert!(authorize_author(&intent,Some(&changed),"polylogue",Some(&operator)).is_err());
-    intent.author=::signals::Author::Shipped;
-    intent.delivery.trigger.rule.id="shipped:synthetic-compiled".into();intent.delivery.id=intent.delivery.trigger.delivery_id();
-    let active=attested_rule(&intent);
-    let shipped=AuthorAttestation{operator:false,shipped:vec![ShippedRule{id:active.version.id.clone(),revision:active.version.revision,fingerprint:rule_fingerprint(&active)}]};
-    authorize_author(&intent,Some(&active),"polylogue",Some(&shipped)).unwrap();
-    let mut changed=active.clone();changed.rule.query="events where text = edited".into();
-    assert!(authorize_author(&intent,Some(&changed),"polylogue",Some(&shipped)).is_err(),"same display and ID do not attest a different compiled definition");
-    let mut authored=active;authored.version.id="authored:same-display".into();intent.delivery.trigger.rule=authored.version.clone();
-    assert!(authorize_author(&intent,Some(&authored),"polylogue",Some(&shipped)).is_err());
+    let mut intent = completion().intent;
+    intent.author = ::signals::Author::Operator;
+    intent.delivery.trigger.rule.id = "authored:synthetic-operator".into();
+    intent.delivery.id = intent.delivery.trigger.delivery_id();
+    let active = attested_rule(&intent);
+    assert!(authorize_author(&intent, Some(&active), "polylogue", None).is_err());
+    assert!(
+        authorize_author(
+            &intent,
+            Some(&active),
+            "polylogue",
+            Some(&AuthorAttestation::default())
+        )
+        .is_err()
+    );
+    let operator = AuthorAttestation {
+        operator: true,
+        shipped: vec![],
+    };
+    assert!(authorize_author(&intent, None, "polylogue", Some(&operator)).is_err());
+    authorize_author(&intent, Some(&active), "polylogue", Some(&operator)).unwrap();
+    assert!(authorize_author(&intent, Some(&active), "another-family", Some(&operator)).is_err());
+    let mut changed = active.clone();
+    changed.author = ::signals::Author::Agent("same-name".into());
+    assert!(authorize_author(&intent, Some(&changed), "polylogue", Some(&operator)).is_err());
+    intent.author = ::signals::Author::Shipped;
+    intent.delivery.trigger.rule.id = "shipped:synthetic-compiled".into();
+    intent.delivery.id = intent.delivery.trigger.delivery_id();
+    let active = attested_rule(&intent);
+    let shipped = AuthorAttestation {
+        operator: false,
+        shipped: vec![ShippedRule {
+            id: active.version.id.clone(),
+            revision: active.version.revision,
+            fingerprint: rule_fingerprint(&active),
+        }],
+    };
+    authorize_author(&intent, Some(&active), "polylogue", Some(&shipped)).unwrap();
+    let mut changed = active.clone();
+    changed.rule.query = "events where text = edited".into();
+    assert!(
+        authorize_author(&intent, Some(&changed), "polylogue", Some(&shipped)).is_err(),
+        "same display and ID do not attest a different compiled definition"
+    );
+    let mut authored = active;
+    authored.version.id = "authored:same-display".into();
+    intent.delivery.trigger.rule = authored.version.clone();
+    assert!(authorize_author(&intent, Some(&authored), "polylogue", Some(&shipped)).is_err());
 }
 
 #[devkit::test]
 fn unprivileged_claim_cannot_preempt_a_compiled_signal_identity() {
-    let mut intent=completion().intent;intent.author=::signals::Author::Agent("same-display".into());
-    assert!(authorize_author(&intent,None,"polylogue",None).unwrap_err().contains("namespace"));
-    intent.author=::signals::Author::Operator;
-    assert!(authorize_author(&intent,Some(&attested_rule(&intent)),"polylogue",Some(&AuthorAttestation{operator:true,shipped:vec![]})).is_err());
+    let mut intent = completion().intent;
+    intent.author = ::signals::Author::Agent("same-display".into());
+    assert!(
+        authorize_author(&intent, None, "polylogue", None)
+            .unwrap_err()
+            .contains("namespace")
+    );
+    intent.author = ::signals::Author::Operator;
+    assert!(
+        authorize_author(
+            &intent,
+            Some(&attested_rule(&intent)),
+            "polylogue",
+            Some(&AuthorAttestation {
+                operator: true,
+                shipped: vec![]
+            })
+        )
+        .is_err()
+    );
 }
 
 #[devkit::test]
 fn compiled_emergency_refuses_dynamic_private_notice_fields() {
-    for field in ["summary","body","reference","command_hint","occurrence","icon"] {
-        let mut value=completion();
-        let mut notice=serde_json::to_value(&value.notice).unwrap();notice[field]=serde_json::json!("synthetic private detail");
-        value.notice=serde_json::from_value(notice).unwrap();
-        assert!(validate_emergency(&value,"polylogue").is_err(),"field {field} is not the compiled notice");
+    for field in [
+        "summary",
+        "body",
+        "reference",
+        "command_hint",
+        "occurrence",
+        "icon",
+    ] {
+        let mut value = completion();
+        let mut notice = serde_json::to_value(&value.notice).unwrap();
+        notice[field] = serde_json::json!("synthetic private detail");
+        value.notice = serde_json::from_value(notice).unwrap();
+        assert!(
+            validate_emergency(&value, "polylogue").is_err(),
+            "field {field} is not the compiled notice"
+        );
     }
 }
 
 #[devkit::test]
 fn compiled_emergency_exports_no_copied_query_or_policy_fields() {
-    let mut value=completion();value.intent.delivery.scope=Some("synthetic private scope".into());assert!(validate_emergency(&value,"polylogue").is_err());
-    let mut value=completion();value.intent.quiet_hours=Some(::signals::QuietHours{from:0,to:60});assert!(validate_emergency(&value,"polylogue").is_err());
+    let mut value = completion();
+    value.intent.delivery.scope = Some("synthetic private scope".into());
+    assert!(validate_emergency(&value, "polylogue").is_err());
+    let mut value = completion();
+    value.intent.quiet_hours = Some(::signals::QuietHours { from: 0, to: 60 });
+    assert!(validate_emergency(&value, "polylogue").is_err());
 }
 
 #[devkit::test]
 fn emergency_trigger_rejects_dynamic_paths_and_non_v7_episodes() {
-    for episode in ["synthetic/private/path","00000000-0000-4000-8000-000000000001"] {
-        let mut value=completion();value.intent.delivery.trigger.occurrence.episode=episode.into();
-        let id=value.intent.delivery.trigger.delivery_id();value.delivery_id=id.clone();value.intent.delivery.id=id.clone();
-        value.notice=emergency_notice(&id);
-        let mut state=NotificationState::default();state.begin(value.notice.clone(),Route::Dbus);value.attempt=state.attempt(&id).unwrap().clone();
-        for receipt in &mut value.receipts {receipt.delivery_id=id.clone();}
-        assert!(validate_emergency(&value,"polylogue").unwrap_err().contains("opaque compiled outage episode"));
+    for episode in [
+        "synthetic/private/path",
+        "00000000-0000-4000-8000-000000000001",
+    ] {
+        let mut value = completion();
+        value.intent.delivery.trigger.occurrence.episode = episode.into();
+        let id = value.intent.delivery.trigger.delivery_id();
+        value.delivery_id = id.clone();
+        value.intent.delivery.id = id.clone();
+        value.notice = emergency_notice(&id);
+        let mut state = NotificationState::default();
+        state.begin(value.notice.clone(), Route::Dbus);
+        value.attempt = state.attempt(&id).unwrap().clone();
+        for receipt in &mut value.receipts {
+            receipt.delivery_id = id.clone();
+        }
+        assert!(
+            validate_emergency(&value, "polylogue")
+                .unwrap_err()
+                .contains("opaque compiled outage episode")
+        );
     }
 }

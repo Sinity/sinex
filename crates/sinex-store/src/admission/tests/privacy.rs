@@ -124,7 +124,11 @@ async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::Test
     .fetch_one(&mut conn)
     .await
     .unwrap();
-    assert_eq!(stored, format!("export PW={SECRET}"), "private original is retained");
+    assert_eq!(
+        stored,
+        format!("export PW={SECRET}"),
+        "private original is retained"
+    );
     let derived = Event::build(
         &CommandExecuted {
             native_id: "d1".into(),
@@ -157,11 +161,12 @@ async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::Test
         0,
         "no current output holds the secret"
     );
-    let classes: Vec<String> =
-        sqlx::query_scalar!(r#"SELECT class AS "class!" FROM core.visible_events ORDER BY commit_seq"#)
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
+    let classes: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT class AS "class!" FROM core.visible_events ORDER BY commit_seq"#
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
     assert_eq!(
         classes,
         ["guarded", "guarded"],
@@ -263,10 +268,7 @@ async fn class_verification_checks_current_projected_floors(db: devkit::pg::Test
         .unwrap();
     let after = privacy::verify_classes(&mut conn).await.unwrap();
     assert_eq!(after.below_floor, 0);
-    assert_eq!(
-        after.by_source,
-        Vec::<(String,u64)>::new()
-    );
+    assert_eq!(after.by_source, Vec::<(String, u64)>::new());
     // New readings never emit below the floor.
     let e = imported("terminal.zsh-history", "pwd", record());
     admit_one(&mut conn, &batch(RunId::new(), vec![e])).await;

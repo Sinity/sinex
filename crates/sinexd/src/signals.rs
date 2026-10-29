@@ -713,8 +713,20 @@ async fn load_forwarded(
         if intent.intent.delivery.trigger.rule.product != family || intent.producer != producer {
             continue;
         }
-        let attestation=grants[target].write.as_ref().and_then(|write|write.author_attestation.as_ref());
-        if sinex_protocol::signals::authorize_author(&intent.intent,intent.active_rule.as_ref(),&family,attestation).is_err(){continue;}
+        let attestation = grants[target]
+            .write
+            .as_ref()
+            .and_then(|write| write.author_attestation.as_ref());
+        if sinex_protocol::signals::authorize_author(
+            &intent.intent,
+            intent.active_rule.as_ref(),
+            &family,
+            attestation,
+        )
+        .is_err()
+        {
+            continue;
+        }
         let id = intent.delivery_id;
         if let Some(previous) = state.forwarded.get_mut(&id) {
             if previous.intent == intent.intent && previous.notice == intent.notice {

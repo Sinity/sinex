@@ -27,7 +27,11 @@ pub enum DerivedScope {
     },
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
     /// no events; the keys are marked dirty like admission marks them.
-    Recompute { keys: Vec<Value>, #[serde(default)] policy_refresh: Option<crate::privacy::refresh::Refresh> },
+    Recompute {
+        keys: Vec<Value>,
+        #[serde(default)]
+        policy_refresh: Option<crate::privacy::refresh::Refresh>,
+    },
     /// Atomically select a compared producer, archive its old chains and schedule its outputs.
     Select {
         selection: crate::derivations::selection::Selection,
@@ -52,12 +56,21 @@ pub struct ReadMark {
 impl ReadMark {
     /// Where archiving and excision stand now.
     pub async fn now(conn: &mut PgConnection) -> Result<Self> {
-        let (changes,excised,desired,active):(i64,i64,i64,i64)=sqlx::query_as(
+        let (changes, excised, desired, active): (i64, i64, i64, i64) = sqlx::query_as(
             "SELECT (SELECT coalesce(max(change_seq),0) FROM audit.archive_changes),
              (SELECT value FROM core.counters WHERE name='excised'),desired_epoch,active_epoch
-             FROM privacy.policy_state WHERE id").fetch_one(conn).await?;
-        if desired!=active{return Err(Error::Invalid("privacy_projection_stale".into()))}
-        Ok(Self{changes,excised,policy_epoch:Some(active)})
+             FROM privacy.policy_state WHERE id",
+        )
+        .fetch_one(conn)
+        .await?;
+        if desired != active {
+            return Err(Error::Invalid("privacy_projection_stale".into()));
+        }
+        Ok(Self {
+            changes,
+            excised,
+            policy_epoch: Some(active),
+        })
     }
 }
 
@@ -143,12 +156,17 @@ pub(super) async fn apply_derived(
                 )
                 .await?)
         }
-        DerivedScope::Recompute { keys: marked, policy_refresh } => {
+        DerivedScope::Recompute {
+            keys: marked,
+            policy_refresh,
+        } => {
             let seq =
                 sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
                     .fetch_one(&mut *conn)
                     .await?;
-            if let Some(refresh)=&policy_refresh {crate::privacy::refresh::record(conn,derivation,refresh).await?;}
+            if let Some(refresh) = &policy_refresh {
+                crate::privacy::refresh::record(conn, derivation, refresh).await?;
+            }
             let name = derivation.to_string();
             mark_dirty(
                 conn,
@@ -323,7 +341,7 @@ pub(super) async fn without_superseded_inputs(
     };
     // Nothing archived or excised since the inputs were read: all still live.
     let now = ReadMark::now(conn).await?;
-    if read.policy_epoch.is_some() && read.policy_epoch!=now.policy_epoch {
+    if read.policy_epoch.is_some() && read.policy_epoch != now.policy_epoch {
         return Err(Error::Invalid("derivation_policy_epoch_changed".into()));
     }
     if now.changes <= read.changes && now.excised <= read.excised {
@@ -472,11 +490,15 @@ pub(super) async fn mark_inputs_dirty(
 ) -> Result<usize> {
     let mut dirty = Vec::new();
     let mut ranges = Vec::new();
-    let policy_ready=crate::privacy::projection::epoch(conn).await?.ready();
+    let policy_ready = crate::privacy::projection::epoch(conn).await?.ready();
     for input in inputs {
         dirty.extend(keys.keys(input));
         ranges.extend(keys.affected_ranges(input));
-        for query in keys.nearby_inputs(input).into_iter().filter(|_|policy_ready) {
+        for query in keys
+            .nearby_inputs(input)
+            .into_iter()
+            .filter(|_| policy_ready)
+        {
             for selected in crate::derivations::read_window(conn, &query).await? {
                 dirty.extend(keys.keys(&KeyInput {
                     event_type: &selected.event.event_type,

@@ -152,9 +152,17 @@ impl Finding {
     /// or not at all.
     pub fn markdown(&self) -> String {
         let mut s = match &self.template {
-            Template::Observation { event_type, source, when, description } => format!(
+            Template::Observation {
+                event_type,
+                source,
+                when,
+                description,
+            } => format!(
                 "{description} ({event_type}, {source}{})",
-                when.as_ref().map(|at| format!(", {at}")).unwrap_or_default()),
+                when.as_ref()
+                    .map(|at| format!(", {at}"))
+                    .unwrap_or_default()
+            ),
             Template::MetricValue {
                 metric,
                 unit,
@@ -262,7 +270,10 @@ impl Finding {
                 let seen = if *observed_fraction <= 0.0 {
                     "not observed".to_owned()
                 } else {
-                    format!("{} observed", crate::coverage::percent_label(*observed_fraction))
+                    format!(
+                        "{} observed",
+                        crate::coverage::percent_label(*observed_fraction)
+                    )
                 };
                 format!("{source} on {unit}: {seen} ({completeness}; {bounded_by})")
             }

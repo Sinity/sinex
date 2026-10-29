@@ -27,7 +27,8 @@ async fn sqlite_rows_keep_failed_and_partial_snapshots_until_writer_commits(
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();

@@ -8,7 +8,11 @@ fn capture_help_describes_the_remote_producer_without_opening_state() {
         .arg("--help")
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let help = String::from_utf8(output.stdout).unwrap();
     for option in ["--nats", "--producer", "--sources", "--upload"] {
         assert!(help.contains(option), "{help}");

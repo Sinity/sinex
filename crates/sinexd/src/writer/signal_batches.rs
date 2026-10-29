@@ -63,7 +63,16 @@ pub(super) async fn admit(
             event.reading_order = sinex_model::ReadingOrder(order);
         }
         let read = match material {
-            Some(material) => sinex_store::signals::material_read_mark(tx, material,event.payload["delivery_id"].as_str().ok_or_else(||sinex_store::Error::Invalid("copied signal lacks delivery identity".into()))?).await?,
+            Some(material) => {
+                sinex_store::signals::material_read_mark(
+                    tx,
+                    material,
+                    event.payload["delivery_id"].as_str().ok_or_else(|| {
+                        sinex_store::Error::Invalid("copied signal lacks delivery identity".into())
+                    })?,
+                )
+                .await?
+            }
             None => None,
         };
         let Some(read) = read.filter(|read| {

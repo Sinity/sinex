@@ -21,7 +21,8 @@ pub(crate) fn catalog() -> Value {
     per_event.push(
         Box::new(crate::document_text::DocumentText { pdf_reader: None }) as Box<dyn AnyPerEvent>,
     );
-    per_event.push(Box::new(crate::screen_text::ScreenText { engine: None }) as Box<dyn AnyPerEvent>);
+    per_event
+        .push(Box::new(crate::screen_text::ScreenText { engine: None }) as Box<dyn AnyPerEvent>);
     let per_event = per_event.into_iter().map(|d| {
         json!({
             "name": d.name(),
@@ -150,16 +151,40 @@ mod tests;
 /// Every actual native declaration version, without collapsing older formats
 /// into the newest parser selected by the current-source projection.
 pub(crate) fn source_declarations() -> Vec<sinex_model::SourceDeclaration> {
-    let kinds=sinex_model::event_types::declarations();
-    let mut declarations:std::collections::BTreeMap<(String,u32),sinex_model::SourceDeclaration>=std::collections::BTreeMap::new();
+    let kinds = sinex_model::event_types::declarations();
+    let mut declarations: std::collections::BTreeMap<
+        (String, u32),
+        sinex_model::SourceDeclaration,
+    > = std::collections::BTreeMap::new();
     for format in sinex_sources::sources::formats() {
         for spec in (format.specs)() {
-            let declaration=declarations.entry((spec.name.into(),spec.parser_version)).or_insert_with(||sinex_model::SourceDeclaration{
-                source:sinex_model::SourceRef{name:spec.name.into(),version:spec.parser_version},family:"sinex".into(),kinds:Vec::new(),
-            });
+            let declaration = declarations
+                .entry((spec.name.into(), spec.parser_version))
+                .or_insert_with(|| sinex_model::SourceDeclaration {
+                    source: sinex_model::SourceRef {
+                        name: spec.name.into(),
+                        version: spec.parser_version,
+                    },
+                    family: "sinex".into(),
+                    kinds: Vec::new(),
+                });
             for emitted in spec.event_types {
-                let kind=kinds.iter().find(|kind|kind.kind.name==*emitted).unwrap_or_else(||panic!("native source {} emits unregistered kind {}",spec.name,emitted));
-                if !declaration.kinds.iter().any(|known|known.kind==kind.kind){declaration.kinds.push(kind.clone());}
+                let kind = kinds
+                    .iter()
+                    .find(|kind| kind.kind.name == *emitted)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "native source {} emits unregistered kind {}",
+                            spec.name, emitted
+                        )
+                    });
+                if !declaration
+                    .kinds
+                    .iter()
+                    .any(|known| known.kind == kind.kind)
+                {
+                    declaration.kinds.push(kind.clone());
+                }
             }
         }
     }

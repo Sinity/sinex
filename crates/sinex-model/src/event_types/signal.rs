@@ -18,7 +18,7 @@ pub struct RuleWritten {
 #[serde(deny_unknown_fields)]
 #[event(version=2,type="signal.intent",key=["delivery_id"],replace=newer,time=received_at,quality=captured)]
 pub struct IntentRecorded {
-    pub active_rule:Option<signals::ActiveRule>,
+    pub active_rule: Option<signals::ActiveRule>,
     pub inputs: Vec<crate::EventId>,
     pub delivery_id: String,
     /// The authenticated capture identity; logical product ownership is in the intent.

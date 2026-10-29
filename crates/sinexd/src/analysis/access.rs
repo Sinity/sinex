@@ -5,8 +5,8 @@ use sinex_analysis::Eligibility;
 use sinex_derivations::Keyed;
 use sinex_derivations::figures::Metric;
 use sinex_model::event_types::analysis::AnalysisRequest;
-use sinex_model::{Timestamp, EventPayload, query::Context};
 use sinex_model::event_types::work::ContextPack;
+use sinex_model::{EventPayload, Timestamp, query::Context};
 use sqlx::PgConnection;
 
 pub(crate) async fn question(
@@ -26,7 +26,9 @@ pub(crate) async fn question(
     let mut names: Vec<_> = metrics.iter().map(|m| m.name.to_owned()).collect();
     names.sort();
     names.dedup();
-    let grants = sinex_store::query::current_grants(conn).await.map_err(|error| error.to_string())?;
+    let grants = sinex_store::query::current_grants(conn)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut grants: Vec<String> = grants
         .split(',')
         .filter(|g| !g.is_empty() && *g != "sealed")
@@ -42,7 +44,9 @@ pub(crate) async fn question(
         from: from.to_string(),
         to: to.to_string(),
         metrics: names,
-        min_observed_fraction: eligibility.min_observed_fraction.map(|fraction| if fraction == 0.0 { 0.0 } else { fraction }),
+        min_observed_fraction: eligibility
+            .min_observed_fraction
+            .map(|fraction| if fraction == 0.0 { 0.0 } else { fraction }),
         zone: ctx.zone_name(),
         day_start: ctx.day_start.to_string(),
         grants,
@@ -80,11 +84,17 @@ pub(super) async fn find(
     event_type: &str,
     request: &str,
 ) -> Result<Option<Value>, String> {
-    Ok(sinex_store::query::live_payload(conn, event_type, "request", request).await.map_err(|error| error.to_string())?
-        .map(|(id, mut payload)| {
-            if event_type != AnalysisRequest::EVENT_TYPE { payload["_citation"] = json!(format!("sinex:ev/{id}")); }
-            payload
-        }))
+    Ok(
+        sinex_store::query::live_payload(conn, event_type, "request", request)
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|(id, mut payload)| {
+                if event_type != AnalysisRequest::EVENT_TYPE {
+                    payload["_citation"] = json!(format!("sinex:ev/{id}"));
+                }
+                payload
+            }),
+    )
 }
 
 pub(crate) async fn materialize(
@@ -97,7 +107,10 @@ pub(crate) async fn materialize(
 ) -> Result<String, String> {
     let time_settings = sinex_model::time_settings::TimeSettings::from_parts(
         jiff::tz::TimeZone::get(&request.zone).map_err(|error| error.to_string())?,
-        request.day_start.parse::<jiff::civil::Time>().map_err(|error| error.to_string())?,
+        request
+            .day_start
+            .parse::<jiff::civil::Time>()
+            .map_err(|error| error.to_string())?,
     );
     let id = request.request.clone();
     let existing = find(conn, "analysis.request", &id).await?;
@@ -123,10 +136,19 @@ pub(crate) async fn materialize(
             json!(request)
         }
     };
-    let dirty = sinex_store::query::key_dirty(conn, StoredProducts::NAME, &key).await.map_err(|error| error.to_string())?;
+    let dirty = sinex_store::query::key_dirty(conn, StoredProducts::NAME, &key)
+        .await
+        .map_err(|error| error.to_string())?;
     if dirty || find(conn, "analysis.panel", &id).await?.is_none() {
-        crate::derivation_runner::compute_now(conn, writer, &StoredProducts, vec![key], host, time_settings)
-            .await?;
+        crate::derivation_runner::compute_now(
+            conn,
+            writer,
+            &StoredProducts,
+            vec![key],
+            host,
+            time_settings,
+        )
+        .await?;
     }
     Ok(id)
 }
@@ -141,10 +163,27 @@ pub(crate) async fn load_pack(
     reference: &str,
 ) -> Result<Option<StoredPack>, String> {
     if let Some(id) = reference.strip_prefix("sinex:ev/") {
-        let id = uuid::Uuid::parse_str(id).map_err(|error| format!("context pack reference: {error}"))?;
-        return Ok(sinex_store::query::event_payload(conn, ContextPack::EVENT_TYPE, sinex_model::EventId(id)).await.map_err(|error| error.to_string())?
-            .map(|payload| StoredPack { citation: format!("sinex:ev/{id}"), payload }));
+        let id = uuid::Uuid::parse_str(id)
+            .map_err(|error| format!("context pack reference: {error}"))?;
+        return Ok(sinex_store::query::event_payload(
+            conn,
+            ContextPack::EVENT_TYPE,
+            sinex_model::EventId(id),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|payload| StoredPack {
+            citation: format!("sinex:ev/{id}"),
+            payload,
+        }));
     }
-    Ok(sinex_store::query::live_payload(conn, ContextPack::EVENT_TYPE, "pack", reference).await.map_err(|error| error.to_string())?
-        .map(|(id, payload)| StoredPack { citation: format!("sinex:ev/{id}"), payload }))
+    Ok(
+        sinex_store::query::live_payload(conn, ContextPack::EVENT_TYPE, "pack", reference)
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|(id, payload)| StoredPack {
+                citation: format!("sinex:ev/{id}"),
+                payload,
+            }),
+    )
 }

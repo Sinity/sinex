@@ -49,8 +49,12 @@ pub fn from_observation(row: &SourceCoverage) -> Option<Coverage> {
 /// A rounded display cannot turn a partial observation into zero or full coverage.
 pub fn percent_label(fraction: f64) -> String {
     let percent = (fraction * 100.0).round();
-    if fraction > 0.0 && percent == 0.0 { return ">0%".into(); }
-    if fraction < 1.0 && percent == 100.0 { return "<100%".into(); }
+    if fraction > 0.0 && percent == 0.0 {
+        return ">0%".into();
+    }
+    if fraction < 1.0 && percent == 100.0 {
+        return "<100%".into();
+    }
     format!("{percent:.0}%")
 }
 

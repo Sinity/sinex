@@ -126,10 +126,21 @@ fn batches_are_drained_lazily() {
     .with_host(Some("owner-attested-host".into()));
     let mut batches = prepared.batches().unwrap();
     let first = batches.next().unwrap().unwrap();
-    let BatchKind::Source(progress) = &first.kind else { panic!("native progress required") };
-    assert_eq!(progress.source, Some(sinex_model::SourceRef { name: "test.counting".into(), version: 1 }));
+    let BatchKind::Source(progress) = &first.kind else {
+        panic!("native progress required")
+    };
+    assert_eq!(
+        progress.source,
+        Some(sinex_model::SourceRef {
+            name: "test.counting".into(),
+            version: 1
+        })
+    );
     assert_eq!(progress.host.as_deref(), Some("owner-attested-host"));
-    assert_eq!(progress.input.host, "h", "untrusted source claim is preserved independently");
+    assert_eq!(
+        progress.input.host, "h",
+        "untrusted source claim is preserved independently"
+    );
     assert_eq!(first.event_count(), 1_000);
     assert!(
         PARSED.load(Ordering::SeqCst) <= 2_001,

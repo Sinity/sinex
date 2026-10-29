@@ -434,7 +434,9 @@ async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let progress = |cursor: i64| SourceProgress { source:None,host:None,
+    let progress = |cursor: i64| SourceProgress {
+        source: None,
+        host: None,
         data_keys: Vec::new(),
         binding: "b".into(),
         input: InputRef {
@@ -664,7 +666,9 @@ mod library_upgrade;
 #[devkit::test]
 async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestDatabase) {
     use sinex_model::{EventId, Origin};
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let parent = keyed("source", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![parent.clone()])).await;
     for id in [EventId::new(), parent.id] {
@@ -692,7 +696,9 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
 async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let root = keyed("chain", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![root.clone()])).await;
     let mut child = keyed("chain", 2, 2, 1);
@@ -744,7 +750,9 @@ async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
 
 #[devkit::test]
 async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::pg::TestDatabase) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let root = keyed("chain", 1, 1, 1);
     let other = keyed("chain", 2, 2, 1);
     admit_one(&mut conn, &batch(vec![root.clone(), other.clone()])).await;
@@ -835,92 +843,265 @@ fn outcomes_add_all_counts_positions_and_ids() {
 }
 
 #[devkit::test]
-async fn assigned_order_retry_and_rollback_share_the_admission_transaction(db:devkit::pg::TestDatabase) {
-    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
-    let ingress=|name:&str,content:u8| {
-        let event=keyed("atuin",1,content,0);
-        let mut batch=batch(vec![event.clone()]);
-        batch.kind=BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
-            content_hash:None,receipt_number:None,coverage:None,native_source:None,source_fingerprint:None,host:None,
-            family:None,write_kind_prefixes:vec![],assign_orders:vec![event.id],producer:"atuin".into(),frame:name.into(),material:None,refusal:None,declarations:vec![],refusal_kind:None,source:None,event_types:vec![],
-        }));batch
+async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ingress = |name: &str, content: u8| {
+        let event = keyed("atuin", 1, content, 0);
+        let mut batch = batch(vec![event.clone()]);
+        batch.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            content_hash: None,
+            receipt_number: None,
+            coverage: None,
+            native_source: None,
+            source_fingerprint: None,
+            host: None,
+            family: None,
+            write_kind_prefixes: vec![],
+            assign_orders: vec![event.id],
+            producer: "atuin".into(),
+            frame: name.into(),
+            material: None,
+            refusal: None,
+            declarations: vec![],
+            refusal_kind: None,
+            source: None,
+            event_types: vec![],
+        }));
+        batch
     };
-    let first=ingress("first",1);
-    let mut tx=conn.begin().await.unwrap();
-    let admitted=tx.admit(&first,&NoDerivations).await.unwrap();
-    let duplicate=tx.admit(&first,&NoDerivations).await.unwrap();
-    assert_eq!(admitted.admitted_ids,duplicate.admitted_ids);assert_eq!(admitted.commit_seq,duplicate.commit_seq);
+    let first = ingress("first", 1);
+    let mut tx = conn.begin().await.unwrap();
+    let admitted = tx.admit(&first, &NoDerivations).await.unwrap();
+    let duplicate = tx.admit(&first, &NoDerivations).await.unwrap();
+    assert_eq!(admitted.admitted_ids, duplicate.admitted_ids);
+    assert_eq!(admitted.commit_seq, duplicate.commit_seq);
     tx.commit().await.unwrap();
-    let rolled_back=ingress("rolled-back",2);
-    let mut tx=conn.begin().await.unwrap();tx.admit(&rolled_back,&NoDerivations).await.unwrap();drop(tx);
-    let final_batch=ingress("final",3);admit_one(&mut conn,&final_batch).await;
-    let mut read=PgConnection::connect(&db.url(None)).await.unwrap();
-    let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE source='atuin' ORDER BY commit_seq").fetch_all(&mut read).await.unwrap();assert_eq!(orders,vec![0,1]);
-    let frames=sqlx::query_scalar!("SELECT count(*) FROM core.ingress_frames WHERE frame='rolled-back'").fetch_one(&mut read).await.unwrap();assert_eq!(frames,Some(0));
+    let rolled_back = ingress("rolled-back", 2);
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&rolled_back, &NoDerivations).await.unwrap();
+    drop(tx);
+    let final_batch = ingress("final", 3);
+    admit_one(&mut conn, &final_batch).await;
+    let mut read = PgConnection::connect(&db.url(None)).await.unwrap();
+    let orders = sqlx::query_scalar!(
+        "SELECT reading_order FROM core.events WHERE source='atuin' ORDER BY commit_seq"
+    )
+    .fetch_all(&mut read)
+    .await
+    .unwrap();
+    assert_eq!(orders, vec![0, 1]);
+    let frames =
+        sqlx::query_scalar!("SELECT count(*) FROM core.ingress_frames WHERE frame='rolled-back'")
+            .fetch_one(&mut read)
+            .await
+            .unwrap();
+    assert_eq!(frames, Some(0));
 }
 
 mod output_ordinals;
 
 #[devkit::test]
-async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_insert(db:devkit::pg::TestDatabase) {
-    let mut catalog=PgConnection::connect(&db.url(None)).await.unwrap();
-    let kind=sinex_model::event_types::declarations().into_iter().find(|kind|kind.kind.name=="command.executed").unwrap();
-    let declarations=["machine.first","machine.second"].map(|name|sinex_model::SourceDeclaration{
-        source:sinex_model::SourceRef{name:name.into(),version:7},family:"sinex".into(),kinds:vec![kind.clone()],
-    });
-    crate::source_declarations::register(&mut catalog,&declarations).await.unwrap();
-    crate::source_declarations::register(&mut catalog,&declarations).await.unwrap();
-    let mut conflicting=declarations[0].clone();conflicting.kinds[0].kind.version+=1;
-    assert!(crate::source_declarations::register(&mut catalog,&[conflicting]).await.is_err());
-    let mut writer=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
-    let mut offered=Vec::new();
-    for (index,declaration) in declarations.iter().enumerate() {
-        let mut b=batch(vec![keyed(&declaration.source.name,1,1,0)]);
-        let material_id=match &b.events().next().unwrap().origin{Origin::Record{location,..}=>location.material,_=>unreachable!()};
-        b.kind=BatchKind::Ingress(Box::new(sinex_model::IngressFrame{
-            content_hash:None,receipt_number:None,coverage:None,native_source:Some(declaration.source.clone()),source_fingerprint:Some(declaration.fingerprint()),host:Some("attested-host".into()),
-            family:Some("sinex".into()),write_kind_prefixes:vec!["command".into()],assign_orders:vec![],producer:"one-credential".into(),frame:format!("source-{index}"),material:Some(SourceProgress{source:Some(declaration.source.clone()),host:Some("attested-host".into()),binding:declaration.source.name.clone(),data_keys:vec![],input:InputRef{kind:"file".into(),locator:format!("/synthetic/{index}"),host:"declared-host".into()},observation:ObservationFacts{changed:true,..Default::default()},revision:RevisionChange::Snapshot,
-                material:Some(sinex_model::MaterialRef{id:material_id,input:None,blob:format!("blake3:{}",blake3::hash(b"synthetic").to_hex()),length:9,part_index:0,previous_part:None,parser:"synthetic".into(),parser_version:7,manifest:Default::default()}),cursor:Value::Null,carry:Value::Null,memory:None}),refusal:None,
-            declarations:vec![],refusal_kind:None,source:Some(declaration.source.name.clone()),event_types:vec!["command.executed".into()],
+async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_insert(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut catalog = PgConnection::connect(&db.url(None)).await.unwrap();
+    let kind = sinex_model::event_types::declarations()
+        .into_iter()
+        .find(|kind| kind.kind.name == "command.executed")
+        .unwrap();
+    let declarations =
+        ["machine.first", "machine.second"].map(|name| sinex_model::SourceDeclaration {
+            source: sinex_model::SourceRef {
+                name: name.into(),
+                version: 7,
+            },
+            family: "sinex".into(),
+            kinds: vec![kind.clone()],
+        });
+    crate::source_declarations::register(&mut catalog, &declarations)
+        .await
+        .unwrap();
+    crate::source_declarations::register(&mut catalog, &declarations)
+        .await
+        .unwrap();
+    let mut conflicting = declarations[0].clone();
+    conflicting.kinds[0].kind.version += 1;
+    assert!(
+        crate::source_declarations::register(&mut catalog, &[conflicting])
+            .await
+            .is_err()
+    );
+    let mut writer = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let mut offered = Vec::new();
+    for (index, declaration) in declarations.iter().enumerate() {
+        let mut b = batch(vec![keyed(&declaration.source.name, 1, 1, 0)]);
+        let material_id = match &b.events().next().unwrap().origin {
+            Origin::Record { location, .. } => location.material,
+            _ => unreachable!(),
+        };
+        b.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            content_hash: None,
+            receipt_number: None,
+            coverage: None,
+            native_source: Some(declaration.source.clone()),
+            source_fingerprint: Some(declaration.fingerprint()),
+            host: Some("attested-host".into()),
+            family: Some("sinex".into()),
+            write_kind_prefixes: vec!["command".into()],
+            assign_orders: vec![],
+            producer: "one-credential".into(),
+            frame: format!("source-{index}"),
+            material: Some(SourceProgress {
+                source: Some(declaration.source.clone()),
+                host: Some("attested-host".into()),
+                binding: declaration.source.name.clone(),
+                data_keys: vec![],
+                input: InputRef {
+                    kind: "file".into(),
+                    locator: format!("/synthetic/{index}"),
+                    host: "declared-host".into(),
+                },
+                observation: ObservationFacts {
+                    changed: true,
+                    ..Default::default()
+                },
+                revision: RevisionChange::Snapshot,
+                material: Some(sinex_model::MaterialRef {
+                    id: material_id,
+                    input: None,
+                    blob: format!("blake3:{}", blake3::hash(b"synthetic").to_hex()),
+                    length: 9,
+                    part_index: 0,
+                    previous_part: None,
+                    parser: "synthetic".into(),
+                    parser_version: 7,
+                    manifest: Default::default(),
+                }),
+                cursor: Value::Null,
+                carry: Value::Null,
+                memory: None,
+            }),
+            refusal: None,
+            declarations: vec![],
+            refusal_kind: None,
+            source: Some(declaration.source.name.clone()),
+            event_types: vec!["command.executed".into()],
         }));
-        let first=admit_one(&mut writer,&b).await;
-        let retry=admit_one(&mut writer,&b).await;
-        assert_eq!(first.admitted_ids,retry.admitted_ids);assert_eq!(first.admitted,1);
+        let first = admit_one(&mut writer, &b).await;
+        let retry = admit_one(&mut writer, &b).await;
+        assert_eq!(first.admitted_ids, retry.admitted_ids);
+        assert_eq!(first.admitted, 1);
         offered.push(b);
     }
     let rows:Vec<(String,Option<String>,Option<String>,Option<String>,Option<i64>,Option<String>,Option<i64>)>=sqlx::query_as("SELECT source,producer_family,producer_identity,producer_host,source_version,source_fingerprint,producer_frame FROM core.events ORDER BY source").fetch_all(&mut catalog).await.unwrap();
-    assert_eq!(rows.len(),2);
-    for (row,declaration) in rows.iter().zip(&declarations) {
-        assert_eq!(row.0,declaration.source.name);assert_eq!(row.1.as_deref(),Some("sinex"));assert_eq!(row.2.as_deref(),Some("one-credential"));
-        assert_eq!(row.3.as_deref(),Some("attested-host"));assert_eq!(row.4,Some(7));assert_eq!(row.5.as_deref(),Some(declaration.fingerprint().as_str()));
-        let number=row.6.unwrap();
-        let matching:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.ingress_frames WHERE number=$1 AND source_name=$2 AND producer_host='attested-host')").bind(number).bind(&declaration.source.name).fetch_one(&mut catalog).await.unwrap();assert!(matching);
+    assert_eq!(rows.len(), 2);
+    for (row, declaration) in rows.iter().zip(&declarations) {
+        assert_eq!(row.0, declaration.source.name);
+        assert_eq!(row.1.as_deref(), Some("sinex"));
+        assert_eq!(row.2.as_deref(), Some("one-credential"));
+        assert_eq!(row.3.as_deref(), Some("attested-host"));
+        assert_eq!(row.4, Some(7));
+        assert_eq!(row.5.as_deref(), Some(declaration.fingerprint().as_str()));
+        let number = row.6.unwrap();
+        let matching:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.ingress_frames WHERE number=$1 AND source_name=$2 AND producer_host='attested-host')").bind(number).bind(&declaration.source.name).fetch_one(&mut catalog).await.unwrap();
+        assert!(matching);
     }
-    let mut false_label=offered[0].clone();
-    let BatchKind::Ingress(frame)=&mut false_label.kind else{unreachable!()};frame.frame="false-label".into();frame.native_source=Some(declarations[1].source.clone());frame.source_fingerprint=Some(declarations[1].fingerprint());
-    let mut tx=writer.begin().await.unwrap();assert!(tx.admit(&false_label,&NoDerivations).await.is_err());drop(tx);
-    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM core.ingress_frames").fetch_one(&mut catalog).await.unwrap(),2);
-    assert!(sqlx::query("UPDATE core.events SET producer_host='forged'").execute(&mut catalog).await.is_err(),"provenance never needs an event update exception");
+    let mut false_label = offered[0].clone();
+    let BatchKind::Ingress(frame) = &mut false_label.kind else {
+        unreachable!()
+    };
+    frame.frame = "false-label".into();
+    frame.native_source = Some(declarations[1].source.clone());
+    frame.source_fingerprint = Some(declarations[1].fingerprint());
+    let mut tx = writer.begin().await.unwrap();
+    assert!(tx.admit(&false_label, &NoDerivations).await.is_err());
+    drop(tx);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.ingress_frames")
+            .fetch_one(&mut catalog)
+            .await
+            .unwrap(),
+        2
+    );
+    assert!(
+        sqlx::query("UPDATE core.events SET producer_host='forged'")
+            .execute(&mut catalog)
+            .await
+            .is_err(),
+        "provenance never needs an event update exception"
+    );
 }
 
 #[devkit::test]
-async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_replacement(db:devkit::pg::TestDatabase){
-    let mut conn=PgConnection::connect(&db.url(None)).await.unwrap();
-    let offered=|position:i64,content:u8|{
-        let mut event=keyed("canonical",1,content,position);event.origin=Origin::Derived{parents:vec![EventId::new()]};
-        let mut b=batch(vec![event.clone()]);
-        b.kind=BatchKind::Ingress(Box::new(sinex_model::IngressFrame{
-            content_hash:None,receipt_number:None,native_source:None,source_fingerprint:None,host:None,
-            coverage:Some(sinex_model::OwnerCoverage{required:true,stamp:"already-validated-by-admission".into(),position,scope:"scope".into(),catalog:"catalog".into(),instance:"instance".into(),host:"host".into(),settings_identity:"settings".into()}),
-            family:Some("canonical".into()),write_kind_prefixes:vec![],assign_orders:vec![],producer:"publisher".into(),frame:String::new(),material:None,refusal:None,declarations:vec![],refusal_kind:None,source:None,event_types:vec![],
-        }));(b,event)
+async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_replacement(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let offered = |position: i64, content: u8| {
+        let mut event = keyed("canonical", 1, content, position);
+        event.origin = Origin::Derived {
+            parents: vec![EventId::new()],
+        };
+        let mut b = batch(vec![event.clone()]);
+        b.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            content_hash: None,
+            receipt_number: None,
+            native_source: None,
+            source_fingerprint: None,
+            host: None,
+            coverage: Some(sinex_model::OwnerCoverage {
+                required: true,
+                stamp: "already-validated-by-admission".into(),
+                position,
+                scope: "scope".into(),
+                catalog: "catalog".into(),
+                instance: "instance".into(),
+                host: "host".into(),
+                settings_identity: "settings".into(),
+            }),
+            family: Some("canonical".into()),
+            write_kind_prefixes: vec![],
+            assign_orders: vec![],
+            producer: "publisher".into(),
+            frame: String::new(),
+            material: None,
+            refusal: None,
+            declarations: vec![],
+            refusal_kind: None,
+            source: None,
+            event_types: vec![],
+        }));
+        (b, event)
     };
     // This unit exercises the order phase after signature validation. The
     // identical newer payload may be suppressed by classification afterward.
-    for (position,content) in [(10,1),(20,1)] {
-        let (batch,event)=offered(position,content);orders::assign(&mut conn,&batch,&mut[event]).await.unwrap();
+    for (position, content) in [(10, 1), (20, 1)] {
+        let (batch, event) = offered(position, content);
+        orders::assign(&mut conn, &batch, &mut [event])
+            .await
+            .unwrap();
     }
-    let order:i64=sqlx::query_scalar("SELECT reading_order FROM core.producer_orders WHERE source='canonical'").fetch_one(&mut conn).await.unwrap();assert_eq!(order,20);
-    let (delayed,event)=offered(15,2);assert!(orders::assign(&mut conn,&delayed,&mut[event]).await.is_err());
-    let (newer,event)=offered(21,2);orders::assign(&mut conn,&newer,&mut[event]).await.unwrap();
+    let order: i64 = sqlx::query_scalar(
+        "SELECT reading_order FROM core.producer_orders WHERE source='canonical'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(order, 20);
+    let (delayed, event) = offered(15, 2);
+    assert!(
+        orders::assign(&mut conn, &delayed, &mut [event])
+            .await
+            .is_err()
+    );
+    let (newer, event) = offered(21, 2);
+    orders::assign(&mut conn, &newer, &mut [event])
+        .await
+        .unwrap();
 }

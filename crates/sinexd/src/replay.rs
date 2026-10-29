@@ -369,7 +369,9 @@ async fn sources_of(
             None => None,
         };
         // The material names the parser it was read with.
-        let host = stored_binding.as_ref().map(|binding| binding.settings.host.clone());
+        let host = stored_binding
+            .as_ref()
+            .map(|binding| binding.settings.host.clone());
         let binding = match stored_binding {
             Some(b) => sinex_source_core::Binding {
                 parser: m.parser.clone(),
@@ -380,7 +382,10 @@ async fn sources_of(
                 format!("material {}: no source has parser {}", m.id, m.parser)
             })?,
         };
-        out.push(NativeReplaySource { source: sources::source_for(&binding).map_err(|e| format!("material {}: {e}", m.id))?, host });
+        out.push(NativeReplaySource {
+            source: sources::source_for(&binding).map_err(|e| format!("material {}: {e}", m.id))?,
+            host,
+        });
     }
     Ok(out)
 }
@@ -480,7 +485,11 @@ fn read_sequence_into(
     };
     send(Batch {
         run: RunId::new(),
-        kind: BatchKind::Replay { operation, source: None, host: None },
+        kind: BatchKind::Replay {
+            operation,
+            source: None,
+            host: None,
+        },
         records: Vec::new(),
         archive: vec![ArchiveRequest::Replay {
             scope: ReplayScope {
@@ -591,7 +600,14 @@ fn read_sequence_into(
             crate::material_access::sealing::seal_records(&mut records, key)?;
             send(Batch {
                 run: RunId::new(),
-                kind: BatchKind::Replay { operation, source: Some(sinex_model::SourceRef { name: source.spec().name.into(), version: source.spec().parser_version }), host: native.host.clone() },
+                kind: BatchKind::Replay {
+                    operation,
+                    source: Some(sinex_model::SourceRef {
+                        name: source.spec().name.into(),
+                        version: source.spec().parser_version,
+                    }),
+                    host: native.host.clone(),
+                },
                 records,
                 archive: Vec::new(),
             })?;

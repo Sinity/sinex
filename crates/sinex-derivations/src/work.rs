@@ -48,21 +48,38 @@ impl Keyed for WorkActs {
     const VERSION: u32 = 7;
     const INPUTS: &'static [&'static str] = &["polylogue.work_snapshot"];
     const OUTPUTS: &'static [&'static str] = &["work.act", "work.coverage"];
-    fn input_requirements(&self)->Option<Vec<sinex_model::InputRequirement>> {Some(snapshot::requirements())}
-    fn unavailable_inputs(&self,key:&Value,inputs:&[Event],issues:&[sinex_model::UnavailableInput],_:&Env)->Computed {
-        snapshot::required_unavailable(key,inputs,issues)
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
+        Some(snapshot::requirements())
+    }
+    fn unavailable_inputs(
+        &self,
+        key: &Value,
+        inputs: &[Event],
+        issues: &[sinex_model::UnavailableInput],
+        _: &Env,
+    ) -> Computed {
+        snapshot::required_unavailable(key, inputs, issues)
     }
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        input.payload.get("session").filter(|id|id.as_str().is_some_and(|id|!id.is_empty()))
-            .map(|id|vec![json!({"session":id})]).unwrap_or_default()
+        input
+            .payload
+            .get("session")
+            .filter(|id| id.as_str().is_some_and(|id| !id.is_empty()))
+            .map(|id| vec![json!({"session":id})])
+            .unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let mut query=InputQuery::all(vec![Kind::all("polylogue.work_snapshot")]).only("session",key.get("session")?.clone());
-        query.unknown_times=true;
+        let mut query = InputQuery::all(vec![Kind::all("polylogue.work_snapshot")])
+            .only("session", key.get("session")?.clone());
+        query.unknown_times = true;
         Some(query)
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {KeyState::Closed}
-    fn compute(&self,key:&Value,inputs:&[Event],_:&Env)->Computed {snapshot::compute(key,inputs)}
+    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+        KeyState::Closed
+    }
+    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
+        snapshot::compute(key, inputs)
+    }
 }
 
 fn episode_kind(episode: &Value) -> Kind {

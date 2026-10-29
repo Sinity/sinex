@@ -12,8 +12,15 @@ fn capture(root: &Path, nats: &devkit::nats::TestNats) -> Process {
     capture_node(root, nats, "satellite", "satellite", None)
 }
 
-fn capture_node(root: &Path, nats: &devkit::nats::TestNats, producer: &str, host: &str, bus: Option<&str>) -> Process {
-    let mut command = Command::new(Path::new(env!("CARGO_BIN_EXE_sinexd")).with_file_name("sinex-capture"));
+fn capture_node(
+    root: &Path,
+    nats: &devkit::nats::TestNats,
+    producer: &str,
+    host: &str,
+    bus: Option<&str>,
+) -> Process {
+    let mut command =
+        Command::new(Path::new(env!("CARGO_BIN_EXE_sinexd")).with_file_name("sinex-capture"));
     command
         .args([
             "--nats",
@@ -37,7 +44,9 @@ fn capture_node(root: &Path, nats: &devkit::nats::TestNats, producer: &str, host
         .arg("--watch")
         .arg(root.join("watched"))
         .env_remove("DATABASE_URL");
-    if let Some(address) = bus { command.env("DBUS_SESSION_BUS_ADDRESS", address); }
+    if let Some(address) = bus {
+        command.env("DBUS_SESSION_BUS_ADDRESS", address);
+    }
     Process::start(
         &mut command,
         root.join(format!("capture-{}.log", uuid_suffix())),
@@ -142,7 +151,14 @@ async fn capture_only_binary_spools_before_daemon_and_resumes_over_nats_once() {
         .unwrap();
     let mut observer = PgConnection::connect(&database).await.unwrap();
     let store = root.join("daemon-store");
-    let mut server = native::server(&daemon_binary, &database, &store, root, &nats, &[("satellite", "satellite", &["machine.file-watch"])]);
+    let mut server = native::server(
+        &daemon_binary,
+        &database,
+        &store,
+        root,
+        &nats,
+        &[("satellite", "satellite", &["machine.file-watch"])],
+    );
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         satellite.running();

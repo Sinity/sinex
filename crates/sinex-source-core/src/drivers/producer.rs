@@ -363,8 +363,22 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(mut batch) = UnacknowledgedFrames::load(state, binding)? {
-            if let Some(kind @ (FrameRefusal::Excised | FrameRefusal::PartiallyExcised | FrameRefusal::Conflict)) = batch.refusal {
-                return Err(Error::Refused { frame: batch.frames.first().map_or(binding, Ingress::frame).to_owned(), reason: "saved terminal frame refusal requires owner intervention".into(), recorded: true, kind });
+            if let Some(
+                kind @ (FrameRefusal::Excised
+                | FrameRefusal::PartiallyExcised
+                | FrameRefusal::Conflict),
+            ) = batch.refusal
+            {
+                return Err(Error::Refused {
+                    frame: batch
+                        .frames
+                        .first()
+                        .map_or(binding, Ingress::frame)
+                        .to_owned(),
+                    reason: "saved terminal frame refusal requires owner intervention".into(),
+                    recorded: true,
+                    kind,
+                });
             }
             if !self.resumed.contains(binding) {
                 if let Some(frame) = batch.frames.first_mut() {
@@ -375,11 +389,36 @@ impl Producer {
                         prepared.frame().to_owned(),
                         format!("malformed/{}", blake3::hash(&body).to_hex()),
                     ];
-                    let recorded = self.recorded(&names).await?.into_iter()
-                        .map(|receipt| sinex_transport::producer::check_receipt(&prepared, receipt).map_err(submit_error))
+                    let recorded = self
+                        .recorded(&names)
+                        .await?
+                        .into_iter()
+                        .map(|receipt| {
+                            sinex_transport::producer::check_receipt(&prepared, receipt)
+                                .map_err(submit_error)
+                        })
                         .collect::<Result<Vec<_>, _>>()?;
-                    if let Some(receipt) = recorded.iter().find(|receipt| matches!(receipt.refusal_kind(), Some(FrameRefusal::Excised | FrameRefusal::PartiallyExcised | FrameRefusal::Conflict))) {
-                        return Err(Error::Refused { frame: prepared.frame().to_owned(), reason: receipt.refusal.clone().unwrap_or_else(|| "terminal recorded refusal".into()), recorded: true, kind: receipt.refusal_kind().expect("terminal refusal was matched") });
+                    if let Some(receipt) = recorded.iter().find(|receipt| {
+                        matches!(
+                            receipt.refusal_kind(),
+                            Some(
+                                FrameRefusal::Excised
+                                    | FrameRefusal::PartiallyExcised
+                                    | FrameRefusal::Conflict
+                            )
+                        )
+                    }) {
+                        return Err(Error::Refused {
+                            frame: prepared.frame().to_owned(),
+                            reason: receipt
+                                .refusal
+                                .clone()
+                                .unwrap_or_else(|| "terminal recorded refusal".into()),
+                            recorded: true,
+                            kind: receipt
+                                .refusal_kind()
+                                .expect("terminal refusal was matched"),
+                        });
                     }
                     let retryable = |kind| {
                         matches!(
@@ -789,7 +828,10 @@ impl Producer {
                 frames.push(Ingress::Material {
                     frame: format!("{binding}/material/{}", m.id),
                     material: Box::new(MaterialFrame {
-                        source:sinex_model::SourceRef{name:source.spec().name.to_owned(),version:source.spec().parser_version},
+                        source: sinex_model::SourceRef {
+                            name: source.spec().name.to_owned(),
+                            version: source.spec().parser_version,
+                        },
                         id: m.id,
                         input: progress.input.clone(),
                         blob: m.blob.clone(),
@@ -841,8 +883,11 @@ impl Producer {
             for (chunk, frame_events) in chunks.into_iter().enumerate() {
                 sent.events += frame_events.len();
                 frames.push(Ingress::Events {
-                    source:Some(sinex_model::SourceRef{name:source.spec().name.to_owned(),version:source.spec().parser_version}),
-                    coverage:None,
+                    source: Some(sinex_model::SourceRef {
+                        name: source.spec().name.to_owned(),
+                        version: source.spec().parser_version,
+                    }),
+                    coverage: None,
                     frame: format!("{binding}/events/{material}/{index}/{chunk}"),
                     events: frame_events,
                     failures: if chunk == 0 {
@@ -937,12 +982,20 @@ fn retry(frame: &mut Ingress) {
 }
 
 fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
-    let mut source=None;
+    let mut source = None;
     for frame in frames {
-        let declared=match frame {Ingress::Material{material,..}=>Some(&material.source),Ingress::Events{source,..}=>source.as_ref(),_=>None};
-        if let Some(declared)=declared {
-            if source.as_ref().is_some_and(|previous|previous!=declared){return Err(Error::Configuration("one failed batch contains several native sources".into()));}
-            source=Some(declared.clone());
+        let declared = match frame {
+            Ingress::Material { material, .. } => Some(&material.source),
+            Ingress::Events { source, .. } => source.as_ref(),
+            _ => None,
+        };
+        if let Some(declared) = declared {
+            if source.as_ref().is_some_and(|previous| previous != declared) {
+                return Err(Error::Configuration(
+                    "one failed batch contains several native sources".into(),
+                ));
+            }
+            source = Some(declared.clone());
         }
     }
     let mut locations = Vec::new();
@@ -966,7 +1019,8 @@ fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
     locations.sort_by_key(|location| (location.material.0, location.anchor));
     locations.dedup();
     Ok(Ingress::Events {
-        source,coverage:None,
+        source,
+        coverage: None,
         frame: format!("{}/failures/{}", frames[0].frame(), uuid::Uuid::now_v7()),
         events: vec![],
         failures: locations

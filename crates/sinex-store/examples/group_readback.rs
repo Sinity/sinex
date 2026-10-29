@@ -1,22 +1,22 @@
 //! Explicit numeric-UID qualification of protected shared-store read authority.
-use sinex_store::Blobs;
 use hashed_blobs::Extent;
-use std::path::Path;
+use sinex_store::Blobs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::Command;
-const BODY:&[u8]=b"a tiny receiver-installed plain blob\n";
-const CLIENT:u32=60001;
-const RECEIVER:u32=60002;
-const OUTSIDER:u32=60003;
-const GROUP:u32=60010;
-fn read(root:&Path)->hashed_blobs::Result<Vec<u8>> {
-    let descriptor=std::fs::read(root.join("descriptor"))?;
-    hashed_blobs::Reader::new(root).read(&[Extent::decode(&descriptor)?],None)
+const BODY: &[u8] = b"a tiny receiver-installed plain blob\n";
+const CLIENT: u32 = 60001;
+const RECEIVER: u32 = 60002;
+const OUTSIDER: u32 = 60003;
+const GROUP: u32 = 60010;
+fn read(root: &Path) -> hashed_blobs::Result<Vec<u8>> {
+    let descriptor = std::fs::read(root.join("descriptor"))?;
+    hashed_blobs::Reader::new(root).read(&[Extent::decode(&descriptor)?], None)
 }
 fn actor(operation: &str) {
-    let expected=std::env::var("SINEX_FIXTURE_UID").unwrap();
-    let actual=Command::new("id").arg("-u").output().unwrap();
-    assert_eq!(String::from_utf8(actual.stdout).unwrap().trim(),expected);
+    let expected = std::env::var("SINEX_FIXTURE_UID").unwrap();
+    let actual = Command::new("id").arg("-u").output().unwrap();
+    assert_eq!(String::from_utf8(actual.stdout).unwrap().trim(), expected);
     let root = Path::new("/proc/self/fd/0");
     match operation {
         "install" => {
@@ -58,7 +58,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
         ])
         .current_dir(root)
         .stdin(std::fs::File::open(root).unwrap())
-        .env("SINEX_FIXTURE_UID",uid.to_string())
+        .env("SINEX_FIXTURE_UID", uid.to_string())
         .output()
         .unwrap();
     assert!(
@@ -72,8 +72,12 @@ fn main() {
     if let Some(operation) = std::env::args().nth(1) {
         return actor(&operation);
     }
-    let identity=Command::new("id").arg("-u").output().unwrap();
-    assert_eq!(String::from_utf8(identity.stdout).unwrap().trim(),"0","numeric-UID fixture requires root");
+    let identity = Command::new("id").arg("-u").output().unwrap();
+    assert_eq!(
+        String::from_utf8(identity.stdout).unwrap().trim(),
+        "0",
+        "numeric-UID fixture requires root"
+    );
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o711)).unwrap();
     std::fs::copy(std::env::current_exe().unwrap(), root.path().join("actor")).unwrap();

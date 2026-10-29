@@ -3,13 +3,28 @@ use sinex_model::{Class, KindDeclaration, KindRef};
 use sinex_protocol::{FetchMaterial, FetchMaterialReply, FetchRefusalKind};
 
 fn grant(family: &str, publisher: bool) -> crate::ingress::fetch::Grants {
-    crate::ingress::fetch::Grants { indexed_catalog:None, public_context:false,
+    crate::ingress::fetch::Grants {
+        indexed_catalog: None,
+        public_context: false,
         kind_prefixes: vec![family.into()],
         classes: vec![Class::Open, Class::Guarded],
         write: Some(crate::ingress::authority::WriteGrant {
-                    forward_signals:false,author_attestation:None, emergency_sinex_blocked_host:None,emergency_lease_seconds:None,
-            family: family.into(),host:Some("attested-host".into()),source_prefixes:vec![family.into()],
-            source_declarations:vec![sinex_model::SourceDeclaration{source:test_source(family),family:family.into(),kinds:vec![declaration(&format!("{family}.raw"),true),declaration(&format!("{family}.summary"),false)]}],canonical_kinds:vec![],
+            forward_signals: false,
+            author_attestation: None,
+            emergency_sinex_blocked_host: None,
+            emergency_lease_seconds: None,
+            family: family.into(),
+            host: Some("attested-host".into()),
+            source_prefixes: vec![family.into()],
+            source_declarations: vec![sinex_model::SourceDeclaration {
+                source: test_source(family),
+                family: family.into(),
+                kinds: vec![
+                    declaration(&format!("{family}.raw"), true),
+                    declaration(&format!("{family}.summary"), false),
+                ],
+            }],
+            canonical_kinds: vec![],
             kind_prefixes: vec![family.into()],
             classes: vec![Class::Open],
             canonical_prefixes: if publisher {
@@ -55,7 +70,11 @@ fn event(kind: &KindRef, material: MaterialId, copy: &str, text: &str) -> Produc
     }
 }
 async fn material(h: &Harness, producer: &str) -> MaterialId {
-    let (id, mut frame) = h.material_for("example",&format!("material-{producer}"), b"captured source\n");
+    let (id, mut frame) = h.material_for(
+        "example",
+        &format!("material-{producer}"),
+        b"captured source\n",
+    );
     if let Ingress::Material { material, .. } = &mut frame {
         material.input.host = producer.into();
     }
@@ -73,7 +92,9 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
     ]);
     capabilities.insert(
         "reader".into(),
-        crate::ingress::fetch::Grants { indexed_catalog:None, public_context:false,
+        crate::ingress::fetch::Grants {
+            indexed_catalog: None,
+            public_context: false,
             kind_prefixes: vec!["example".into()],
             classes: vec![Class::Open, Class::Guarded],
             write: None,
@@ -123,7 +144,8 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
             h.send(
                 producer,
                 &Ingress::Events {
-                    source:Some(test_source("example")),coverage:None,
+                    source: Some(test_source("example")),
+                    coverage: None,
                     frame: "raw-copy".into(),
                     events: vec![event(&raw.kind, id, producer, "same captured text")],
                     failures: vec![]
@@ -141,7 +163,8 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         h.send(
             "host-b",
             &Ingress::Events {
-                source:Some(test_source("example")),coverage:None,
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "unauthorized-summary".into(),
                 events: vec![event(&summary.kind, b, "host-b", "forged summary")],
                 failures: vec![]
@@ -155,7 +178,8 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         h.send(
             "host-a",
             &Ingress::Events {
-                source:Some(test_source("example")),coverage:None,
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "canonical-summary".into(),
                 events: vec![event(&summary.kind, a, "canonical", "summary")],
                 failures: vec![]
@@ -249,7 +273,8 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
         h.send(
             "host-a",
             &Ingress::Events {
-                source:Some(test_source("example")),coverage:None,
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "old-owner-unknown".into(),
                 events: vec![event(
                     &KindRef {

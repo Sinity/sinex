@@ -179,7 +179,11 @@ async fn sessions_select_connected_windows_and_create_new_owners_after_removal(
         .iter()
         .find(|window| window.started_at == at(0))
         .unwrap();
-    let env = Env::at(at(11_000_000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        at(11_000_000),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let query = Keyed::inputs(
         &sinex_derivations::activity::ActivitySessions(Default::default()),
         &json!({"at":first.started_at,"scope":first.scope}),

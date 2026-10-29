@@ -41,7 +41,7 @@ fn intent(family: &str) -> ForwardedSignal {
         scope: None,
     };
     ForwardedSignal {
-        active_rule:None,
+        active_rule: None,
         inputs: vec![],
         intent: ::signals::FiredIntent {
             delivery,
@@ -67,15 +67,44 @@ fn intent(family: &str) -> ForwardedSignal {
         },
     }
 }
-fn emergency_completion(context_token:String)->sinex_protocol::signals::EmergencyCompletion {
-    let trigger=sinex_protocol::signals::emergency_trigger(sinex_model::EventId::new());
-    let id=trigger.delivery_id();let completed_at=sinex_model::Timestamp::now();let at=i64::try_from(completed_at.unix_ns()/1_000_000).unwrap();
-    let notice=sinex_protocol::signals::emergency_notice(&id);
-    let mut state=::signals::notifications::NotificationState::default();
-    let receipts=state.begin(notice.clone(),::signals::notifications::Route::Dbus);
-    let attempt=state.release(&id).unwrap();
-    sinex_protocol::signals::EmergencyCompletion{inputs:vec![],delivery_id:id.clone(),host:"fixture".into(),context_token,
-        intent: ::signals::FiredIntent{delivery: ::signals::Delivery{id,trigger,matched:at,at,basis:vec![],channel: ::signals::Channel::Interrupt,downgrade:None,change:None,value:None,scope:None},author: ::signals::Author::Shipped,quiet_hours:None,rate_limit:None,current:true},notice,receipts,attempt,invoked_at:completed_at,completed_at}
+fn emergency_completion(context_token: String) -> sinex_protocol::signals::EmergencyCompletion {
+    let trigger = sinex_protocol::signals::emergency_trigger(sinex_model::EventId::new());
+    let id = trigger.delivery_id();
+    let completed_at = sinex_model::Timestamp::now();
+    let at = i64::try_from(completed_at.unix_ns() / 1_000_000).unwrap();
+    let notice = sinex_protocol::signals::emergency_notice(&id);
+    let mut state = ::signals::notifications::NotificationState::default();
+    let receipts = state.begin(notice.clone(), ::signals::notifications::Route::Dbus);
+    let attempt = state.release(&id).unwrap();
+    sinex_protocol::signals::EmergencyCompletion {
+        inputs: vec![],
+        delivery_id: id.clone(),
+        host: "fixture".into(),
+        context_token,
+        intent: ::signals::FiredIntent {
+            delivery: ::signals::Delivery {
+                id,
+                trigger,
+                matched: at,
+                at,
+                basis: vec![],
+                channel: ::signals::Channel::Interrupt,
+                downgrade: None,
+                change: None,
+                value: None,
+                scope: None,
+            },
+            author: ::signals::Author::Shipped,
+            quiet_hours: None,
+            rate_limit: None,
+            current: true,
+        },
+        notice,
+        receipts,
+        attempt,
+        invoked_at: completed_at,
+        completed_at,
+    }
 }
 
 async fn context(client: &async_nats::Client, subjects: &Subjects) -> PublicContext {
@@ -283,7 +312,11 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
             sinex_protocol::InputReplayReply::Page {
                 position,
                 inputs,
-                continuation: sinex_protocol::ReplayContinuation::Complete { raw_inputs: sinex_protocol::CoverageStatus::Complete { proof: basis }, .. },
+                continuation:
+                    sinex_protocol::ReplayContinuation::Complete {
+                        raw_inputs: sinex_protocol::CoverageStatus::Complete { proof: basis },
+                        ..
+                    },
                 ..
             },
     } = replay
@@ -417,10 +450,28 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
     .unwrap();
     let mut denied_acks = capture.subscribe(subjects.ack("capture")).await.unwrap();
     capture.flush().await.unwrap();
-    let mut elevated=frame.clone();
-    if let Ingress::Signals{frame,signals,..}=&mut elevated {frame.push_str("-unauthorized-operator");signals[0].intent.author=::signals::Author::Operator;}
-    let denied=sinex_transport::producer::submit_frame(&client,&subjects,"polylogue",&mut acks,&elevated,Duration::from_secs(10)).await.unwrap();
-    assert!(denied.refusal.as_deref().is_some_and(|reason|reason.contains("attestation")),"canonical publishing alone does not attest an operator: {denied:?}");
+    let mut elevated = frame.clone();
+    if let Ingress::Signals { frame, signals, .. } = &mut elevated {
+        frame.push_str("-unauthorized-operator");
+        signals[0].intent.author = ::signals::Author::Operator;
+    }
+    let denied = sinex_transport::producer::submit_frame(
+        &client,
+        &subjects,
+        "polylogue",
+        &mut acks,
+        &elevated,
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert!(
+        denied
+            .refusal
+            .as_deref()
+            .is_some_and(|reason| reason.contains("attestation")),
+        "canonical publishing alone does not attest an operator: {denied:?}"
+    );
     let mut spoof = frame.clone();
     if let Ingress::Signals { frame, signals, .. } = &mut spoof {
         *frame = "synthetic-spoof".into();
@@ -440,16 +491,51 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
         denied.refusal.is_some(),
         "payload authorship cannot grant capture-only forwarding"
     );
-    let completion=emergency_completion(context_token);
-    let emergency_id=completion.delivery_id.clone();
-    let mut optional=match &frame{Ingress::Signals{coverage:Some(proof),..}=>proof.clone(),_=>unreachable!()};optional.stamp.push_str("invalid");
-    let emergency=Ingress::Signals{frame:"synthetic-emergency-stale-proof".into(),coverage:Some(optional),signals:vec![],receipts:vec![],emergency:vec![completion],class:sinex_model::Class::Open};
-    let audit=sinex_transport::producer::submit_frame(&client,&subjects,"polylogue",&mut acks,&emergency,Duration::from_secs(10)).await.unwrap();
-    assert!(audit.refusal.is_none(),"optional certification cannot discard a valid compiled handoff audit: {audit:?}");
-    assert_eq!(audit.outcome["superseded_input"],json!(1));
-    let (handoff,receipts):(i64,i64)=sqlx::query_as("SELECT count(*) FILTER(WHERE event_type='signal.handoff'),count(*) FILTER(WHERE event_type='signal.desktop_receipt') FROM core.events WHERE payload->>'delivery_id'=$1").bind(&emergency_id).fetch_one(&mut conn).await.unwrap();assert_eq!((handoff,receipts),(1,1));
-    let copied:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.emergency' AND payload->>'delivery_id'=$1").bind(&emergency_id).fetch_one(&mut conn).await.unwrap();assert_eq!(copied,0,"stale optional proof never certifies copied full evidence");
-    assert_eq!(std::fs::read_to_string(&sink).unwrap().lines().count(),2,"minimal audit admission never hands an uncertified route to an outlet");
+    let completion = emergency_completion(context_token);
+    let emergency_id = completion.delivery_id.clone();
+    let mut optional = match &frame {
+        Ingress::Signals {
+            coverage: Some(proof),
+            ..
+        } => proof.clone(),
+        _ => unreachable!(),
+    };
+    optional.stamp.push_str("invalid");
+    let emergency = Ingress::Signals {
+        frame: "synthetic-emergency-stale-proof".into(),
+        coverage: Some(optional),
+        signals: vec![],
+        receipts: vec![],
+        emergency: vec![completion],
+        class: sinex_model::Class::Open,
+    };
+    let audit = sinex_transport::producer::submit_frame(
+        &client,
+        &subjects,
+        "polylogue",
+        &mut acks,
+        &emergency,
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert!(
+        audit.refusal.is_none(),
+        "optional certification cannot discard a valid compiled handoff audit: {audit:?}"
+    );
+    assert_eq!(audit.outcome["superseded_input"], json!(1));
+    let (handoff,receipts):(i64,i64)=sqlx::query_as("SELECT count(*) FILTER(WHERE event_type='signal.handoff'),count(*) FILTER(WHERE event_type='signal.desktop_receipt') FROM core.events WHERE payload->>'delivery_id'=$1").bind(&emergency_id).fetch_one(&mut conn).await.unwrap();
+    assert_eq!((handoff, receipts), (1, 1));
+    let copied:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.emergency' AND payload->>'delivery_id'=$1").bind(&emergency_id).fetch_one(&mut conn).await.unwrap();
+    assert_eq!(
+        copied, 0,
+        "stale optional proof never certifies copied full evidence"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&sink).unwrap().lines().count(),
+        2,
+        "minimal audit admission never hands an uncertified route to an outlet"
+    );
     process.stop().await;
     let mut process = start();
     ready(&mut process, &socket).await;

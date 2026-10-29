@@ -13,10 +13,12 @@ impl Blobs {
             sqlx::query!("SELECT hash,descriptor,deleting FROM core.blob_extents ORDER BY hash")
                 .fetch_all(&mut *conn)
                 .await?;
-        let end: Option<i64> =
-            sqlx::query_scalar!("SELECT committed_end FROM core.blob_segments WHERE segment=$1",SEGMENT)
-                .fetch_optional(conn)
-                .await?;
+        let end: Option<i64> = sqlx::query_scalar!(
+            "SELECT committed_end FROM core.blob_segments WHERE segment=$1",
+            SEGMENT
+        )
+        .fetch_optional(conn)
+        .await?;
         let mut state = self.state()?;
         if state.writer.is_some() || !state.groups.is_empty() || !state.prepared.is_empty() {
             return Err(crate::Error::Invalid(
@@ -28,7 +30,7 @@ impl Blobs {
         let mut extents = BTreeMap::new();
         for row in rows {
             let extent = Extent::decode(&row.descriptor)?;
-            let name=row.hash;
+            let name = row.hash;
             if extent.hash != parse(&name)?
                 || extent.segment != SEGMENT
                 || extent.end() > committed_end
@@ -83,11 +85,12 @@ impl Blobs {
         let groups = self.state()?.groups.clone();
         for group in &groups {
             for extent in &group.extents {
-                let name=extent.hash.to_string();
-                let descriptor=extent.encode();
+                let name = extent.hash.to_string();
+                let descriptor = extent.encode();
                 sqlx::query!("INSERT INTO core.blob_extents(hash,descriptor,deleting) VALUES($1,$2,false) ON CONFLICT(hash) DO UPDATE SET descriptor=EXCLUDED.descriptor,deleting=false",name,descriptor).execute(&mut *conn).await?;
             }
-            let end=i64::try_from(group.end).map_err(|_|crate::Error::Invalid("segment end exceeds i64".into()))?;
+            let end = i64::try_from(group.end)
+                .map_err(|_| crate::Error::Invalid("segment end exceeds i64".into()))?;
             sqlx::query!("INSERT INTO core.blob_segments(segment,committed_end) VALUES($1,$2) ON CONFLICT(segment) DO UPDATE SET committed_end=greatest(core.blob_segments.committed_end,EXCLUDED.committed_end)",SEGMENT,end).execute(&mut *conn).await?;
         }
         let deleting: bool =
@@ -140,15 +143,21 @@ pub async fn delete_unreferenced_extents(
     blobs.acknowledge(receipt)?;
     let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash)").fetch_all(&mut *conn).await?;
     if !names.is_empty() {
-        sqlx::query!("UPDATE core.blob_extents SET deleting=true WHERE hash=ANY($1)",&names)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query!(
+            "UPDATE core.blob_extents SET deleting=true WHERE hash=ANY($1)",
+            &names
+        )
+        .execute(&mut *conn)
+        .await?;
     }
     for name in names {
         blobs.delete(&name)?;
-        sqlx::query!("DELETE FROM core.blob_extents WHERE hash=$1 AND deleting",name)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM core.blob_extents WHERE hash=$1 AND deleting",
+            name
+        )
+        .execute(&mut *conn)
+        .await?;
         found.push(name);
     }
     Ok(found)

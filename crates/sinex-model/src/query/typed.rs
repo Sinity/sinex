@@ -77,34 +77,80 @@ pub fn complete(text: &str) -> Vec<Completion> {
     let table = Table::from_name(first).unwrap_or(Table::Events);
     let mut kinds: Option<BTreeSet<String>> =
         alias.map(|a| a.kinds.iter().map(|s| (*s).into()).collect());
-    let ctx=Context::utc(jiff::Timestamp::UNIX_EPOCH);
-    let shared_catalog=super::syntax::catalog(&ctx);
-    let offered=query_language::complete::complete(text,text.len(),&shared_catalog);
-    let field_names: BTreeSet<String>=offered.iter().filter(|c|c.kind==query_language::complete::CompletionKind::Field).map(|c|c.value.clone()).collect();
+    let ctx = Context::utc(jiff::Timestamp::UNIX_EPOCH);
+    let shared_catalog = super::syntax::catalog(&ctx);
+    let offered = query_language::complete::complete(text, text.len(), &shared_catalog);
+    let field_names: BTreeSet<String> = offered
+        .iter()
+        .filter(|c| c.kind == query_language::complete::CompletionKind::Field)
+        .map(|c| c.value.clone())
+        .collect();
     // Complete one field-exists atom to inspect the already parsed kind filter.
     // The shared completer owns the unfinished-token replacement span.
-    if let Some(candidate)=offered.iter().find(|c|c.kind==query_language::complete::CompletionKind::Field) {
-        let probe=format!("{}{} exists{}",&text[..candidate.replace.start],candidate.value,&text[candidate.replace.end..]);
-        if let Ok(parsed)=super::syntax::parse(&probe,&ctx) {
-            fn mentioned(c:&query_language::ast::Condition,out:&mut BTreeSet<String>) {
-                use query_language::ast::{ConditionKind as C,Operand as O,Value as V};
+    if let Some(candidate) = offered
+        .iter()
+        .find(|c| c.kind == query_language::complete::CompletionKind::Field)
+    {
+        let probe = format!(
+            "{}{} exists{}",
+            &text[..candidate.replace.start],
+            candidate.value,
+            &text[candidate.replace.end..]
+        );
+        if let Ok(parsed) = super::syntax::parse(&probe, &ctx) {
+            fn mentioned(c: &query_language::ast::Condition, out: &mut BTreeSet<String>) {
+                use query_language::ast::{ConditionKind as C, Operand as O, Value as V};
                 match &c.kind {
-                    C::And{conditions}|C::Or{conditions}=>for c in conditions {mentioned(c,out);},
-                    C::Compare{operand:O::Field{name},op:Op::Eq,value}|C::Match{field:name,value} if name=="event_type"=>{
-                        fn add(v:&V,out:&mut BTreeSet<String>) {
-                            match v {V::Set{values}=>for v in values {add(v,out);},V::Scalar{text,quoted}=>{
-                                let v=if !quoted&&text.contains('*'){Value::Glob(text.clone())}else{Value::Text(text.clone())};
-                                if let Some(selected)=selected_value(&v,None){out.extend(selected);}
-                            },_=>{}}
+                    C::And { conditions } | C::Or { conditions } => {
+                        for c in conditions {
+                            mentioned(c, out);
                         }
-                        add(value,out);
                     }
-                    _=>{}
+                    C::Compare {
+                        operand: O::Field { name },
+                        op: Op::Eq,
+                        value,
+                    }
+                    | C::Match { field: name, value }
+                        if name == "event_type" =>
+                    {
+                        fn add(v: &V, out: &mut BTreeSet<String>) {
+                            match v {
+                                V::Set { values } => {
+                                    for v in values {
+                                        add(v, out);
+                                    }
+                                }
+                                V::Scalar { text, quoted } => {
+                                    let v = if !quoted && text.contains('*') {
+                                        Value::Glob(text.clone())
+                                    } else {
+                                        Value::Text(text.clone())
+                                    };
+                                    if let Some(selected) = selected_value(&v, None) {
+                                        out.extend(selected);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        add(value, out);
+                    }
+                    _ => {}
                 }
             }
-            let mut selected=BTreeSet::new();
-            if let query_language::ast::Source::Unit{condition:Some(c),..}=parsed.source {mentioned(&c,&mut selected);}
-            if !selected.is_empty(){kinds=Some(kinds.map_or(selected.clone(),|alias|alias.intersection(&selected).cloned().collect()));}
+            let mut selected = BTreeSet::new();
+            if let query_language::ast::Source::Unit {
+                condition: Some(c), ..
+            } = parsed.source
+            {
+                mentioned(&c, &mut selected);
+            }
+            if !selected.is_empty() {
+                kinds = Some(kinds.map_or(selected.clone(), |alias| {
+                    alias.intersection(&selected).cloned().collect()
+                }));
+            }
         }
     }
     let mut choices = std::collections::BTreeMap::new();
@@ -311,7 +357,9 @@ fn operand(
     }
 }
 fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
-    if matches!(v,Value::Unknown){return Ok(());}
+    if matches!(v, Value::Unknown) {
+        return Ok(());
+    }
     if ty == FieldType::Json {
         return Ok(());
     }
@@ -368,7 +416,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
     });
     let kinds = if narrowed.is_some() { &narrowed } else { kinds };
     match e {
-        Expr::Truth{operand:field,..}=>operand(field,kinds,ctx)?,
+        Expr::Truth { operand: field, .. } => operand(field, kinds, ctx)?,
         Expr::And(a, b) | Expr::Or(a, b) => {
             expr(a, kinds, ctx)?;
             expr(b, kinds, ctx)?;

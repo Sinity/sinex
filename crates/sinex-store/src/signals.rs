@@ -294,7 +294,7 @@ pub async fn live_reading(
 pub async fn material_read_mark(
     conn: &mut PgConnection,
     material: sinex_model::MaterialId,
-    delivery:&str,
+    delivery: &str,
 ) -> Result<Option<crate::ReadMark>> {
     let value = sqlx::query_scalar!(
         "SELECT CASE WHEN (manifest->'uncertified_signals') ? $2 THEN NULL ELSE manifest->'signal_read_mark' END FROM raw.materials WHERE id=$1",

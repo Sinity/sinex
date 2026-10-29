@@ -54,21 +54,42 @@ pub struct Presentation {
 pub fn compile(ctx: Context, sections: Vec<Section>, budget: usize) -> Presentation {
     let mut used = 0usize;
     let mut sections = sections;
-    for section in &mut sections { section.findings.sort_by_key(Finding::rank); }
-    let mut rendered: Vec<_> = sections.iter().map(|section| RenderedSection {
-        title: section.title.clone(), shown: 0, lines: Vec::new(), dropped: 0, absent: section.absent.clone(),
-    }).collect();
+    for section in &mut sections {
+        section.findings.sort_by_key(Finding::rank);
+    }
+    let mut rendered: Vec<_> = sections
+        .iter()
+        .map(|section| RenderedSection {
+            title: section.title.clone(),
+            shown: 0,
+            lines: Vec::new(),
+            dropped: 0,
+            absent: section.absent.clone(),
+        })
+        .collect();
     // Give each section its highest-ranked finding before spending the
     // remaining budget on another finding from the same section.
-    let rounds = sections.iter().map(|section| section.findings.len()).max().unwrap_or(0);
+    let rounds = sections
+        .iter()
+        .map(|section| section.findings.len())
+        .max()
+        .unwrap_or(0);
     for round in 0..rounds {
         for (section, output) in sections.iter().zip(&mut rendered) {
-            let Some(finding) = section.findings.get(round) else { continue; };
+            let Some(finding) = section.findings.get(round) else {
+                continue;
+            };
             let mut line = format!("- {}", finding.markdown());
-            if let Some(citation) = &ctx.citation { let _ = write!(line, " ({citation})"); }
-            if used + line.len() + 1 > budget { output.dropped += 1; continue; }
+            if let Some(citation) = &ctx.citation {
+                let _ = write!(line, " ({citation})");
+            }
+            if used + line.len() + 1 > budget {
+                output.dropped += 1;
+                continue;
+            }
             used += line.len() + 1;
-            output.lines.push(line); output.shown += 1;
+            output.lines.push(line);
+            output.shown += 1;
         }
     }
     let mut md = format!(
@@ -78,9 +99,12 @@ pub fn compile(ctx: Context, sections: Vec<Section>, budget: usize) -> Presentat
     if let Some(versions) = &ctx.producer_versions {
         let mut by_producer =
             std::collections::BTreeMap::<&str, std::collections::BTreeSet<String>>::new();
-        let mut by_parser = std::collections::BTreeMap::<&str, std::collections::BTreeSet<i64>>::new();
+        let mut by_parser =
+            std::collections::BTreeMap::<&str, std::collections::BTreeSet<i64>>::new();
         for row in versions.as_array().into_iter().flatten() {
-            if let (Some(parser), Some(version)) = (row["parser"].as_str(), row["parser_version"].as_i64()) {
+            if let (Some(parser), Some(version)) =
+                (row["parser"].as_str(), row["parser_version"].as_i64())
+            {
                 by_parser.entry(parser).or_default().insert(version);
             }
             if let Some(producer) = row["producer"].as_str() {
@@ -108,9 +132,27 @@ pub fn compile(ctx: Context, sections: Vec<Section>, budget: usize) -> Presentat
                 mixed.join("; ")
             );
         }
-        let mixed_parsers: Vec<_> = by_parser.into_iter().filter(|(_, versions)| versions.len() > 1)
-            .map(|(parser, versions)| format!("{parser}: {}", versions.into_iter().map(|version| version.to_string()).collect::<Vec<_>>().join(", "))).collect();
-        if !mixed_parsers.is_empty() { let _ = writeln!(md, "\nIncludes several parser versions: {}.", mixed_parsers.join("; ")); }
+        let mixed_parsers: Vec<_> = by_parser
+            .into_iter()
+            .filter(|(_, versions)| versions.len() > 1)
+            .map(|(parser, versions)| {
+                format!(
+                    "{parser}: {}",
+                    versions
+                        .into_iter()
+                        .map(|version| version.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .collect();
+        if !mixed_parsers.is_empty() {
+            let _ = writeln!(
+                md,
+                "\nIncludes several parser versions: {}.",
+                mixed_parsers.join("; ")
+            );
+        }
     }
     for s in &rendered {
         let _ = write!(md, "\n## {}\n\n", s.title);

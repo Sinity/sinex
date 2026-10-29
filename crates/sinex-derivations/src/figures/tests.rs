@@ -90,7 +90,11 @@ fn key(metric: &str) -> Value {
 }
 
 fn env(now: i64) -> Env {
-    Env::at(Timestamp::from_unix_secs(T + now).unwrap(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
+    Env::at(
+        Timestamp::from_unix_secs(T + now).unwrap(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
 }
 
 /// The hourly figures of `metric` from `inputs`, as the runner reads them.

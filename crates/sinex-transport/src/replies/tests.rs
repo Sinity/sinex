@@ -2,20 +2,52 @@ use super::*;
 use serde::ser::SerializeSeq;
 
 #[devkit::test]
-async fn no_responders_is_a_transport_failure_and_the_original_request_can_retry(){
-    let server=devkit::nats::test_nats().unwrap();
-    let client=async_nats::connect(server.url()).await.unwrap();
-    let body=serde_json::json!({"frame":"frozen-request"});
-    let missing=request_json::<serde_json::Value>(&client,"unavailable.reader","reader",&body,Duration::from_secs(2)).await;
-    assert!(matches!(missing,Err(ReplyError::Transport(reason)) if reason.contains("no responders")),"NATS 503 has no flow inbox because no responder accepted the request");
-    let mut requests=client.subscribe("unavailable.reader").await.unwrap();client.flush().await.unwrap();
-    let responder=client.clone();let expected=body.clone();
-    let task=tokio::spawn(async move{
-        let request=requests.next().await.unwrap();assert_eq!(serde_json::from_slice::<serde_json::Value>(&request.payload).unwrap(),expected);
-        publish_json(&responder,request.reply.unwrap().to_string(),serde_json::json!({"recorded":true}),Duration::from_secs(2)).await.unwrap();
+async fn no_responders_is_a_transport_failure_and_the_original_request_can_retry() {
+    let server = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(server.url()).await.unwrap();
+    let body = serde_json::json!({"frame":"frozen-request"});
+    let missing = request_json::<serde_json::Value>(
+        &client,
+        "unavailable.reader",
+        "reader",
+        &body,
+        Duration::from_secs(2),
+    )
+    .await;
+    assert!(
+        matches!(missing,Err(ReplyError::Transport(reason)) if reason.contains("no responders")),
+        "NATS 503 has no flow inbox because no responder accepted the request"
+    );
+    let mut requests = client.subscribe("unavailable.reader").await.unwrap();
+    client.flush().await.unwrap();
+    let responder = client.clone();
+    let expected = body.clone();
+    let task = tokio::spawn(async move {
+        let request = requests.next().await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&request.payload).unwrap(),
+            expected
+        );
+        publish_json(
+            &responder,
+            request.reply.unwrap().to_string(),
+            serde_json::json!({"recorded":true}),
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
     });
-    let reply:serde_json::Value=request_json(&client,"unavailable.reader","reader",&body,Duration::from_secs(2)).await.unwrap();
-    assert_eq!(reply,serde_json::json!({"recorded":true}));task.await.unwrap();
+    let reply: serde_json::Value = request_json(
+        &client,
+        "unavailable.reader",
+        "reader",
+        &body,
+        Duration::from_secs(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply, serde_json::json!({"recorded":true}));
+    task.await.unwrap();
 }
 
 struct Generated(usize);

@@ -79,19 +79,19 @@ pub enum BatchKind {
 #[derive(Clone, Debug)]
 pub struct IngressFrame {
     /// Digest of the frozen logical frame bytes; retained after payload excision.
-    pub content_hash:Option<String>,
+    pub content_hash: Option<String>,
     /// Reserved by the atomic replay writer, not by a producer.
-    pub receipt_number:Option<i64>,
+    pub receipt_number: Option<i64>,
     /// Owner-configured expectations; never deserialized from a producer frame.
     pub coverage: Option<OwnerCoverage>,
     pub native_source: Option<SourceRef>,
     pub source_fingerprint: Option<String>,
     pub host: Option<String>,
     /// Transport-configured ownership captured with this frame; historical ownership stays unknown.
-    pub family:Option<String>,
-    pub write_kind_prefixes:Vec<String>,
+    pub family: Option<String>,
+    pub write_kind_prefixes: Vec<String>,
     /// Offered events whose source did not supply a reading order.
-    pub assign_orders:Vec<crate::EventId>,
+    pub assign_orders: Vec<crate::EventId>,
     pub producer: String,
     /// The producer's own name for the frame, unique per producer.
     pub frame: String,
@@ -111,14 +111,14 @@ pub struct IngressFrame {
 pub struct OwnerCoverage {
     /// Required for normal copied evidence; optional only for the owner-checked
     /// compiled emergency receipt. Never accepted from a producer payload.
-    pub required:bool,
-    pub stamp:String,
-    pub position:i64,
-    pub scope:String,
-    pub catalog:String,
-    pub instance:String,
-    pub host:String,
-    pub settings_identity:String,
+    pub required: bool,
+    pub stamp: String,
+    pub position: i64,
+    pub scope: String,
+    pub catalog: String,
+    pub instance: String,
+    pub host: String,
+    pub settings_identity: String,
 }
 
 /// What a producer must do after a refused frame.

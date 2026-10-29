@@ -129,22 +129,45 @@ pub async fn recorded(
     Ok(receipts)
 }
 /// The frozen logical JSON byte identity survives a LargeFrame envelope.
-pub fn content_hash(frame:&Ingress)->Result<String,SubmitError>{
-    if let Ingress::LargeFrame{blob,..}=frame{return Ok(blob.clone())}
-    let bytes=serde_json::to_vec(frame).map_err(|error|SubmitError::Transport(error.to_string()))?;
-    Ok(format!("blake3:{}",blake3::hash(&bytes).to_hex()))
+pub fn content_hash(frame: &Ingress) -> Result<String, SubmitError> {
+    if let Ingress::LargeFrame { blob, .. } = frame {
+        return Ok(blob.clone());
+    }
+    let bytes =
+        serde_json::to_vec(frame).map_err(|error| SubmitError::Transport(error.to_string()))?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
 }
 /// Resolve an owned receipt fetched on this authenticated producer's RPC.
 /// A conflicting prior receipt is evidence only, never admission of the offer.
-pub fn check_receipt(frame:&Ingress,receipt:Acknowledgment)->Result<Acknowledgment,SubmitError>{
-    let expected=content_hash(frame)?;
-    if receipt.frame!=frame.frame() {
-        return Err(SubmitError::Refused{frame:frame.frame().into(),reason:"receipt_frame_identity_mismatch".into(),kind:sinex_model::FrameRefusal::Conflict});
+pub fn check_receipt(
+    frame: &Ingress,
+    receipt: Acknowledgment,
+) -> Result<Acknowledgment, SubmitError> {
+    let expected = content_hash(frame)?;
+    if receipt.frame != frame.frame() {
+        return Err(SubmitError::Refused {
+            frame: frame.frame().into(),
+            reason: "receipt_frame_identity_mismatch".into(),
+            kind: sinex_model::FrameRefusal::Conflict,
+        });
     }
-    if receipt.content_hash().is_none() && matches!(receipt.refusal_kind(),Some(sinex_model::FrameRefusal::Excised|sinex_model::FrameRefusal::PartiallyExcised)){return Ok(receipt);}
-    if receipt.content_hash()!=Some(expected.as_str()) {
-        if receipt.number.is_none_or(|number|number<=0){return Err(SubmitError::NoReceipt(frame.frame().into()));}
-        return Err(SubmitError::ReceiptConflict{frame:frame.frame().into(),offered_hash:expected,receipt:Box::new(receipt)});
+    if receipt.content_hash().is_none()
+        && matches!(
+            receipt.refusal_kind(),
+            Some(sinex_model::FrameRefusal::Excised | sinex_model::FrameRefusal::PartiallyExcised)
+        )
+    {
+        return Ok(receipt);
+    }
+    if receipt.content_hash() != Some(expected.as_str()) {
+        if receipt.number.is_none_or(|number| number <= 0) {
+            return Err(SubmitError::NoReceipt(frame.frame().into()));
+        }
+        return Err(SubmitError::ReceiptConflict {
+            frame: frame.frame().into(),
+            offered_hash: expected,
+            receipt: Box::new(receipt),
+        });
     }
     Ok(receipt)
 }
@@ -202,7 +225,7 @@ pub async fn submit_frame(
         )
         .await?
     };
-    let receipt=receipts
+    let receipt = receipts
         .into_iter()
         .find(|receipt| {
             receipt.frame == id
@@ -210,7 +233,7 @@ pub async fn submit_frame(
                     && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
         })
         .ok_or_else(|| SubmitError::NoReceipt(id.into()))?;
-    check_receipt(frame,receipt)
+    check_receipt(frame, receipt)
 }
 
 /// Transfer encoded custody under the original authenticated frame namespace.

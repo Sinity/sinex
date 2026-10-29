@@ -17,7 +17,9 @@ pub(super) async fn definitions(
     conn: &mut sqlx::PgConnection,
     requested: &str,
 ) -> Result<BTreeMap<String, SavedQuery>, String> {
-    sinex_store::query::saved_definitions(conn,requested).await.map_err(error)
+    sinex_store::query::saved_definitions(conn, requested)
+        .await
+        .map_err(error)
 }
 
 impl Api {
@@ -131,10 +133,22 @@ impl Api {
         until: Option<String>,
         page: Page,
     ) -> Reply {
-        let question=json!({"surface":"context","since":since,"until":until});
-        let mut conn=match self.acquire(caller).await {Ok(c)=>c,Err(e)=>return refused(e.to_string())};
-        let ctx=match super::recall::context_for_page(&mut conn,&self.context(),&page,&question,&caller.grants).await {
-            Ok(ctx)=>ctx,Err(e)=>return refused(e),
+        let question = json!({"surface":"context","since":since,"until":until});
+        let mut conn = match self.acquire(caller).await {
+            Ok(c) => c,
+            Err(e) => return refused(e.to_string()),
+        };
+        let ctx = match super::recall::context_for_page(
+            &mut conn,
+            &self.context(),
+            &page,
+            &question,
+            &caller.grants,
+        )
+        .await
+        {
+            Ok(ctx) => ctx,
+            Err(e) => return refused(e),
         };
         drop(conn);
         let end = match until {
@@ -159,6 +173,12 @@ impl Api {
         if start >= end {
             return refused("context end must follow its start");
         }
-        self.recall_context(caller,&format!("recall sinex:window/{start}/{end}"),page,question).await
+        self.recall_context(
+            caller,
+            &format!("recall sinex:window/{start}/{end}"),
+            page,
+            question,
+        )
+        .await
     }
 }
