@@ -31,7 +31,8 @@ BEGIN
 END $$"#;
 pub(crate) fn tables()->Vec<String>{vec![STATE.into(),INIT.into(),BUILDS.into(),DERIVATION_EPOCHS.into(),ORIGINALS.into(),OUTPUTS.into()]}
 pub(crate) fn hooks()->Vec<String>{vec![
- r#"CREATE OR REPLACE FUNCTION privacy.invalidate_outputs() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE privacy.policy_state SET desired_epoch=desired_epoch+1 WHERE id; RETURN NULL; END $$"#.into(),
+ "INSERT INTO core.counters(name,value) VALUES('privacy_outputs',0)".into(),
+ r#"CREATE OR REPLACE FUNCTION privacy.invalidate_outputs() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM value FROM core.counters WHERE name='commit_seq' FOR UPDATE; UPDATE privacy.policy_state SET desired_epoch=desired_epoch+1 WHERE id; RETURN NULL; END $$"#.into(),
  "CREATE TRIGGER rules_policy_epoch AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON privacy.rules FOR EACH STATEMENT EXECUTE FUNCTION privacy.invalidate_outputs()".into(),
  "CREATE TRIGGER floors_policy_epoch AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON privacy.source_classes FOR EACH STATEMENT EXECUTE FUNCTION privacy.invalidate_outputs()".into(),
  GUARD.into(),
@@ -43,7 +44,7 @@ pub(crate) fn statements()->Vec<String>{let mut out=tables();out.extend(hooks())
  "GRANT SELECT,INSERT,UPDATE,DELETE ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.original_events,privacy.event_outputs TO sinex_writer".into(),
  "REVOKE ALL ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.original_events,privacy.event_outputs FROM sinex_reader".into(),
 ]);out}
-pub(crate) fn before(statement:&str)->bool{!statement.contains("privacy.derivation_epochs")&&!statement.contains("core.derivation_events")&&!statement.contains("privacy.output_builds")&&!statement.contains("privacy.policy_state")&&!statement.contains("privacy.original_events")&&!statement.contains("privacy.event_outputs")&&!statement.contains("privacy.invalidate_outputs")&&!statement.contains("privacy.require_active_epoch")}
+pub(crate) fn before(statement:&str)->bool{!statement.contains("privacy_outputs")&&!statement.contains("privacy.derivation_epochs")&&!statement.contains("core.derivation_events")&&!statement.contains("privacy.output_builds")&&!statement.contains("privacy.policy_state")&&!statement.contains("privacy.original_events")&&!statement.contains("privacy.event_outputs")&&!statement.contains("privacy.invalidate_outputs")&&!statement.contains("privacy.require_active_epoch")}
 
 /// The boundary owner composes these views with its privilege declarations.
 pub(crate) const VISIBLE_EVENTS:&str=r#"CREATE VIEW core.visible_events AS SELECT

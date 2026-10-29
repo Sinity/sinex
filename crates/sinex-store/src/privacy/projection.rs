@@ -101,6 +101,7 @@ pub(crate) async fn certify_basis(conn:&mut PgConnection,batch:&sinex_model::Bat
         }
     }
     if !restored_types.is_empty() {
+        sqlx::query("UPDATE core.counters SET value=value+1 WHERE name='privacy_outputs'").execute(&mut *conn).await?;
         let types:Vec<_>=restored_types.into_iter().collect();
         sqlx::query("DELETE FROM derivation.positions p USING registry.derivations d WHERE p.derivation=d.name AND d.kind='per_event' AND d.inputs && $1::text[] AND d.name<>$2").bind(types).bind(derivation).execute(&mut *conn).await?;
     }

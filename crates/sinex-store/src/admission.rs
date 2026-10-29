@@ -152,6 +152,7 @@ pub(crate) async fn admit(
         && let Some(outcome)=register::recorded(conn,frame).await? {
         return Ok(outcome);
     }
+    sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE").execute(&mut *conn).await?;
     privacy::projection::lock_epoch(conn).await?;
     let mut outcome = Outcome::default();
     let kept_batch;

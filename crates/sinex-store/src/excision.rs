@@ -246,10 +246,9 @@ pub async fn apply(
     actor: &str,
     keys: &dyn DirtyKeys,
 ) -> Result<Applied> {
-    // Exclude epoch pages before allocating the lifecycle position. The
-    // counter still orders this transition with event admission.
-    sqlx::query("SELECT desired_epoch FROM privacy.policy_state WHERE id FOR UPDATE").execute(&mut *conn).await?;
+    // The global counter precedes policy and metadata row locks everywhere.
     let seq = crate::commit_log::allocate_position(conn).await?;
+    sqlx::query("SELECT desired_epoch FROM privacy.policy_state WHERE id FOR UPDATE").execute(&mut *conn).await?;
     if self::plan(conn, target).await? != *plan {
         return Err(Error::Invalid(
             "the readings to excise changed after planning; plan the excision again".into(),

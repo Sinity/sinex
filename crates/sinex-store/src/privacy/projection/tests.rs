@@ -97,8 +97,10 @@ async fn repeated_identity_requires_exact_current_transformed_basis(db:devkit::p
     let mut forged=child.clone();forged.id=EventId::new();forged.payload["command"]=json!("different supplied output");
     let batch=recomputation(parent_id,forged,read,head);let mut tx=conn.begin().await.unwrap();let result=tx.admit(&batch,&NoDerivations).await.unwrap();assert_eq!(result.repeats,1);tx.commit().await.unwrap();
     assert_eq!(visible(&mut conn,child_id.0).await["unavailable"],"unavailable_dependency","same hash alone is insufficient evidence");
+    let revision:i64=sqlx::query_scalar("SELECT value FROM core.counters WHERE name='privacy_outputs'").fetch_one(&mut *conn).await.unwrap();
     let mut same=child;same.id=EventId::new();let batch=recomputation(parent_id,same,read,head);let mut tx=conn.begin().await.unwrap();let result=tx.admit(&batch,&NoDerivations).await.unwrap();assert_eq!(result.repeats,1);tx.commit().await.unwrap();
     assert_eq!(visible(&mut conn,child_id.0).await["command"],"[masked]");
+    let changed:i64=sqlx::query_scalar("SELECT value FROM core.counters WHERE name='privacy_outputs'").fetch_one(&mut *conn).await.unwrap();assert_eq!(changed,revision+1);
     let basis:Option<i64>=sqlx::query_scalar("SELECT basis_epoch FROM privacy.original_events WHERE event_id=$1").bind(child_id.0).fetch_one(&mut *conn).await.unwrap();assert_eq!(basis,read.policy_epoch);
     privacy::end_rule(&mut conn,"configured field","fixture").await.unwrap();ensure_current(&mut conn).await.unwrap();
     let mut stale=derived_command(parent_id,"leafsecret");stale.reading_order=ReadingOrder(2);let batch=recomputation(parent_id,stale,read,head);let mut tx=conn.begin().await.unwrap();let error=tx.admit(&batch,&NoDerivations).await.unwrap_err();assert!(error.to_string().contains("derivation_policy_epoch_changed"));tx.rollback().await.unwrap();
