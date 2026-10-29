@@ -53,15 +53,15 @@ async fn setup(
     let clock = i64::try_from(now.unix_ns() / 1_000_000).unwrap() - 1000;
     let checkpoint = sinex_store::signals::Checkpoint {
         settings_identity: provider.settings_identity.clone().unwrap(),
-        evaluator: signals::Evaluator::new(
+        evaluator: ::signals::Evaluator::new(
             clock,
             vec![],
-            signals::Policy { private: vec![] },
-            &signals::DayCalendar::new(day),
+            ::signals::Policy { private: vec![] },
+            &::signals::DayCalendar::new(day),
         )
         .unwrap(),
-        host_policy: signals::HostPolicy::new(
-            signals::InterruptBudget {
+        host_policy: ::signals::HostPolicy::new(
+            ::signals::InterruptBudget {
                 per_hour: 2,
                 handoffs: vec![],
             },

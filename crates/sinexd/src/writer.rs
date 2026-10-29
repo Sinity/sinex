@@ -813,7 +813,7 @@ async fn replay_sequence(
     let mut outcomes = Vec::new();
     while let Some(batch) = sequence.batches.recv().await {
         let mut batch = batch.map_err(|e| refuse(&e))?;
-        if let BatchKind::Ingress(frame) = &mut batch.kind
+        if let sinex_model::BatchKind::Ingress(frame) = &mut batch.kind
             && frame.frame.is_empty()
         {
             frame.receipt_number = receipt_number;

@@ -86,7 +86,14 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-analysis",
             "sinex-library",
         ]),
-        "sinex-session" | "sinex-capture" => Ok(&[
+        "sinex-session" => Ok(&[
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-sources",
+            "sinex-source-core",
+            "sinex-transport",
+        ]),
+        "sinex-capture" => Ok(&[
             "sinex-model",
             "sinex-protocol",
             "sinex-sources",

@@ -403,7 +403,9 @@ async fn references_expose_no_source_key_and_route_by_current_policy_class(
     let raw = stream.get_raw_message(1).await.unwrap();
     assert_eq!(
         raw.subject,
-        subjects.confirmed_event("guarded", "command.executed")
+        subjects
+            .confirmed_event("guarded", "command.executed")
+            .into()
     );
     assert!(!String::from_utf8_lossy(&raw.payload).contains("route-secret"));
     let wire: Confirmed = serde_json::from_slice(&raw.payload).unwrap();
@@ -441,7 +443,7 @@ async fn retained_inline_contract_two_is_refused_without_erasing_messages(
     js.create_stream(config).await.unwrap();
     let old = serde_json::json!({"type":"event","equivalence_key":"synthetic-inline-key"});
     js.publish(
-        subjects.confirmed_event("open", "fixture.event").into(),
+        subjects.confirmed_event("open", "fixture.event"),
         serde_json::to_vec(&old).unwrap().into(),
     )
     .await
