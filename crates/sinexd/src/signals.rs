@@ -147,7 +147,7 @@ pub(crate) async fn run(
                 state.evaluator.withdraw(&active.version);
                 state
                     .evaluator
-                    .replace_rule(active, &calendar)
+                    .replace_rule(active, at, &calendar)
                     .map_err(error)?;
             }
             state.rows.clear();

@@ -60,7 +60,7 @@ pub(super) async fn evaluate(
         if new {
             state
                 .evaluator
-                .replace_rule(rule.clone(), calendar)
+                .replace_rule(rule.clone(), millis(at)?, calendar)
                 .map_err(error)?;
             state.rows.remove(&key);
         }
