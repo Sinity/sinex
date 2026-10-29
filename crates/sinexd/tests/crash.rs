@@ -803,20 +803,48 @@ excision_steps! {
     excision_killed_removing_the_material: lock("core.excised_materials");
 }
 
-/// How far the publisher is behind the commit counter.
-const PUBLISHER_BEHIND: &str = "SELECT (SELECT value FROM core.counters WHERE name = 'commit_seq') - coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer = 'publisher'), 0)";
-
 /// Kill the daemon while it publishes to the confirmed stream; start it again
 /// and let it catch up. Every committed event is on the stream exactly once:
 /// a page published before the crash but not yet recorded is published again,
 /// and the stream drops the copies by message ID.
-async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
+async fn publisher_survives(between_pages: bool) {
     let inputs = Inputs::multiple_batches();
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
     let nats = devkit::nats::test_nats().expect("run through `xtask test`");
+    let subjects = sinex_protocol::Subjects::new(nats.prefix());
+    let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
+    // The fixture owns a fresh native stream before acquiring either fault
+    // lock, so both barriers name the exact incarnation the daemon will use.
+    let mut config = async_nats::jetstream::stream::Config {
+        name: subjects.confirmed_stream(),
+        subjects: vec![subjects.confirmed_all()],
+        duplicate_window: Duration::from_secs(120),
+        ..Default::default()
+    };
+    config
+        .metadata
+        .insert("sinex_confirmed_contract".into(), "3".into());
+    let stream = js.create_stream(config).await.unwrap();
+    let consumer = format!(
+        "publisher/{}/{}",
+        stream.cached_info().config.name,
+        stream.cached_info().created.unix_timestamp_nanos()
+    );
+    let consumer = consumer.replace('\'', "''");
+    let ready = between_pages.then(|| {
+        format!("SELECT EXISTS (SELECT 1 FROM core.consumer_positions WHERE consumer='{consumer}')")
+    });
+    let lock_sql = if between_pages {
+        format!("SELECT 1 FROM core.consumer_positions WHERE consumer='{consumer}' FOR UPDATE")
+    } else {
+        lock("core.published")
+    };
+    let behind_sql = format!(
+        "SELECT (SELECT value FROM core.counters WHERE name='commit_seq') - coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='{consumer}'), 0)"
+    );
     let run = || target.daemon(&inputs, &nats);
-    kill_at(&target, &mut run(), ready, lock_sql).await;
+    kill_at(&target, &mut run(), ready.as_deref(), &lock_sql).await;
 
     let mut daemon = Process::start(&mut run());
     let mut c = target.connect().await;
@@ -824,10 +852,10 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
     loop {
         // Caught up, and still caught up a moment later: the daemon's
         // derivations commit events of their own while it runs.
-        let behind = scalar(&mut c, PUBLISHER_BEHIND).await;
+        let behind = scalar(&mut c, &behind_sql).await;
         if behind == 0 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            if scalar(&mut c, PUBLISHER_BEHIND).await == 0 {
+            if scalar(&mut c, &behind_sql).await == 0 {
                 break;
             }
         }
@@ -908,22 +936,16 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
     );
 }
 
-macro_rules! publisher_steps {
-    ($($name:ident: $ready:expr, $lock:expr;)*) => {$(
-        #[devkit::test]
-        async fn $name() {
-            publisher_survives($ready, &$lock).await;
-        }
-    )*};
+/// The first page is on the stream; recording it is blocked.
+#[devkit::test]
+async fn publisher_killed_recording_a_published_page() {
+    publisher_survives(false).await;
 }
 
-publisher_steps! {
-    // The first page is on the stream; recording it is blocked.
-    publisher_killed_recording_a_published_page: None, lock("core.published");
-    // A later page is on the stream; saving its position is blocked.
-    publisher_killed_between_pages:
-        Some("SELECT EXISTS (SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher')"),
-        "SELECT 1 FROM core.consumer_positions WHERE consumer = 'publisher' FOR UPDATE";
+/// A later page is on the stream; saving its position is blocked.
+#[devkit::test]
+async fn publisher_killed_between_pages() {
+    publisher_survives(true).await;
 }
 
 /// Kill after the segment group is synced and before its database boundary
