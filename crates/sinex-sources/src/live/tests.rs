@@ -68,6 +68,44 @@ static SYNTHETIC: InputFormat = InputFormat {
 type ReceivedFrames = Arc<Mutex<HashMap<String, Ingress>>>;
 type ReceivedOrder = Arc<Mutex<Vec<Ingress>>>;
 
+const REPLIES_AT_ONCE: usize = 4;
+const REPLY_IDLE: Duration = Duration::from_secs(10);
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum ReplyBody {
+    Welcome(sinex_protocol::ProducerWelcome),
+    Recorded(sinex_protocol::RecordedPage),
+}
+struct ReplyWork {
+    inbox: String,
+    body: ReplyBody,
+}
+struct WaitingReply {
+    inbox: String,
+    stream: String,
+    sequence: u64,
+    observed_at: Instant,
+}
+struct StoppedReply {
+    waiting: WaitingReply,
+    stopped_at: Instant,
+}
+struct ExpectedInterruption {
+    stopped: tokio::sync::oneshot::Receiver<StoppedReply>,
+    observed: tokio::sync::oneshot::Sender<StoppedReply>,
+}
+enum ReplyControl {
+    Hold {
+        inbox: String,
+        cut: ExpectedInterruption,
+        ready: tokio::sync::oneshot::Sender<()>,
+    },
+    Resume {
+        ready: tokio::sync::oneshot::Sender<()>,
+    },
+}
+
 async fn fake_ingress(
     url: &str,
     subjects: &Subjects,
@@ -80,35 +118,26 @@ async fn fake_ingress(
 async fn fake_ingress_with_configuration(
     url: &str,
     subjects: &Subjects,
+    available: tokio::sync::watch::Receiver<bool>,
+    timeout: Arc<tokio::sync::Notify>,
+    connections: Option<Arc<std::sync::atomic::AtomicUsize>>,
+) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
+    fake_ingress_controlled(url, subjects, available, timeout, connections, None).await
+}
+
+async fn fake_ingress_controlled(
+    url: &str,
+    subjects: &Subjects,
     mut available: tokio::sync::watch::Receiver<bool>,
     timeout: Arc<tokio::sync::Notify>,
     connections: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    mut controls: Option<tokio::sync::mpsc::Receiver<ReplyControl>>,
 ) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
     let client = async_nats::connect(url).await.unwrap();
     let mut declarations = client
         .subscribe(subjects.connect("synthetic"))
         .await
         .unwrap();
-    let declarer = client.clone();
-    let declarations_count = connections.clone();
-    tokio::spawn(async move {
-        while let Some(message) = declarations.next().await {
-            if let Some(count) = &declarations_count {
-                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }
-            sinex_transport::replies::publish_json(
-                &declarer,
-                message.reply.unwrap().to_string(),
-                sinex_protocol::ProducerWelcome {
-                    refusal: None,
-                    ..Default::default()
-                },
-                std::time::Duration::from_secs(10),
-            )
-            .await
-            .unwrap();
-        }
-    });
     jetstream_stream(&client, subjects).await;
     let stream = async_nats::jetstream::new(client.clone())
         .get_stream(subjects.ingress_stream())
@@ -140,8 +169,85 @@ async fn fake_ingress_with_configuration(
         let mut pending = Vec::new();
         let mut configuration_refused = false;
         let mut recorded = HashMap::<String, Acknowledgment>::new();
+        let mut replies = tokio::task::JoinSet::new();
+        let mut queued = std::collections::VecDeque::<ReplyWork>::new();
+        let mut held_inbox: Option<String> = None;
+        let mut cut: Option<ExpectedInterruption> = None;
+        let mut hold_ready: Option<tokio::sync::oneshot::Sender<()>> = None;
         loop {
+            // The cut drains unrelated reply attempts while receipt intake stays live.
+            while replies.len() < REPLIES_AT_ONCE {
+                let Some(index) = queued
+                    .iter()
+                    .position(|work| held_inbox.as_ref().is_none_or(|inbox| inbox == &work.inbox))
+                else {
+                    break;
+                };
+                let work = queued.remove(index).unwrap();
+                let expected = if held_inbox.as_ref() == Some(&work.inbox) {
+                    Some(cut.take().expect("one controlled reply"))
+                } else {
+                    None
+                };
+                let publisher = client.clone();
+                replies.spawn(async move {
+                    let is_recorded = matches!(&work.body, ReplyBody::Recorded(_));
+                    let result = sinex_transport::replies::publish_json(
+                        &publisher,
+                        work.inbox.clone(),
+                        work.body,
+                        REPLY_IDLE,
+                    )
+                    .await;
+                    let finished_at = Instant::now();
+                    if let Some(expected) = expected {
+                        // Only an observed final frame and an actual broker stop
+                        // can authorize this exact attempt's expected idle result.
+                        let evidence = expected
+                            .stopped
+                            .await
+                            .expect("the controlled reply must cross an observed broker stop");
+                        assert_eq!(evidence.waiting.inbox, work.inbox);
+                        assert!(
+                            evidence.waiting.sequence > 0 && !evidence.waiting.stream.is_empty()
+                        );
+                        assert!(
+                            evidence.waiting.observed_at <= evidence.stopped_at
+                                && evidence.stopped_at <= finished_at,
+                            "the exact reply must still be outstanding when this broker stops"
+                        );
+                        assert!(
+                            matches!(&result, Err(sinex_transport::replies::ReplyError::Idle)),
+                            "controlled outstanding final ACK: {result:?}"
+                        );
+                        expected
+                            .observed
+                            .send(evidence)
+                            .ok()
+                            .expect("interruption observer is alive");
+                        (false, Ok(()))
+                    } else {
+                        (is_recorded, result)
+                    }
+                });
+            }
+            if replies.is_empty()
+                && let Some(ready) = hold_ready.take()
+            {
+                ready.send(()).expect("reply cut controller is alive");
+            }
             tokio::select! {
+                Some(result) = replies.join_next() => {
+                    let (recorded, result) = result.expect("fake owner reply task panicked");
+                    result.expect("unexpected fake owner reply failure");
+                    if recorded { timeout.notify_one(); }
+                }
+                Some(message) = declarations.next() => {
+                    if let Some(count) = &connections {
+                        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Welcome(sinex_protocol::ProducerWelcome { refusal: None, ..Default::default() }) });
+                }
                 Some(message) = incoming.next() => {
                     if let Ok(message) = message {
                         let frame = serde_json::from_slice::<Ingress>(&message.payload).unwrap();
@@ -151,8 +257,22 @@ async fn fake_ingress_with_configuration(
                 Some(message) = queries.next() => {
                     let query: sinex_protocol::RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
                     let acknowledgments=recorded.values().filter(|receipt|(query.frames.contains(&receipt.frame)||receipt.number.is_some_and(|number|query.numbers.contains(&number)))&&receipt.number.is_some_and(|number|number>query.after)).cloned().collect();
-                    sinex_transport::replies::publish_json(&client,message.reply.unwrap().to_string(),sinex_protocol::RecordedPage{acknowledgments,next:None},std::time::Duration::from_secs(10)).await.unwrap();
-                    timeout.notify_one();
+                    queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Recorded(sinex_protocol::RecordedPage { acknowledgments, next: None }) });
+                }
+                command = async { controls.as_mut().expect("enabled control branch").recv().await }, if controls.is_some() => {
+                    match command.expect("reply control lifetime covers the fake owner") {
+                        ReplyControl::Hold { inbox, cut: expected, ready } => {
+                            assert!(held_inbox.is_none());
+                            held_inbox = Some(inbox);
+                            cut = Some(expected);
+                            hold_ready = Some(ready);
+                        }
+                        ReplyControl::Resume { ready } => {
+                            assert!(held_inbox.take().is_some() && cut.is_none());
+                            client.flush().await.unwrap();
+                            ready.send(()).expect("restart controller is alive");
+                        }
+                    }
                 }
                 changed = available.changed() => {
                     if changed.is_err() { break; }
@@ -247,6 +367,96 @@ async fn wait_for(running: &mut Running, mut ready: impl FnMut() -> bool) {
     tokio::select! {
         result = tokio::time::timeout(Duration::from_secs(90), observed) => result.expect("live capture did not make progress"),
         result = &mut running.0 => panic!("live publishing stopped unexpectedly: {result:?}"),
+    }
+}
+
+async fn owner_alive<T>(
+    owner: &mut tokio::task::JoinHandle<()>,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    tokio::select! {
+        result = future => result,
+        result = owner => panic!("fake ingress owner stopped unexpectedly: {result:?}"),
+    }
+}
+
+async fn wait_for_owner(
+    running: &mut Running,
+    owner: &mut tokio::task::JoinHandle<()>,
+    ready: impl FnMut() -> bool,
+) {
+    owner_alive(owner, wait_for(running, ready)).await;
+}
+
+/// Receive a real framed page, acknowledging every data unit but its final marker.
+async fn hold_final_ack(
+    client: &async_nats::Client,
+    subjects: &Subjects,
+    inbox: String,
+    frames: Vec<String>,
+) -> (WaitingReply, async_nats::Subscriber) {
+    use sinex_protocol::replies::{FlowAck, ReplyFrame};
+    let flow = format!("{inbox}.flow");
+    let mut messages = client.subscribe(inbox.clone()).await.unwrap();
+    client.flush().await.unwrap();
+    client
+        .publish_with_reply(
+            subjects.recorded("synthetic"),
+            inbox.clone(),
+            serde_json::to_vec(&sinex_protocol::RecordedQuery {
+                frames,
+                ..Default::default()
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
+    let mut next = 0;
+    let mut identity = None;
+    loop {
+        let message = tokio::time::timeout(REPLY_IDLE, messages.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.reply.as_deref(), Some(flow.as_str()));
+        match serde_json::from_slice::<ReplyFrame>(&message.payload).unwrap() {
+            ReplyFrame::Data {
+                stream, sequence, ..
+            } => {
+                assert_eq!(sequence, next);
+                assert!(identity.as_ref().is_none_or(|found| found == &stream));
+                identity = Some(stream.clone());
+                client
+                    .publish(
+                        flow.clone(),
+                        serde_json::to_vec(&FlowAck::Accepted { stream, sequence })
+                            .unwrap()
+                            .into(),
+                    )
+                    .await
+                    .unwrap();
+                client.flush().await.unwrap();
+                next += 1;
+            }
+            ReplyFrame::End {
+                stream, sequence, ..
+            } => {
+                assert_eq!(sequence, next);
+                assert_eq!(identity.as_ref(), Some(&stream));
+                return (
+                    WaitingReply {
+                        inbox,
+                        stream,
+                        sequence,
+                        observed_at: Instant::now(),
+                    },
+                    messages,
+                );
+            }
+            ReplyFrame::Abort { code, .. } => panic!("controlled recorded reply aborted: {code}"),
+        }
     }
 }
 
@@ -621,6 +831,18 @@ impl RestartingNats {
         .expect("NATS did not start");
     }
 
+    fn stop_with_reply_pending(&mut self, waiting: WaitingReply) -> StoppedReply {
+        assert!(
+            self.child.is_some(),
+            "this reply is bound to the running broker"
+        );
+        self.stop();
+        StoppedReply {
+            waiting,
+            stopped_at: Instant::now(),
+        }
+    }
+
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
             child.kill().unwrap();
@@ -639,11 +861,22 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     let mut nats = RestartingNats::new();
     let subjects = Subjects::new("reconnect");
     let (available, availability) = tokio::sync::watch::channel(true);
+    let (reply_controls, commands) = tokio::sync::mpsc::channel(2);
+    let mut commands = Some(commands);
     let mut responder = None;
     if !initially_unavailable {
         nats.start().await;
-        responder =
-            Some(fake_ingress(&nats.url(), &subjects, availability.clone(), Arc::default()).await);
+        responder = Some(
+            fake_ingress_controlled(
+                &nats.url(),
+                &subjects,
+                availability.clone(),
+                Arc::default(),
+                None,
+                commands.take(),
+            )
+            .await,
+        );
     }
     let dir = tempfile::tempdir().unwrap();
     let spool = dir.path().join("spool");
@@ -670,8 +903,11 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .await
     }));
     let segment = spool.join("000000000000.ndjson");
-    if let Some((frames, _, _)) = &responder {
-        wait_for(&mut running, || {
+    let mut saved_receipts = Vec::new();
+    let mut interrupted = None;
+    let mut held_recipient = None;
+    if let Some((frames, _, owner)) = &mut responder {
+        wait_for_owner(&mut running, owner, || {
             frames
                 .lock()
                 .unwrap()
@@ -679,16 +915,69 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
                 .any(|frame| matches!(frame, Ingress::Events { .. }))
         })
         .await;
-        nats.stop();
+        let names = frames.lock().unwrap().keys().cloned().collect::<Vec<_>>();
+        let reader = async_nats::connect(nats.url()).await.unwrap();
+        saved_receipts = owner_alive(
+            owner,
+            sinex_transport::producer::recorded(
+                &reader,
+                &subjects,
+                "synthetic",
+                &names,
+                &[],
+                REPLY_IDLE,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            saved_receipts.len(),
+            names.len(),
+            "the owner recorded every pre-stop frame before the cut"
+        );
+        let inbox = format!("_INBOX.synthetic.{}", uuid::Uuid::now_v7().simple());
+        let (stopped, stop_evidence) = tokio::sync::oneshot::channel();
+        let (observed, interruption) = tokio::sync::oneshot::channel();
+        let (ready, quiescent) = tokio::sync::oneshot::channel();
+        reply_controls
+            .send(ReplyControl::Hold {
+                inbox: inbox.clone(),
+                cut: ExpectedInterruption {
+                    stopped: stop_evidence,
+                    observed,
+                },
+                ready,
+            })
+            .await
+            .unwrap();
+        owner_alive(owner, quiescent).await.unwrap();
+        let (waiting, recipient) = owner_alive(
+            owner,
+            hold_final_ack(&reader, &subjects, inbox.clone(), names),
+        )
+        .await;
+        let evidence = nats.stop_with_reply_pending(waiting);
+        stopped
+            .send(evidence)
+            .ok()
+            .expect("the exact interrupted attempt is still owned");
+        interrupted = Some((inbox, interruption));
+        held_recipient = Some((reader, recipient));
     }
     wait_for(&mut running, || segment.exists()).await;
     let before = std::fs::metadata(&segment).unwrap().len();
-    wait_for(&mut running, || {
-        std::fs::metadata(&segment).unwrap().len() > before + 500
-    })
-    .await;
+    let offline_growth = || std::fs::metadata(&segment).unwrap().len() > before + 500;
+    if let Some((_, _, owner)) = &mut responder {
+        wait_for_owner(&mut running, owner, offline_growth).await;
+    } else {
+        wait_for(&mut running, offline_growth).await;
+    }
     std::fs::write(spool.join("finished"), b"").unwrap();
-    wait_for(&mut running, || spool.join("paused").exists()).await;
+    if let Some((_, _, owner)) = &mut responder {
+        wait_for_owner(&mut running, owner, || spool.join("paused").exists()).await;
+    } else {
+        wait_for(&mut running, || spool.join("paused").exists()).await;
+    }
     let captured: std::collections::HashSet<_> = std::fs::read_to_string(&segment)
         .unwrap()
         .lines()
@@ -698,7 +987,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         })
         .collect();
     let report = dir.path().join("health.json");
-    wait_for(&mut running, || {
+    let backlogged = || {
         std::fs::read(&report)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -707,15 +996,63 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
                     .as_u64()
                     .is_some_and(|records| records > 0)
             })
-    })
-    .await;
-    nats.start().await;
-    let (received, _, ingress) = match responder {
-        Some(responder) => responder,
-        None => fake_ingress(&nats.url(), &subjects, availability, Arc::default()).await,
     };
-    let report = dir.path().join("health.json");
-    wait_for(&mut running, || {
+    if let Some((_, _, owner)) = &mut responder {
+        wait_for_owner(&mut running, owner, backlogged).await;
+    } else {
+        wait_for(&mut running, backlogged).await;
+    }
+    nats.start().await;
+    let (received, _, mut ingress) = match responder {
+        Some(responder) => responder,
+        None => {
+            fake_ingress_controlled(
+                &nats.url(),
+                &subjects,
+                availability,
+                Arc::default(),
+                None,
+                commands.take(),
+            )
+            .await
+        }
+    };
+    if let Some((inbox, observed)) = interrupted {
+        let (ready, resumed) = tokio::sync::oneshot::channel();
+        reply_controls
+            .send(ReplyControl::Resume { ready })
+            .await
+            .unwrap();
+        owner_alive(&mut ingress, resumed).await.unwrap();
+        let fresh = async_nats::connect(nats.url()).await.unwrap();
+        let names = saved_receipts
+            .iter()
+            .map(|receipt| receipt.frame.clone())
+            .collect::<Vec<_>>();
+        let mut recovered = owner_alive(
+            &mut ingress,
+            sinex_transport::producer::recorded(
+                &fresh,
+                &subjects,
+                "synthetic",
+                &names,
+                &[],
+                REPLY_IDLE,
+            ),
+        )
+        .await
+        .unwrap();
+        recovered.sort_by(|a, b| a.frame.cmp(&b.frame));
+        saved_receipts.sort_by(|a, b| a.frame.cmp(&b.frame));
+        assert_eq!(
+            serde_json::to_value(recovered).unwrap(),
+            serde_json::to_value(saved_receipts).unwrap(),
+            "a fresh post-restart request reaches the same owner receipts"
+        );
+        let evidence = owner_alive(&mut ingress, observed).await.unwrap();
+        assert_eq!(evidence.waiting.inbox, inbox);
+    }
+    wait_for_owner(&mut running, &mut ingress, || {
         std::fs::read(&report)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -742,8 +1079,15 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     assert_eq!(payloads.len(), events.len());
     assert_eq!(events.len(), captured.len());
     assert!(!events.is_empty());
-    drop(available);
+    assert!(
+        !ingress.is_finished(),
+        "the owner survived its interrupted reply"
+    );
+    drop(frames);
     ingress.abort();
+    assert!(ingress.await.unwrap_err().is_cancelled());
+    drop(held_recipient);
+    drop(available);
 }
 
 #[devkit::test(multi_thread)]
