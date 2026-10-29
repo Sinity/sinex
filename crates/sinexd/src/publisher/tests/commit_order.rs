@@ -136,6 +136,9 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db:devkit::pg
     let page=commit_log::after(&mut conn,1,1,i64::MAX).await.unwrap();
     let full=Confirmed::Event(Box::new(confirmed_event(&page.events[0]).unwrap()));
     assert!(serde_json::to_vec(&full).unwrap().len()>js.client().server_info().max_payload);
+    let transfer=commit_log::changes_page(&mut conn,commit_log::ChangeCursor::after(1),100,js.client().server_info().max_payload as i64).await.unwrap();
+    assert_eq!(transfer.entries.len(),1,"giant metadata is allowed alone and its completion waits for the next page");
+    assert!(matches!(transfer.entries[0].change,commit_log::Change::Event(_)));
     publish_pending(&mut conn,&js,&subjects).await.unwrap();
     let messages=read_wire_all(&js,&subjects).await;
     assert!(matches!(&messages[0],Confirmed::Event(event) if event.id==parent_id));
