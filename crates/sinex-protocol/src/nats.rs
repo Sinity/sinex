@@ -621,6 +621,9 @@ pub enum Confirmed {
         /// Historical tombstones may predate recorded commit boundaries.
         #[serde(default)]
         commit_seq: Option<i64>,
+        /// The removed reading's original position, when retained historical evidence establishes it.
+        #[serde(default)]
+        original_commit_seq:Option<i64>,
         event: EventId,
         operation: sinex_model::OperationId,
     },
