@@ -67,13 +67,27 @@ impl Ingest {
         }
         let optional = signals.is_empty() && !emergency.is_empty();
         let certified = if let Some(proof) = coverage {
-            let key=sinex_store::owner_protocol::key(&mut self.conn).await
-                .map_err(|error|Check::Unavailable(error.to_string()))?;
-            match sinex_store::owner_protocol::open::<sinex_store::read_coverage::Claims>(&key, sinex_store::read_coverage::DOMAIN, &proof.stamp) {
-                Ok(claims) if proof.policy_epoch == claims.policy_epoch
-                    && proof.position == claims.position && proof.scope == claims.scope => Some(claims),
+            let key = sinex_store::owner_protocol::key(&mut self.conn)
+                .await
+                .map_err(|error| Check::Unavailable(error.to_string()))?;
+            match sinex_store::owner_protocol::open::<sinex_store::read_coverage::Claims>(
+                &key,
+                sinex_store::read_coverage::DOMAIN,
+                &proof.stamp,
+            ) {
+                Ok(claims)
+                    if proof.policy_epoch == claims.policy_epoch
+                        && proof.position == claims.position
+                        && proof.scope == claims.scope =>
+                {
+                    Some(claims)
+                }
                 Ok(_) if optional => None,
-                Ok(_) => return Err(Check::Refused("signal coverage envelope differs from signed authority".into())),
+                Ok(_) => {
+                    return Err(Check::Refused(
+                        "signal coverage envelope differs from signed authority".into(),
+                    ));
+                }
                 Err(sinex_store::Error::Invalid(_)) if optional => None,
                 Err(sinex_store::Error::Invalid(reason)) => return Err(Check::Refused(reason)),
                 Err(error) => return Err(Check::Unavailable(error.to_string())),

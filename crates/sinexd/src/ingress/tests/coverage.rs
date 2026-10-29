@@ -255,79 +255,215 @@ async fn proof_with_completion(
 async fn raw_coverage_checks_outer_epoch_and_reports_same_scope_policy_invalidation(
     db: devkit::pg::TestDatabase,
 ) {
-    let (h,_,ids,snapshot)=setup_inputs(db,1,"synthetic",sinex_model::Class::Open).await;
-    let InputReplayReply::Page{position,policy_epoch,scope,continuation:ReplayContinuation::Complete{raw_inputs:CoverageStatus::Complete{proof:basis},..},..}=page(&h,"polylogue","cache",None).await else {panic!("complete native baseline")};
-    assert_eq!(basis.policy_epoch,policy_epoch);
-    let CoverageStatus::Complete{proof:write}=proof(&h,basis.clone(),position).await else {panic!("positive owner write proof")};
-    assert_eq!(write.policy_epoch,policy_epoch);
+    let (h, _, ids, snapshot) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
+    let InputReplayReply::Page {
+        position,
+        policy_epoch,
+        scope,
+        continuation:
+            ReplayContinuation::Complete {
+                raw_inputs: CoverageStatus::Complete { proof: basis },
+                ..
+            },
+        ..
+    } = page(&h, "polylogue", "cache", None).await
+    else {
+        panic!("complete native baseline")
+    };
+    assert_eq!(basis.policy_epoch, policy_epoch);
+    let CoverageStatus::Complete { proof: write } = proof(&h, basis.clone(), position).await else {
+        panic!("positive owner write proof")
+    };
+    assert_eq!(write.policy_epoch, policy_epoch);
     for mutate in [
-        |proof:&mut CoverageProof|proof.policy_epoch+=1,
-        |proof:&mut CoverageProof|proof.position+=1,
-        |proof:&mut CoverageProof|proof.scope.push_str("-forged"),
+        |proof: &mut CoverageProof| proof.policy_epoch += 1,
+        |proof: &mut CoverageProof| proof.position += 1,
+        |proof: &mut CoverageProof| proof.scope.push_str("-forged"),
     ] {
-        let mut forged=basis.clone();mutate(&mut forged);
-        assert!(matches!(proof(&h,forged,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==policy_epoch&&actual_scope==scope));
+        let mut forged = basis.clone();
+        mutate(&mut forged);
+        assert!(
+            matches!(proof(&h,forged,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==policy_epoch&&actual_scope==scope)
+        );
     }
-    let mut forged=write.clone();forged.policy_epoch+=1;
-    let mut frame=Ingress::Events{frame:"forged-outer-policy".into(),source:None,coverage:Some(forged),events:vec![ProducerEvent{
-        kind:snapshot.kind,payload:json!({"id":"session","text":"synthetic canonical output"}),location:None,output_index:0,parents:vec![ids[0]],reading_order:Some(position),class:sinex_model::Class::Open,
-    }],failures:vec![]};
-    assert!(h.send("polylogue",&frame).await.refusal.is_some());
-    if let Ingress::Events{frame,coverage,..}=&mut frame {*frame="valid-outer-policy".into();*coverage=Some(write);}
-    assert!(h.send("polylogue",&frame).await.refusal.is_none(),"the same canonical output with the actual signed epoch remains admissible");
-    let mut conn=PgConnection::connect(&h.url).await.unwrap();
-    sinex_store::privacy::add_rule(&mut conn,&sinex_store::privacy::NewRule{
-        name:"synthetic-coverage-policy-change".into(),source:"polylogue".into(),event_type:Some("polylogue.message".into()),field:Some("/text".into()),matcher:"all".into(),matcher_arg:None,class:sinex_model::Class::Guarded,action:sinex_store::privacy::Action::Mask,author:"synthetic-test".into(),
-    }).await.unwrap();
-    sinex_store::privacy::projection::ensure_current(&mut conn).await.unwrap();
-    let changed=sinex_store::privacy::projection::epoch(&mut conn).await.unwrap().active;
-    assert!(changed>policy_epoch);
-    assert!(matches!(proof(&h,basis,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==changed&&actual_scope==scope));
+    let mut forged = write.clone();
+    forged.policy_epoch += 1;
+    let mut frame = Ingress::Events {
+        frame: "forged-outer-policy".into(),
+        source: None,
+        coverage: Some(forged),
+        events: vec![ProducerEvent {
+            kind: snapshot.kind,
+            payload: json!({"id":"session","text":"synthetic canonical output"}),
+            location: None,
+            output_index: 0,
+            parents: vec![ids[0]],
+            reading_order: Some(position),
+            class: sinex_model::Class::Open,
+        }],
+        failures: vec![],
+    };
+    assert!(h.send("polylogue", &frame).await.refusal.is_some());
+    if let Ingress::Events {
+        frame, coverage, ..
+    } = &mut frame
+    {
+        *frame = "valid-outer-policy".into();
+        *coverage = Some(write);
+    }
+    assert!(
+        h.send("polylogue", &frame).await.refusal.is_none(),
+        "the same canonical output with the actual signed epoch remains admissible"
+    );
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    sinex_store::privacy::add_rule(
+        &mut conn,
+        &sinex_store::privacy::NewRule {
+            name: "synthetic-coverage-policy-change".into(),
+            source: "polylogue".into(),
+            event_type: Some("polylogue.message".into()),
+            field: Some("/text".into()),
+            matcher: "all".into(),
+            matcher_arg: None,
+            class: sinex_model::Class::Guarded,
+            action: sinex_store::privacy::Action::Mask,
+            author: "synthetic-test".into(),
+        },
+    )
+    .await
+    .unwrap();
+    sinex_store::privacy::projection::ensure_current(&mut conn)
+        .await
+        .unwrap();
+    let changed = sinex_store::privacy::projection::epoch(&mut conn)
+        .await
+        .unwrap()
+        .active;
+    assert!(changed > policy_epoch);
+    assert!(
+        matches!(proof(&h,basis,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==changed&&actual_scope==scope)
+    );
 }
 
 #[devkit::test]
-async fn coverage_database_uncertainty_does_not_claim_a_basis_reset(
-    db: devkit::pg::TestDatabase,
-) {
-    let (h,_,_,_)=setup_inputs(db,1,"synthetic",sinex_model::Class::Open).await;
-    let InputReplayReply::Page{position,policy_epoch,continuation:ReplayContinuation::Complete{raw_inputs:CoverageStatus::Complete{proof:basis},..},..}=page(&h,"polylogue","cache",None).await else {panic!("complete native baseline")};
-    assert!(matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch));
-    let mut conn=PgConnection::connect(&h.url).await.unwrap();
+async fn coverage_database_uncertainty_does_not_claim_a_basis_reset(db: devkit::pg::TestDatabase) {
+    let (h, _, _, _) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
+    let InputReplayReply::Page {
+        position,
+        policy_epoch,
+        continuation:
+            ReplayContinuation::Complete {
+                raw_inputs: CoverageStatus::Complete { proof: basis },
+                ..
+            },
+        ..
+    } = page(&h, "polylogue", "cache", None).await
+    else {
+        panic!("complete native baseline")
+    };
+    assert!(
+        matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch)
+    );
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
     // A missing owner history counter is operational uncertainty. RowNotFound
     // leaves the read transaction usable, so the typed coverage result returns.
-    let saved:i64=sqlx::query_scalar("DELETE FROM core.counters WHERE name='commit_seq' RETURNING value").fetch_one(&mut conn).await.unwrap();
-    let unavailable=proof(&h,basis.clone(),position).await;
-    sqlx::query("INSERT INTO core.counters(name,value) VALUES('commit_seq',$1)").bind(saved).execute(&mut conn).await.unwrap();
-    assert!(matches!(unavailable,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Unverified,..}));
-    assert!(matches!(proof(&h,basis,position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch),"uncertainty does not invent a new epoch or invalidate the retained basis");
+    let saved: i64 =
+        sqlx::query_scalar("DELETE FROM core.counters WHERE name='commit_seq' RETURNING value")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    let unavailable = proof(&h, basis.clone(), position).await;
+    sqlx::query("INSERT INTO core.counters(name,value) VALUES('commit_seq',$1)")
+        .bind(saved)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert!(matches!(
+        unavailable,
+        CoverageStatus::Incomplete {
+            basis: ReplayBasisStatus::Unverified,
+            ..
+        }
+    ));
+    assert!(
+        matches!(proof(&h,basis,position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch),
+        "uncertainty does not invent a new epoch or invalidate the retained basis"
+    );
 }
 
 #[devkit::test]
 async fn coverage_private_key_failures_are_unverified_but_invalid_tokens_revoke_the_basis(
     db: devkit::pg::TestDatabase,
 ) {
-    let (h,_,_,_)=setup_inputs(db,1,"synthetic",sinex_model::Class::Open).await;
-    let InputReplayReply::Page{position,policy_epoch,scope,continuation:ReplayContinuation::Complete{raw_inputs:CoverageStatus::Complete{proof:basis},..},..}=page(&h,"polylogue","cache",None).await else {panic!("complete native baseline")};
-    let context=h.requests.public_context_snapshot("polylogue",&sinex_protocol::PublicContextRequest::default()).await;
-    let request=CoverageRequest{basis:Some(basis.clone()),cache:"cache".into(),completed_position:position,completion:None};
-    let mut conn=PgConnection::connect(&h.url).await.unwrap();
-    for corrupt in [false,true] {
-        let mut tx=conn.begin().await.unwrap();
+    let (h, _, _, _) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
+    let InputReplayReply::Page {
+        position,
+        policy_epoch,
+        scope,
+        continuation:
+            ReplayContinuation::Complete {
+                raw_inputs: CoverageStatus::Complete { proof: basis },
+                ..
+            },
+        ..
+    } = page(&h, "polylogue", "cache", None).await
+    else {
+        panic!("complete native baseline")
+    };
+    let context = h
+        .requests
+        .public_context_snapshot(
+            "polylogue",
+            &sinex_protocol::PublicContextRequest::default(),
+        )
+        .await;
+    let request = CoverageRequest {
+        basis: Some(basis.clone()),
+        cache: "cache".into(),
+        completed_position: position,
+        completion: None,
+    };
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    for corrupt in [false, true] {
+        let mut tx = conn.begin().await.unwrap();
         if corrupt {
             // Corruption cannot pass the production CHECK. This isolated
             // transaction injects the failure and rolls the schema back too.
             sqlx::query("ALTER TABLE core.owner_protocol_key DROP CONSTRAINT owner_protocol_key_secret_check").execute(&mut *tx).await.unwrap();
-            sqlx::query("UPDATE core.owner_protocol_key SET secret=decode('00','hex')").execute(&mut *tx).await.unwrap();
+            sqlx::query("UPDATE core.owner_protocol_key SET secret=decode('00','hex')")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
         } else {
-            sqlx::query("DELETE FROM core.owner_protocol_key").execute(&mut *tx).await.unwrap();
+            sqlx::query("DELETE FROM core.owner_protocol_key")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
         }
-        let status=h.requests.coverage(&mut tx,"polylogue",&request,&context).await;
+        let status = h
+            .requests
+            .coverage(&mut tx, "polylogue", &request, &context)
+            .await;
         tx.rollback().await.unwrap();
-        assert!(matches!(&status,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Unverified,..}),"private signing authority failure never becomes a client proof invalidation: {status:?}");
+        assert!(
+            matches!(
+                &status,
+                CoverageStatus::Incomplete {
+                    basis: ReplayBasisStatus::Unverified,
+                    ..
+                }
+            ),
+            "private signing authority failure never becomes a client proof invalidation: {status:?}"
+        );
     }
-    assert!(matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch));
-    let mut invalid=basis;invalid.stamp.push_str("-forged");
-    assert!(matches!(proof(&h,invalid,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==policy_epoch&&actual_scope==scope));
+    assert!(
+        matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch)
+    );
+    let mut invalid = basis;
+    invalid.stamp.push_str("-forged");
+    assert!(
+        matches!(proof(&h,invalid,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==policy_epoch&&actual_scope==scope)
+    );
 }
 
 #[devkit::test]

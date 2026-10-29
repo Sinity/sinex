@@ -18,7 +18,10 @@ enum Failure {
 impl Failure {
     fn basis(&self, policy_epoch: Option<i64>, scope: Option<String>) -> ReplayBasisStatus {
         match self {
-            Self::Invalidated(_) => ReplayBasisStatus::Invalidated { policy_epoch, scope },
+            Self::Invalidated(_) => ReplayBasisStatus::Invalidated {
+                policy_epoch,
+                scope,
+            },
             Self::Unverified(_) => ReplayBasisStatus::Unverified,
         }
     }
@@ -497,10 +500,14 @@ impl Requests {
         context: &sinex_protocol::PublicContext,
     ) -> CoverageStatus {
         let mut current_epoch = None;
-        let current_scope = self.read_grants.get(producer)
+        let current_scope = self
+            .read_grants
+            .get(producer)
             .map(|grant| grant.consumer_scope(producer, &self.subjects).1);
         let result: Result<_, Failure> = async {
-            let policy = sinex_store::privacy::projection::epoch(conn).await.map_err(|error|error.to_string())?;
+            let policy = sinex_store::privacy::projection::epoch(conn)
+                .await
+                .map_err(|error| error.to_string())?;
             current_epoch = policy.ready().then_some(policy.active);
             let sinex_protocol::PublicContext::Available {
                 settings_identity,
@@ -510,23 +517,25 @@ impl Requests {
             else {
                 return Err("coverage_owner_policy_unavailable".into());
             };
-            let basis = request
-                .basis
-                .as_ref()
-                .ok_or_else(||Failure::Invalidated("coverage_completed_replay_basis_required".into()))?;
-            let key = sinex_store::owner_protocol::key(conn).await
-                .map_err(|error|Failure::Unverified(error.to_string()))?;
-            let mut claims: Claims = sinex_store::owner_protocol::open(&key, read_coverage::DOMAIN, &basis.stamp)
-                .map_err(|error|match error {
-                    sinex_store::Error::Invalid(reason) => Failure::Invalidated(reason),
-                    error => Failure::Unverified(error.to_string()),
-                })?;
+            let basis = request.basis.as_ref().ok_or_else(|| {
+                Failure::Invalidated("coverage_completed_replay_basis_required".into())
+            })?;
+            let key = sinex_store::owner_protocol::key(conn)
+                .await
+                .map_err(|error| Failure::Unverified(error.to_string()))?;
+            let mut claims: Claims =
+                sinex_store::owner_protocol::open(&key, read_coverage::DOMAIN, &basis.stamp)
+                    .map_err(|error| match error {
+                        sinex_store::Error::Invalid(reason) => Failure::Invalidated(reason),
+                        error => Failure::Unverified(error.to_string()),
+                    })?;
             let Contract {
                 family,
                 scope,
                 catalog,
                 ..
-            } = contract(&self.read_grants, producer, &self.subjects).map_err(Failure::Invalidated)?;
+            } = contract(&self.read_grants, producer, &self.subjects)
+                .map_err(Failure::Invalidated)?;
             let native = instance(&self.client, &self.subjects).await?;
             if claims.replay_root.is_none()
                 || claims.purpose != "basis"
@@ -550,10 +559,9 @@ impl Requests {
                 return Err(Failure::Invalidated("coverage_replay_basis_changed".into()));
             }
             if request.completed_position > claims.position {
-                let completion = request
-                    .completion
-                    .as_ref()
-                    .ok_or_else(||Failure::Invalidated("coverage_native_completion_receipt_required".into()))?;
+                let completion = request.completion.as_ref().ok_or_else(|| {
+                    Failure::Invalidated("coverage_native_completion_receipt_required".into())
+                })?;
                 delivery::verify(
                     &self.client,
                     &self.subjects,

@@ -41,8 +41,13 @@ pub struct CoverageProof {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CoverageStatus {
-    Complete { proof: CoverageProof },
-    Incomplete { reason: String, basis: crate::ReplayBasisStatus },
+    Complete {
+        proof: CoverageProof,
+    },
+    Incomplete {
+        reason: String,
+        basis: crate::ReplayBasisStatus,
+    },
     NotRequested,
 }
 
