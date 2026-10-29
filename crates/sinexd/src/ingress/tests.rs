@@ -804,33 +804,75 @@ async fn producers_are_limited_to_their_own_subjects() {
         &[("kitty", "kitty-scope".into())],
     );
     assert!(!config.contains("dpw") && !config.contains("kpw"));
+    let api_subjects = [
+        "$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign",
+        "$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-old-scope",
+        "$JS.API.STREAM.MSG.GET.SX_CONFIRMED",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope",
+    ];
+    let (publish, _) = subjects.producer_permissions("kitty", Some("kitty-scope"));
+    assert!(publish.iter().any(|subject| subject == api_subjects[5]));
+    for denied in &api_subjects[..5] {
+        assert!(!publish.iter().any(|subject| subject == denied));
+    }
     let server = devkit::nats::Server::start_with(&devkit::nats::Options { config }).unwrap();
     let address = server.url().trim_start_matches("nats://").to_owned();
+    let daemon_events = Arc::new(acl_diagnostics::Events::default());
+    let kitty_events = Arc::new(acl_diagnostics::Events::default());
     let connect = |user: &str, password: &str| {
+        let events = if user == "kitty" {
+            &kitty_events
+        } else {
+            &daemon_events
+        }
+        .clone();
         async_nats::ConnectOptions::with_user_and_password(user.into(), password.into())
             .custom_inbox_prefix(subjects.inbox_prefix(user))
+            .event_callback(move |event| {
+                events.record(event);
+                std::future::ready(())
+            })
             .connect(address.clone())
     };
     assert!(connect("daemon", "wrong").await.is_err());
     let daemon = connect("daemon", "dpw").await.unwrap();
-    let mut seen = daemon.subscribe("sx.ingress.*").await.unwrap();
-    daemon.flush().await.unwrap();
-
-    let kitty = connect("kitty", "kpw").await.unwrap();
-    kitty
-        .publish("sx.ingress.phone", "forged".into())
-        .await
-        .unwrap();
-    kitty
-        .publish("sx.ingress.kitty", "mine".into())
-        .await
-        .unwrap();
-    kitty.flush().await.unwrap();
-
-    let first = tokio::time::timeout(Duration::from_secs(5), seen.next())
-        .await
-        .unwrap()
-        .unwrap();
+    let mut kitty = None;
+    let initial = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut seen = daemon
+            .subscribe("sx.ingress.*")
+            .await
+            .map_err(|_| "subscribe")?;
+        daemon.flush().await.map_err(|_| "flush")?;
+        acl_diagnostics::ready(&daemon).await?;
+        kitty = Some(connect("kitty", "kpw").await.map_err(|_| "connect")?);
+        let kitty = kitty.as_ref().unwrap();
+        kitty
+            .publish("sx.ingress.phone", "forged".into())
+            .await
+            .map_err(|_| "publish")?;
+        kitty
+            .publish("sx.ingress.kitty", "mine".into())
+            .await
+            .map_err(|_| "publish")?;
+        kitty.flush().await.map_err(|_| "flush")?;
+        let first = seen.next().await.ok_or("subscriber_closed")?;
+        Ok::<_, &'static str>((seen, first))
+    })
+    .await;
+    acl_diagnostics::report(
+        "ingress",
+        &initial,
+        &server,
+        [Some(&daemon), kitty.as_ref()],
+        [&daemon_events, &kitty_events],
+        &api_subjects,
+    );
+    let (mut seen, first) = initial
+        .expect("ingress exchange within five seconds")
+        .expect("ingress setup and delivery");
+    let kitty = kitty.unwrap();
     assert_eq!(first.subject.as_str(), "sx.ingress.kitty");
     assert_eq!(&first.payload[..], b"mine");
     assert!(
@@ -839,23 +881,35 @@ async fn producers_are_limited_to_their_own_subjects() {
             .is_err(),
         "the forged message on another producer's subject was not delivered"
     );
-    let mut api = daemon.subscribe("$JS.API.>").await.unwrap();
-    daemon.flush().await.unwrap();
-    for subject in [
-        "$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign",
-        "$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope",
-        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone",
-        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-old-scope",
-        "$JS.API.STREAM.MSG.GET.SX_CONFIRMED",
-        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope",
-    ] {
-        kitty.publish(subject, "{}".into()).await.unwrap();
-    }
-    kitty.flush().await.unwrap();
-    let allowed = tokio::time::timeout(Duration::from_secs(5), api.next())
-        .await
-        .unwrap()
-        .unwrap();
+    let api_exchange = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut api = daemon
+            .subscribe("$JS.API.>")
+            .await
+            .map_err(|_| "subscribe")?;
+        daemon.flush().await.map_err(|_| "flush")?;
+        acl_diagnostics::ready(&daemon).await?;
+        for subject in api_subjects {
+            kitty
+                .publish(subject, "{}".into())
+                .await
+                .map_err(|_| "publish")?;
+        }
+        kitty.flush().await.map_err(|_| "flush")?;
+        let allowed = api.next().await.ok_or("subscriber_closed")?;
+        Ok::<_, &'static str>((api, allowed))
+    })
+    .await;
+    acl_diagnostics::report(
+        "api",
+        &api_exchange,
+        &server,
+        [Some(&daemon), Some(&kitty)],
+        [&daemon_events, &kitty_events],
+        &api_subjects,
+    );
+    let (mut api, allowed) = api_exchange
+        .expect("API exchange within five seconds")
+        .expect("API setup and delivery");
     assert_eq!(
         allowed.subject.as_str(),
         "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope"
@@ -1962,3 +2016,5 @@ mod receipts;
 mod coverage;
 
 mod recorded_continuations;
+
+mod acl_diagnostics;
