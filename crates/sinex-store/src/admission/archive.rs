@@ -6,7 +6,6 @@ use sinex_model::{ArchiveReason, OperationId, ReplayScope};
 
 mod history;
 mod restore;
-pub use history::erase_archive_history;
 pub(super) use history::{archive_at, position};
 
 /// Archive the live readings a replay re-reads: those read from the scope's

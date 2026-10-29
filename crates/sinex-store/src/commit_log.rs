@@ -1,14 +1,9 @@
-//! Reading committed events in commit order: the commit-log reader and the
-//! confirmed-stream publisher page through `core.commit_log` from a saved
-//! position. Visibility changes (a reading replaced, hidden or unhidden) are
-//! numbered in their own sequence; `audit.archive_changes` keeps their
-//! committed history.
-//!
-//! An excision removes events and their commit-log rows, leaving gaps in the
-//! commit positions; pages read past gaps, and an event row missing behind a
-//! commit-log row is skipped, so consumers never see excised content. The
-//! publisher erases the stream messages of events excised after they were
-//! published ([`excised_on_stream`]).
+//! Committed events and lifecycle changes share the global commit position.
+//! [`changes_page`] is the canonical ordered feed, including completion markers
+//! for scalar checkpoints and named gaps for unknown historical metadata.
+//! [`after`] is the event-only projection used by internal event derivations.
+//! Excision retains positions and payload-free lifecycle history; exact stream
+//! placements are tracked per native stream incarnation for physical erasure.
 use crate::{Error, Result};
 use serde_json::Value;
 use sinex_model::{
@@ -18,6 +13,27 @@ use sinex_model::{
 use sqlx::PgConnection;
 use time::OffsetDateTime;
 use uuid::Uuid;
+
+mod changes;
+pub use changes::{
+    Change, ChangeCursor, ChangePage, CommittedChange, HistoryGap, Tombstone, LifecycleChange, changes_page,
+};
+
+/// Take a lifecycle position while holding the same counter lock as admission.
+pub(crate) async fn allocate_position(conn: &mut PgConnection) -> Result<i64> {
+    let position = sqlx::query_scalar!(
+        "UPDATE core.counters SET value=value+1 WHERE name='commit_seq' RETURNING value"
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES($1,NULL,NULL)",
+        position
+    )
+    .execute(conn)
+    .await?;
+    Ok(position)
+}
 
 /// One committed event as stored.
 #[derive(Clone, Debug, PartialEq)]
@@ -33,7 +49,7 @@ pub struct Committed {
     pub run_id: Uuid,
     pub material_id: Option<Uuid>,
     pub anchor: Option<i64>,
-    pub output_index: i16,
+    pub output_index: i64,
     pub parents: Option<Vec<Uuid>>,
     pub ts_orig: Option<OffsetDateTime>,
     pub ts_quality: String,
@@ -123,7 +139,9 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             run_id,
             material_id: row.material_id,
             anchor: row.anchor,
-            output_index: row.output_index.unwrap_or(0),
+            output_index: row
+                .output_index
+                .ok_or_else(|| Error::Invalid("event has no output index".into()))?,
             parents: row.parents,
             ts_orig: row.ts_orig,
             ts_quality: row.ts_quality.unwrap_or_default(),
@@ -172,7 +190,7 @@ impl Committed {
                     anchor: u64::try_from(anchor)
                         .map_err(|_| Error::Invalid(format!("negative anchor on {}", self.id)))?,
                 },
-                output_index: u16::try_from(self.output_index)
+                output_index: u64::try_from(self.output_index)
                     .map_err(|_| Error::Invalid(format!("negative output_index on {}", self.id)))?,
             },
             (_, _, Some(parents)) => Origin::Derived {
@@ -252,6 +270,11 @@ pub async fn latest(conn: &mut PgConnection) -> Result<i64> {
             .fetch_one(&mut *conn)
             .await?,
     )
+}
+
+pub async fn consumer_exists(conn:&mut PgConnection,consumer:&str)->Result<bool>{
+    Ok(sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM core.consumer_positions WHERE consumer=$1)",consumer)
+        .fetch_one(conn).await?.unwrap_or(false))
 }
 
 /// A non-derivation consumer's saved position: (commit_seq, change_seq).
@@ -387,7 +410,12 @@ pub async fn producer_materials(
 }
 
 /// Record where published events sit in the confirmed stream.
+#[cfg(test)]
 pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]) -> Result<()> {
+    record_published_in(conn,"",published).await
+}
+
+pub async fn record_published_in(conn:&mut PgConnection,stream_instance:&str,published:&[(Uuid,i64)])->Result<()> {
     if published.is_empty() {
         return Ok(());
     }
@@ -396,11 +424,12 @@ pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]
     pairs.dedup();
     let (ids, seqs): (Vec<Uuid>, Vec<i64>) = pairs.into_iter().unzip();
     sqlx::query!(
-        r#"INSERT INTO core.published (event_id, stream_seq)
-           SELECT * FROM unnest($1::uuid[], $2::bigint[])
-           ON CONFLICT (event_id, stream_seq) DO NOTHING"#,
+        r#"INSERT INTO core.published (event_id, stream_seq, stream_instance)
+           SELECT event_id,stream_seq,$3 FROM unnest($1::uuid[], $2::bigint[]) AS p(event_id,stream_seq)
+           ON CONFLICT (event_id, stream_seq, stream_instance) DO NOTHING"#,
         &ids,
         &seqs,
+        stream_instance,
     )
     .execute(&mut *conn)
     .await?;
@@ -410,31 +439,43 @@ pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]
 /// An excised event whose message is still on the confirmed stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExcisedOnStream {
-    pub commit_seq:Option<i64>,
+    pub commit_seq: Option<i64>,
     pub event_id: Uuid,
     pub stream_seq: i64,
     pub operation_id: Uuid,
 }
 
 /// Up to `limit` excised events whose messages are still on the stream.
+#[cfg(test)]
 pub async fn excised_on_stream(
     conn: &mut PgConnection,
     limit: i64,
 ) -> Result<Vec<ExcisedOnStream>> {
+    excised_on_stream_in(conn,"",limit).await
+}
+
+pub async fn excised_on_stream_in(conn:&mut PgConnection,stream_instance:&str,limit:i64)->Result<Vec<ExcisedOnStream>> {
     Ok(sqlx::query_as!(
         ExcisedOnStream,
         r#"SELECT p.event_id, p.stream_seq, t.operation_id,t.commit_seq
            FROM core.event_tombstones t
            JOIN core.published p ON p.event_id = t.event_id
+           WHERE p.stream_instance=$2
            ORDER BY p.stream_seq, p.event_id LIMIT $1"#,
         limit,
+        stream_instance,
     )
     .fetch_all(&mut *conn)
     .await?)
 }
 
 /// Forget only acknowledged erasures, keeping every other acknowledged copy.
+#[cfg(test)]
 pub async fn forget_published(conn: &mut PgConnection, erased: &[(Uuid, i64)]) -> Result<()> {
+    forget_published_in(conn,"",erased).await
+}
+
+pub async fn forget_published_in(conn:&mut PgConnection,stream_instance:&str,erased:&[(Uuid,i64)])->Result<()> {
     if erased.is_empty() {
         return Ok(());
     }
@@ -445,9 +486,10 @@ pub async fn forget_published(conn: &mut PgConnection, erased: &[(Uuid, i64)]) -
     sqlx::query!(
         r#"DELETE FROM core.published p
            USING unnest($1::uuid[], $2::bigint[]) AS e(event_id, stream_seq)
-           WHERE p.event_id = e.event_id AND p.stream_seq = e.stream_seq"#,
+           WHERE p.event_id = e.event_id AND p.stream_seq = e.stream_seq AND p.stream_instance=$3"#,
         &ids,
         &seqs,
+        stream_instance,
     )
     .execute(&mut *conn)
     .await?;

@@ -183,9 +183,8 @@ async fn wait_published(conn: &mut PgConnection) {
         .unwrap();
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            let (position, _) = sinex_store::commit_log::consumer_position(conn, "publisher")
-                .await
-                .unwrap();
+            let position:i64=sqlx::query_scalar("SELECT coalesce(max(commit_seq),0) FROM core.consumer_positions WHERE consumer LIKE 'publisher/%'")
+                .fetch_one(&mut *conn).await.unwrap();
             if position >= head {
                 return;
             }
@@ -273,7 +272,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         vec!["command.executed"],
         vec!["command.imported", "command.executed"],
     ] {
-        let filters = types.iter().map(|t| subjects.confirmed_event(t)).collect();
+        let filters = types.iter().map(|t| subjects.confirmed_event("open",t)).collect();
         let published: Vec<(i64, uuid::Uuid)> = read_filtered(&direct, &stream, filters)
             .await
             .into_iter()
@@ -294,7 +293,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     }
     // Archive changes, once each, in the order they were made.
     let changes: Vec<(uuid::Uuid, sinex_model::ArchiveReason)> =
-        read_filtered(&direct, &stream, vec![subjects.confirmed_archive()])
+        read_filtered(&direct, &stream, vec![subjects.confirmed_lifecycle("*",">")])
             .await
             .into_iter()
             .filter_map(|m| match m {
@@ -317,6 +316,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
             continue;
         };
         assert!(ids.insert(e.id), "{} published twice", e.id);
+        assert_eq!(e.withheld, Some(sinex_protocol::Withheld::Grants));
         let stored: (String, serde_json::Value, i64) = sqlx::query_as(
             "SELECT encode(record_hash, 'hex'), payload, reading_order FROM core.events WHERE id = $1",
         )
@@ -326,7 +326,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         .unwrap();
         assert_eq!(
             (&e.record_hash, e.payload.as_ref(), e.reading_order),
-            (&stored.0, Some(&stored.1), stored.2)
+            (&stored.0, None, stored.2)
         );
     }
     let events: i64 =

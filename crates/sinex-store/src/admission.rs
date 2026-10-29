@@ -26,7 +26,6 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 mod archive;
-pub use archive::erase_archive_history;
 mod classify;
 mod derived;
 mod kinds;

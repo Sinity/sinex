@@ -83,23 +83,23 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 ### Content
 
 - **Changes**: every committed event, and every lifecycle change: archived, restored, tombstoned, and material status changes ([the lifecycle](lifecycle.md)).
-- **Each message carries its commit position**, the event ID and the change. Consumers save commit positions, not stream sequences, because a rebuilt stream keeps the commit positions and not the sequences.
-- **Payloads travel whole**, with two exceptions:
-  - a field that a privacy rule in force currently targets, or that carries a hit of an imported detector, is **marked withheld**; the consumer fetches it by event ID through the producer client, and gets what its own grants allow ([privacy](privacy.md#output-parity));
-  - a field larger than a message carries a material or range reference instead of its value ([bulky fields by reference](materials.md)).
-- **Withholding sees every hit.** The publisher publishes a commit position only after the detector-hit read model has applied it.
-- **A message stays as it was sent.** Messages published before a privacy rule was written are not rewritten; database outputs apply the new rule at once, and status counts the stream messages the rule would have withheld.
+- **Each data message carries its global commit position**, the event ID and the change. Archive change IDs identify rows; they are never consumer watermarks. Events precede lifecycle changes within one position, with lifecycle rows ordered by their stable change IDs.
+- **Completion is explicit.** `PositionComplete { commit_seq: P }` says every change through P has been acknowledged. It is cumulative and includes empty positions. Consumers durably stage partial positions, expose them and advance their scalar watermark only on this barrier. Transfer pages can divide any position; page budgets never cap its changes. An empty store emits position zero to signal readiness.
+- **Shared payloads travel by reference.** Every event carries `withheld: grants`; the consumer fetches by event ID and gets exactly what its own current grants allow ([privacy](privacy.md#output-parity)). The shared stream carries no event payload, including for the open class.
+- **Subjects express the configured scope.** Events use `confirmed.event.<class>.<kind>`, lifecycle notices use `confirmed.lifecycle.<class>.<kind>`, and global completion and gap controls use `confirmed.control`, under the configured root. The daemon provisions each durable's class and kind filters.
 - **One stream for every consumer.** There is no per-consumer stream: each consumer's grants apply when it fetches withheld fields.
 
 ### Retention
 
 **The confirmed stream keeps everything**: no age limit, no compaction, no discard. A new outside derivation reads from the beginning without falling back to PostgreSQL, so there is only one delivery path. Its size is a storage cost, measured and reported in status.
 
-**Tombstone reaches the stream.** The publisher keeps an exact record of which stream sequence carries each event. When events are tombstoned, their messages are deleted by sequence, and a tombstone notice follows.
+**Tombstone reaches the stream.** The publisher records every acknowledged copy's sequence together with the native stream incarnation (name and creation time). Excision deletes those exact copies. Its notice carries the newly allocated excision position and the exact original admission position. The original position remains an empty slot; rebuild never inserts an extra data tuple there. Payload-free archive history and lineage remain available for reconstruction.
 
 ### Rebuild and outages
 
-- If the NATS store is lost, the publisher republishes from PostgreSQL in commit order with the same commit positions; tombstoned events republish as skeleton notices. A consumer resumes from its saved commit position on the rebuilt stream.
+- If the NATS store is lost, the publisher detects the new native stream incarnation and republishes from PostgreSQL with the same commit positions. Tombstoned events produce skeleton notices at their actual excision positions. Pruned commit-log rows are reconstructed from retained events and lifecycle metadata. Unknown historical positions or class metadata produce a named `Gap`; no completion barrier crosses it.
+- Restarting the same broker store resumes its saved PostgreSQL checkpoint. Data items have stable logical IDs, so replay before a completion barrier is idempotent; handlers also deduplicate durable staged items after the broker's duplicate window expires.
+- The stream carries version-2 contract metadata. A nonempty stream without this contract is refused and preserved. Conversion or a parallel stream requires an explicit operational decision.
 - A NATS outage pauses the publisher, which resumes from its saved position; derivation inside the daemon continues.
 - **Identical sequences.** For any filter, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences. They differ only in fields withheld or carried by reference under the consumer's grants.
 

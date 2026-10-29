@@ -7,18 +7,7 @@ use uuid::Uuid;
 
 /// A non-event change receives an ordinary writer position, not an Event.
 pub(in crate::admission) async fn position(conn: &mut PgConnection) -> Result<i64> {
-    let position = sqlx::query_scalar!(
-        "UPDATE core.counters SET value=value+1 WHERE name='commit_seq' RETURNING value"
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    sqlx::query!(
-        "INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES($1,NULL,NULL)",
-        position
-    )
-    .execute(conn)
-    .await?;
-    Ok(position)
+    crate::commit_log::allocate_position(conn).await
 }
 
 pub(in crate::admission) async fn archive_at(
@@ -73,24 +62,4 @@ pub(super) async fn unhide_at(
       SELECT count(*) AS "n!" FROM unhidden"#,event,position,operation)
       .fetch_one(conn).await?;
     Ok(changed != 0)
-}
-
-/// Excision removes the archive state and history of the excised events too.
-pub async fn erase_archive_history(conn: &mut PgConnection, ids: &[Uuid]) -> Result<()> {
-    sqlx::query!(
-        "DELETE FROM core.event_children WHERE parent=ANY($1) OR child=ANY($1)",
-        ids
-    )
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query!("DELETE FROM audit.archived WHERE event_id=ANY($1)", ids)
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query!(
-        "DELETE FROM audit.archive_changes WHERE event_id=ANY($1)",
-        ids
-    )
-    .execute(conn)
-    .await?;
-    Ok(())
 }

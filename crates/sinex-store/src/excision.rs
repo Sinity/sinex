@@ -246,6 +246,9 @@ pub async fn apply(
     actor: &str,
     keys: &dyn DirtyKeys,
 ) -> Result<Applied> {
+    // The allocation is the transaction's first statement and serializes this
+    // lifecycle transition with event admission.
+    let seq = crate::commit_log::allocate_position(conn).await?;
     if self::plan(conn, target).await? != *plan {
         return Err(Error::Invalid(
             "the readings to excise changed after planning; plan the excision again".into(),
@@ -277,15 +280,12 @@ pub async fn apply(
     )
     .fetch_all(&mut *conn)
     .await?;
-    let seq = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
-        .fetch_one(&mut *conn)
-        .await?;
     applied.dirty_keys = mark_archived_dirty(conn, &live, seq, keys, None, None).await?;
     remove_live(conn, &ids).await?;
 
     sqlx::query!(
-        r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, operation_id,commit_seq)
-           SELECT id, source, event_type, ts_orig, $2,$3 FROM core.events WHERE id = ANY($1)
+        r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, operation_id,commit_seq,original_commit_seq,class)
+           SELECT id, source, event_type, ts_orig, $2,$3,commit_seq,class FROM core.events WHERE id = ANY($1)
            ON CONFLICT DO NOTHING"#,
         &ids,
         operation.0,
@@ -321,10 +321,8 @@ pub async fn apply(
     )
     .execute(&mut *conn)
     .await?;
-    crate::admission::erase_archive_history(conn, &ids).await?;
-    sqlx::query!("DELETE FROM core.commit_log WHERE event_id = ANY($1)", &ids)
-        .execute(&mut *conn)
-        .await?;
+    // Commit order, archive transitions and lineage contain no payload. Keep
+    // their skeleton metadata so stream rebuilds preserve the same identities.
     sqlx::query!(
         "SELECT set_config('sinex.excise_operation', $1, true)",
         operation.0.to_string()
