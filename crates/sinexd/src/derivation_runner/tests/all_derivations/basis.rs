@@ -18,15 +18,15 @@ pub(super) async fn validate(w: &World) {
     query::set_grants(&mut conn, "guarded,sealed")
         .await
         .unwrap();
-    let retained: Vec<(Value, Vec<uuid::Uuid>, String)> = sqlx::query_as(
-        "SELECT e.payload,e.parents,e.class FROM core.derivation_events e
+    let retained: Vec<(Value, Vec<uuid::Uuid>, String, i64)> = sqlx::query_as(
+        "SELECT e.payload,e.parents,e.class,e.commit_seq FROM core.derivation_events e
          WHERE e.source='context.packs' AND e.event_type='context.pack'
            AND EXISTS(SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)",
     )
     .fetch_all(&mut conn)
     .await
     .unwrap();
-    for (payload, parents, class) in retained {
+    for (payload, parents, class, admitted_at) in retained {
         let env = Env::at(
             at(86_400 * 5),
             TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
@@ -36,6 +36,10 @@ pub(super) async fn validate(w: &World) {
         let position = payload["read_as"]
             .as_i64()
             .expect("retained physical read position");
+        assert!(
+            position >= 0 && position < admitted_at,
+            "the reconstructed read must precede this pack reading's admission"
+        );
         let key = json!({"episode":payload["episode"]});
         let owner = Keyed::inputs(&ContextPacks, &key, &env).unwrap();
         // Translate only this owner's captured, unbounded known-time shape.
