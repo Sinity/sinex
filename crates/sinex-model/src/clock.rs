@@ -7,7 +7,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 /// How a payload records the end of an interval starting at `ts_orig`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IntervalEnd {
     At(&'static str),
     /// A missing end leaves only the recorded instant, with unknown duration.

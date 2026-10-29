@@ -490,6 +490,10 @@ pub(super) async fn mark_inputs_dirty(
 ) -> Result<usize> {
     let mut dirty = Vec::new();
     let mut ranges = Vec::new();
+    // No event/projection membership changes during this invocation. Separate
+    // calls before and after projection each execute their own exact windows.
+    let mut nearby = std::collections::HashMap::<crate::derivations::Window, usize>::new();
+    let mut repeated_marks = 0;
     let policy_ready = crate::privacy::projection::epoch(conn).await?.ready();
     for input in inputs {
         dirty.extend(keys.keys(input));
@@ -499,6 +503,11 @@ pub(super) async fn mark_inputs_dirty(
             .into_iter()
             .filter(|_| policy_ready)
         {
+            if let Some(marks) = nearby.get(&query) {
+                repeated_marks += *marks;
+                continue;
+            }
+            let before = dirty.len();
             for selected in crate::derivations::read_window(conn, &query).await? {
                 dirty.extend(keys.keys(&KeyInput {
                     event_type: &selected.event.event_type,
@@ -506,6 +515,7 @@ pub(super) async fn mark_inputs_dirty(
                     payload: &selected.event.payload,
                 }));
             }
+            nearby.insert(query, dirty.len() - before);
         }
     }
     if !ranges.is_empty() {
@@ -532,7 +542,9 @@ pub(super) async fn mark_inputs_dirty(
         ).fetch_all(&mut *conn).await?;
         dirty.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
     }
-    mark_dirty(conn, dirty, seq).await
+    // Outcome counts describe offered marks, including repeated input offers;
+    // the affected-target union and its durable rows remain unchanged.
+    Ok(mark_dirty(conn, dirty, seq).await? + repeated_marks)
 }
 
 /// Every live descendant leaves the live set in this transaction, including

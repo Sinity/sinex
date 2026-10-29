@@ -22,7 +22,7 @@ pub struct Committed {
 
 /// Events of one type whose payload contains `contains`, a JSON object (`{}`
 /// for every event of the type). An event is read when any kind admits it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Kind {
     pub event_type: String,
     pub contains: Value,
@@ -37,7 +37,7 @@ fn kind_arrays(kinds: &[Kind]) -> (Vec<String>, Vec<Value>) {
 }
 
 /// The nearest events to a window edge.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Nearest {
     pub kinds: Vec<Kind>,
     /// One answer set per value of this payload field seen in the window.
@@ -46,7 +46,7 @@ pub struct Nearest {
 }
 
 /// Live events of some kinds in a `ts_orig` window, plus nearest neighbours.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Window {
     pub range: Option<InputRange>,
     pub unknown_times: bool,
@@ -63,7 +63,7 @@ pub struct Window {
 mod state_transitions;
 
 /// Time bounds resolved from live records within the reader's snapshot.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum InputRange {
     Connected {
         kinds: Vec<Kind>,
