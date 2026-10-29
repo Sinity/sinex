@@ -676,9 +676,20 @@ async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
     .fetch_one(&mut c)
     .await
     .unwrap();
+    let initial_markers = support::marker_count(&mut c).await;
     t.admin(&["hide", &id.to_string()]);
+    assert_eq!(
+        support::marker_count(&mut c).await,
+        initial_markers + 1,
+        "hide has one lifecycle position"
+    );
     assert_eq!(visible_a3(&mut c, &path).await, 0);
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
+    assert_eq!(
+        support::marker_count(&mut c).await,
+        initial_markers + 2,
+        "the first replay reads one retained root sequence"
+    );
     assert_eq!(visible_a3(&mut c, &path).await, 0, "replay brought it back");
     sqlx::query("DELETE FROM raw.positions")
         .execute(&mut c)
@@ -713,14 +724,74 @@ async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
         retained[0].1, retained[1].1,
         "independent inputs retain byte-identical row materials"
     );
+    assert_eq!(
+        support::marker_count(&mut c).await,
+        initial_markers + 2,
+        "rereading and copying inputs allocate no lifecycle markers"
+    );
+    let roots: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1 AND m.previous_part_id IS NULL ORDER BY m.id"
+    ).bind(atuin_binding(&path)).fetch_all(&mut c).await.unwrap();
+    assert_eq!(
+        roots.len(),
+        2,
+        "the forced reread retains a second independent root sequence for the same native input"
+    );
     t.admin(&["unhide", &id.to_string()]);
+    let before_replay = support::marker_count(&mut c).await;
+    assert_eq!(
+        before_replay,
+        initial_markers + 3,
+        "unhide has one lifecycle position"
+    );
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
     assert_eq!(visible_a3(&mut c, &path).await, 1);
     assert_eq!(visible_a3(&mut c, &copy).await, 1);
+    let journals: Vec<(uuid::Uuid, i64)> = sqlx::query_as(
+        "SELECT s.operation_id,count(*) FROM core.replayed_sequences s JOIN core.operations o ON o.id=s.operation_id WHERE o.kind='replay' GROUP BY s.operation_id ORDER BY count(*),s.operation_id"
+    ).fetch_all(&mut c).await.unwrap();
     assert_eq!(
-        support::marker_count(&mut c).await,
-        4,
-        "hide, replay, unhide and replay each have a position"
+        journals.len(),
+        2,
+        "both explicit replay operations are retained"
+    );
+    assert_eq!(
+        journals.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+        vec![1, 2],
+        "replay journals one root initially and both retained roots after rereading"
+    );
+    let replayed_roots: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT first_part FROM core.replayed_sequences WHERE operation_id=$1 ORDER BY first_part",
+    )
+    .bind(journals[1].0)
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
+    assert_eq!(
+        replayed_roots, roots,
+        "the last replay journal covers the exact original-input roots, never the independent copy"
+    );
+    assert_eq!(
+        support::marker_count(&mut c).await - before_replay,
+        journals[1].1,
+        "each replay root, including an empty live scope, has one lifecycle position"
+    );
+    let reasons: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT reason,count(DISTINCT commit_seq) FROM audit.archive_changes WHERE reason IN ('hide','replay','unhide') GROUP BY reason ORDER BY reason"
+    ).fetch_all(&mut c).await.unwrap();
+    assert_eq!(
+        reasons,
+        vec![
+            ("hide".into(), 1),
+            ("replay".into(), 2),
+            ("unhide".into(), 1)
+        ],
+        "typed history identifies hide, both nonempty replay scopes and unhide; the last replay's empty second scope still retains its marker"
+    );
+    assert_eq!(
+        support::marker_count(&mut c).await - initial_markers,
+        2 + journals.iter().map(|(_, count)| *count).sum::<i64>(),
+        "markers cover hide/unhide and every journaled replay sequence"
     );
     consistent(&mut c).await;
 }

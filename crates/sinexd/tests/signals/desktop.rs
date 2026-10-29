@@ -219,7 +219,7 @@ async fn no_server_retry_keeps_frozen_input_parents_across_an_unchanged_evaluati
     let mut watched = rule("held-group", "notice");
     watched["interrupt"] = json!(true);
     watched["query"] = json!(
-        "events where event_type = operator.mark AND text = \"synthetic watched input\" group by event_type count"
+        "events where event_type = operator.mark AND payload.text = \"synthetic watched input\" group by event_type count"
     );
     ok(
         &socket,
@@ -235,7 +235,30 @@ async fn no_server_retry_keeps_frozen_input_parents_across_an_unchanged_evaluati
         &socket,
         json!({"method":"mark","text":"synthetic watched input"}),
     );
-    wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'reason'='no_notification_server'",1).await;
+    let matched = ok(&socket, json!({"method":"query","query":watched["query"]}));
+    assert_eq!(
+        matched["total"], 1,
+        "the exact watched payload creates one group: {matched}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.desktop_receipt' AND payload->'receipt'->'outcome'->>'reason'='no_notification_server'")
+            .fetch_one(&mut conn).await.unwrap();
+        if count >= 1 {
+            break;
+        }
+        process.running();
+        if Instant::now() >= deadline {
+            let rows: Vec<(String, Value)> = sqlx::query_as(
+                "SELECT DISTINCT ON(event_type) event_type,payload FROM core.events WHERE event_type IN ('signal.evaluation','signal.delivery','signal.handoff','signal.desktop_receipt') ORDER BY event_type,commit_seq DESC"
+            ).fetch_all(&mut conn).await.unwrap();
+            panic!(
+                "the matched group produced no NoServer receipt; signal readings: {rows:?}; daemon: {}",
+                process.log()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let decision: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM core.events WHERE event_type='signal.delivery'")
             .fetch_one(&mut conn)
