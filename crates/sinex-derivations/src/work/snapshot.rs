@@ -1,10 +1,10 @@
-//! Projection of Polylogue's atomic version-3 work snapshot. The full typed
+//! Projection of Polylogue's atomic version-4 work snapshot. The full typed
 //! producer record stays in the sole parent; this decoder names only fields
 //! consumed by work attribution.
 use super::*;
 use serde::Deserialize;
 
-const REDUCER_VERSION: u32 = 1;
+const REDUCER_VERSION: u32 = 2;
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -50,7 +50,13 @@ struct Message {
 }
 #[derive(Deserialize)]
 struct Call {
+    entry_id:String,
     call: String,
+    physical_session:String,
+    native_call_id:Option<String>,
+    original_block:Option<u64>,
+    #[serde(default)] unavailable:Vec<String>,
+    outcome_reason:Option<String>,
     session: String,
     action: String,
     path: Option<String>,
@@ -60,7 +66,7 @@ struct Call {
     result_at: Option<Timestamp>,
     #[serde(default)]
     result_at_evidence: WorkTimeEvidence,
-    outcome: Outcome,
+    outcome: Option<Outcome>,
     revision: Option<String>,
     check_name: Option<String>,
     check_passed: Option<bool>,
@@ -70,11 +76,11 @@ struct Call {
 enum Outcome { Ok, Error { #[serde(rename="reason")] _reason: Option<Value> }, NoResult, Unknown { #[serde(rename="reason")] _reason: String } }
 #[derive(Deserialize)]
 struct Turn { turn:String,session:String,start:Option<Timestamp>,#[serde(default)]start_evidence:WorkTimeEvidence,
-    end:Option<Timestamp>,#[serde(default)]end_evidence:WorkTimeEvidence,errors:u64 }
+    end:Option<Timestamp>,#[serde(default)]end_evidence:WorkTimeEvidence,errors:u64,#[serde(default)]unavailable:Vec<String> }
 
 struct Entry {
     kind: &'static str, id: String, at: Option<Timestamp>,at_evidence:WorkTimeEvidence,end:Option<Timestamp>,end_evidence:Option<WorkTimeEvidence>,
-    agency: Agency, action: String, path: Option<String>, failed: bool,
+    agency: Agency, action: String, path: Option<String>, failed: Option<bool>,details:Option<Value>,
     revision: Option<String>, check_name: Option<String>, check_passed: Option<bool>,
 }
 #[allow(clippy::too_many_arguments)]
@@ -92,11 +98,16 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
     let Some(session)=key["session"].as_str().filter(|id|!id.is_empty()) else {return Computed::default()};
     let mut snapshots:Vec<_>=inputs.iter().filter(|event|event.event_type=="polylogue.work_snapshot"&&event.payload["session"]==session).collect();
     snapshots.sort_by_cached_key(|event|stable(event));
-    let Some(parent)=snapshots.first().copied() else{return Computed::default()};
-    // Reading all versions is intentional: an unsupported version is visible,
-    // rather than silently falling back to a stale supported snapshot.
-    if let Some(unsupported)=snapshots.iter().find(|event|event.kind_version!=3||event.payload["reducer_version"].as_u64()!=Some(u64::from(REDUCER_VERSION))) {
-        return unavailable(unsupported,session,unsupported.payload["reducer_version"].as_u64().and_then(|v|u32::try_from(v).ok()),"unsupported_reducer_or_kind_version")
+    let Some(first)=snapshots.first().copied() else{return Computed::default()};
+    // Older reducers remain raw and citable. The highest explicit reducer
+    // controls the session, including an unsupported or retired replacement.
+    let Some(highest)=snapshots.iter().map(|event|event.payload["reducer_version"].as_u64()).collect::<Option<Vec<_>>>().and_then(|versions|versions.into_iter().max()) else {
+        return unavailable(first,session,None,"invalid_snapshot_reducer")
+    };
+    snapshots.retain(|event|event.payload["reducer_version"].as_u64()==Some(highest));
+    let parent=snapshots[0];
+    if highest!=u64::from(REDUCER_VERSION)||snapshots.iter().any(|event|event.kind_version!=4) {
+        return unavailable(parent,session,u32::try_from(highest).ok(),"unsupported_reducer_or_kind_version")
     }
     if snapshots.len()!=1{return unavailable(parent,session,Some(REDUCER_VERSION),"conflicting_live_snapshots")}
     let envelope:Envelope=match serde_json::from_value(parent.payload.clone()) {
@@ -117,25 +128,30 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
         return Computed{outputs:vec![coverage(parent,session,Some(REDUCER_VERSION),WorkCoverageState::Complete,Some(0),Some(0),Some(0),[("retired".into(),1)].into())],..Default::default()}
     }
     let sparse=snapshot.sources.iter().filter(|source|source.selected&&source.projection.as_ref().is_some_and(|projection|projection.block_ordinals.len()as u64!=projection.block_count||projection.block_ordinals.iter().any(|ordinal|*ordinal>=projection.block_count)||projection.block_ordinals.iter().collect::<BTreeSet<_>>().len()!=projection.block_ordinals.len())).count();
-    let mut entries=Vec::new();let mut uncertain_outcomes=0u64;
+    let mut entries=Vec::new();let mut uncertain_outcomes=0u64;let mut call_unavailable=0u64;let mut turn_unavailable=0u64;
     for message in snapshot.messages {
         if message.role=="user"&&message.written_by=="human"&&message.prompt_kind.as_deref()==Some("prose")
             &&metadata["kind"]=="main"&&metadata.get("mode").is_none_or(Value::is_null) {
             entries.push(Entry{kind:"message",id:message.message,at:message.at,at_evidence:message.at_evidence,end:None,end_evidence:None,agency:Agency::Operator,
-                action:"prompt".into(),path:None,failed:false,revision:None,check_name:None,check_passed:None});
+                action:"prompt".into(),path:None,failed:None,details:None,revision:None,check_name:None,check_passed:None});
         }
     }
     for call in snapshot.calls {
         if call.session!=session{return unavailable(parent,session,Some(REDUCER_VERSION),"entry_session_mismatch")}
-        uncertain_outcomes+=u64::from(matches!(&call.outcome,Outcome::Unknown{..}));
-        let failed=matches!(&call.outcome,Outcome::Error{..})||call.check_passed==Some(false);
-        entries.push(Entry{kind:"call",id:call.call,at:call.at,at_evidence:call.at_evidence,end:call.result_at,end_evidence:Some(call.result_at_evidence),agency:Agency::Delegated,
-            action:call.action,path:call.path,failed,revision:call.revision,check_name:call.check_name,check_passed:call.check_passed});
+        uncertain_outcomes+=u64::from(!matches!(&call.outcome,Some(Outcome::Ok|Outcome::Error{..})));
+        call_unavailable+=u64::from(!call.unavailable.is_empty());
+        let failed=if call.check_passed==Some(false)||matches!(&call.outcome,Some(Outcome::Error{..})){Some(true)}
+            else if matches!(&call.outcome,Some(Outcome::Ok)){Some(false)}else{None};
+        let details=Some(json!({"call":call.call,"physical_session":call.physical_session,"native_call_id":call.native_call_id,"original_block":call.original_block,"outcome_reason":call.outcome_reason,"unavailable":call.unavailable}));
+        entries.push(Entry{kind:"call",id:call.entry_id,at:call.at,at_evidence:call.at_evidence,end:call.result_at,end_evidence:Some(call.result_at_evidence),agency:Agency::Delegated,
+            action:call.action,path:call.path,failed,details,revision:call.revision,check_name:call.check_name,check_passed:call.check_passed});
     }
     for turn in snapshot.turns {
         if turn.session!=session{return unavailable(parent,session,Some(REDUCER_VERSION),"entry_session_mismatch")}
+        turn_unavailable+=u64::from(!turn.unavailable.is_empty());
+        let failed=if turn.errors>0{Some(true)}else if turn.unavailable.is_empty(){Some(false)}else{None};
         entries.push(Entry{kind:"turn",id:turn.turn,at:turn.start,at_evidence:turn.start_evidence,end:turn.end,end_evidence:Some(turn.end_evidence),agency:Agency::Delegated,
-            action:"turn".into(),path:None,failed:turn.errors>0,revision:None,check_name:None,check_passed:None});
+            action:"turn".into(),path:None,failed,details:None,revision:None,check_name:None,check_passed:None});
     }
     let mut identities=BTreeSet::new();
     if entries.iter().any(|entry|entry.id.is_empty()||!identities.insert((entry.kind,entry.id.clone()))) {
@@ -149,6 +165,8 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
     if !snapshot.unavailable.is_empty(){reasons.insert("snapshot_source_unavailable".into(),snapshot.unavailable.len()as u64);}
     if sparse>0 {reasons.insert("sparse_selected_source".into(),sparse as u64);}
     if uncertain_outcomes>0 {reasons.insert("tool_outcome_unknown".into(),uncertain_outcomes);}
+    if call_unavailable>0 {reasons.insert("tool_entry_unavailable".into(),call_unavailable);}
+    if turn_unavailable>0 {reasons.insert("turn_entry_unavailable".into(),turn_unavailable);}
     if snapshot.session.is_none(){reasons.insert("session_metadata_unavailable".into(),1);}
     entries.sort_by(|left,right|(left.at,left.kind,&left.id).cmp(&(right.at,right.kind,&right.id)));
     for entry in entries {
@@ -158,7 +176,7 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
         let ended_at=entry.end_evidence.as_ref().and_then(|evidence|evidence.instant(entry.end)).filter(|end|*end>=at);
         if entry.agency==Agency::Delegated&&ended_at.is_none(){*reasons.entry("entry_duration_unknown".into()).or_default()+=1;}
         let identity=json!([session,entry.kind,entry.id]).to_string();
-        let mut citation=evidence(parent);citation.record=format!("{}#{identity}",citation.record);
+        let mut citation=evidence(parent);citation.record=format!("{}#{}",citation.record,json!({"identity":identity,"entry":entry.details}));
         outputs.push(derived(&WorkAct {
             act:identity,session:session.into(),episode:episode.clone(),objective:objective.clone(),
             label:objective.as_ref().map(|objective|objective.reference.clone()),label_source:evidence(parent),

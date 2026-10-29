@@ -87,7 +87,9 @@ pub struct WorkAct {
     pub agency: Agency,
     pub action: String,
     pub path: Option<String>,
-    pub failed: bool,
+    /// Unknown until native outcome or check evidence establishes it.
+    #[serde(default)]
+    pub failed: Option<bool>,
     #[serde(default)]
     pub revision: Option<String>,
     #[serde(default)]

@@ -45,7 +45,7 @@ mod snapshot;
 pub struct WorkActs;
 impl Keyed for WorkActs {
     const NAME: &'static str = "work.acts";
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 6;
     const INPUTS: &'static [&'static str] = &["polylogue.work_snapshot"];
     const OUTPUTS: &'static [&'static str] = &["work.act", "work.coverage"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
@@ -411,7 +411,7 @@ impl Keyed for ContextPacks {
                     open_failures: acts
                         .iter()
                         .filter(|(_, act)| {
-                            act.failed
+                            act.failed == Some(true)
                                 && !acts.iter().any(|(_, later)| {
                                     later.at > act.at
                                         && later.check_passed == Some(true)

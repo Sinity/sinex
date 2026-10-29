@@ -45,11 +45,11 @@ fn record(kind: &str, payload: Value, anchor: u64) -> Event {
 }
 fn session(id: &str, branch: Option<&str>) -> Event {
     let mut event=record("polylogue.work_snapshot",json!({
-        "session":id,"reducer_version":1,"source_position":1,"complete":true,
+        "session":id,"reducer_version":2,"source_position":1,"complete":true,
         "repo":"synthetic/repo","branch":branch,"machine":"box","kind":"main","mode":null,"cwd":["/synthetic/repo"],
         "objectives":[],"record":{"product":"work_snapshot","snapshot":{
-            "reducer_version":1,"position":1,"session_id":id,"session":{"id":id},"retired":false,"unavailable":[],"messages":[],"calls":[],"turns":[],"sources":[],"native":[]}}}),0);
-    event.kind_version=3;
+            "reducer_version":2,"position":1,"session_id":id,"session":{"id":id},"retired":false,"unavailable":[],"messages":[],"calls":[],"turns":[],"sources":[],"native":[]}}}),0);
+    event.kind_version=4;
     event
 }
 fn fixture_evidence(at:&Value)->Value {
@@ -59,6 +59,10 @@ fn fixture_evidence(at:&Value)->Value {
 fn qualify_fixture_times(snapshot:&mut Event){
     for (kind,fields)in [("messages",vec![("at","at_evidence")]),("calls",vec![("at","at_evidence"),("result_at","result_at_evidence")]),("turns",vec![("start","start_evidence"),("end","end_evidence")])]{
         for entry in snapshot.payload["record"]["snapshot"][kind].as_array_mut().unwrap(){
+            if kind=="calls" {
+                if entry.get("entry_id").is_none(){entry["entry_id"]=json!(format!("fixture-entry:{}:{}",entry["session"],entry["call"]));}
+                if entry.get("physical_session").is_none(){entry["physical_session"]=entry["session"].clone();}
+            }
             for (field,evidence)in &fields{if entry.get(*evidence).is_none(){entry[*evidence]=fixture_evidence(&entry[*field]);}}
         }
     }
@@ -72,6 +76,8 @@ fn tool(payload:Value,anchor:u64)->Event {
     let id=payload["session"].as_str().unwrap().to_owned();let mut snapshot=session(&id,None);
     let mut call=payload;
     if call.get("call").is_none(){call["call"]=json!(format!("{id}/{anchor}"));}
+    if call.get("entry_id").is_none(){call["entry_id"]=json!(format!("fixture-entry:{id}:{anchor}"));}
+    if call.get("physical_session").is_none(){call["physical_session"]=json!(id);}
     if call.get("outcome").is_none(){call["outcome"]=json!({"kind":"no_result"});}
     else if call["outcome"].is_string(){call["outcome"]=json!({"kind":call["outcome"]});}
     snapshot.payload["record"]["snapshot"]["calls"]=json!([call]);qualify_fixture_times(&mut snapshot);snapshot
@@ -630,8 +636,8 @@ fn empty_snapshot_and_newer_unsupported_reducer_do_not_fall_back_to_old_acts(){
     assert_eq!(invalid[0].payload["state"],"unavailable");
     let old=complete_snapshots(&[empty,prompt("atomic",0)]).remove(0);
     let mut unsupported=old.clone();unsupported.id=sinex_model::EventId::new();
-    unsupported.payload["reducer_version"]=json!(2);
-    unsupported.payload["record"]["snapshot"]["reducer_version"]=json!(2);
+    unsupported.payload["reducer_version"]=json!(3);
+    unsupported.payload["record"]["snapshot"]["reducer_version"]=json!(3);
     let outputs=Keyed::compute(&WorkActs,&json!({"session":"atomic"}),&[old,unsupported],&env).outputs;
     assert_eq!(outputs.len(),1);
     let coverage=outputs[0].payload_as::<WorkCoverage>().unwrap();
@@ -655,10 +661,38 @@ fn source_time_quality_periods_sparse_coverage_and_retirement_remain_explicit(){
     let coverage=computed.outputs.iter().find_map(|event|event.payload_as::<WorkCoverage>()).unwrap();
     assert_eq!(coverage.state,WorkCoverageState::Partial);
     assert_eq!(coverage.reasons["entry_time_not_instant"],1);assert_eq!(coverage.reasons["sparse_selected_source"],1);
-    snapshot.payload["record"]["snapshot"]=json!({"reducer_version":1,"position":1,"session_id":"a","session":null,"retired":true,"unavailable":[],"messages":[],"calls":[],"turns":[],"sources":[],"native":[]});
+    snapshot.payload["record"]["snapshot"]=json!({"reducer_version":2,"position":1,"session_id":"a","session":null,"retired":true,"unavailable":[],"messages":[],"calls":[],"turns":[],"sources":[],"native":[]});
     for field in ["repo","branch","kind","mode","machine","git_identity","terminal","boot_id"]{snapshot.payload[field]=Value::Null;}
     snapshot.payload["objectives"]=json!([]);
     let retired=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[snapshot],&env).outputs;
     assert_eq!(retired.len(),1);let coverage=retired[0].payload_as::<WorkCoverage>().unwrap();
     assert_eq!(coverage.state,WorkCoverageState::Complete);assert_eq!(coverage.eligible_entries,Some(0));assert_eq!(coverage.reasons["retired"],1);
+}
+
+
+#[devkit::test]
+fn native_redefinition_entries_stay_distinct_and_ambiguous_failure_stays_unknown(){
+    let env=Env::at(at(100),sinex_model::time_settings::TimeSettings::new("UTC",0,0).unwrap());
+    let mut snapshot=session("a",Some("task"));
+    snapshot.payload["record"]["snapshot"]["calls"]=json!([
+      {"entry_id":"native-definition:a:0","call":"display:same","session":"a","physical_session":"physical:one","native_call_id":"same","original_block":0,"unavailable":["ambiguous_native_call_id"],"action":"shell","at":at(1),"result_at":at(2),"outcome":null,"outcome_reason":"ambiguous_result_evidence"},
+      {"entry_id":"native-definition:a:1","call":"display:same","session":"a","physical_session":"physical:one","native_call_id":"same","original_block":1,"unavailable":["ambiguous_native_call_id"],"action":"shell","at":at(3),"result_at":at(4),"outcome":null,"outcome_reason":"ambiguous_result_evidence"}]);
+    qualify_fixture_times(&mut snapshot);
+    let computed=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[snapshot.clone()],&env);
+    let acts:Vec<_>=computed.outputs.iter().filter(|event|event.event_type=="work.act").collect();assert_eq!(acts.len(),2);assert_ne!(acts[0].payload["act"],acts[1].payload["act"]);
+    for act in acts{assert!(act.payload["failed"].is_null());let evidence=act.payload["evidence"]["record"].as_str().unwrap();assert!(evidence.contains("display:same"));assert!(evidence.contains("physical:one"));assert!(evidence.contains("native-definition:"));}
+    let coverage=computed.outputs.iter().find_map(|event|event.payload_as::<WorkCoverage>()).unwrap();assert_eq!(coverage.state,WorkCoverageState::Partial);assert_eq!(coverage.reasons["tool_outcome_unknown"],2);assert_eq!(coverage.reasons["tool_entry_unavailable"],2);
+    snapshot.payload["record"]["snapshot"]["calls"][1]["entry_id"]=snapshot.payload["record"]["snapshot"]["calls"][0]["entry_id"].clone();
+    let invalid=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[snapshot],&env);assert_eq!(invalid.outputs.len(),1);assert_eq!(invalid.outputs[0].payload["state"],"unavailable");
+}
+
+#[devkit::test]
+fn highest_reducer_controls_retirement_while_older_raw_snapshot_remains_citable(){
+    let env=Env::at(at(100),sinex_model::time_settings::TimeSettings::new("UTC",0,0).unwrap());let current=prompt("a",1);
+    let mut old=current.clone();old.id=sinex_model::EventId::new();old.kind_version=3;old.payload["reducer_version"]=json!(1);old.payload["record"]["snapshot"]["reducer_version"]=json!(1);
+    let only_old=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[old.clone()],&env);assert_eq!(only_old.outputs[0].payload["state"],"unavailable");
+    let selected=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[old.clone(),current.clone()],&env);let acts:Vec<_>=selected.outputs.iter().filter(|event|event.event_type=="work.act").collect();assert_eq!(acts.len(),1);assert_eq!(acts[0].origin,Origin::Derived{parents:vec![current.id]});
+    let mut retired=current;retired.payload["record"]["snapshot"]=json!({"reducer_version":2,"position":1,"session_id":"a","session":null,"retired":true,"unavailable":[],"messages":[],"calls":[],"turns":[],"sources":[],"native":[]});
+    for field in ["repo","branch","kind","mode","machine","git_identity","terminal","boot_id"]{retired.payload[field]=Value::Null;}retired.payload["objectives"]=json!([]);
+    let cleared=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[old,retired],&env);assert_eq!(cleared.outputs.len(),1);assert_eq!(cleared.outputs[0].payload["eligible_entries"],0);assert_eq!(cleared.outputs[0].payload["state"],"complete");
 }
