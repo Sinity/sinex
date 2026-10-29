@@ -22,7 +22,7 @@ impl ExactInputs {
             SELECT commit_seq FROM(SELECT commit_seq,sum(size) OVER(ORDER BY commit_seq)-size AS before
               FROM(SELECT e.commit_seq,pg_column_size(e)::bigint AS size FROM core.derivation_events e
                 WHERE e.id=ANY($1) AND e.commit_seq>$2 AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
-                ORDER BY e.commit_seq LIMIT $3) selected) bounded WHERE before<$4) page ON page.commit_seq=e.commit_seq
+                ORDER BY e.commit_seq LIMIT $3) selected) bounded WHERE before<$4::bigint) page ON page.commit_seq=e.commit_seq
           ORDER BY e.commit_seq"#,&self.ids,self.after,self.count,self.bytes).fetch_all(conn).await?;
         if rows.is_empty(){self.finished=true;return Ok(None)}
         let mut page=Vec::with_capacity(rows.len());
