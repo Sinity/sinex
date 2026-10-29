@@ -21,14 +21,14 @@ pub async fn lock_epoch(conn:&mut PgConnection)->Result<Epoch>{
     Ok(Epoch{desired,active})
 }
 #[derive(sqlx::FromRow)]
-struct Input {id:Uuid,commit_seq:i64,source:String,event_type:String,kind_version:i64,payload:Value,class:String,equivalence_key:Option<String>,parents:Option<Vec<Uuid>>,original:bool,custody:Option<bool>,basis_epoch:Option<i64>,legacy_changed:bool,search:String}
+struct Input {id:Uuid,commit_seq:i64,source:String,event_type:String,kind_version:i64,payload:Value,class:String,equivalence_key:Option<String>,parents:Option<Vec<Uuid>>,original:bool,custody:Option<bool>,basis_epoch:Option<i64>,legacy_changed:bool,kind_known:bool,search:Option<String>}
 const INPUT:&str=r#"SELECT e.id,e.commit_seq,e.source,e.event_type,e.kind_version,e.payload,coalesce(o.baseline_class,e.class) AS class,
  coalesce(o.equivalence_key,e.equivalence_key) AS equivalence_key,e.parents,coalesce(o.recoverable,false) AS original,o.recoverable AS custody,o.basis_epoch,
  (o.event_id IS NOT NULL AND NOT o.recoverable) OR EXISTS(SELECT 1 FROM privacy.rules r WHERE r.source=e.source AND (r.event_type IS NULL OR r.event_type=e.event_type))
  OR EXISTS(SELECT 1 FROM privacy.source_classes f WHERE f.source=e.source)
  OR EXISTS(SELECT 1 FROM core.runs r WHERE r.id=e.run_id AND r.privacy_rules_seq>0) AS legacy_changed,
- k.search FROM core.events e LEFT JOIN privacy.original_events o ON o.event_id=e.id
- JOIN registry.event_types k ON k.name=e.event_type AND k.version=e.kind_version"#;
+ (k.name IS NOT NULL) AS kind_known,k.search FROM core.events e LEFT JOIN privacy.original_events o ON o.event_id=e.id
+ LEFT JOIN registry.event_types k ON k.name=e.event_type AND k.version=e.kind_version"#;
 
 /// The clone contains only fields RuleSet reads. Original metadata is never
 /// replaced by this selector-only value or written back to core.events.
@@ -43,6 +43,8 @@ fn transform(input:&Input,rules:&privacy::RuleSet)->Result<Transformed>{
     Ok(Transformed{payload:event.payload,class:event.class,key:event.equivalence_key.map(|key|key.0),changed,state:"complete",trace:applied.trace})
 }
 async fn project(conn:&mut PgConnection,input:&Input,rules:&privacy::RuleSet,epoch:i64)->Result<()> {
+    if !input.kind_known{return Err(Error::Invalid("privacy_projection_kind_unavailable".into()))}
+    let search=input.search.as_deref().unwrap_or("none");
     if input.custody.is_none() {
         // This decision is made once, while retained history is available.
         // Rule deletion later cannot turn an unknown original into custody.
@@ -61,9 +63,9 @@ async fn project(conn:&mut PgConnection,input:&Input,rules:&privacy::RuleSet,epo
     sqlx::query("INSERT INTO privacy.event_outputs(event_id,epoch,payload,class,equivalence_key,changed,state,trace) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(event_id) DO UPDATE SET epoch=EXCLUDED.epoch,payload=EXCLUDED.payload,class=EXCLUDED.class,equivalence_key=EXCLUDED.equivalence_key,changed=EXCLUDED.changed,state=EXCLUDED.state,trace=EXCLUDED.trace")
         .bind(input.id).bind(epoch).bind(&payload).bind(privacy::class_name(class)).bind(key).bind(changed).bind(state).bind(serde_json::to_value(trace).map_err(|error|Error::Invalid(error.to_string()))?).execute(&mut *conn).await?;
     sqlx::query("DELETE FROM core.search_text WHERE event_id=$1").bind(input.id).execute(&mut *conn).await?;
-    if state=="complete"&&class!=Class::Sealed&&input.search!="none" {
+    if state=="complete"&&class!=Class::Sealed&&search!="none" {
         let text=sinex_model::query::text::payload_text(&payload);
-        if !text.is_empty(){sqlx::query("INSERT INTO core.search_text(event_id,text,trigram_indexed) VALUES($1,$2,$3)").bind(input.id).bind(text).bind(input.search=="words_and_trigram").execute(&mut *conn).await?;}
+        if !text.is_empty(){sqlx::query("INSERT INTO core.search_text(event_id,text,trigram_indexed) VALUES($1,$2,$3)").bind(input.id).bind(text).bind(search=="words_and_trigram").execute(&mut *conn).await?;}
     }
     Ok(())
 }
@@ -117,21 +119,24 @@ async fn build_page(conn:&mut PgConnection)->Result<bool> {
     let mut tx=conn.begin().await?;
     let policy=lock_epoch(&mut tx).await?;
     sqlx::query("INSERT INTO privacy.output_builds(epoch,after_seq) VALUES($1,0) ON CONFLICT DO NOTHING").bind(policy.desired).execute(&mut *tx).await?;
-    let after:i64=sqlx::query_scalar("SELECT after_seq FROM privacy.output_builds WHERE epoch=$1 FOR UPDATE").bind(policy.desired).fetch_one(&mut *tx).await?;
+    let (after,after_id):(i64,Option<Uuid>)=sqlx::query_as("SELECT after_seq,after_id FROM privacy.output_builds WHERE epoch=$1 FOR UPDATE").bind(policy.desired).fetch_one(&mut *tx).await?;
     let head:i64=sqlx::query_scalar("SELECT value FROM core.counters WHERE name='commit_seq'").fetch_one(&mut *tx).await?;
-    if policy.ready()&&after>=head {tx.commit().await?;return Ok(true)}
+    if policy.ready()&&after>=head&&after_id.is_none() {tx.commit().await?;return Ok(true)}
     let hash_key=privacy::hash_key(&mut tx).await?;
     let mut cache=privacy::Cache::new(hash_key);
     let rules=cache.load(&mut tx).await?.clone();
-    let sql=format!("{INPUT} JOIN (SELECT id FROM (SELECT id,commit_seq,sum(pg_column_size(e)::bigint) OVER(ORDER BY commit_seq)-pg_column_size(e)::bigint AS before FROM (SELECT * FROM core.events WHERE commit_seq>$1 AND commit_seq<=$3 ORDER BY commit_seq LIMIT 1000) e) bounded WHERE before<$2) page ON page.id=e.id ORDER BY e.commit_seq");
-    let inputs=sqlx::query_as::<_,Input>(&sql).bind(after).bind(crate::PAGE_BYTES).bind(head).fetch_all(&mut *tx).await?;
-    let covered=inputs.last().map_or(head,|row|row.commit_seq);
+    let sql=format!("{INPUT} JOIN (SELECT id FROM (SELECT id,commit_seq,sum(pg_column_size(e)::bigint) OVER(ORDER BY commit_seq,id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)-pg_column_size(e)::bigint AS before FROM (SELECT * FROM core.events WHERE (commit_seq>$1 OR (commit_seq=$1 AND $4::uuid IS NOT NULL AND id>$4)) AND commit_seq<=$3 ORDER BY commit_seq,id LIMIT 1000) e) bounded WHERE before<$2::bigint) page ON page.id=e.id ORDER BY e.commit_seq,e.id");
+    let inputs=sqlx::query_as::<_,Input>(&sql).bind(after).bind(crate::PAGE_BYTES).bind(head).bind(after_id).fetch_all(&mut *tx).await?;
+    // NULL is a complete-position fence, established only by an empty page.
+    // A last row at the sampled head can still have siblings on the next page.
+    let finished=inputs.is_empty();
+    let (covered,covered_id)=inputs.last().map_or((head,None),|row|(row.commit_seq,Some(row.id)));
     // The same lock order is used by admission/search and excision.
     sqlx::query("LOCK TABLE core.search_text IN SHARE ROW EXCLUSIVE MODE").execute(&mut *tx).await?;
     for input in inputs{project(&mut tx,&input,&rules,policy.desired).await?;}
-    sqlx::query("UPDATE privacy.output_builds SET after_seq=$2 WHERE epoch=$1").bind(policy.desired).bind(covered).execute(&mut *tx).await?;
+    sqlx::query("UPDATE privacy.output_builds SET after_seq=$2,after_id=$3 WHERE epoch=$1").bind(policy.desired).bind(covered).bind(covered_id).execute(&mut *tx).await?;
     tx.commit().await?;
-    if covered<head{return Ok(false)}
+    if !finished{return Ok(false)}
     let mut activation=conn.begin().await?;
     // Exclusive only across the scalar head comparison and activation CAS.
     let current:(i64,i64)=sqlx::query_as("SELECT desired_epoch,active_epoch FROM privacy.policy_state WHERE id FOR UPDATE").fetch_one(&mut *activation).await?;

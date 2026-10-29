@@ -5,7 +5,7 @@ pub(crate) const STATE:&str="CREATE TABLE privacy.policy_state (
   active_epoch bigint NOT NULL CHECK (active_epoch >= 0)
 )";
 pub(crate) const INIT:&str="INSERT INTO privacy.policy_state(id,desired_epoch,active_epoch) VALUES(true,0,0)";
-pub(crate) const BUILDS:&str="CREATE TABLE privacy.output_builds (\n  epoch bigint PRIMARY KEY,\n  after_seq bigint NOT NULL\n)";
+pub(crate) const BUILDS:&str="CREATE TABLE privacy.output_builds (\n  epoch bigint PRIMARY KEY,\n  after_seq bigint NOT NULL,\n  after_id uuid\n)";
 pub(crate) const ORIGINALS:&str="CREATE TABLE privacy.original_events (
   event_id uuid PRIMARY KEY,
   baseline_class text NOT NULL,

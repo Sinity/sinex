@@ -132,3 +132,54 @@ async fn transformed_source_key_is_not_resolved_from_the_private_original(db:dev
     let shown=crate::query::show(&mut conn,&Reference::Event(id.0)).await.unwrap();assert_eq!(shown["payload"]["native_id"],"[masked]");
     let projected_ref=Reference::Key{source:"fixture.derived".into(),event_type:"command.executed".into(),key:shown["key"].as_str().unwrap().into()};assert_eq!(crate::query::resolve(&mut conn,&projected_ref).await.unwrap(),id.0);
 }
+
+#[devkit::test]
+async fn populated_upgrade_build_resumes_retained_position_siblings_before_activation(db:devkit::pg::TestDatabase){
+    const N:i64=1_005;
+    let url=db.url(None);let mut conn=AdmissionContext::connect(&url).await.unwrap();
+    let records=(0..N).map(|n|document("fixture.upgrade",&format!("preserved row {n}"))).collect();
+    admit(&mut conn,records).await;
+    // Normal admission gives events distinct positions. Retained storage and
+    // the canonical feed also permit ties; exercise that synthetic shape.
+    sqlx::query("UPDATE core.events SET commit_seq=$1 WHERE source='fixture.upgrade'").bind(N).execute(&mut *conn).await.unwrap();
+    sqlx::query("DELETE FROM privacy.event_outputs").execute(&mut *conn).await.unwrap();
+    sqlx::query("DELETE FROM privacy.original_events").execute(&mut *conn).await.unwrap();
+    sqlx::query("DELETE FROM privacy.output_builds").execute(&mut *conn).await.unwrap();
+    sqlx::query("UPDATE privacy.policy_state SET desired_epoch=1,active_epoch=0 WHERE id").execute(&mut *conn).await.unwrap();
+    assert!(!build_page(&mut conn).await.unwrap());
+    assert_eq!(epoch(&mut conn).await.unwrap(),Epoch{desired:1,active:0});
+    let (after,id):(i64,Option<Uuid>)=sqlx::query_as("SELECT after_seq,after_id FROM privacy.output_builds WHERE epoch=1").fetch_one(&mut *conn).await.unwrap();assert_eq!(after,N);assert!(id.is_some());
+    let projected:i64=sqlx::query_scalar("SELECT count(*) FROM privacy.event_outputs WHERE epoch=1").fetch_one(&mut *conn).await.unwrap();assert_eq!(projected,1000);
+    // New admissions project the desired epoch while the bounded build runs.
+    admit(&mut conn,vec![document("fixture.upgrade","admitted during build")]).await;
+    drop(conn);let mut conn=AdmissionContext::connect(&url).await.unwrap();
+    assert!(!build_page(&mut conn).await.unwrap());
+    assert_eq!(epoch(&mut conn).await.unwrap(),Epoch{desired:1,active:0},"last row at head does not prove its position complete");
+    assert!(build_page(&mut conn).await.unwrap());assert_eq!(epoch(&mut conn).await.unwrap(),Epoch{desired:1,active:1});
+    let (total,complete):(i64,i64)=sqlx::query_as("SELECT count(*),count(*) FILTER(WHERE o.epoch=1 AND o.state='complete') FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.source='fixture.upgrade'").fetch_one(&mut *conn).await.unwrap();assert_eq!((total,complete),(N+1,N+1));
+    let private:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE source='fixture.upgrade' AND payload->>'text' LIKE '%row%'").fetch_one(&mut *conn).await.unwrap();assert_eq!(private,N);
+    let indexed:i64=sqlx::query_scalar("SELECT count(*) FROM core.visible_search_text").fetch_one(&mut *conn).await.unwrap();assert_eq!(indexed,N+1);
+    ensure_current(&mut conn).await.unwrap();
+    let after_id:Option<Uuid>=sqlx::query_scalar("SELECT after_id FROM privacy.output_builds WHERE epoch=1").fetch_one(&mut *conn).await.unwrap();assert!(after_id.is_none());
+}
+
+#[devkit::test]
+async fn missing_retained_kind_keeps_epoch_stale_but_explicit_no_search_kind_projects(db:devkit::pg::TestDatabase){
+    let mut conn=AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let kind=KindRef{name:"fixture.no_search".into(),version:1};
+    let mut declaration=sinex_model::KindDeclaration::schemaless(kind.clone(),"fixture".into());declaration.search=sinex_model::Search::None;
+    sinex_schema::kinds::register(&mut conn,"fixture",&[declaration]).await.unwrap();
+    let mut event=document("fixture.upgrade","preserved original");event.event_type=kind.name.clone();event.kind_version=kind.version;
+    let id=event.id.0;admit(&mut conn,vec![event.clone()]).await;
+    sqlx::query("UPDATE privacy.policy_state SET desired_epoch=1,active_epoch=0 WHERE id").execute(&mut *conn).await.unwrap();ensure_current(&mut conn).await.unwrap();
+    assert_eq!(visible(&mut conn,id).await,event.payload);
+    let indexed:i64=sqlx::query_scalar("SELECT count(*) FROM core.search_text WHERE event_id=$1").bind(id).fetch_one(&mut *conn).await.unwrap();assert_eq!(indexed,0,"explicit no-search is a valid declaration");
+    // A retained event with an absent declaration must not vanish in an
+    // inner join and leave an apparently complete empty projection.
+    sqlx::query("UPDATE core.events SET kind_version=2 WHERE id=$1").bind(id).execute(&mut *conn).await.unwrap();
+    sqlx::query("UPDATE privacy.policy_state SET desired_epoch=2 WHERE id").execute(&mut *conn).await.unwrap();
+    let error=ensure_current(&mut conn).await.unwrap_err();assert!(error.to_string().contains("privacy_projection_kind_unavailable"));
+    assert_eq!(epoch(&mut conn).await.unwrap(),Epoch{desired:2,active:1});
+    let raw:Value=sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1").bind(id).fetch_one(&mut *conn).await.unwrap();assert_eq!(raw,event.payload);
+    let progress:Option<i64>=sqlx::query_scalar("SELECT after_seq FROM privacy.output_builds WHERE epoch=2").fetch_optional(&mut *conn).await.unwrap();assert!(progress.is_none(),"failed page progress rolled back");
+}
