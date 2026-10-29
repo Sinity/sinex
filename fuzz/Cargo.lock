@@ -583,6 +583,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#803a029a9579348709f9b626480d528b08f6572f"
 dependencies = [
  "blake3",
  "clap",
@@ -600,6 +601,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#803a029a9579348709f9b626480d528b08f6572f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1039,6 +1041,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#803a029a9579348709f9b626480d528b08f6572f"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -2824,7 +2827,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -3241,7 +3244,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -3500,7 +3503,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "credential-masking"
-version = "0.1.1"
