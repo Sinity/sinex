@@ -569,6 +569,67 @@ async fn verified_backfill_state(target: &Target, inputs: &Inputs) -> State {
     state
 }
 
+async fn material_ids(target: &Target, bindings: Option<&[String]>) -> Vec<uuid::Uuid> {
+    sqlx::query_scalar(
+        "SELECT m.id FROM raw.materials m LEFT JOIN raw.inputs i ON i.id=m.input_id WHERE $1::text[] IS NULL OR i.binding=ANY($1) ORDER BY m.id",
+    )
+    .bind(bindings)
+    .fetch_all(&mut target.connect().await)
+    .await
+    .unwrap()
+}
+
+/// An unchanged look still records coverage. Every extra material must be
+/// that exact binding's zero-event observation, while native IDs stay fixed.
+async fn checked_unchanged_coverage(target: &Target, bindings: &[String], before: &[uuid::Uuid]) {
+    let after = material_ids(target, None).await;
+    assert!(before.iter().all(|id| after.binary_search(id).is_ok()));
+    let added: Vec<_> = after
+        .into_iter()
+        .filter(|id| before.binary_search(id).is_err())
+        .collect();
+    assert_eq!(
+        added.len(),
+        bindings.len(),
+        "one coverage material per look"
+    );
+    let mut observed = std::collections::BTreeSet::new();
+    let mut conn = target.connect().await;
+    for material in added {
+        let (binding, kind, parser, manifest): (String, String, String, serde_json::Value) =
+            sqlx::query_as("SELECT i.binding,i.kind,m.parser,m.manifest FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1")
+                .bind(material).fetch_one(&mut conn).await.unwrap();
+        let native = binding.strip_prefix("source.observation:").unwrap();
+        assert!(bindings.iter().any(|expected| expected == native));
+        assert!(
+            observed.insert(native.to_owned()),
+            "one observation per binding"
+        );
+        assert_eq!(kind, "source-observation");
+        assert_eq!(parser, "source-observation");
+        assert_eq!(
+            manifest["media_type"],
+            "application/x-sinex-source-observation"
+        );
+        let events: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+            "SELECT source,event_type,payload FROM core.events WHERE material_id=$1",
+        )
+        .bind(material)
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(events.len(), 1, "coverage material has one exact reading");
+        let (source, kind, payload) = &events[0];
+        assert_eq!(source, "source.observation");
+        assert_eq!(kind, "source.coverage");
+        assert_eq!(payload["binding"], native);
+        assert_eq!(payload["host"], HOST);
+        assert_eq!(payload["observed_source"], native.split_once(':').unwrap().0);
+        assert_eq!(payload["events"], 0);
+        assert_eq!(payload["failures"], 0);
+    }
+}
+
 async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
     let reference = Target::new(&inputs);
     finish(&mut reference.backfill(&inputs));
@@ -593,12 +654,13 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
     };
     same(&actual, &expected, "after the restart");
     if verify {
+        let bindings = [
+            inputs.zsh_binding(),
+            format!("terminal.atuin-history:{}@{HOST}", inputs.atuin.display()),
+        ];
         for (owner, before) in [(&reference, &expected), (&target, &actual)] {
-            let material_count = scalar(
-                &mut owner.connect().await,
-                "SELECT count(*) FROM raw.materials",
-            )
-            .await;
+            let native_materials = material_ids(owner, Some(&bindings)).await;
+            let all_materials = material_ids(owner, None).await;
             finish(&mut owner.backfill(&inputs));
             consistent(owner).await;
             same(
@@ -607,14 +669,11 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
                 "unchanged future backfill",
             );
             assert_eq!(
-                scalar(
-                    &mut owner.connect().await,
-                    "SELECT count(*) FROM raw.materials"
-                )
-                .await,
-                material_count,
-                "unchanged input creates no replacement material"
+                material_ids(owner, Some(&bindings)).await,
+                native_materials,
+                "unchanged native inputs preserve every actual material identity"
             );
+            checked_unchanged_coverage(owner, &bindings, &all_materials).await;
         }
         // Both stores replay their own captured bytes and explicit predecessor
         // cuts. No cursor coordinate is borrowed from the other store.
