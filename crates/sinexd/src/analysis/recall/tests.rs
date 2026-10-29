@@ -84,7 +84,9 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
 }
 
 #[devkit::test]
-fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_definition() {
+async fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_definition(
+    db: devkit::pg::TestDatabase,
+) {
     let at = Timestamp::from_unix_secs(1_000).unwrap();
     let mut request = AnalysisRequest {
         request: String::new(),
@@ -109,7 +111,7 @@ fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_def
             day_start: "06:00:00".into(),
             grants: vec![],
             selected: json!({"kind":"window","from":at,"to":at}),
-            declarations: json!({"schema":"x".repeat(32_768)}),
+            declarations: json!({"schema":"x".repeat(32_768),"metadata":{"long":"value","a":1}}),
         }),
     };
     request.request = request_identity(&request).unwrap();
@@ -128,6 +130,32 @@ fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_def
         Class::Open,
     )
     .unwrap();
+    use sqlx::Connection;
+    let mut connection = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let retained: sqlx::types::Json<Value> = sqlx::query_scalar("SELECT $1::jsonb")
+        .bind(sqlx::types::Json(&input.payload))
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    let mut input = input;
+    input.payload = retained.0;
+
+    fn reverse_objects(value: &Value) -> Value {
+        match value {
+            Value::Object(fields) => Value::Object(
+                fields
+                    .iter()
+                    .rev()
+                    .map(|(key, value)| (key.clone(), reverse_objects(value)))
+                    .collect(),
+            ),
+            Value::Array(values) => Value::Array(values.iter().map(reverse_objects).collect()),
+            value => value.clone(),
+        }
+    }
+    let reordered: AnalysisRequest =
+        serde_json::from_value(reverse_objects(&input.payload)).unwrap();
+    assert_eq!(request_identity(&reordered).unwrap(), request.request);
     let env = Env::at(
         at,
         sinex_model::time_settings::TimeSettings::new("Etc/UTC", 6, 0).unwrap(),
@@ -208,10 +236,16 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
     let mut forged = input.clone();
     forged.payload["request"] = json!("forged");
     assert!(
-        request_input(&key("forged"), &[forged])
+        request_input(&key("forged"), std::slice::from_ref(&forged))
             .unwrap_err()
             .contains("identity")
     );
+    let env = Env::at(
+        at,
+        sinex_model::time_settings::TimeSettings::new("Etc/UTC", 6, 0).unwrap(),
+    );
+    let refused = RecallProducts.compute(&key("forged"), &[forged], &env);
+    assert!(refused.error.unwrap().to_string().contains("identity"));
 
     for (pointer, value) in [
         ("/selection/selected/kind", json!("session")),

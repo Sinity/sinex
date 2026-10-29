@@ -71,11 +71,15 @@ impl AnyKeyed for RecallProducts {
     fn key_state(&self, _: &Value, _: &Env) -> KeyState {
         KeyState::Closed
     }
-    fn compute(&self, _: &Value, _: &[Event], _: &Env) -> Computed {
+    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
+        let reason = match request_input(key, inputs) {
+            Ok(_) => "recall requires its selected query inputs".into(),
+            Err(error) => error,
+        };
         Computed {
             error: Some(sinex_model::BuildError::Payload(
                 "analysis.request".into(),
-                "recall requires its selected query inputs".into(),
+                reason,
             )),
             ..Default::default()
         }
@@ -108,6 +112,7 @@ fn key(request: &str) -> Value {
 }
 
 /// The retained selector defines identity; its changing input fingerprint does not.
+/// Object order is canonical because retained values pass through PostgreSQL JSONB.
 pub(crate) fn request_identity(request: &AnalysisRequest) -> Result<String, String> {
     if request.operation != "recall" {
         return Err("the request is not a recall selector".into());
@@ -121,21 +126,15 @@ pub(crate) fn request_identity(request: &AnalysisRequest) -> Result<String, Stri
         .as_object_mut()
         .ok_or("recall selector is not an object")?
         .remove("_fingerprint");
-    Ok(blake3::hash(
-        serde_json::to_vec(&json!([
-            request.operation,
-            scope,
-            selected.zone,
-            selected.day_start,
-            selected.grants,
-            selected.read_as,
-            selected.declarations
-        ]))
-        .map_err(|error| error.to_string())?
-        .as_slice(),
-    )
-    .to_hex()
-    .to_string())
+    Ok(sinex_model::json_identity::hash(&json!([
+        request.operation,
+        scope,
+        selected.zone,
+        selected.day_start,
+        selected.grants,
+        selected.read_as,
+        selected.declarations
+    ])))
 }
 
 fn validate_request(request: &AnalysisRequest) -> Result<(), String> {
