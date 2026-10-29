@@ -143,16 +143,20 @@ pub fn check_receipt(
     frame: &Ingress,
     receipt: Acknowledgment,
 ) -> Result<Acknowledgment, SubmitError> {
-    let expected = content_hash(frame)?;
-    let malformed = format!(
-        "malformed/{}",
-        blake3::hash(
-            &serde_json::to_vec(frame)
-                .map_err(|error| SubmitError::Transport(error.to_string()))?
-        )
-        .to_hex()
-    );
-    let correlated_malformed = receipt.frame == malformed
+    check_receipt_for(frame, receipt, content_hash(frame)?, None)
+}
+
+// Only the submitter has the exact transmitted envelope digest. Recovered
+// receipts without that evidence must retain the offered frame identity.
+fn check_receipt_for(
+    frame: &Ingress,
+    receipt: Acknowledgment,
+    expected: String,
+    transmitted_malformed: Option<&str>,
+) -> Result<Acknowledgment, SubmitError> {
+    let invalid_name = frame.frame().is_empty() || frame.frame().contains('\0');
+    let correlated_malformed = invalid_name
+        && transmitted_malformed == Some(receipt.frame.as_str())
         && receipt.refusal.is_some()
         && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed)
         && receipt.number.is_some_and(|number| number > 0)
@@ -204,6 +208,10 @@ pub async fn submit_frame(
     let bytes =
         serde_json::to_vec(frame).map_err(|error| SubmitError::Transport(error.to_string()))?;
     let malformed = format!("malformed/{}", blake3::hash(&bytes).to_hex());
+    let logical_hash = match frame {
+        Ingress::LargeFrame { blob, .. } => blob.clone(),
+        _ => format!("blake3:{}", blake3::hash(&bytes).to_hex()),
+    };
     jetstream::new(client.clone())
         .publish_with_headers(subjects.ingress(producer), headers, bytes.into())
         .await
@@ -246,7 +254,7 @@ pub async fn submit_frame(
                     && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
         })
         .ok_or_else(|| SubmitError::NoReceipt(id.into()))?;
-    check_receipt(frame, receipt)
+    check_receipt_for(frame, receipt, logical_hash, Some(&malformed))
 }
 
 /// Transfer encoded custody under the original authenticated frame namespace.

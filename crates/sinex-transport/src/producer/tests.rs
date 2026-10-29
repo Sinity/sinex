@@ -69,7 +69,7 @@ fn foreign_frame_or_missing_durable_identity_never_exposes_a_prior_receipt_as_co
 }
 
 #[devkit::test]
-fn malformed_receipt_binds_the_exact_offered_envelope_and_logical_body() {
+fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
     for frame in [
         Ingress::RegisterKinds {
             frame: "".into(),
@@ -81,25 +81,68 @@ fn malformed_receipt_binds_the_exact_offered_envelope_and_logical_body() {
             length: 42,
         },
     ] {
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        let malformed = format!("malformed/{}", blake3::hash(&bytes).to_hex());
         let mut saved = receipt(&frame);
-        saved.frame = format!(
-            "malformed/{}",
-            blake3::hash(&serde_json::to_vec(&frame).unwrap()).to_hex()
-        );
+        saved.frame = malformed.clone();
         saved.refusal = Some("invalid frame name".into());
         saved.outcome["refusal_kind"] = serde_json::json!("malformed");
-        assert_eq!(check_receipt(&frame, saved.clone()).unwrap(), saved);
+        let check = |receipt| {
+            check_receipt_for(
+                &frame,
+                receipt,
+                content_hash(&frame).unwrap(),
+                Some(&malformed),
+            )
+        };
+        assert_eq!(check(saved.clone()).unwrap(), saved);
+        // The public recovery helper has no transmitted-envelope evidence.
+        assert!(check_receipt(&frame, saved.clone()).is_err());
+        let other_envelope = format!(
+            "malformed/{}",
+            blake3::hash(b"different transmitted bytes").to_hex()
+        );
+        assert!(
+            check_receipt_for(
+                &frame,
+                saved.clone(),
+                content_hash(&frame).unwrap(),
+                Some(&other_envelope)
+            )
+            .is_err()
+        );
         let mut foreign = saved.clone();
         foreign.frame.push('x');
-        assert!(check_receipt(&frame, foreign).is_err());
+        assert!(check(foreign).is_err());
         let mut wrong_body = saved.clone();
         wrong_body.outcome["frame_content_hash"] = serde_json::json!("blake3:different");
-        assert!(check_receipt(&frame, wrong_body).is_err());
+        assert!(check(wrong_body).is_err());
         let mut not_refused = saved.clone();
         not_refused.refusal = None;
-        assert!(check_receipt(&frame, not_refused).is_err());
+        assert!(check(not_refused).is_err());
         let mut undurable = saved;
         undurable.number = None;
-        assert!(check_receipt(&frame, undurable).is_err());
+        assert!(check(undurable).is_err());
     }
+    let valid = Ingress::RegisterKinds {
+        frame: "valid-offered-name".into(),
+        declarations: vec![],
+    };
+    let malformed = format!(
+        "malformed/{}",
+        blake3::hash(&serde_json::to_vec(&valid).unwrap()).to_hex()
+    );
+    let mut saved = receipt(&valid);
+    saved.frame = malformed.clone();
+    saved.refusal = Some("invalid content".into());
+    saved.outcome["refusal_kind"] = serde_json::json!("malformed");
+    assert!(
+        check_receipt_for(
+            &valid,
+            saved,
+            content_hash(&valid).unwrap(),
+            Some(&malformed)
+        )
+        .is_err()
+    );
 }

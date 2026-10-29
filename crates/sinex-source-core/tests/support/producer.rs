@@ -194,7 +194,7 @@ pub(crate) async fn refusing(
             let ack = Acknowledgment {
                 number: Some(number),
                 material_extents: vec![],
-                frame: if refusal.is_some() && refusal_kind == FrameRefusal::Malformed {
+                frame: if frame.frame().is_empty() || frame.frame().contains('\0') {
                     format!("malformed/{}", blake3::hash(&message.payload).to_hex())
                 } else {
                     frame.frame().to_owned()
