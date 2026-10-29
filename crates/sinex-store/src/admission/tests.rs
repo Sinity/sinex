@@ -510,10 +510,12 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
+    let events=vec![keyed("s",1,1,1),keyed("s",2,1,1)];
+    let target=events[0].id;
     let mut tx = conn.begin().await.unwrap();
     let out = tx
         .admit(
-            &batch(vec![keyed("s", 1, 1, 1), keyed("s", 2, 1, 1)]),
+            &batch(events),
             &ByDay,
         )
         .await
@@ -530,18 +532,20 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     .await
     .unwrap();
     assert_eq!(n, 1, "both events fall on the same day");
-    let dirty_seq: i64 =
-        sqlx::query_scalar("SELECT dirty_seq FROM derivation.dirty WHERE derivation='daily'")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(
-        Some(dirty_seq),
-        out.commit_seq.map(|(_, last)| last),
-        "the one dirty key covers every original and projected input through the last admitted reading"
-    );
+    let (first,last):(i64,i64)=sqlx::query_as("SELECT first_dirty_seq,last_dirty_seq FROM derivation.dirty WHERE derivation='daily'").fetch_one(&mut conn).await.unwrap();
+    let (_,frontier)=out.commit_seq.unwrap();
+    assert_eq!((first,last),(frontier,frontier),"the atomic batch first marks its key at the completed frontier of every original and projected input");
+    let mut hide=batch(vec![]);
+    hide.archive.push(ArchiveRequest::Hide{target,operation:OperationId::new()});
+    let mut tx=conn.begin().await.unwrap();
+    let archived=tx.admit(&hide,&ByDay).await.unwrap();
+    tx.commit().await.unwrap();
+    assert!(archived.dirty_keys>0);
+    let position=crate::query::current_seq(&mut conn).await.unwrap();
+    assert!(position>frontier);
+    let changed:(i64,i64)=sqlx::query_as("SELECT first_dirty_seq,last_dirty_seq FROM derivation.dirty WHERE derivation='daily'").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(changed,(first,position),"archival preserves the first dirty mark and advances the last one to its actual lifecycle position");
 }
-
 #[devkit::test]
 async fn dirty_keys_keep_each_derivation_and_advance_existing_keys(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
