@@ -73,7 +73,7 @@ async fn follow_range_excludes_later_commits_from_every_page(db: devkit::pg::Tes
         .iter()
         .flat_map(|(fused, observation)| [json!(fused).to_string(), json!(observation).to_string()])
         .collect();
-    assert_eq!(rows.len(), expected.len());
+    assert_eq!(rows.len(), expected.len(), "range ({after}, {through}], rows={rows:?}, expected={expected:?}");
     assert_eq!(
         rows.into_iter()
             .map(|id| id.to_string())
