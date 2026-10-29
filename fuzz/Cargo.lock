@@ -583,7 +583,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#803a029a9579348709f9b626480d528b08f6572f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#ec1dd19084b53126c94bf8324795c39c14dc9b25"
 dependencies = [
  "blake3",
  "clap",
@@ -601,7 +601,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#803a029a9579348709f9b626480d528b08f6572f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#ec1dd19084b53126c94bf8324795c39c14dc9b25"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1041,7 +1041,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#803a029a9579348709f9b626480d528b08f6572f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#ec1dd19084b53126c94bf8324795c39c14dc9b25"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -1907,6 +1907,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "query-language"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#ec1dd19084b53126c94bf8324795c39c14dc9b25"
+dependencies = [
+ "blake3",
+ "jiff",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2404,6 +2416,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "signals"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#ec1dd19084b53126c94bf8324795c39c14dc9b25"
+dependencies = [
+ "blake3",
+ "jiff",
+ "query-language",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2460,8 +2485,11 @@ dependencies = [
 name = "sinex-protocol"
 version = "0.1.0"
 dependencies = [
+ "query-language",
+ "schemars",
  "serde",
  "serde_json",
+ "signals",
  "sinex-model",
 ]
 
