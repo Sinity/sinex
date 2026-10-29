@@ -56,7 +56,9 @@ async fn read_page(conn:&mut PgConnection,after:ChangeCursor,limit:i64,bytes:i64
         UNION SELECT value FROM head WHERE value >= $1 AND value>0
       ), changes AS NOT MATERIALIZED (
         SELECT e.commit_seq,0::smallint AS kind,0::bigint AS change_seq,e.id AS event_id,
-            (pg_column_size(e.payload)+256)::bigint AS size FROM core.events e WHERE e.commit_seq >= $1
+            (pg_column_size(e)::bigint+octet_length(e.payload::text)::bigint+
+             coalesce(cardinality(e.parents),0)::bigint*40+1024) AS size
+            FROM core.events e WHERE e.commit_seq >= $1
             AND NOT EXISTS(SELECT 1 FROM core.event_tombstones t WHERE t.event_id=e.id)
         UNION ALL SELECT a.commit_seq,1::smallint,a.change_seq,a.event_id,256::bigint
             FROM audit.archive_changes a WHERE a.commit_seq >= $1
