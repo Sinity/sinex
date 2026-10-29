@@ -337,3 +337,104 @@ async fn actually_excised_recorded_material_has_no_continuation_binding(
         RecordedContinuation::Unknown { .. }
     ));
 }
+
+#[devkit::test]
+async fn historical_write_prefixes_are_provenance_while_current_permission_may_widen(
+    db: devkit::pg::TestDatabase,
+) {
+    let (h, _, _, claim) = prepared(db).await;
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let mut narrowed = (*h.requests.read_grants).clone();
+    let write = narrowed.get_mut("kitty").unwrap().write.as_mut().unwrap();
+    // Startup need not register the already retained source again. Both
+    // settings below are valid current configurations over its owner catalog.
+    write.source_declarations.clear();
+    write.kind_prefixes = vec!["unrelated".into()];
+    authority::validate(&narrowed).unwrap();
+    let mut widened = narrowed.clone();
+    widened
+        .get_mut("kitty")
+        .unwrap()
+        .write
+        .as_mut()
+        .unwrap()
+        .kind_prefixes = vec!["command".into()];
+    authority::validate(&widened).unwrap();
+    for historical in [vec!["historical.only".to_owned()], Vec::new()] {
+        sqlx::query("UPDATE core.ingress_frames SET write_kind_prefixes=$2 WHERE producer='kitty' AND frame=$1")
+            .bind(&claim.frame).bind(&historical).execute(&mut conn).await.unwrap();
+        for (current, permitted) in [(&narrowed, false), (&widened, true)] {
+            let mut requests = h.requests.clone();
+            requests.read_grants = Arc::new(current.clone());
+            let page = requests
+                .recorded(
+                    "kitty",
+                    &RecordedQuery {
+                        continuations: vec![claim.clone()],
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            let RecordedContinuation::Retained {
+                binding, headers, ..
+            } = &page.continuations[0]
+            else {
+                panic!("known empty or narrow historical provenance remains retained")
+            };
+            assert_eq!(binding.write_kind_prefixes, historical);
+            assert_eq!(
+                matches!(headers, RecordedHeaders::PermittedHeaders),
+                permitted
+            );
+            if !permitted {
+                assert!(matches!(headers, RecordedHeaders::NotPermitted { .. }));
+            }
+        }
+    }
+    sqlx::query("UPDATE core.ingress_frames SET write_kind_prefixes=NULL WHERE producer='kitty' AND frame=$1")
+        .bind(&claim.frame).execute(&mut conn).await.unwrap();
+    assert!(
+        matches!(
+            lookup(&h, "kitty", claim).await,
+            RecordedContinuation::Unknown { .. }
+        ),
+        "a missing legacy column differs from known empty provenance"
+    );
+}
+
+#[devkit::test]
+async fn current_recorded_receiver_returns_the_unchanged_wire_to_an_old_strict_page(
+    db: devkit::pg::TestDatabase,
+) {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PreviousPage {
+        acknowledgments: Vec<Acknowledgment>,
+        next: Option<i64>,
+    }
+    let (h, _, receipt, claim) = prepared(db).await;
+    // This is the actual pre-extension request shape, sent to the current
+    // receiver and decoded first as raw JSON to inspect the response keys.
+    let raw: Value = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.recorded("kitty"),
+        "kitty",
+        &json!({"frames":[claim.frame],"numbers":[],"after":0}),
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    assert!(raw.get("continuations").is_none());
+    assert_eq!(
+        raw.as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["acknowledgments", "next"])
+    );
+    let page: PreviousPage = serde_json::from_value(raw).unwrap();
+    assert_eq!(page.acknowledgments, vec![receipt]);
+    assert_eq!(page.next, None);
+}

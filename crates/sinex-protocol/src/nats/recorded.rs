@@ -35,6 +35,8 @@ pub struct RecordedMaterialBinding {
     pub source: SourceRef,
     pub source_fingerprint: String,
     pub family: String,
+    /// Provenance only, including a known empty historical set. Current
+    /// header permission uses the current authenticated write grant.
     pub write_kind_prefixes: Vec<String>,
     pub producer_host: Option<String>,
 }

@@ -66,11 +66,7 @@ impl Requests {
         ) else {
             return Ok(unknown("material_source_authority_unknown"));
         };
-        if name.is_empty()
-            || family.is_empty()
-            || prefixes.is_empty()
-            || blake3::Hash::from_hex(&fingerprint).is_err()
-        {
+        if name.is_empty() || family.is_empty() || blake3::Hash::from_hex(&fingerprint).is_err() {
             return Ok(unknown("material_source_authority_unknown"));
         }
         let binding = RecordedMaterialBinding {
@@ -139,11 +135,6 @@ impl Requests {
             .await
             .map_err(|error| Check::Unavailable(error.to_string()))?;
         for header in uses {
-            if !authority::matches(&binding.write_kind_prefixes, &header.kind.name) {
-                return Err(Check::Configuration(
-                    "header is outside retained write prefixes".into(),
-                ));
-            }
             let registered = kinds.get(&header.kind).ok_or_else(|| {
                 Check::Configuration("header kind version is not registered".into())
             })?;
