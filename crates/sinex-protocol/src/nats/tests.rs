@@ -34,9 +34,9 @@ fn producer_permissions_name_only_its_own_subjects() {
             "sinex.excise.phone",
             "sinex.replay_scope.phone",
             "sinex.fetch_event.phone",
-            "sinex.fetch_payload.phone",
             "sinex.fetch_material.phone",
-            "sinex.confirmed_consumer.phone"
+            "sinex.confirmed_consumer.phone",
+            "_INBOX.phone.>"
         ]
     );
     assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.phone.>"]);

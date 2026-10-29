@@ -319,6 +319,7 @@ pub async fn set_consumer_position(
 /// What Sinex recorded for one ingress frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredFrame {
+    pub number: i64,
     pub material_extent: Option<Vec<u8>>,
     pub producer: String,
     pub frame: String,
@@ -337,7 +338,7 @@ pub async fn frames(
 ) -> Result<Vec<StoredFrame>> {
     Ok(sqlx::query_as!(
         StoredFrame,
-        r#"SELECT f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS material_extent
+        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS material_extent
            FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
            LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
            WHERE f.producer = $1 AND f.frame = ANY($2)
@@ -347,6 +348,23 @@ pub async fn frames(
     )
     .fetch_all(&mut *conn)
     .await?)
+}
+
+/// A transfer page of immutable receipts owned by this authenticated producer.
+pub async fn frames_page(
+    conn: &mut PgConnection,
+    producer: &str,
+    frames: &[String],
+    numbers: &[i64],
+    after: i64,
+) -> Result<(Vec<StoredFrame>, Option<i64>)> {
+    const PAGE: i64 = 64;
+    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,x.descriptor AS material_extent
+      FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
+      LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
+      WHERE f.producer=$1 AND (f.frame=ANY($2) OR f.number=ANY($3)) AND f.number>$4 ORDER BY f.number LIMIT $5"#,producer,frames,numbers,after,PAGE).fetch_all(conn).await?;
+    let next = (rows.len() == PAGE as usize).then(|| rows.last().expect("full page").number);
+    Ok((rows, next))
 }
 
 /// Whether this producer registered the material named by its events frame.

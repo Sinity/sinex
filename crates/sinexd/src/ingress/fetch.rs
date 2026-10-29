@@ -3,8 +3,8 @@ use super::*;
 use serde::{Deserialize, de::DeserializeOwned};
 use sinex_model::Class;
 use sinex_protocol::{
-    ConfirmedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply, FetchPayload,
-    FetchPayloadReply, FetchRefusalKind, MaterialReference, PayloadReference, Withheld,
+    ConfirmedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
+    FetchRefusalKind,
 };
 use sqlx::Connection;
 use std::collections::BTreeMap;
@@ -225,103 +225,16 @@ impl Requests {
         request: &FetchEvent,
     ) -> FetchEventReply {
         match self.event_for(producer, request.event).await {
-            Ok(event) => {
-                let mut reply = FetchEventReply {
-                    event: Some(event),
-                    ..Default::default()
-                };
-                if serde_json::to_vec(&reply)
-                    .is_ok_and(|bytes| bytes.len() as u64 + 1024 > self.max_payload)
-                {
-                    let event = reply.event.as_mut().expect("event set");
-                    let original = event.payload.take().expect("visible payload");
-                    let payload = serde_json::to_vec(&original).expect("JSON serializes");
-                    event.withheld = Some(Withheld::Size {
-                        payload_bytes: payload.len() as u64,
-                        limit: self.max_payload,
-                    });
-                    reply.payload_ref = Some(PayloadReference {
-                        event: event.id,
-                        length: payload.len() as u64,
-                        hash: format!("blake3:{}", blake3::hash(&payload).to_hex()),
-                    });
-                    if serde_json::to_vec(&reply)
-                        .is_ok_and(|bytes| bytes.len() as u64 + 1024 > self.max_payload)
-                    {
-                        let event = reply.event.as_mut().expect("event set");
-                        event.payload = Some(original);
-                        event.withheld = None;
-                        let bytes = serde_json::to_vec(&event).expect("event serializes");
-                        reply.event_ref = Some(PayloadReference {
-                            event: event.id,
-                            length: bytes.len() as u64,
-                            hash: format!("blake3:{}", blake3::hash(&bytes).to_hex()),
-                        });
-                        reply.event = None;
-                        reply.payload_ref = None;
-                    }
-                }
-                reply
-            }
+            Ok(event) => FetchEventReply {
+                event: Some(event),
+                ..Default::default()
+            },
             Err(error) => FetchEventReply {
                 refusal: Some(error.reason),
                 refusal_kind: Some(error.kind),
                 ..Default::default()
             },
         }
-    }
-    pub(super) async fn fetch_payload(
-        &self,
-        producer: &str,
-        request: &FetchPayload,
-    ) -> FetchPayloadReply {
-        let result: ReadResult<_> = async {
-            let event = self.event_for(producer, request.event).await?;
-            let mut payload = serde_json::to_vec(event.payload.as_ref().expect("visible payload"))
-                .map_err(unavailable)?;
-            let mut hash = format!("blake3:{}", blake3::hash(&payload).to_hex());
-            if hash != request.hash {
-                payload = serde_json::to_vec(&event).map_err(unavailable)?;
-                hash = format!("blake3:{}", blake3::hash(&payload).to_hex());
-                if hash != request.hash {
-                    return Err(Refusal {
-                        kind: FetchRefusalKind::Changed,
-                        reason: "visible payload changed; fetch its event again".into(),
-                    });
-                }
-            }
-            let start = usize::try_from(request.offset)
-                .ok()
-                .filter(|offset| *offset <= payload.len())
-                .ok_or_else(|| Refusal {
-                    kind: FetchRefusalKind::Invalid,
-                    reason: "payload offset is outside its length".into(),
-                })?;
-            let transfer = self.max_payload.saturating_sub(2048) * 3 / 4;
-            if transfer == 0 {
-                return Err(unavailable(
-                    "NATS message limit cannot hold a payload transfer",
-                ));
-            }
-            let length = request
-                .length
-                .min(transfer)
-                .min((payload.len() - start) as u64) as usize;
-            Ok(FetchPayloadReply {
-                offset: request.offset,
-                total: payload.len() as u64,
-                hash,
-                data: base64::engine::general_purpose::STANDARD
-                    .encode(&payload[start..start + length]),
-                ..Default::default()
-            })
-        }
-        .await;
-        result.unwrap_or_else(|error| FetchPayloadReply {
-            refusal: Some(error.reason),
-            refusal_kind: Some(error.kind),
-            ..Default::default()
-        })
     }
     pub(super) async fn fetch_material(
         &self,
@@ -352,54 +265,6 @@ impl Requests {
             if self.blobs.is_sealed(&material.blob).map_err(unavailable)? {return Err(Refusal{kind:FetchRefusalKind::Locked,reason:"sealed material requires an operator unlock".into()});}
             Ok(FetchMaterialReply{material:Some(MaterialFrame{id:material.id,input:sinex_model::InputRef{kind:input.kind,locator:input.locator,host:input.host},blob:material.blob,length:material.length,parser:material.parser,parser_version:material.parser_version,part_index:material.part_index,previous_part:material.previous_part,manifest:material.manifest}),extents:vec![descriptor],..Default::default()})
         }.await;
-        let result = result.and_then(|reply| {
-            let bytes = serde_json::to_vec(&reply).map_err(unavailable)?;
-            let hash = format!("blake3:{}", blake3::hash(&bytes).to_hex());
-            if let Some(range) = &request.range {
-                if range.hash != hash {
-                    return Err(Refusal {
-                        kind: FetchRefusalKind::Changed,
-                        reason: "material metadata changed; fetch its reference again".into(),
-                    });
-                }
-                let start = usize::try_from(range.offset)
-                    .ok()
-                    .filter(|offset| *offset <= bytes.len())
-                    .ok_or_else(|| Refusal {
-                        kind: FetchRefusalKind::Invalid,
-                        reason: "material metadata offset is outside its length".into(),
-                    })?;
-                let transfer = self.max_payload.saturating_sub(2048) * 3 / 4;
-                if transfer == 0 {
-                    return Err(unavailable(
-                        "NATS message limit cannot hold a material transfer",
-                    ));
-                }
-                let length = range.length.min(transfer).min((bytes.len() - start) as u64) as usize;
-                return Ok(FetchMaterialReply {
-                    transfer: Some(FetchPayloadReply {
-                        offset: range.offset,
-                        total: bytes.len() as u64,
-                        hash,
-                        data: base64::engine::general_purpose::STANDARD
-                            .encode(&bytes[start..start + length]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                });
-            }
-            if bytes.len() as u64 + 1024 > self.max_payload {
-                return Ok(FetchMaterialReply {
-                    material_ref: Some(MaterialReference {
-                        material: request.material,
-                        length: bytes.len() as u64,
-                        hash,
-                    }),
-                    ..Default::default()
-                });
-            }
-            Ok(reply)
-        });
         result.unwrap_or_else(|error| FetchMaterialReply {
             refusal: Some(error.reason),
             refusal_kind: Some(error.kind),

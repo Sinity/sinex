@@ -89,6 +89,22 @@ pub(super) async fn select(
     Ok(selections)
 }
 
+pub(super) async fn select_page(
+    conn: &mut PgConnection,
+    producer: &str,
+    family: &str,
+    query: &ReplayScopeQuery,
+) -> Result<sinex_protocol::ReplayScopePage, Check> {
+    let selections = select(conn, producer, family, query).await?;
+    let sequences = selections
+        .into_iter()
+        .filter(|selection| query.after.is_none_or(|after| selection.root > after))
+        .take(64)
+        .collect::<Vec<_>>();
+    let next = (sequences.len() == 64).then(|| sequences.last().expect("full page").root);
+    Ok(sinex_protocol::ReplayScopePage { sequences, next })
+}
+
 async fn live_hash(
     conn: &mut PgConnection,
     producer: &str,
@@ -132,6 +148,7 @@ pub(crate) async fn check_scope(
         return Err("replay needs the producer parser build and version".into());
     }
     let query = ReplayScopeQuery {
+        after: None,
         materials: sequence.materials.iter().map(|m| m.id).collect(),
         event_types: sequence.event_types.clone(),
         from: sequence.from,

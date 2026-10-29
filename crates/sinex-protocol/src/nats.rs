@@ -159,7 +159,6 @@ impl Subjects {
             .or_else(|| rest.strip_prefix("excise."))
             .or_else(|| rest.strip_prefix("replay_scope."))
             .or_else(|| rest.strip_prefix("fetch_event."))
-            .or_else(|| rest.strip_prefix("fetch_payload."))
             .or_else(|| rest.strip_prefix("fetch_material."))
             .or_else(|| rest.strip_prefix("confirmed_consumer."))?;
         valid_producer(producer).then_some(producer)
@@ -170,13 +169,6 @@ impl Subjects {
     }
     pub fn fetch_event_all(&self) -> String {
         format!("{}.fetch_event.*", self.root)
-    }
-
-    pub fn fetch_payload(&self, producer: &str) -> String {
-        format!("{}.fetch_payload.{producer}", self.root)
-    }
-    pub fn fetch_payload_all(&self) -> String {
-        format!("{}.fetch_payload.*", self.root)
     }
 
     pub fn fetch_material(&self, producer: &str) -> String {
@@ -202,9 +194,9 @@ impl Subjects {
             self.excise(producer),
             self.replay_scope(producer),
             self.fetch_event(producer),
-            self.fetch_payload(producer),
             self.fetch_material(producer),
             self.confirmed_consumer(producer),
+            format!("{}.>", self.inbox_prefix(producer)),
         ];
         if let Some(scope) = scope {
             let stream = self.confirmed_stream();
@@ -361,6 +353,8 @@ pub struct DeclarationHash {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ReplayScopeQuery {
+    #[serde(default)]
+    pub after: Option<MaterialId>,
     pub materials: Vec<MaterialId>,
     pub event_types: Option<Vec<String>>,
     pub from: Option<Timestamp>,
@@ -461,6 +455,8 @@ pub struct ProducerEvent {
 /// returned again for the same frame.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Acknowledgment {
+    #[serde(default)]
+    pub number: Option<i64>,
     pub frame: String,
     /// The material a material frame registered.
     pub material: Option<MaterialId>,
@@ -491,46 +487,17 @@ pub struct FetchEvent {
     pub event: EventId,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PayloadReference {
-    pub event: EventId,
-    pub length: u64,
-    pub hash: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FetchRefusalKind {
     Denied,
     Missing,
     Locked,
     Invalid,
-    Changed,
     Unavailable,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct FetchEventReply {
     pub event: Option<ConfirmedEvent>,
-    pub payload_ref: Option<PayloadReference>,
-    /// The entire event when even its metadata exceeds a transport message.
-    #[serde(default)]
-    pub event_ref: Option<PayloadReference>,
-    pub refusal: Option<String>,
-    pub refusal_kind: Option<FetchRefusalKind>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct FetchPayload {
-    pub event: EventId,
-    pub offset: u64,
-    pub length: u64,
-    pub hash: String,
-}
-/// One transfer unit. Decode `data` as base64; continue until offset plus decoded bytes equals total.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FetchPayloadReply {
-    pub offset: u64,
-    pub total: u64,
-    pub hash: String,
-    pub data: String,
     pub refusal: Option<String>,
     pub refusal_kind: Option<FetchRefusalKind>,
 }
@@ -538,32 +505,19 @@ pub struct FetchPayloadReply {
 #[serde(deny_unknown_fields)]
 pub struct FetchMaterial {
     pub material: MaterialId,
-    #[serde(default)]
-    pub range: Option<FetchRange>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct FetchRange {
-    pub offset: u64,
-    pub length: u64,
-    pub hash: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MaterialReference {
-    pub material: MaterialId,
-    pub length: u64,
-    pub hash: String,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct FetchMaterialReply {
-    #[serde(default)]
-    pub material_ref: Option<MaterialReference>,
-    #[serde(default)]
-    pub transfer: Option<FetchPayloadReply>,
     pub material: Option<MaterialFrame>,
     pub extents: Vec<Vec<u8>>,
     pub refusal: Option<String>,
     pub refusal_kind: Option<FetchRefusalKind>,
+}
+/// A broadcast is only a wakeup hint. Progress requires the complete verified receipt.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReceiptHint {
+    pub number: i64,
+    pub frame_hash: String,
 }
 
 pub const PRODUCER_VERSION: u32 = 2;
@@ -597,18 +551,34 @@ pub struct ProducerWelcome {
 }
 
 /// A request on `<root>.recorded.<producer>`: which of these frames Sinex has
-/// recorded. The reply is a JSON array of [`Acknowledgment`]s, one per
-/// recorded frame; a frame missing from it was not received.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+/// recorded. The reply is a framed [`RecordedPage`]. Continue after its
+/// frontier to retrieve every matching receipt; missing frames were not received.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct RecordedQuery {
+    #[serde(default)]
     pub frames: Vec<String>,
+    #[serde(default)]
+    pub numbers: Vec<i64>,
+    #[serde(default)]
+    pub after: i64,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct RecordedPage {
+    pub acknowledgments: Vec<Acknowledgment>,
+    pub next: Option<i64>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct MaterialsPage {
+    pub materials: Vec<ProducerMaterial>,
+    pub next: Option<i64>,
 }
 
 /// A request on `<root>.materials.<producer>`: the materials this producer
 /// registered and Sinex still holds, in the order Sinex recorded them,
 /// starting after the frame numbered `after`. A producer that keeps nothing of
-/// its own rebuilds what it sent from these pages. The reply is a JSON array
-/// of [`ProducerMaterial`]s, at most `limit` long; an empty page is the end.
+/// its own rebuilds what it sent from these pages. The framed [`MaterialsPage`]
+/// contains at most `limit` materials and the next frontier.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Materials {
     #[serde(default)]
@@ -722,11 +692,6 @@ pub struct ConfirmedEvent {
 pub enum Withheld {
     /// Shared stream payloads are fetched under the authenticated consumer grants.
     Grants,
-    /// The event's class is `guarded` or `sealed`.
-    Class,
-    /// The message with the payload would exceed the NATS server's message
-    /// size limit (`max_payload`).
-    Size { payload_bytes: u64, limit: u64 },
 }
 
 /// A reading taken out of the live set.
@@ -771,4 +736,10 @@ pub struct ConfirmedConsumerReply {
     pub scope: String,
     pub refusal: Option<String>,
     pub gap: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct ReplayScopePage {
+    pub sequences: Vec<ReplaySelection>,
+    pub next: Option<MaterialId>,
 }

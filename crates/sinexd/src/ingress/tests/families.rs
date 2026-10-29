@@ -96,19 +96,18 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         second.outcome["registered_kinds"]
     );
     for (producer, canonical_publisher) in [("host-a", true), ("host-b", false)] {
-        let reply = h
-            .client
-            .request(
-                h.subjects.connect(producer),
-                serde_json::to_vec(&ProducerHello {
-                    event_types: vec![raw.kind.name.clone()],
-                    ..Default::default()
-                })
-                .unwrap()
-                .into(),
-            )
-            .await
-            .unwrap();
+        let reply = rpc(
+            &h.client,
+            h.subjects.connect(producer),
+            serde_json::to_vec(&ProducerHello {
+                event_types: vec![raw.kind.name.clone()],
+                ..Default::default()
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .unwrap();
         let welcome: sinex_protocol::ProducerWelcome =
             serde_json::from_slice(&reply.payload).unwrap();
         assert_eq!(welcome.refusal, None);
@@ -184,18 +183,14 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         .refusal
         .is_some()
     );
-    let request = FetchMaterial {
-        material: a,
-        range: None,
-    };
-    let reply = h
-        .client
-        .request(
-            h.subjects.fetch_material("reader"),
-            serde_json::to_vec(&request).unwrap().into(),
-        )
-        .await
-        .unwrap();
+    let request = FetchMaterial { material: a };
+    let reply = rpc(
+        &h.client,
+        h.subjects.fetch_material("reader"),
+        serde_json::to_vec(&request).unwrap().into(),
+    )
+    .await
+    .unwrap();
     let reply: FetchMaterialReply = serde_json::from_slice(&reply.payload).unwrap();
     assert_eq!(
         reply.refusal, None,
@@ -233,19 +228,15 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
     .execute(&mut conn)
     .await
     .unwrap();
-    let reply = h
-        .client
-        .request(
-            h.subjects.fetch_material("host-a"),
-            serde_json::to_vec(&FetchMaterial {
-                material: id,
-                range: None,
-            })
+    let reply = rpc(
+        &h.client,
+        h.subjects.fetch_material("host-a"),
+        serde_json::to_vec(&FetchMaterial { material: id })
             .unwrap()
             .into(),
-        )
-        .await
-        .unwrap();
+    )
+    .await
+    .unwrap();
     let reply: FetchMaterialReply = serde_json::from_slice(&reply.payload).unwrap();
     assert_eq!(reply.refusal_kind, Some(FetchRefusalKind::Unavailable));
     assert!(reply.material.is_none());

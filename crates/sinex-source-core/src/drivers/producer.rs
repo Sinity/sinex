@@ -28,16 +28,13 @@ use staging::Snapshots;
 
 use crate::drivers::{self, Acquired, DriverError, MaterialSink};
 use crate::{Limits, Source};
-use async_nats::HeaderMap;
-use async_nats::jetstream;
 use base64::Engine;
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::{BatchKind, FrameRefusal, Origin, RecordOutcome, RunId};
 use sinex_protocol::{
     Acknowledgment, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, ProducerHello,
-    ProducerWelcome, RecordedQuery, Subjects,
+    ProducerWelcome, Subjects,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -251,7 +248,6 @@ pub struct Producer {
     name: String,
     subjects: Subjects,
     client: async_nats::Client,
-    js: jetstream::Context,
     acks: async_nats::Subscriber,
     /// The local content store, when `sinexd` does not share it: material
     /// bytes and oversized frames are then sent in chunks.
@@ -297,16 +293,15 @@ impl Producer {
             .await
             .map_err(Error::Nats)?;
         let acks = client.subscribe(subjects.ack(name)).await.map_err(nats)?;
-        let reply = client
-            .request(
-                subjects.connect(name),
-                serde_json::to_vec(hello)
-                    .expect("declaration serializes")
-                    .into(),
-            )
-            .await
-            .map_err(nats)?;
-        let welcome: ProducerWelcome = serde_json::from_slice(&reply.payload).map_err(nats)?;
+        let welcome: ProducerWelcome = sinex_transport::replies::request_json(
+            &client,
+            subjects.connect(name),
+            name,
+            hello,
+            ACK_WAIT,
+        )
+        .await
+        .map_err(nats)?;
         if let Some(reason) = welcome.refusal {
             return Err(Error::Configuration(reason));
         }
@@ -315,7 +310,6 @@ impl Producer {
             health: Default::default(),
             resumed: Default::default(),
             name: name.to_owned(),
-            js: jetstream::new(client.clone()),
             subjects,
             client,
             acks,
@@ -703,59 +697,20 @@ impl Producer {
     /// Send one frame and wait for its acknowledgment.
     async fn send(&mut self, frame: Ingress) -> Result<Acknowledgment, Error> {
         let id = frame.frame().to_owned();
-        let mut headers = HeaderMap::new();
-        // JetStream drops a duplicate within its window; the ingress also
-        // answers a resent frame from its record.
-        headers.insert("Nats-Msg-Id", id.as_str());
-        let body = serde_json::to_vec(&frame).expect("frame serializes");
-        let malformed = format!("malformed/{}", blake3::hash(&body).to_hex());
-        self.js
-            .publish_with_headers(self.subjects.ingress(&self.name), headers, body.into())
-            .await
-            .map_err(nats)?
-            .await
-            .map_err(nats)?;
-        let wait = async {
-            while let Some(message) = self.acks.next().await {
-                if let Ok(ack) = serde_json::from_slice::<Acknowledgment>(&message.payload)
-                    && (ack.frame == id
-                        || (ack.frame == malformed
-                            && ack.refusal_kind() == Some(FrameRefusal::Malformed)))
-                {
-                    return Some(ack);
-                }
-            }
-            None
-        };
-        let (mut ack, mut recorded) = match tokio::time::timeout(ACK_WAIT, wait).await {
-            Ok(Some(ack)) => (ack, false),
-            // Missed it: ask what Sinex has recorded for this frame.
-            _ => (
-                self.recorded(&[id.clone(), malformed.clone()])
-                    .await?
-                    .into_iter()
-                    .find(|ack| {
-                        ack.frame == id
-                            || (ack.frame == malformed
-                                && ack.refusal_kind() == Some(FrameRefusal::Malformed))
-                    })
-                    .ok_or_else(|| Error::NoAck(id.clone()))?,
-                true,
-            ),
-        };
-        // Refused frames admit no events, so their commit sequence can be
-        // absent. The recorded query, not that sequence, confirms durability.
-        if ack.refusal.is_some()
-            && !recorded
-            && let Some(stored) = self
-                .recorded(std::slice::from_ref(&ack.frame))
-                .await?
-                .into_iter()
-                .find(|stored| stored.frame == ack.frame)
-        {
-            ack = stored;
-            recorded = true;
-        }
+        let ack = sinex_transport::producer::submit_frame(
+            &self.client,
+            &self.subjects,
+            &self.name,
+            &mut self.acks,
+            &frame,
+            ACK_WAIT,
+        )
+        .await
+        .map_err(|error| match error {
+            sinex_transport::producer::SubmitError::NoReceipt(frame) => Error::NoAck(frame),
+            other => nats(other),
+        })?;
+        let recorded = true;
         if let Some(reason) = &ack.refusal {
             return Err(Error::Refused {
                 frame: id,
@@ -769,16 +724,16 @@ impl Producer {
 
     /// Which of these frames Sinex has recorded.
     pub async fn recorded(&self, frames: &[String]) -> Result<Vec<Acknowledgment>, Error> {
-        let request = serde_json::to_vec(&RecordedQuery {
-            frames: frames.to_vec(),
-        })
-        .expect("request serializes");
-        let reply = self
-            .client
-            .request(self.subjects.recorded(&self.name), request.into())
-            .await
-            .map_err(nats)?;
-        serde_json::from_slice(&reply.payload).map_err(nats)
+        sinex_transport::producer::recorded(
+            &self.client,
+            &self.subjects,
+            &self.name,
+            frames,
+            &[],
+            ACK_WAIT,
+        )
+        .await
+        .map_err(nats)
     }
 
     /// Send what one poll acquired, then advance the binding's position. The

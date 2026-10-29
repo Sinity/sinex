@@ -2,20 +2,19 @@ use super::*;
 use sinex_protocol::{ConfirmedConsumer, ConfirmedConsumerReply};
 
 async fn provision(h: &Harness, producer: &str, after: i64) -> ConfirmedConsumerReply {
-    let reply = h
-        .client
-        .request(
-            h.subjects.confirmed_consumer(producer),
-            serde_json::to_vec(&ConfirmedConsumer {
-                after,
-                cache: "synthetic-index".into(),
-                status_only: false,
-            })
-            .unwrap()
-            .into(),
-        )
-        .await
-        .unwrap();
+    let reply = rpc(
+        &h.client,
+        h.subjects.confirmed_consumer(producer),
+        serde_json::to_vec(&ConfirmedConsumer {
+            after,
+            cache: "synthetic-index".into(),
+            status_only: false,
+        })
+        .unwrap()
+        .into(),
+    )
+    .await
+    .unwrap();
     serde_json::from_slice(&reply.payload).unwrap()
 }
 
@@ -122,20 +121,19 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     assert_eq!(complete, head);
     let delivered = consumer.info().await.unwrap().delivered.consumer_sequence;
     assert!(delivered > 0);
-    let status = h
-        .client
-        .request(
-            h.subjects.confirmed_consumer("replica"),
-            serde_json::to_vec(&ConfirmedConsumer {
-                after: 0,
-                cache: "synthetic-index".into(),
-                status_only: true,
-            })
-            .unwrap()
-            .into(),
-        )
-        .await
-        .unwrap();
+    let status = rpc(
+        &h.client,
+        h.subjects.confirmed_consumer("replica"),
+        serde_json::to_vec(&ConfirmedConsumer {
+            after: 0,
+            cache: "synthetic-index".into(),
+            status_only: true,
+        })
+        .unwrap()
+        .into(),
+    )
+    .await
+    .unwrap();
     let status: ConfirmedConsumerReply = serde_json::from_slice(&status.payload).unwrap();
     assert_eq!(status.position, Some(head));
     assert_eq!(

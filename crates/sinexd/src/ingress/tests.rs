@@ -9,6 +9,28 @@ use std::sync::Arc;
 
 /// A daemon slice for tests: NATS, a database, the writer, the ingress task
 /// and a content store.
+struct TestReply {
+    payload: Vec<u8>,
+}
+async fn rpc(
+    client: &async_nats::Client,
+    subject: String,
+    payload: Vec<u8>,
+) -> Result<TestReply, sinex_transport::replies::ReplyError> {
+    let producer = subject.rsplit_once('.').expect("producer subject").1;
+    let value: Value = sinex_transport::replies::request_bytes(
+        client,
+        subject.clone(),
+        producer,
+        payload,
+        Duration::from_secs(20),
+    )
+    .await?;
+    Ok(TestReply {
+        payload: serde_json::to_vec(&value).expect("reply JSON"),
+    })
+}
+
 struct Harness {
     writer: WriterHandle,
     reads: sqlx::PgPool,
@@ -94,7 +116,6 @@ impl Harness {
             client: client.clone(),
             consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             read_grants: grants.clone(),
-            max_payload: client.server_info().max_payload as u64,
             subjects: subjects.clone(),
             writer: handle.clone(),
             reads: reads.clone(),
@@ -194,52 +215,88 @@ impl Harness {
     }
 
     async fn send_raw(&self, producer: &str, body: Vec<u8>) -> Acknowledgment {
+        let expected = serde_json::from_slice::<Ingress>(&body)
+            .ok()
+            .map(|frame| frame.frame().to_owned())
+            .unwrap_or_else(|| format!("malformed/{}", blake3::hash(&body).to_hex()));
+        let expected_hash = blake3::hash(expected.as_bytes()).to_hex().to_string();
         let mut acks = self
             .client
             .subscribe(self.subjects.ack(producer))
             .await
             .unwrap();
         self.client.flush().await.unwrap();
-        let js = jetstream::new(self.client.clone());
-        js.publish(self.subjects.ingress(producer), body.into())
+        jetstream::new(self.client.clone())
+            .publish(self.subjects.ingress(producer), body.into())
             .await
             .unwrap()
             .await
             .unwrap();
-        let message = tokio::time::timeout(Duration::from_secs(20), acks.next())
-            .await
-            .expect("an acknowledgment")
-            .unwrap();
-        serde_json::from_slice(&message.payload).unwrap()
+        let hint = loop {
+            let message = tokio::time::timeout(Duration::from_secs(20), acks.next())
+                .await
+                .expect("receipt hint")
+                .unwrap();
+            let hint: sinex_protocol::ReceiptHint =
+                serde_json::from_slice(&message.payload).unwrap();
+            if hint.frame_hash == expected_hash {
+                break hint;
+            }
+        };
+        let page: sinex_protocol::RecordedPage = sinex_transport::replies::request_json(
+            &self.client,
+            self.subjects.recorded(producer),
+            producer,
+            &RecordedQuery {
+                numbers: vec![hint.number],
+                ..Default::default()
+            },
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        page.acknowledgments
+            .into_iter()
+            .find(|ack| ack.number == Some(hint.number))
+            .expect("complete owned receipt")
     }
 
     async fn recorded(&self, producer: &str, frames: &[&str]) -> Vec<Acknowledgment> {
-        let request = RecordedQuery {
-            frames: frames.iter().map(|s| s.to_string()).collect(),
-        };
-        let reply = self
-            .client
-            .request(
+        let mut after = 0;
+        let mut all = Vec::new();
+        loop {
+            let page: sinex_protocol::RecordedPage = sinex_transport::replies::request_json(
+                &self.client,
                 self.subjects.recorded(producer),
-                serde_json::to_vec(&request).unwrap().into(),
+                producer,
+                &RecordedQuery {
+                    frames: frames.iter().map(|frame| (*frame).into()).collect(),
+                    after,
+                    ..Default::default()
+                },
+                Duration::from_secs(20),
             )
             .await
             .unwrap();
-        serde_json::from_slice(&reply.payload).unwrap()
+            all.extend(page.acknowledgments);
+            match page.next {
+                Some(next) => after = next,
+                None => return all,
+            }
+        }
     }
 
     async fn materials(&self, producer: &str, after: i64, limit: u32) -> Vec<ProducerMaterial> {
-        let reply = self
-            .client
-            .request(
-                self.subjects.materials(producer),
-                serde_json::to_vec(&Materials { after, limit })
-                    .unwrap()
-                    .into(),
-            )
-            .await
-            .unwrap();
-        serde_json::from_slice(&reply.payload).unwrap()
+        let page: sinex_protocol::MaterialsPage = sinex_transport::replies::request_json(
+            &self.client,
+            self.subjects.materials(producer),
+            producer,
+            &Materials { after, limit },
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        page.materials
     }
 
     fn material_frame(&self, frame: &str, bytes: &[u8]) -> (MaterialId, Ingress) {
@@ -675,6 +732,30 @@ async fn producers_are_limited_to_their_own_subjects() {
             .is_err(),
         "foreign/admin/raw-message API requests must not reach the daemon"
     );
+    let mut foreign_flow = daemon
+        .subscribe("_INBOX.phone.synthetic.flow")
+        .await
+        .unwrap();
+    daemon.flush().await.unwrap();
+    kitty
+        .publish(
+            "_INBOX.phone.synthetic.flow",
+            serde_json::to_vec(&sinex_protocol::replies::FlowAck::Accepted {
+                stream: "forged".into(),
+                sequence: 0,
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .unwrap();
+    kitty.flush().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), foreign_flow.next())
+            .await
+            .is_err(),
+        "a foreign credential cannot acknowledge another principal's flow"
+    );
     let mut foreign_inbox = kitty.subscribe("_INBOX.phone.>").await.unwrap();
     kitty.flush().await.unwrap();
     daemon
@@ -869,14 +950,13 @@ impl Harness {
         let request = Excise {
             materials: materials.to_vec(),
         };
-        let reply = self
-            .client
-            .request(
-                self.subjects.excise(producer),
-                serde_json::to_vec(&request).unwrap().into(),
-            )
-            .await
-            .unwrap();
+        let reply = rpc(
+            &self.client,
+            self.subjects.excise(producer),
+            serde_json::to_vec(&request).unwrap().into(),
+        )
+        .await
+        .unwrap();
         serde_json::from_slice(&reply.payload).unwrap()
     }
 
@@ -992,9 +1072,10 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     let request = tokio::spawn(async move {
         let body = serde_json::to_vec(&RecordedQuery {
             frames: vec!["m1".into()],
+            ..Default::default()
         })
         .unwrap();
-        client.request(subject, body.into()).await.unwrap()
+        rpc(&client, subject, body).await.unwrap()
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(
@@ -1011,7 +1092,8 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
         .await
         .unwrap()
         .unwrap();
-    let acks: Vec<Acknowledgment> = serde_json::from_slice(&reply.payload).unwrap();
+    let page: sinex_protocol::RecordedPage = serde_json::from_slice(&reply.payload).unwrap();
+    let acks = page.acknowledgments;
     assert_eq!(acks.len(), 1);
     assert_eq!(acks[0].frame, "m1");
 }
@@ -1655,3 +1737,5 @@ mod fetch_reads;
 mod consumer_reads;
 
 mod families;
+
+mod replies;

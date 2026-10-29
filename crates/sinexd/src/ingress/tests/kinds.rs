@@ -46,19 +46,18 @@ async fn scope_for(
     event_types: Option<Vec<String>>,
 ) -> ReplaySelection {
     let body = serde_json::to_vec(&ReplayScopeQuery {
+        after: None,
         materials: vec![material],
         event_types,
         from: None,
         until: None,
     })
     .unwrap();
-    let answer = h
-        .client
-        .request(h.subjects.replay_scope("example"), body.into())
+    let answer = rpc(&h.client, h.subjects.replay_scope("example"), body.into())
         .await
         .unwrap();
-    let selections: Vec<ReplaySelection> = serde_json::from_slice(&answer.payload).unwrap();
-    selections.into_iter().next().unwrap()
+    let page: sinex_protocol::ReplayScopePage = serde_json::from_slice(&answer.payload).unwrap();
+    page.sequences.into_iter().next().unwrap()
 }
 
 #[devkit::test]
@@ -440,19 +439,19 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
     for (round, order) in [0, 0, 20].into_iter().enumerate() {
         let replacement = format!("replacement-{round}");
         let body = serde_json::to_vec(&ReplayScopeQuery {
+            after: None,
             materials: vec![material],
             event_types: None,
             from: None,
             until: None,
         })
         .unwrap();
-        let answer = h
-            .client
-            .request(h.subjects.replay_scope("polylogue"), body.into())
+        let answer = rpc(&h.client, h.subjects.replay_scope("polylogue"), body.into())
             .await
             .unwrap();
-        let selected: Vec<ReplaySelection> = serde_json::from_slice(&answer.payload).unwrap();
-        let selected = &selected[0];
+        let page: sinex_protocol::ReplayScopePage =
+            serde_json::from_slice(&answer.payload).unwrap();
+        let selected = &page.sequences[0];
         let sequence = ProducerReplay {
             operation: sinex_model::OperationId::new(),
             root: selected.root,
