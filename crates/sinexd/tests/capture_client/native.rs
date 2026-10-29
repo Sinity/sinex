@@ -9,6 +9,16 @@ use std::{
 };
 use zbus::zvariant::OwnedValue;
 
+// A source name may have several parsers and declaration versions. These
+// real capture fixtures authorize the adapters they actually launch.
+fn native_spec(name: &str) -> &'static sinex_source_core::SourceSpec {
+    match name {
+        "machine.file-watch" => &sinex_sources::sources::file_watch::SPEC,
+        "desktop.notifications" => &sinex_sources::sources::notifications::SPEC,
+        _ => panic!("fixture has no native capture adapter for {name}"),
+    }
+}
+
 pub(super) fn server(
     binary: &Path,
     database: &str,
@@ -22,21 +32,21 @@ pub(super) fn server(
         let declarations: Vec<_> = names
             .iter()
             .map(|name| {
-                let spec = sinex_sources::sources::specs()
-                    .into_iter()
-                    .find(|spec| spec.name == *name)
-                    .unwrap();
+                let spec = native_spec(name);
+                let kinds: Vec<_> = spec.event_types.iter().map(|expected| {
+                    sinex_model::event_types::declarations().iter().find(|kind| kind.kind.name == *expected)
+                        .unwrap_or_else(|| panic!("native source {} parser {} version {} emits missing bundled kind {}", spec.name, spec.parser, spec.parser_version, expected)).clone()
+                }).collect();
+                for expected in spec.event_types {
+                    assert!(kinds.iter().any(|kind| kind.kind.name == *expected), "native source {} lacks exact emitted kind {}", spec.name, expected);
+                }
                 sinex_model::SourceDeclaration {
                     source: sinex_model::SourceRef {
                         name: (*name).into(),
                         version: spec.parser_version,
                     },
                     family: "sinex".into(),
-                    kinds: sinex_model::event_types::declarations()
-                        .iter()
-                        .filter(|kind| spec.event_types.contains(&kind.kind.name.as_str()))
-                        .cloned()
-                        .collect(),
+                    kinds,
                 }
             })
             .collect();
@@ -235,10 +245,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
                 "host-b"
             }
         );
-        let spec = sinex_sources::sources::specs()
-            .into_iter()
-            .find(|spec| spec.name == source)
-            .unwrap();
+        let spec = native_spec(source);
         assert_eq!(*version, i64::from(spec.parser_version));
     }
     assert_eq!(identities.len(), 4);

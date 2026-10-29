@@ -172,8 +172,8 @@ pub async fn authorize_raw(conn: &mut PgConnection, material: MaterialId) -> Res
         ));
     }
     let sources = rows.iter().map(|row| row.0.clone()).collect::<Vec<_>>();
-    let rules = crate::privacy::load(conn, sources.iter().map(String::as_str)).await?;
-    if rules.rules.iter().any(|rule| rule.action.transforms()) {
+    let rules = crate::privacy::active_rules(conn, &sources).await?;
+    if rules.iter().any(|rule| rule.action.transforms()) {
         return Err(crate::Error::Invalid("current privacy rules withhold raw material bytes; no verified field range is available".into()));
     }
     if rows.is_empty() {
