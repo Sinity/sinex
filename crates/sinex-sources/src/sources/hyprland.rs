@@ -32,7 +32,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Window titles are free text that can contain anything.
     class: Class::Guarded,
     parser: "hyprland-socket2",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &[
         "window.focused",
         "window.opened",
@@ -107,6 +107,9 @@ impl Parser for HyprlandParser {
         let flush = |out: &mut Vec<Desktop>, pending: &Option<Pending>| {
             if let Some(p) = pending {
                 out.push(Desktop::Focused(WindowFocused {
+                    host: _context.manifest.detail("host").as_str().map(str::to_owned),
+                    scope: _context.manifest.detail("host").as_str().map(|host|
+                        serde_json::json!([host, _context.manifest.detail("session")]).to_string()),
                     received_at: pending_time(p).unwrap_or(received_at),
                     window: None,
                     class: nonempty(&p.class),
@@ -146,6 +149,9 @@ impl Parser for HyprlandParser {
                     None => (None, None, received_at),
                 };
                 out.push(Desktop::Focused(WindowFocused {
+                    host: _context.manifest.detail("host").as_str().map(str::to_owned),
+                    scope: _context.manifest.detail("host").as_str().map(|host|
+                        serde_json::json!([host, _context.manifest.detail("session")]).to_string()),
                     received_at: at,
                     window: nonempty(data.trim()),
                     class,
@@ -198,6 +204,9 @@ impl Parser for HyprlandParser {
             "workspacev2" => {
                 let (id, name) = data.split_once(',').unwrap_or((data, ""));
                 Desktop::Workspace(WorkspaceSwitched {
+                    host: _context.manifest.detail("host").as_str().map(str::to_owned),
+                    scope: _context.manifest.detail("host").as_str().map(|host|
+                        serde_json::json!([host, _context.manifest.detail("session")]).to_string()),
                     received_at,
                     workspace_id: id.trim().parse().ok(),
                     workspace_name: nonempty(name),

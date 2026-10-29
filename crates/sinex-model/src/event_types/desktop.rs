@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "window.focused", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WindowFocused {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub received_at: Timestamp,
     /// The compositor's window address; `None` when only class and title were
     /// reported before the next event arrived.
@@ -61,6 +65,10 @@ pub struct WindowTitleChanged {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "workspace.switched", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct WorkspaceSwitched {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub received_at: Timestamp,
     pub workspace_id: Option<i64>,
     pub workspace_name: Option<String>,
@@ -90,6 +98,10 @@ pub struct DesktopOther {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "window.span", key = ["bucket", "span_id"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct WindowSpan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub bucket: String,
     /// The row ID of the first ActivityWatch event in this span.
     pub span_id: i64,
@@ -106,6 +118,10 @@ pub struct WindowSpan {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "presence.span", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct PresenceSpan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub bucket: String,
     pub row: i64,
     pub started_at: Timestamp,

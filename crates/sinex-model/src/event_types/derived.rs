@@ -23,6 +23,9 @@ pub struct StateInterval {
     pub label: Option<String>,
     pub started_at: Timestamp,
     pub ended_at: Option<Timestamp>,
+    /// A later boot bounds an earlier unknown end without claiming uptime until it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fenced_at: Option<Timestamp>,
     pub start_event_type: String,
     /// What ended it: the next transition, a fence, a stop, or the observed
     /// duration (`None` while open).

@@ -38,6 +38,8 @@ fn focus_halves_merge_and_keep_the_first_halfs_time() {
     assert_eq!(
         out,
         vec![Desktop::Focused(WindowFocused {
+            scope: None,
+            host: None,
             received_at: at(1_000_000_000),
             window: Some("55aa".into()),
             class: Some("kitty".into()),

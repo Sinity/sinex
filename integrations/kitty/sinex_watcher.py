@@ -23,6 +23,11 @@ import socket
 import subprocess
 
 _HOST = socket.gethostname()
+try:
+    with open("/proc/sys/kernel/random/boot_id", encoding="ascii") as boot:
+        _BOOT_ID = boot.read().strip()
+except OSError:
+    _BOOT_ID = None
 _ROW_END = re.compile(r"(\r\n|\r)")
 _timer = None
 # Window id -> kitty's count of rows added to that window's history when its
@@ -85,7 +90,7 @@ def _send(event, window, **fields):
         pass
     line["git_identity"] = _git_identity(line.get("cwd"))
     line["terminal_identity"] = {
-        "host": _HOST, "adapter": "kitty", "process_id": os.getpid(),
+        "host": _HOST, "boot_id": _BOOT_ID, "adapter": "kitty", "process_id": os.getpid(),
         "parent_process_id": os.getppid(), "window_id": str(window.id),
     }
     line.update({k: v for k, v in fields.items() if v is not None})

@@ -26,6 +26,12 @@ pub struct Mark {
     pub by: String,
     #[event(class = guarded)]
     pub written_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[event(class = guarded)]
+    pub command_record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[event(class = guarded)]
+    pub focus_record: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]

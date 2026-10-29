@@ -7,6 +7,8 @@ fn query_requests_keep_bytes_and_use_manifest_authorship_without_changing_the_ma
     let at = Timestamp::from_unix_secs(100).unwrap();
     let marked = Timestamp::from_unix_secs(50).unwrap();
     let record = QueryRecord::Mark(Mark {
+        command_record: None,
+        focus_record: None,
         host: "spoofed".into(),
         at: marked,
         text: Some("synthetic note".into()),

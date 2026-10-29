@@ -14,7 +14,9 @@ fn at(secs: i64) -> Timestamp {
     Timestamp::from_unix_secs(T + secs).unwrap()
 }
 
-fn input(event_type: &str, secs: i64, payload: Value) -> Event {
+fn input(event_type: &str, secs: i64, mut payload: Value) -> Event {
+    static SEQUENCE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+    payload["scope"] = json!("synthetic-scope");
     let event_type: &'static str = INPUT_TYPES
         .iter()
         .copied()
@@ -34,7 +36,7 @@ fn input(event_type: &str, secs: i64, payload: Value) -> Event {
             },
             output_index: 0,
         },
-        ReadingOrder(0),
+        ReadingOrder(SEQUENCE.fetch_add(1,std::sync::atomic::Ordering::Relaxed)),
         [0; 32],
         Class::Open,
     );
@@ -211,7 +213,7 @@ fn key(state: &str) -> Value {
 
 #[devkit::test]
 fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
-    let env = Env::at(at(100_000));
+    let env = Env::at(at(100_000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     // Logical day 2024-06-15 runs 04:00 to 04:00 CEST: T-6h .. T+18h.
     let day_end = 18 * 3600;
     let inputs = [
@@ -240,21 +242,22 @@ fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
 
 #[devkit::test]
 fn inputs_ask_for_the_transitions_after_the_day() {
-    let env = Env::at(at(0));
+    let env = Env::at(at(0), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
     assert_eq!(q.window.unwrap().0, at(-6 * 3600));
     assert_eq!(q.window.unwrap().1, at(18 * 3600));
     assert!(q.event_types().contains(&"window.focused".to_string()));
     assert!(
-        q.event_types().contains(&"presence.span"),
+        q.event_types().contains(&"presence.span".to_string()),
         "interruptions are inputs"
     );
-    assert_eq!(q.after.len(), 2, "next transitions, next afk");
+    assert_eq!(q.after.len(), 1, "AFK closer is separate from the structural next-state range");
+    assert!(matches!(q.range,Some(InputRange::StateTransitions {..})));
 }
 
 #[devkit::test]
 fn keys_cover_the_rules_a_fence_ends() {
-    let env = Env::at(at(0));
+    let env = Env::at(at(0), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let view = |e: &Event| {
         StateIntervals.keys_for(
             &KeyView {
@@ -268,4 +271,24 @@ fn keys_cover_the_rules_a_fence_ends() {
     // Going AFK ends focus and workspace, and is itself a presence span.
     let afk = presence(0, 10, "afk");
     assert_eq!(view(&afk).len(), 3);
+}
+
+mod machine;
+
+#[devkit::test]
+fn all_changed_refreshes_before_a_late_closer_remain_exact_parents() {
+    let mut events=vec![focus(0,"window-a","first")];
+    events.extend((0..130).map(|index|focus(18*3600+index,"window-a",&format!("refresh-{index}"))));
+    events.push(focus(3*86400,"window-b","other"));
+    let env=Env::at(at(4*86400), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));let output=StateIntervals.compute(&key("desktop.focus"),&events,&env);
+    let interval=output.outputs.iter().find(|event|event.ts_orig.at==Some(at(0))).unwrap();
+    assert_eq!(interval.payload["ended_at"],json!(at(3*86400)));
+    let Origin::Derived{parents}=&interval.origin else{panic!("derived interval")};
+    assert_eq!(parents.len(),132);
+    for event in &events{assert!(parents.contains(&event.id));}
+}
+#[devkit::test]
+fn desktop_transitions_require_the_same_captured_scope() {
+    let first=focus(0,"window-a","first");let mut other=focus(10,"window-b","other");other.payload["scope"]=json!("other-host");
+    let output=lift("desktop.focus",&[first,other]);assert_eq!(output.len(),2);assert!(output.iter().all(|interval|interval.ended_at.is_none()));
 }
