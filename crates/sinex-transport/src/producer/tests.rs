@@ -207,16 +207,21 @@ impl Duplicate {
             .await
             .unwrap();
         assert!(!first.duplicate);
-        let message = consumer
-            .fetch()
-            .max_messages(1)
-            .messages()
-            .await
-            .unwrap()
-            .next()
-            .await
-            .unwrap()
-            .unwrap();
+        let message = tokio::time::timeout(EXCHANGE, async {
+            consumer
+                .batch()
+                .max_messages(1)
+                .expires(EXCHANGE)
+                .messages()
+                .await
+                .expect("one waiting pull for the committed original")
+                .next()
+                .await
+                .expect("the waiting pull delivers the committed original")
+                .expect("the original delivery succeeds")
+        })
+        .await
+        .expect("the committed original is delivered within the exchange deadline");
         assert_eq!(message.payload.as_ref(), body.as_slice());
         if committed {
             message.double_ack().await.unwrap();
