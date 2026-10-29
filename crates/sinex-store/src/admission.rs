@@ -286,38 +286,12 @@ pub(crate) async fn admit(
 
     outcome.timings.insert("replay_archive", started.elapsed());
     let mut events: Vec<Event> = batch.events().cloned().collect();
-    let profile = events.len() >= 8192;
-    let large_started = std::time::Instant::now();
-    if profile {
-        eprintln!(
-            "ADMISSION_STAGE events={} stage=prepare_start elapsed_ms=0",
-            events.len()
-        );
-    }
     let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
-    if profile {
-        eprintln!(
-            "ADMISSION_STAGE stage=kinds_prepared elapsed_ms={}",
-            large_started.elapsed().as_millis()
-        );
-    }
     register::native_keys(conn, batch, &mut events).await?;
-    if profile {
-        eprintln!(
-            "ADMISSION_STAGE stage=native_keys elapsed_ms={}",
-            large_started.elapsed().as_millis()
-        );
-    }
     let started = std::time::Instant::now();
     apply_privacy(conn, cache, batch, &mut events).await?;
     orders::assign(conn, batch, &mut events).await?;
     outcome.timings.insert("privacy", started.elapsed());
-    if profile {
-        eprintln!(
-            "ADMISSION_STAGE stage=privacy_orders elapsed_ms={}",
-            large_started.elapsed().as_millis()
-        );
-    }
     let started = std::time::Instant::now();
     removed_at_source(conn, batch, &mut events).await?;
     let missing: Vec<_> = events
@@ -340,13 +314,6 @@ pub(crate) async fn admit(
 
     if !events.is_empty() {
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
-        if profile {
-            eprintln!(
-                "ADMISSION_STAGE stage=classified elapsed_ms={} timings={:?}",
-                large_started.elapsed().as_millis(),
-                outcome.timings
-            );
-        }
         let started = std::time::Instant::now();
         sqlx::query!(
             "DELETE FROM core.admission_stage AS staged
@@ -381,24 +348,9 @@ pub(crate) async fn admit(
                 &provenance,
             )
             .await?;
-            if profile {
-                eprintln!(
-                    "ADMISSION_STAGE stage=inserted elapsed_ms={} timings={:?}",
-                    large_started.elapsed().as_millis(),
-                    outcome.timings
-                );
-            }
             let ids: Vec<_> = outcome.admitted_ids.iter().map(|id| id.0).collect();
             let rules = cache.load(conn).await?.clone();
-            let started = std::time::Instant::now();
             privacy::projection::admitted(conn, &ids, &rules).await?;
-            outcome.timings.insert("projection", started.elapsed());
-            if profile {
-                eprintln!(
-                    "ADMISSION_STAGE stage=projected elapsed_ms={}",
-                    large_started.elapsed().as_millis()
-                );
-            }
         }
         let rules = cache.load(conn).await?.clone();
         if validated_epoch.is_some()

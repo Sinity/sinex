@@ -188,7 +188,6 @@ pub(crate) async fn admitted(
     ids: &[Uuid],
     rules: &privacy::RuleSet,
 ) -> Result<()> {
-    let started = std::time::Instant::now();
     sqlx::query("INSERT INTO privacy.original_events(event_id,baseline_class,equivalence_key,recoverable) SELECT id,class,equivalence_key,true FROM core.events WHERE id=ANY($1) ON CONFLICT DO NOTHING").bind(ids).execute(&mut *conn).await?;
     let state = epoch(conn).await?;
     let sql = format!("{INPUT} WHERE e.id=ANY($1) ORDER BY e.commit_seq,e.id");
@@ -196,21 +195,8 @@ pub(crate) async fn admitted(
         .bind(ids)
         .fetch_all(&mut *conn)
         .await?;
-    if ids.len() >= 8192 {
-        eprintln!(
-            "PROJECTION_STAGE rows={} stage=loaded elapsed_ms={}",
-            inputs.len(), started.elapsed().as_millis()
-        );
-    }
-    for (index, input) in inputs.into_iter().enumerate() {
+    for input in inputs {
         project(conn, &input, rules, state.desired).await?;
-        if ids.len() >= 8192 && (index + 1) % 8192 == 0 {
-            eprintln!(
-                "PROJECTION_STAGE rows={} elapsed_ms={}",
-                index + 1,
-                started.elapsed().as_millis()
-            );
-        }
     }
     Ok(())
 }
