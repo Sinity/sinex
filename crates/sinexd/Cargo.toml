@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+hashed-blobs.workspace = true
 query-language.workspace = true
 signals.workspace = true
 signal-delivery.workspace = true
@@ -45,7 +46,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 age.workspace = true
-hashed-blobs.workspace = true
 tar = "0.4"
 flate2 = "1"
 devkit.workspace = true
