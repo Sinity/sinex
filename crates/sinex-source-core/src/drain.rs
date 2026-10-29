@@ -326,7 +326,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
             member: self.input.manifest.member_at(start),
         };
         let mut reader = std::io::BufReader::with_capacity(
-            65536,
+            (end-start).clamp(1,65536),
             DigestRead {
                 reader: self.input.bytes.reader(start, end)?,
                 hash: blake3::Hasher::new(),
@@ -481,6 +481,7 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
         while let Some(&(start, end)) = self.input.records.get(self.next) {
             self.next += 1;
             let (outcome, size) = if <P::Record<'_> as RecordShape>::STREAMING
+                && !matches!(&self.input.bytes,RecordBytes::Slice(_))
                 && !crate::drivers::dir_snapshot::is_directory(self.input.manifest)
             {
                 match self.streamed_outcome(start, end) {
