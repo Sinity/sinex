@@ -77,9 +77,14 @@ async fn replay(ctx: &mut ReaderContext) -> crate::replay::Report {
 #[devkit::test]
 async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let shell = dir.path().join("atuin.db");
     let history = dir.path().join("zsh_history");
     let books = dir.path().join("goodreads.csv");
@@ -232,9 +237,14 @@ async fn kestrel_presence_updates_replace_readings_and_replay_keeps_the_latest(
     sqlite.execute_batch("CREATE TABLE buckets(id INTEGER PRIMARY KEY, name TEXT, type TEXT);
         INSERT INTO buckets VALUES (1,'aw-watcher-afk_kestrel','afkstatus');
         CREATE TABLE events(id INTEGER PRIMARY KEY, bucketrow INTEGER, starttime TEXT, endtime TEXT, data TEXT);").unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let mut readers = [binding(&activitywatch::FORMAT, &activitywatch::SPEC, &path)];
     activity_rows(&sqlite, "2026-09-14T08-00-00Z.json");
     ingest(&mut ctx, &mut readers).await;

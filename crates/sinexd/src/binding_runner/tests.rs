@@ -171,7 +171,14 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
         .remove(0);
     let store = root.path().join("store");
     let url = db.url(None);
-    let mut context = ReaderContext::open(&url, &store).await.unwrap();
+    let mut context = ReaderContext::open(
+        &url,
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     binding_reader::once(
         &mut context.read_conn,
         &context.blobs,
@@ -187,7 +194,14 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
         .unwrap();
     context.close().await.unwrap();
     let configuration = config(json!({"sources":{"terminal.zsh-history":{"paths":[history]}}}));
-    let mut context = ReaderContext::open(&url, &store).await.unwrap();
+    let mut context = ReaderContext::open(
+        &url,
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let saved = saved(&mut context.read_conn, &url, "h").await.unwrap();
     let planned = discovery::reconcile(plan(&configuration, "h").unwrap(), &saved).bindings;
     assert_eq!(planned[0].1.name, original.name);
@@ -204,10 +218,12 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
     )
     .await
     .unwrap();
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type = 'command.imported'")
-        .fetch_one(&mut context.read_conn)
-        .await
-        .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE event_type = 'command.imported'",
+    )
+    .fetch_one(&mut context.read_conn)
+    .await
+    .unwrap();
     assert_eq!(count, 1, "rediscovery must not admit the location again");
     assert_eq!(
         sinex_store::positions::load(&mut context.read_conn, &original.name)
@@ -358,5 +374,8 @@ fn project_registry_reaches_the_versioned_derivation() {
     let c = config(serde_json::json!({"project_attribution":{"projects":[{
         "project":"example","common_dirs":["/captured/example/.git"]}]}}));
     let configuration = c.derivation_configuration();
-    assert_eq!(configuration.project_attribution.projects[0]["project"],"example");
+    assert_eq!(
+        configuration.project_attribution.projects[0]["project"],
+        "example"
+    );
 }

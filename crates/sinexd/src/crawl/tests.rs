@@ -4,9 +4,14 @@ use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, MaterialId, Operati
 #[devkit::test]
 async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path())
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let run = uuid::Uuid::now_v7();
     sqlx::query("INSERT INTO core.runs(id,name,host) VALUES ($1,'test','synthetic')")
         .bind(run)
@@ -155,9 +160,14 @@ fn crawl_filters_domains_and_fetched_urls_before_applying_the_limit() {
 #[devkit::test]
 async fn a_second_crawl_refuses_without_waiting(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path())
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let active = CRAWL_LOCK.lock().await;
     let result = tokio::time::timeout(
         Duration::from_secs(1),
