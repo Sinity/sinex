@@ -422,7 +422,7 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
     let authority = Authorities::new(snapshot);
     let mut admitted = BTreeSet::new();
     for (part, cut) in &parts {
-        for (start, end) in frames(&part.bytes, is_zsh)
+        for (start, _) in frames(&part.bytes, is_zsh)
             .into_iter()
             .filter(|(_, end)| end <= cut)
         {
@@ -648,4 +648,5 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
 }
 
 #[cfg(test)]
+#[path = "progress/tests.rs"]
 mod tests;
