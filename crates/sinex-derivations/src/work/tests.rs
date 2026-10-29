@@ -325,6 +325,7 @@ fn work_queries_select_a_session_then_the_recorded_objective_range() {
     let key = Keyed::keys_for(
         &WorkEpisodes,
         &KeyView {
+            event_id: output.outputs[0].id,
             event_type: "work.act",
             ts_orig: Some(at(0)),
             payload: &output.outputs[0].payload,

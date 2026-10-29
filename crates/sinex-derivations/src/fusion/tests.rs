@@ -270,6 +270,7 @@ fn fuse_events(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Event> {
     let mut keys: Vec<Value> = Vec::new();
     for e in inputs {
         let view = KeyView {
+            event_id: e.id,
             event_type: &e.event_type,
             ts_orig: e.ts_orig.at,
             payload: &e.payload,

@@ -57,6 +57,7 @@ fn env() -> Env {
 fn keys(d: &dyn crate::AnyKeyed, e: &Event) -> Vec<Value> {
     d.keys_for(
         &KeyView {
+            event_id: e.id,
             event_type: &e.event_type,
             ts_orig: e.ts_orig.at,
             payload: &e.payload,

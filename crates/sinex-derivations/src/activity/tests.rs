@@ -410,6 +410,7 @@ fn more_than_ten_thousand_inputs_keep_all_support_and_counts() {
 fn only_sleep_journal_records_are_read_or_mark_activity_keys() {
     let payload = json!({"identifier":"unrelated", "message":"Performing sleep operation"});
     let input = KeyView {
+        event_id: sinex_model::EventId::new(),
         event_type: "journal.entry",
         ts_orig: Some(at(0)),
         payload: &payload,
@@ -671,6 +672,7 @@ fn recorder_lifetimes_keep_hosts_separate_when_session_ids_repeat() {
     ];
     fn view(event: &Event) -> KeyView<'_> {
         KeyView {
+            event_id: event.id,
             event_type: &event.event_type,
             ts_orig: event.ts_orig.at,
             payload: &event.payload,

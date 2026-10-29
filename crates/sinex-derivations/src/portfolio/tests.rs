@@ -72,7 +72,7 @@ fn rhythm_recomputes_after_a_late_prior_correction_and_never_counts_unknown_days
 #[devkit::test]
 fn late_rhythm_input_dirties_its_future_baseline_days(){
     let event=daily(0,300,true);let env=Env::at(at(40*86400), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
-    let view=crate::KeyView{event_type:&event.event_type,ts_orig:event.ts_orig.at,payload:&event.payload};
+    let view=crate::KeyView{event_id: event.id,event_type: &event.event_type,ts_orig:event.ts_orig.at,payload:&event.payload};
     let keys=rhythm::RhythmDeviations(rhythm::RhythmProfile::default()).keys_for(&view,&env);
     assert_eq!(keys.len(),29);
 }

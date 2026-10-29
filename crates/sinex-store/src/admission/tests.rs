@@ -503,6 +503,28 @@ impl DirtyKeys for ByDay {
     }
 }
 
+struct ByEventId;
+impl DirtyKeys for ByEventId {
+    fn keys(&self,input:&KeyInput<'_>)->Vec<(String,Value)>{vec![("fixture.event_identity".into(),json!(input.event_id))]}
+}
+
+#[devkit::test]
+async fn admitted_projected_archived_and_restored_keys_keep_the_exact_event_identity(db:devkit::pg::TestDatabase){
+    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    crate::privacy::add_rule(&mut conn,&crate::privacy::NewRule{name:"identity field".into(),source:"fixture.identity".into(),event_type:Some("command.executed".into()),field:Some("/command".into()),matcher:"all".into(),matcher_arg:None,class:Class::Open,action:crate::privacy::Action::Mask,author:"fixture".into()}).await.unwrap();
+    let event=keyed("fixture.identity",1,1,1);let expected=event.id;
+    let mut hide=batch(vec![]);hide.archive.push(ArchiveRequest::Hide{target:expected,operation:OperationId::new()});
+    let mut restore=batch(vec![]);restore.archive.push(ArchiveRequest::Unhide{target:expected,operation:OperationId::new()});
+    for operation in [batch(vec![event]),hide,restore]{
+        let mut tx=conn.begin().await.unwrap();tx.admit(&operation,&ByEventId).await.unwrap();tx.commit().await.unwrap();
+        crate::privacy::projection::ensure_current(&mut conn).await.unwrap();
+        let keys:Vec<Value>=sqlx::query_scalar("SELECT key FROM derivation.dirty WHERE derivation='fixture.event_identity'").fetch_all(&mut *conn).await.unwrap();
+        assert_eq!(keys,vec![json!(expected)],"original, projected and lifecycle callbacks must describe the same retained reading");
+        sqlx::query("DELETE FROM derivation.dirty WHERE derivation='fixture.event_identity'").execute(&mut *conn).await.unwrap();
+    }
+    let retained:Uuid=sqlx::query_scalar("SELECT event_id FROM core.live_equivalence WHERE source='fixture.identity'").fetch_one(&mut *conn).await.unwrap();assert_eq!(retained,expected.0);
+}
+
 #[devkit::test]
 async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))

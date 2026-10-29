@@ -234,6 +234,7 @@ fn an_old_open_interval_stops_counting_at_its_day_end() {
     let now = 2 * 365 * 86_400;
     let e = focus("vim", 0, None);
     let view = KeyView {
+        event_id: e.id,
         event_type: &e.event_type,
         ts_orig: e.ts_orig.at,
         payload: &e.payload,
@@ -255,6 +256,7 @@ fn an_old_open_interval_stops_counting_at_its_day_end() {
 fn a_long_interval_dirties_every_day_it_covers() {
     let e = focus("vim", 0, Some(2 * 86_400));
     let view = KeyView {
+        event_id: e.id,
         event_type: &e.event_type,
         ts_orig: e.ts_orig.at,
         payload: &e.payload,
@@ -332,6 +334,7 @@ fn a_day_adds_up_its_hours() {
         let q = DailyMetrics.inputs(&key(metric), &env).unwrap();
         assert!(hours.iter().all(|h| q.admits(h)));
         let view = KeyView {
+            event_id: hours[0].id,
             event_type: &hours[0].event_type,
             ts_orig: hours[0].ts_orig.at,
             payload: &hours[0].payload,

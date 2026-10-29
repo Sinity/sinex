@@ -424,6 +424,7 @@ pub(super) async fn mark_inputs_dirty(
         for query in keys.nearby_inputs(input).into_iter().filter(|_|policy_ready) {
             for selected in crate::derivations::read_window(conn, &query).await? {
                 dirty.extend(keys.keys(&KeyInput {
+                    event_id: selected.event.id,
                     event_type: selected.event.event_type,
                     ts_orig: selected.event.ts_orig.at.map(|at| at.0),
                     payload: &selected.event.payload,
@@ -485,7 +486,7 @@ pub(crate) async fn mark_archived_dirty(
     ).fetch_all(&mut *conn).await?;
     let all: Vec<Uuid> = ids.iter().chain(&descendants).copied().collect();
     let rows = sqlx::query!(
-        "SELECT event_type, ts_orig, payload FROM core.events WHERE id = ANY($1)",
+        "SELECT id, event_type, ts_orig, payload FROM core.events WHERE id = ANY($1)",
         &all,
     )
     .fetch_all(&mut *conn)
@@ -493,6 +494,7 @@ pub(crate) async fn mark_archived_dirty(
     let inputs: Vec<_> = rows
         .iter()
         .map(|row| KeyInput {
+            event_id: sinex_model::EventId(row.id),
             event_type: &row.event_type,
             ts_orig: row.ts_orig,
             payload: &row.payload,

@@ -23,6 +23,7 @@ impl Registered {
 impl DirtyKeys for Registered {
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)> {
         let view = KeyView {
+            event_id: event.event_id,
             event_type: event.event_type,
             ts_orig: event.ts_orig.map(Timestamp),
             payload: event.payload,
@@ -44,6 +45,7 @@ impl DirtyKeys for Registered {
     }
     fn affected_ranges(&self, event: &KeyInput<'_>) -> Vec<sinex_store::AffectedRange> {
         let view = KeyView {
+            event_id: event.event_id,
             event_type: event.event_type,
             ts_orig: event.ts_orig.map(Timestamp),
             payload: event.payload,
@@ -74,6 +76,7 @@ impl DirtyKeys for Registered {
 
     fn nearby_inputs(&self, event: &KeyInput<'_>) -> Vec<sinex_store::derivations::Window> {
         let view = KeyView {
+            event_id: event.event_id,
             event_type: event.event_type,
             ts_orig: event.ts_orig.map(Timestamp),
             payload: event.payload,

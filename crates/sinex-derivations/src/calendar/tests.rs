@@ -221,6 +221,7 @@ fn a_series_is_one_key_read_whole() {
     let env = Env::at(at("2024-03-01T00:00:00Z"));
     let keys = Instances.keys_for(
         &KeyView {
+            event_id: e.id,
             event_type: e.event_type.as_str(),
             ts_orig: e.ts_orig.at,
             payload: &e.payload,

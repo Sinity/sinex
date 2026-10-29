@@ -278,6 +278,7 @@ impl DerivationRunner {
                     continue;
                 }
                 let view = KeyView {
+                    event_id: c.event.id,
                     event_type: c.event.event_type,
                     ts_orig: t,
                     payload: &c.event.payload,

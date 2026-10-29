@@ -108,6 +108,7 @@ pub(super) async fn descendants(
             dirty += mark_inputs_dirty(
                 conn,
                 &[KeyInput {
+                    event_id: sinex_model::EventId(event.id),
                     event_type: &event.event_type,
                     ts_orig: event.ts_orig,
                     payload: &event.payload,

@@ -261,6 +261,7 @@ fn keys_cover_the_rules_a_fence_ends() {
     let view = |e: &Event| {
         StateIntervals.keys_for(
             &KeyView {
+                event_id: e.id,
                 event_type: &e.event_type,
                 ts_orig: e.ts_orig.at,
                 payload: &e.payload,

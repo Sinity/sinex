@@ -34,6 +34,7 @@ pub mod work;
 /// What a key function sees of an admitted or archived event.
 #[derive(Clone, Copy, Debug)]
 pub struct KeyView<'a> {
+    pub event_id: EventId,
     pub event_type: &'a str,
     pub ts_orig: Option<Timestamp>,
     pub payload: &'a Value,

@@ -40,6 +40,7 @@ pub use derived::{ComputedKey, DerivedScope, ReadMark};
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]
 pub struct KeyInput<'a> {
+    pub event_id: EventId,
     pub event_type: &'a str,
     pub ts_orig: Option<time::OffsetDateTime>,
     pub payload: &'a Value,
@@ -440,8 +441,8 @@ mod tests;
 /// New values can produce different keys after a configured field transform.
 /// Use the existing key functions on the one projection as well as old keys.
 async fn mark_projected_inputs_dirty(conn:&mut PgConnection,ids:&[Uuid],keys:&dyn DirtyKeys,outcome:&mut Outcome)->Result<()> {
-    let rows:Vec<(String,Option<time::OffsetDateTime>,Value,i64)>=sqlx::query_as("SELECT e.event_type,e.ts_orig,o.payload,e.commit_seq FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id JOIN privacy.policy_state p ON p.id WHERE e.id=ANY($1) AND o.epoch=p.desired_epoch AND o.state='complete'").bind(ids).fetch_all(&mut *conn).await?;
-    let seq=rows.iter().map(|row|row.3).max().unwrap_or(0);
-    let inputs:Vec<_>=rows.iter().map(|row|KeyInput{event_type:&row.0,ts_orig:row.1,payload:&row.2}).collect();
+    let rows:Vec<(Uuid,String,Option<time::OffsetDateTime>,Value,i64)>=sqlx::query_as("SELECT e.id,e.event_type,e.ts_orig,o.payload,e.commit_seq FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id JOIN privacy.policy_state p ON p.id WHERE e.id=ANY($1) AND o.epoch=p.desired_epoch AND o.state='complete'").bind(ids).fetch_all(&mut *conn).await?;
+    let seq=rows.iter().map(|row|row.4).max().unwrap_or(0);
+    let inputs:Vec<_>=rows.iter().map(|row|KeyInput{event_id:EventId(row.0),event_type:&row.1,ts_orig:row.2,payload:&row.3}).collect();
     outcome.dirty_keys+=derived::mark_inputs_dirty(conn,&inputs,seq,keys).await?;Ok(())
 }
