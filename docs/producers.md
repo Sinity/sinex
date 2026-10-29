@@ -164,7 +164,7 @@ Producer replay frames are described under [the ingress](#producer-replay).
 
 ### Confirmed position boundaries and authenticated fetches
 
-`PositionComplete { commit_seq }` closes a global commit position after its events and lifecycle changes have been published. Consumers advance their durable scalar position only on this control message. `Gap { reason }` reports historical evidence that cannot establish an exact position and never advances it.
+`EventReference { commit_seq, event }` carries an oversized event metadata reference on the same scoped topic; fetching it verifies both the event ID and position. `PositionComplete { commit_seq }` closes a global commit position after its events and lifecycle changes have been published. Consumers advance their durable scalar position only on this control message. `Gap { reason }` reports historical evidence that cannot establish an exact position and never advances it.
 
 Producer read grants are operator-configured kind prefixes and classes, with no access granted by registration alone. Fetch subjects use the authenticated producer identity. Event fetches apply the public visibility and redaction rules and return exact kind, version, record hash and commit position. Oversized payloads or complete events carry a BLAKE3-bound reference; bounded range replies repeat the reference hash and reject changed output. Material fetches return authoritative encoded segment descriptors after checking the same grants and producer-family ownership. Oversized material metadata returns `material_ref`; requests on the same subject with `range` reauthorize each transfer, which carries a stable hash, total length and offset. Sealed bytes require an explicit unlocked access path.
 

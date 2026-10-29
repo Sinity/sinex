@@ -615,6 +615,9 @@ async fn producers_are_limited_to_their_own_subjects() {
     let mut foreign_inbox=kitty.subscribe("_INBOX.phone.>").await.unwrap();kitty.flush().await.unwrap();
     daemon.publish("_INBOX.phone.synthetic","private response".into()).await.unwrap();daemon.flush().await.unwrap();
     assert!(tokio::time::timeout(Duration::from_millis(300),foreign_inbox.next()).await.map_or(true,|message|message.is_none()),"producer must not eavesdrop another identity's RPC reply inbox");
+    let mut foreign_inline=kitty.subscribe("sx.confirmed.>").await.unwrap();kitty.flush().await.unwrap();
+    daemon.publish("sx.confirmed.event.open.foreign.kind","private inline payload".into()).await.unwrap();daemon.flush().await.unwrap();
+    assert!(tokio::time::timeout(Duration::from_millis(300),foreign_inline.next()).await.map_or(true,|message|message.is_none()),"producer cannot bypass its scoped consumer with a raw stream subscription");
     // Nor can a producer read another producer's acknowledgments.
     assert!(kitty.subscribe("sx.ack.phone").await.is_ok());
     let mut probe = kitty.subscribe("sx.ack.phone").await.unwrap();

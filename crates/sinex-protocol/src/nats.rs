@@ -621,6 +621,8 @@ pub enum Confirmed {
         reason: String,
     },
     Event(Box<ConfirmedEvent>),
+    /// Metadata exceeding a transfer unit is fetched under the same scoped grants.
+    EventReference {commit_seq:i64,event:EventId},
     Archived(Archived),
     /// A previously hidden reading is live again at a new position.
     Unhidden(Unhidden),
