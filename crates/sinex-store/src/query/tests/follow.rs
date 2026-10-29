@@ -51,7 +51,7 @@ async fn follow_range_excludes_later_commits_from_every_page(db: devkit::pg::Tes
     let later = admit_commands(&mut conn, &[("cargo later", "/src/tide")]).await;
     catch_up_search_text(&mut conn).await.unwrap();
     let context = ctx();
-    let text = "events where cargo";
+    let text = "commands where cargo";
     let bound = bind(text, &context).unwrap();
     let query = follow_query(&bound, after, through);
     let mut page = Page {
@@ -71,9 +71,13 @@ async fn follow_range_excludes_later_commits_from_every_page(db: devkit::pg::Tes
     }
     let expected: std::collections::BTreeSet<_> = within
         .iter()
-        .flat_map(|(fused, observation)| [json!(fused).to_string(), json!(observation).to_string()])
+        .map(|(fused, _)| json!(fused).to_string())
         .collect();
-    assert_eq!(rows.len(), expected.len(), "range ({after}, {through}], rows={rows:?}, expected={expected:?}");
+    assert_eq!(
+        rows.len(),
+        expected.len(),
+        "range ({after}, {through}], rows={rows:?}, expected={expected:?}"
+    );
     assert_eq!(
         rows.into_iter()
             .map(|id| id.to_string())
@@ -87,7 +91,7 @@ async fn follow_range_excludes_later_commits_from_every_page(db: devkit::pg::Tes
         .unwrap();
     let expected: std::collections::BTreeSet<_> = later
         .iter()
-        .flat_map(|(fused, observation)| [json!(fused).to_string(), json!(observation).to_string()])
+        .map(|(fused, _)| json!(fused).to_string())
         .collect();
     let rows = column(&answer, "id");
     assert_eq!(rows.len(), expected.len());
