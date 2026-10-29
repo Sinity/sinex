@@ -28,6 +28,7 @@ mod bytes;
 mod confirmed_consumer;
 mod coverage;
 pub(crate) mod fetch;
+mod recorded;
 pub(crate) mod replay;
 mod signals;
 
@@ -620,26 +621,7 @@ impl Ingest {
         producer: &str,
         source: &sinex_model::SourceRef,
     ) -> Result<sinex_model::SourceDeclaration, Check> {
-        let write = authority::write(&self.grants, producer).map_err(Check::Configuration)?;
-        if !authority::matches(&write.source_prefixes, &source.name) {
-            return Err(Check::Configuration(
-                "native source is outside the configured credential capability".into(),
-            ));
-        }
-        let declaration = sinex_store::source_declarations::load(&mut self.conn, source)
-            .await
-            .map_err(|error| Check::Unavailable(error.to_string()))?
-            .ok_or_else(|| {
-                Check::Configuration(
-                    "native source version is not installed in the owner catalog".into(),
-                )
-            })?;
-        if declaration.family != write.family {
-            return Err(Check::Configuration(
-                "native source belongs to another configured family".into(),
-            ));
-        }
-        Ok(declaration)
+        authority::native_declaration(&mut self.conn, &self.grants, producer, source).await
     }
 
     fn check_declarations(
@@ -1135,9 +1117,17 @@ impl Requests {
         producer: &str,
         request: &RecordedQuery,
     ) -> Result<sinex_protocol::RecordedPage, String> {
-        let mut conn = self
+        use sqlx::Connection;
+        let mut connection = self
             .reads
             .acquire()
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut conn = connection
+            .begin()
+            .await
+            .map_err(|error| error.to_string())?;
+        sinex_store::query::read_one_snapshot(&mut conn)
             .await
             .map_err(|error| error.to_string())?;
         let (rows, next) = commit_log::frames_page(
@@ -1149,9 +1139,18 @@ impl Requests {
         )
         .await
         .map_err(|error| error.to_string())?;
+        let mut continuations = Vec::with_capacity(request.continuations.len());
+        for claim in &request.continuations {
+            continuations.push(
+                self.recorded_continuation(&mut conn, producer, claim)
+                    .await?,
+            );
+        }
+        conn.commit().await.map_err(|error| error.to_string())?;
         Ok(sinex_protocol::RecordedPage {
             acknowledgments: rows.into_iter().map(acknowledgment).collect(),
             next,
+            continuations,
         })
     }
 

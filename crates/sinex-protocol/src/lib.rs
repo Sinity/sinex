@@ -29,9 +29,10 @@ pub use nats::{
     DeclarationHash, ErasedEvent, Excise, ExciseReply, FetchEvent, FetchEventReply, FetchMaterial,
     FetchMaterialReply, FetchRefusalKind, ForwardedSignal, Ingress, MaterialFrame, Materials,
     MaterialsPage, PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello,
-    ProducerMaterial, ProducerReplay, ProducerWelcome, ReceiptHint, RecordedPage, RecordedQuery,
-    ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery, ReplaySelection,
-    SignalCondition, SignalConditionReply, Subjects, Unhidden,
+    ProducerMaterial, ProducerReplay, ProducerWelcome, ReceiptHint, RecordedContinuation,
+    RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders, RecordedMaterialBinding,
+    RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery,
+    ReplaySelection, SignalCondition, SignalConditionReply, Subjects, Unhidden,
 };
 pub use request::{Reply, Request};
 pub use sinex_model::SourceRef;

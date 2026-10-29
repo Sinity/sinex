@@ -110,6 +110,7 @@ pub(crate) async fn refusing(
                 sinex_protocol::RecordedPage {
                     acknowledgments,
                     next: None,
+                    ..Default::default()
                 },
                 std::time::Duration::from_secs(10),
             )

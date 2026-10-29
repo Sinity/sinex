@@ -299,6 +299,7 @@ async fn answer_recorded(
         RecordedPage {
             acknowledgments,
             next: None,
+            ..Default::default()
         },
         HINT_IDLE,
     )
@@ -460,4 +461,85 @@ async fn duplicate_refusal_preserves_the_owned_terminal_disposition() {
         responder.await.unwrap();
         fixture.once().await;
     }
+}
+
+#[devkit::test]
+async fn optional_continuations_preserve_ordinary_wire_and_explicit_rejection_is_not_retried() {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PreviousQuery {
+        frames: Vec<String>,
+        numbers: Vec<i64>,
+        after: i64,
+    }
+    let server = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(server.url()).await.unwrap();
+    let subjects = Subjects::new(server.prefix());
+    let mut requests = client.subscribe(subjects.recorded(PRODUCER)).await.unwrap();
+    client.flush().await.unwrap();
+    let owner = client.clone();
+    let responder = tokio::spawn(async move {
+        for explicit in [false, true] {
+            let request = requests.next().await.unwrap();
+            let previous = serde_json::from_slice::<PreviousQuery>(&request.payload);
+            let value = if explicit {
+                assert!(
+                    previous.is_err(),
+                    "old deny_unknown_fields peer refuses the explicit feature"
+                );
+                serde_json::json!({"refusal":"continuations unsupported"})
+            } else {
+                let previous = previous.unwrap();
+                assert_eq!(previous.frames, vec!["owned"]);
+                assert!(previous.numbers.is_empty());
+                assert_eq!(previous.after, 0);
+                serde_json::json!({"acknowledgments":[],"next":null})
+            };
+            let _ = crate::replies::publish_json(
+                &owner,
+                request.reply.unwrap().to_string(),
+                value,
+                HINT_IDLE,
+            )
+            .await;
+        }
+    });
+    let ordinary = RecordedQuery {
+        frames: vec!["owned".into()],
+        ..Default::default()
+    };
+    let page: RecordedPage = crate::replies::request_json(
+        &client,
+        subjects.recorded(PRODUCER),
+        PRODUCER,
+        &ordinary,
+        HINT_IDLE,
+    )
+    .await
+    .unwrap();
+    assert!(page.continuations.is_empty());
+    let explicit = RecordedQuery {
+        continuations: vec![sinex_protocol::RecordedContinuationRequest {
+            frame: "retained-material".into(),
+            frame_content_hash: "blake3:expected-body".into(),
+            material: sinex_model::MaterialId::new(),
+            blob: "blake3:expected-bytes".into(),
+            length: 0,
+            uses: vec![],
+        }],
+        ..Default::default()
+    };
+    let result = crate::replies::request_json::<RecordedPage>(
+        &client,
+        subjects.recorded(PRODUCER),
+        PRODUCER,
+        &explicit,
+        HINT_IDLE,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "unsupported evidence remains unavailable, never a fresh ordinary ACK"
+    );
+    responder.await.unwrap();
 }

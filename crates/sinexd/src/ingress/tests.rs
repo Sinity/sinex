@@ -1960,3 +1960,5 @@ mod replies;
 mod receipts;
 
 mod coverage;
+
+mod recorded_continuations;

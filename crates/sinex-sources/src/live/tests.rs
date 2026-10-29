@@ -257,7 +257,7 @@ async fn fake_ingress_controlled(
                 Some(message) = queries.next() => {
                     let query: sinex_protocol::RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
                     let acknowledgments=recorded.values().filter(|receipt|(query.frames.contains(&receipt.frame)||receipt.number.is_some_and(|number|query.numbers.contains(&number)))&&receipt.number.is_some_and(|number|number>query.after)).cloned().collect();
-                    queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Recorded(sinex_protocol::RecordedPage { acknowledgments, next: None }) });
+                    queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Recorded(sinex_protocol::RecordedPage { acknowledgments, next: None, ..Default::default() }) });
                 }
                 command = async { controls.as_mut().expect("enabled control branch").recv().await }, if controls.is_some() => {
                     match command.expect("reply control lifetime covers the fake owner") {

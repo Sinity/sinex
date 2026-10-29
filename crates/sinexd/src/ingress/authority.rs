@@ -234,3 +234,33 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+/// The same current native source authority serves admission and optional
+/// retained-material header observations. Neither path registers old sources.
+pub(crate) async fn native_declaration(
+    conn: &mut PgConnection,
+    grants: &fetch::ProducerGrants,
+    producer: &str,
+    source: &sinex_model::SourceRef,
+) -> Result<sinex_model::SourceDeclaration, Check> {
+    let write = write(grants, producer).map_err(Check::Configuration)?;
+    if !matches(&write.source_prefixes, &source.name) {
+        return Err(Check::Configuration(
+            "native source is outside the configured credential capability".into(),
+        ));
+    }
+    let declaration = sinex_store::source_declarations::load(conn, source)
+        .await
+        .map_err(|error| Check::Unavailable(error.to_string()))?
+        .ok_or_else(|| {
+            Check::Configuration(
+                "native source version is not installed in the owner catalog".into(),
+            )
+        })?;
+    if declaration.family != write.family {
+        return Err(Check::Configuration(
+            "native source belongs to another configured family".into(),
+        ));
+    }
+    Ok(declaration)
+}

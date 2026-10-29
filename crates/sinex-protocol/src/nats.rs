@@ -17,6 +17,9 @@
 //! Each producer's credentials allow only its own subjects
 //! ([`Subjects::producer_permissions`]), so the producer named in a subject is
 //! the producer that sent it.
+mod recorded;
+pub use recorded::*;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use sinex_model::SourceRef;
@@ -633,6 +636,9 @@ pub struct ProducerWelcome {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RecordedQuery {
+    /// Exact-request collection, independent of the receipt page frontier.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuations: Vec<RecordedContinuationRequest>,
     #[serde(default)]
     pub frames: Vec<String>,
     #[serde(default)]
@@ -642,6 +648,8 @@ pub struct RecordedQuery {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct RecordedPage {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuations: Vec<RecordedContinuation>,
     pub acknowledgments: Vec<Acknowledgment>,
     pub next: Option<i64>,
 }

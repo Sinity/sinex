@@ -590,3 +590,56 @@ pub async fn reserve_frame_number(conn: &mut PgConnection) -> Result<i64> {
         .await?,
     )
 }
+
+/// Original own MATERIAL custody and its immutable receipt provenance. Nullable
+/// legacy fields remain nullable; current grants never backfill their meaning.
+pub struct RecordedMaterial {
+    pub receipt: StoredFrame,
+    pub blob: Option<String>,
+    pub length: Option<i64>,
+    pub source_name: Option<String>,
+    pub source_version: Option<i64>,
+    pub source_fingerprint: Option<String>,
+    pub family: Option<String>,
+    pub write_kind_prefixes: Option<Vec<String>>,
+    pub producer_host: Option<String>,
+    pub available: bool,
+}
+
+pub async fn recorded_material(
+    conn: &mut PgConnection,
+    producer: &str,
+    frame: &str,
+) -> Result<Option<RecordedMaterial>> {
+    let row = sqlx::query!(r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,
+        x.descriptor AS "material_extent?",m.blob AS "blob?",m.length AS "length?",
+        f.source_name,f.source_version,f.source_fingerprint,f.family,f.write_kind_prefixes,f.producer_host,
+        (m.id IS NOT NULL AND x.descriptor IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM core.operations o WHERE o.kind='excise' AND o.scope->'materials' ? m.id::text)) AS "available!"
+        FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
+        LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
+        WHERE f.producer=$1 AND f.frame=$2"#,producer,frame)
+        .fetch_optional(conn).await?;
+    Ok(row.map(|row| RecordedMaterial {
+        receipt: StoredFrame {
+            number: row.number,
+            material_extent: row.material_extent,
+            producer: row.producer,
+            frame: row.frame,
+            material_id: row.material_id,
+            admitted: row.admitted,
+            outcome: row.outcome,
+            refusal: row.refusal,
+            commit_seq: row.commit_seq,
+        },
+        blob: row.blob,
+        length: row.length,
+        source_name: row.source_name,
+        source_version: row.source_version,
+        source_fingerprint: row.source_fingerprint,
+        family: row.family,
+        write_kind_prefixes: row.write_kind_prefixes,
+        producer_host: row.producer_host,
+        available: row.available,
+    }))
+}

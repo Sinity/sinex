@@ -216,3 +216,41 @@ fn condition_callbacks_are_scoped_to_the_authenticated_producer_only() {
             .any(|subject| subject.starts_with("sinex.signal_condition."))
     );
 }
+
+#[devkit::test]
+fn recorded_continuations_are_optional_comparisons_without_an_identity_override() {
+    let old: RecordedQuery =
+        serde_json::from_value(serde_json::json!({"frames":["known"],"after":42})).unwrap();
+    assert!(old.continuations.is_empty());
+    assert!(
+        serde_json::to_value(&old)
+            .unwrap()
+            .get("continuations")
+            .is_none()
+    );
+    let page: RecordedPage =
+        serde_json::from_value(serde_json::json!({"acknowledgments":[],"next":null})).unwrap();
+    assert!(page.continuations.is_empty());
+    assert_eq!(
+        serde_json::to_value(&page).unwrap(),
+        serde_json::json!({"acknowledgments":[],"next":null})
+    );
+    let request = serde_json::json!({"frame":"material-frame","frame_content_hash":"blake3:frozen","material":MaterialId::new(),"blob":"blake3:bytes","length":0,"uses":[]});
+    let parsed: RecordedContinuationRequest = serde_json::from_value(request.clone()).unwrap();
+    assert!(parsed.uses.is_empty());
+    for field in [
+        "producer",
+        "source",
+        "family",
+        "allowed",
+        "owner_instance",
+        "scope",
+    ] {
+        let mut forged = request.clone();
+        forged[field] = serde_json::json!("claimed");
+        assert!(
+            serde_json::from_value::<RecordedContinuationRequest>(forged).is_err(),
+            "{field}"
+        );
+    }
+}
