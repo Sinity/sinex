@@ -12,6 +12,8 @@ mod support;
 
 #[path = "crash/private_history.rs"]
 mod private_history;
+#[path = "crash/progress.rs"]
+mod progress;
 
 use devkit::pg::TestDatabase;
 use sqlx::{Connection, PgConnection, Row};
@@ -70,9 +72,24 @@ struct Inputs {
     zsh: PathBuf,
     atuin: PathBuf,
     expected_events: usize,
+    zsh_records: usize,
+    atuin_rows: usize,
 }
 
 impl Inputs {
+    fn zsh_bytes(&self) -> Vec<u8> {
+        (0..self.zsh_records)
+            .map(|i| {
+                if i % 97 == 0 {
+                    format!(": {}:0;printf '%s' \\\nline {i}\n", 1_600_000_000 + i)
+                } else {
+                    format!(": {}:0;cmd {i}\n", 1_600_000_000 + i)
+                }
+            })
+            .collect::<String>()
+            .into_bytes()
+    }
+
     /// The binding backfill files the zsh history under.
     fn zsh_binding(&self) -> String {
         format!("terminal.zsh-history:{}@{HOST}", self.zsh.display())
@@ -131,6 +148,8 @@ impl Inputs {
             zsh,
             atuin,
             expected_events: zsh_lines + atuin_rows,
+            zsh_records: zsh_lines,
+            atuin_rows,
         }
     }
 }
@@ -320,9 +339,11 @@ fn stable_progress(value: serde_json::Value) -> serde_json::Value {
 }
 
 fn same(actual: &State, expected: &State, what: &str) {
-    assert_eq!(
-        actual.positions, expected.positions,
-        "{what}: committed cursors and carry differ"
+    assert!(
+        actual.positions == expected.positions,
+        "{what}: committed cursor/carry proof differs (actual digest {}, expected digest {})",
+        blake3::hash(&serde_json::to_vec(&actual.positions).unwrap()),
+        blake3::hash(&serde_json::to_vec(&expected.positions).unwrap())
     );
     let only = |a: &State, b: &State| -> Vec<String> {
         a.live
@@ -538,10 +559,24 @@ fn read_lock(table: &str) -> String {
 
 /// Kill the backfill at a step, run it again to the end, and compare with a
 /// run that was never interrupted.
+async fn verified_backfill_state(target: &Target, inputs: &Inputs) -> State {
+    // The generic extractor below is also used by unrelated clipboard and
+    // lifecycle laws. Its old normalized positions are replaced only AFTER
+    // both native cursor claims have passed the independent custody proof.
+    let positions = progress::positions(target, inputs).await;
+    let mut state = state(&mut target.connect().await).await;
+    state.positions = positions;
+    state
+}
+
 async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
-    let expected = {
-        let reference = Target::new(&inputs);
-        finish(&mut reference.backfill(&inputs));
+    let reference = Target::new(&inputs);
+    finish(&mut reference.backfill(&inputs));
+    let verify = ready.is_some();
+    let expected = if verify {
+        consistent(&reference).await;
+        verified_backfill_state(&reference, &inputs).await
+    } else {
         state(&mut reference.connect().await).await
     };
     assert_eq!(expected.events as usize, inputs.expected_events);
@@ -551,11 +586,78 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
     consistent(&target).await;
     finish(&mut target.backfill(&inputs));
     consistent(&target).await;
-    same(
-        &state(&mut target.connect().await).await,
-        &expected,
-        "after the restart",
-    );
+    let actual = if verify {
+        verified_backfill_state(&target, &inputs).await
+    } else {
+        state(&mut target.connect().await).await
+    };
+    same(&actual, &expected, "after the restart");
+    if verify {
+        for (owner, before) in [(&reference, &expected), (&target, &actual)] {
+            let material_count = scalar(
+                &mut owner.connect().await,
+                "SELECT count(*) FROM raw.materials",
+            )
+            .await;
+            finish(&mut owner.backfill(&inputs));
+            consistent(owner).await;
+            same(
+                &verified_backfill_state(owner, &inputs).await,
+                before,
+                "unchanged future backfill",
+            );
+            assert_eq!(
+                scalar(
+                    &mut owner.connect().await,
+                    "SELECT count(*) FROM raw.materials"
+                )
+                .await,
+                material_count,
+                "unchanged input creates no replacement material"
+            );
+        }
+        // Both stores replay their own captured bytes and explicit predecessor
+        // cuts. No cursor coordinate is borrowed from the other store.
+        let scope = [
+            "--event-type",
+            "command.imported",
+            "--event-type",
+            "command.executed",
+        ];
+        finish(&mut reference.replay(&scope));
+        finish(&mut target.replay(&scope));
+        consistent(&reference).await;
+        consistent(&target).await;
+        let replayed_reference = verified_backfill_state(&reference, &inputs).await;
+        let replayed_target = verified_backfill_state(&target, &inputs).await;
+        for (label, replayed, before) in [
+            ("reference", &replayed_reference, &expected),
+            ("restarted", &replayed_target, &actual),
+        ] {
+            assert!(
+                replayed.positions == before.positions,
+                "{label}: replay preserves proven frontier/carry (before {}, after {})",
+                blake3::hash(&serde_json::to_vec(&before.positions).unwrap()),
+                blake3::hash(&serde_json::to_vec(&replayed.positions).unwrap()),
+            );
+            assert!(
+                replayed.live == before.live,
+                "{label}: replay changed live readings (before {}, after {})",
+                blake3::hash(&serde_json::to_vec(&before.live).unwrap()),
+                blake3::hash(&serde_json::to_vec(&replayed.live).unwrap()),
+            );
+            assert_eq!(
+                replayed.events - before.events,
+                inputs.expected_events as i64,
+                "{label}: ordinary replay adds one historical reading per native record",
+            );
+        }
+        same(
+            &replayed_target,
+            &replayed_reference,
+            "ordinary replay after restart",
+        );
+    }
 }
 
 macro_rules! backfill_steps {
