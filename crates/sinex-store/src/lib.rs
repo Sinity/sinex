@@ -20,6 +20,7 @@ pub mod material_bytes;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;
+pub mod producer_reads;
 pub mod query;
 pub mod read_models;
 pub mod registry;

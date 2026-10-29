@@ -526,11 +526,12 @@ impl Ingest {
             }
         }
         if !cited.is_empty() {
-            let ownership=sqlx::query!("SELECT material_id,family FROM core.ingress_frames WHERE material_id=ANY($1) AND refusal IS NULL",&cited).fetch_all(&mut self.conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+            let ownership = sinex_store::producer_reads::material_owners(&mut self.conn, &cited)
+                .await
+                .map_err(|error| Check::Unavailable(error.to_string()))?;
             if cited.iter().any(|id| {
                 !ownership.iter().any(|owner| {
-                    owner.material_id == Some(*id)
-                        && owner.family.as_deref() == Some(family.as_str())
+                    owner.0 == Some(*id) && owner.1.as_deref() == Some(family.as_str())
                 })
             }) {
                 return Err(Check::Refused("material family ownership is unavailable or belongs to another family; explicit mapping is required for historical material".into()));

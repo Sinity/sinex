@@ -23,17 +23,20 @@ pub(super) async fn select(
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?;
     let ids: Vec<_> = rows.iter().map(|row| row.0).collect();
-    let unknown=sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1 AND material_id=ANY($2) AND family IS DISTINCT FROM $3) AS "unknown!""#,producer,&ids,family).fetch_one(&mut *conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+    let unknown = sinex_store::producer_reads::family_unknown(conn, producer, &ids, family)
+        .await
+        .map_err(|error| Check::Unavailable(error.to_string()))?;
     if unknown {
         return Err(Check::Refused(
             "historical material family ownership requires an explicit mapping".into(),
         ));
     }
-    let descriptors=sqlx::query!("SELECT m.id,m.length,x.descriptor FROM raw.materials m JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting WHERE m.id=ANY($1)",&ids)
-        .fetch_all(&mut *conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+    let descriptors = sinex_store::producer_reads::material_extents(conn, &ids)
+        .await
+        .map_err(|error| Check::Unavailable(error.to_string()))?;
     let descriptors: BTreeMap<_, _> = descriptors
         .into_iter()
-        .map(|row| (row.id, (row.length, row.descriptor)))
+        .map(|(id, length, descriptor)| (id, (length, descriptor)))
         .collect();
     let by_id: BTreeMap<_, _> = rows.iter().map(|r| (r.0, r)).collect();
     for id in &query.materials {
