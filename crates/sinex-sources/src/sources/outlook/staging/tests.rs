@@ -107,3 +107,71 @@ fn converter_failure_cleans_its_private_directory_and_preserves_the_export() {
     assert!(!Path::new(&stage).exists());
     assert_eq!(std::fs::read(input).unwrap(), original);
 }
+
+#[devkit::test]
+fn folders_of_one_revision_share_conversion_until_the_last_reader_closes() {
+    let root = tempfile::tempdir().unwrap();
+    let converter = converter(root.path(), false);
+    let script = std::fs::read_to_string(&converter).unwrap().replace(
+        "cat \"$input\" > \"$out/Inbox/mbox\"",
+        "cat \"$input\" > \"$out/Inbox/mbox\"\nmkdir -p \"$out/Sent\"\ncat \"$input\" > \"$out/Sent/mbox\"\nprintf x >> \"$(dirname \"$0\")/conversions\"",
+    );
+    std::fs::write(&converter, script).unwrap();
+    let input = root.path().join("archive.pst");
+    std::fs::write(&input, message("shared folders")).unwrap();
+    let bindings = plan_with(&input, &Settings::default(), &converter).unwrap();
+    assert_eq!(bindings.len(), 2);
+    let Reading::Shared(a) = reader_with(&bindings[0], &converter).unwrap() else {
+        panic!("shared reader");
+    };
+    let Reading::Shared(b) = reader_with(&bindings[1], &converter).unwrap() else {
+        panic!("shared reader");
+    };
+    let stage = a.path().parent().unwrap().to_owned();
+    assert_eq!(stage, b.path().parent().unwrap());
+    assert_eq!(
+        std::fs::read(root.path().join("conversions"))
+            .unwrap()
+            .len(),
+        2,
+        "one enumeration conversion and one shared acquisition conversion"
+    );
+    drop(a);
+    assert!(
+        b.path().is_file(),
+        "another folder still owns its private conversion"
+    );
+    drop(b);
+    assert!(
+        !stage.exists(),
+        "weak cache entries retain no scratch directory"
+    );
+}
+
+#[devkit::test]
+fn an_empty_conversion_still_binds_and_retains_its_native_acquisition() {
+    let root = tempfile::tempdir().unwrap();
+    let converter = root.path().join("readpst");
+    std::fs::write(
+        &converter,
+        "#!/bin/sh\nif [ \"$1\" = \"-V\" ]; then printf 'synthetic-readpst 1\\n'; fi\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&converter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let input = root.path().join("empty.pst");
+    std::fs::write(&input, b"native empty PST fixture bytes").unwrap();
+    let bindings = plan_with(&input, &Settings::default(), &converter).unwrap();
+    assert_eq!(bindings.len(), 1, "empty exports are acquisition evidence");
+    let Reading::Shared(reader) = reader_with(&bindings[0], &converter).unwrap() else {
+        panic!("shared reader");
+    };
+    let stage = reader.path().parent().unwrap().to_owned();
+    assert_eq!(std::fs::metadata(reader.path()).unwrap().len(), 0);
+    assert_eq!(reader.acquisition().unwrap().path, input);
+    assert_eq!(
+        std::fs::read(&input).unwrap(),
+        b"native empty PST fixture bytes"
+    );
+    drop(reader);
+    assert!(!stage.exists());
+}

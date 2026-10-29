@@ -1,4 +1,4 @@
-//! Converted folders live in a private managed directory owned by each reader.
+//! Converted folders live in private managed directories owned by their readers.
 use super::{PST, pst_driver};
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts};
@@ -8,6 +8,8 @@ use sinex_source_core::shared_pass::{Acquisition, Route, SharedPass, SharedReadS
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+mod cache;
 
 fn convert(pst: &Path, out: &Path, converter: &Path) -> Result<Vec<PathBuf>, String> {
     // The caller owns this new directory; no existing conversion is removed.
@@ -121,10 +123,16 @@ fn plan_with(input: &Path, settings: &Settings, converter: &Path) -> Result<Vec<
         path.extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("pst"))
     }) {
-        let stage = scratch()?;
-        for mbox in convert(&pst, stage.path(), converter)? {
+        let conversion = cache::get(&pst, converter)?;
+        if conversion.files.is_empty() {
+            bindings.push(Binding::of(&PST, &pst, settings.clone()).named(&format!(
+                "{}:",
+                blake3::hash(pst.as_os_str().as_bytes()).to_hex()
+            )));
+        }
+        for mbox in &conversion.files {
             let relative = mbox
-                .strip_prefix(stage.path())
+                .strip_prefix(conversion.root())
                 .map_err(|error| error.to_string())?;
             let identity = format!(
                 "{}:{}",
@@ -147,40 +155,25 @@ fn reader_with(binding: &Binding, converter: &Path) -> Result<Reading, String> {
 
 fn build_folder(binding: &Binding, converter: &Path) -> Result<Folder, String> {
     let folder = folder(binding)?;
-    let facts = sinex_source_core::drivers::file_facts(&binding.input)
-        .map_err(|error| error.to_string())?;
-    let version = Command::new(converter)
-        .arg("-V")
-        .output()
-        .map_err(|error| format!("readpst version: {error}"))?;
-    if !version.status.success() {
-        return Err(format!("readpst version failed: {}", version.status));
-    }
-    let mut version_bytes = version.stdout;
-    version_bytes.extend(version.stderr);
-    let version =
-        String::from_utf8(version_bytes).map_err(|error| format!("readpst version: {error}"))?;
-    let version = version.trim();
-    if version.is_empty() {
-        return Err("readpst returned an empty version".into());
-    }
-    let stage = scratch()?;
-    let converted = convert(&binding.input, stage.path(), converter)?;
-    let after = sinex_source_core::drivers::file_facts(&binding.input)
-        .map_err(|error| error.to_string())?;
-    if !same_revision(&facts, &after) {
-        return Err("PST changed during conversion; retry an unchanged revision".into());
-    }
-    let mbox = stage.path().join(&folder);
-    if !converted.contains(&mbox) {
-        return Err(format!("{}: converted folder disappeared", binding.name));
-    }
+    let conversion = cache::get(&binding.input, converter)?;
+    let mbox = if folder.as_os_str().is_empty() {
+        conversion
+            .empty
+            .clone()
+            .ok_or_else(|| format!("{}: empty conversion became nonempty", binding.name))?
+    } else {
+        let mbox = conversion.root().join(&folder);
+        if !conversion.files.contains(&mbox) {
+            return Err(format!("{}: converted folder disappeared", binding.name));
+        }
+        mbox
+    };
     let acquisition = Acquisition {
         path: binding.input.clone(),
-        facts,
+        facts: conversion.facts.clone(),
         manifest: sinex_model::Manifest::from_json(serde_json::json!({
             "role": "original-archive", "path": binding.input.display().to_string(), "path_bytes": binding.input.as_os_str().as_bytes(), "media_type": "application/vnd.ms-outlook",
-            "acquisition": {"tool": converter.display().to_string(), "version": version, "arguments": ["-r", "-8", "-q", "-b"], "folder": folder.display().to_string(), "folder_bytes": folder.as_os_str().as_bytes()}
+            "acquisition": {"tool": converter.display().to_string(), "version": conversion.version.as_str(), "arguments": ["-r", "-8", "-q", "-b"], "folder": folder.display().to_string(), "folder_bytes": folder.as_os_str().as_bytes()}
         })),
     };
     Ok(Folder {
@@ -188,7 +181,7 @@ fn build_folder(binding: &Binding, converter: &Path) -> Result<Folder, String> {
         acquisition,
         binding: binding.clone(),
         converter: converter.to_owned(),
-        _stage: stage,
+        _conversion: conversion,
     })
 }
 
@@ -205,7 +198,7 @@ struct Folder {
     converter: PathBuf,
     acquisition: Acquisition,
     driver: sinex_source_core::drivers::export_archive::ExportArchive,
-    _stage: tempfile::TempDir,
+    _conversion: Arc<cache::Conversion>,
 }
 impl SharedPass for Folder {
     fn refresh(&mut self) -> Result<(), DriverError> {

@@ -5,8 +5,9 @@
 //! `readpst` (libpst) converts each folder to an mbox file, and those files are
 //! read like any mbox export, as the source `communication.outlook`. Sinex
 //! retains the native PST and converter version before admitting converted
-//! material, whose manifest cites that acquisition. Each reader owns its private
-//! conversion directory; bindings identify the original PST and folder. The
+//! material, whose manifest cites that acquisition. Folder readers share a private
+//! conversion directory until the last reader closes; bindings identify the
+//! original PST and folder. The
 //! original file is unchanged.
 //!
 //! The CSV export carries no message ID and no date, only the people, subject,
