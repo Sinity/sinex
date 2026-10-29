@@ -236,11 +236,15 @@ fn payload_paths_use_their_schema_types() {
         Expr::Compare { lhs: Operand::Field(FieldRef::TypedPayload { path, ty: FieldType::Text }), op: Op::Contains, rhs: Value::Text(value) }
         if path == &["url"] && value == "github"
     )));
+    let text = "materials where payload.x = 1";
+    let error = err(text);
     assert!(
-        err("materials where payload.x = 1")
+        error
             .message
-            .contains("no payload")
+            .contains("unknown field `payload.x` on `materials`"),
+        "{error}"
     );
+    assert_eq!(error.at, text.find("payload.x"));
 }
 
 #[devkit::test]
@@ -415,7 +419,9 @@ fn recall_windows() {
 
 #[devkit::test]
 fn reserved_words_must_be_quoted_to_search() {
-    assert!(err("offset algorithm").message.contains("quote"));
+    let error = err("offset algorithm");
+    assert!(error.message.contains("`offset` is a field"), "{error}");
+    assert_eq!(error.at, Some(0));
     assert!(q(r#""offset" algorithm"#).ranked);
 }
 

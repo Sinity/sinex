@@ -109,7 +109,14 @@ impl SavedQuery {
         definitions: &BTreeMap<String, SavedQuery>,
     ) -> Result<(), QueryError> {
         let input = self.validation_ast(ctx)?;
-        let input = expand(input, ctx, definitions, &mut BTreeSet::new(), true)?;
+        let input = expand(
+            input,
+            ctx,
+            definitions,
+            &mut BTreeSet::new(),
+            &mut false,
+            true,
+        )?;
         super::parse::validate_syntax(input, ctx).map(|_| ())
     }
     pub fn validate_parameters(&self) -> Result<(), QueryError> {
@@ -231,14 +238,30 @@ pub fn bind_saved(
     saved: &BTreeMap<String, SavedQuery>,
 ) -> Result<Query, QueryError> {
     let input = super::syntax::parse(text, ctx)?;
-    let expanded = expand(input, ctx, saved, &mut BTreeSet::new(), false)?;
-    super::parse::bind_syntax(expanded, ctx)
+    let mut expanded_definition = false;
+    let result = expand(
+        input,
+        ctx,
+        saved,
+        &mut BTreeSet::new(),
+        &mut expanded_definition,
+        false,
+    )
+    .and_then(|expanded| super::parse::bind_syntax(expanded, ctx));
+    result.map_err(|mut error| {
+        // Definition spans belong to the stored question, not its invocation.
+        if expanded_definition {
+            error.at = None;
+        }
+        error
+    })
 }
 fn expand(
     mut input: syntax::Query,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
     seen: &mut BTreeSet<String>,
+    expanded_definition: &mut bool,
     validating: bool,
 ) -> Result<syntax::Query, QueryError> {
     if let syntax::Source::Saved {
@@ -248,6 +271,7 @@ fn expand(
         ..
     } = input.source.clone()
     {
+        *expanded_definition = true;
         if !seen.insert(name.clone()) {
             return Err(QueryError::new(format!("saved query cycle at {name}")));
         }
@@ -272,7 +296,7 @@ fn expand(
         }
         expanded.stages.append(&mut input.stages);
         expanded.attach.append(&mut input.attach);
-        let out = expand(expanded, ctx, saved, seen, validating);
+        let out = expand(expanded, ctx, saved, seen, expanded_definition, validating);
         seen.remove(&name);
         return out;
     }
@@ -280,7 +304,14 @@ fn expand(
         if let syntax::StageKind::Temporal { query, .. }
         | syntax::StageKind::Combine { query, .. } = &mut stage.kind
         {
-            **query = expand((**query).clone(), ctx, saved, seen, validating)?;
+            **query = expand(
+                (**query).clone(),
+                ctx,
+                saved,
+                seen,
+                expanded_definition,
+                validating,
+            )?;
         }
     }
     Ok(input)

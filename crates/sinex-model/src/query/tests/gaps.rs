@@ -273,6 +273,10 @@ fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
     let error = bind_saved(&invocation, &ctx(), &definitions).unwrap_err();
     assert!(error.at.is_none());
     assert_eq!(error.render(&invocation), error.message);
+    let direct = "events where when < not-a-time";
+    let error = bind_saved(direct, &ctx(), &definitions).unwrap_err();
+    assert!(error.at.is_some());
+    assert!(error.render(direct).contains('^'));
     let error = QueryError::at(1, "synthetic error");
     assert_eq!(error.render("界"), "synthetic error");
 }

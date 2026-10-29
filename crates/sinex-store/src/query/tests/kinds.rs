@@ -141,7 +141,24 @@ async fn dynamic_json_uses_projected_row_types_without_losing_scalar_spelling(
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let d = register(&mut conn, 19, json!({})).await;
+    let mut d = KindDeclaration::schemaless(
+        KindRef {
+            name: "example.point".into(),
+            version: 19,
+        },
+        "example".into(),
+    );
+    d.payload_schema = Some(json!({
+        "type":"object",
+        "properties":{"value":{},"missing":{},"at":{"type":"string","format":"date-time"}},
+        "required":["value","at"]
+    }));
+    let mut tx = conn.begin().await.unwrap();
+    // The field is declared but absent from every row, so comparison is Unknown.
+    sinex_schema::kinds::register(&mut tx, "example", std::slice::from_ref(&d))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
     let values = [
         ("leading", json!("001")),
         ("one", json!(1)),
