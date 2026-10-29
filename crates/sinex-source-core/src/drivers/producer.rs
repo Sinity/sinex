@@ -545,7 +545,7 @@ impl Producer {
     ) -> Result<Ingress, Error> {
         let snapshots = Snapshots::new()?;
         for source in sources.iter().filter(|source| matches!(frame, Ingress::Material { material, .. } if material.blob == source.blob)) {
-            let mut file = match std::fs::File::open(&source.path) {
+            let file = match std::fs::File::open(&source.path) {
                 Ok(mut file) => {
                     std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(source.offset)).map_err(|e| Error::Local(e.to_string()))?;
                     file
