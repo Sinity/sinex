@@ -73,6 +73,7 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
         .await
         .unwrap();
     let bytes = sinex_store::Blobs::open(&store).unwrap();
+    bytes.load(&mut conn).await.unwrap();
     let original_bytes: Vec<_> = blobs.iter().map(|name| bytes.read(name).unwrap()).collect();
     for round in 0..2 {
         let log = dir.path().join(format!("daemon-{round}.log"));

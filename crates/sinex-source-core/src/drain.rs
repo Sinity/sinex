@@ -46,6 +46,29 @@ impl<'a> From<&'a [u8]> for RecordBytes<'a> {
 }
 
 impl<'a> RecordBytes<'a> {
+    /// A bounded view of a record, including records larger than the part target.
+    pub fn reader(&self, start: usize, end: usize) -> std::io::Result<Box<dyn std::io::Read + '_>> {
+        if start > end {
+            return Err(std::io::Error::other("invalid record range"));
+        }
+        match self {
+            Self::Slice(bytes) => {
+                Ok(Box::new(bytes.get(start..end).ok_or_else(|| {
+                    std::io::Error::other("record range exceeds material")
+                })?))
+            }
+            Self::File(file) => Ok(Box::new(RecordRange {
+                source: RangeSource::File(file),
+                at: start as u64,
+                end: end as u64,
+            })),
+            Self::Reader(reader) => Ok(Box::new(RecordRange {
+                source: RangeSource::Stored(*reader),
+                at: start as u64,
+                end: end as u64,
+            })),
+        }
+    }
     pub fn record(&self, start: usize, end: usize) -> std::io::Result<std::borrow::Cow<'a, [u8]>> {
         match self {
             Self::Slice(bytes) => bytes
@@ -74,6 +97,50 @@ impl<'a> RecordBytes<'a> {
                 Ok(std::borrow::Cow::Owned(bytes))
             }
         }
+    }
+}
+
+enum RangeSource<'a> {
+    File(&'a std::fs::File),
+    Stored(&'a dyn RecordRead),
+}
+struct RecordRange<'a> {
+    source: RangeSource<'a>,
+    at: u64,
+    end: u64,
+}
+impl std::io::Read for RecordRange<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let count = out.len().min(self.end.saturating_sub(self.at) as usize);
+        if count == 0 {
+            return Ok(0);
+        }
+        match self.source {
+            RangeSource::File(file) => {
+                use std::os::unix::fs::FileExt;
+                file.read_exact_at(&mut out[..count], self.at)?;
+            }
+            RangeSource::Stored(reader) => reader.read_exact_at(self.at, &mut out[..count])?,
+        }
+        self.at += count as u64;
+        Ok(count)
+    }
+}
+struct DigestRead<R> {
+    reader: R,
+    hash: blake3::Hasher,
+    blank: bool,
+    bytes: u64,
+}
+impl<R: std::io::Read> std::io::Read for DigestRead<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.reader.read(out)?;
+        self.hash.update(&out[..count]);
+        self.blank &= out[..count]
+            .iter()
+            .all(|byte| *byte == b' ' || *byte == b'\n');
+        self.bytes += count as u64;
+        Ok(count)
     }
 }
 
@@ -240,20 +307,77 @@ impl<'a, P: Parser> Drainer<'a, P> {
 
     /// Parse one record into its outcome, advancing the carry on success.
     fn outcome(&mut self, raw: &[u8], start: usize) -> RecordOutcome {
+        let context = RecordContext {
+            manifest: self.input.manifest,
+            member: self.input.manifest.member_at(start),
+        };
+        let parsed = parse_one(self.parser, raw, &self.carry, &context);
+        let hash = record_hash(self.parser, raw, &context);
+        self.finish_outcome(parsed, hash, start)
+    }
+
+    fn streamed_outcome(
+        &mut self,
+        start: usize,
+        end: usize,
+    ) -> std::io::Result<Option<RecordOutcome>> {
+        let context = RecordContext {
+            manifest: self.input.manifest,
+            member: self.input.manifest.member_at(start),
+        };
+        let mut reader = std::io::BufReader::with_capacity(
+            65536,
+            DigestRead {
+                reader: self.input.bytes.reader(start, end)?,
+                hash: blake3::Hasher::new(),
+                blank: true,
+                bytes: 0,
+            },
+        );
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let record = <P::Record<'_> as RecordShape>::decode_reader(&mut reader)?;
+            let hash = self.parser.streamed_record_hash(
+                &record,
+                *reader.get_ref().hash.finalize().as_bytes(),
+                &context,
+            );
+            let parsed = self.parser.parse(&record, &self.carry, &context);
+            Ok::<_, RecordError>((parsed, hash))
+        }));
+        // A failed decode can stop before EOF. Finish the bounded read for blank classification and IO faults.
+        std::io::copy(&mut reader, &mut std::io::sink())?;
+        if reader.get_ref().blank && reader.get_ref().bytes > 0 {
+            return Ok(None);
+        }
+        let raw_hash = *reader.get_ref().hash.finalize().as_bytes();
+        let (parsed, hash) = match parsed {
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => (Err(error), raw_hash),
+            Err(_) => (
+                Err(RecordError::new(
+                    "parser panicked while decoding a streamed record",
+                )),
+                raw_hash,
+            ),
+        };
+        drop(reader);
+        Ok(Some(self.finish_outcome(parsed, hash, start)))
+    }
+
+    fn finish_outcome(
+        &mut self,
+        parsed: Result<(Vec<P::Payload>, P::Carry), RecordError>,
+        hash: [u8; 32],
+        start: usize,
+    ) -> RecordOutcome {
         let input = &self.input;
         let location = RecordLocation {
             material: input.material,
             anchor: start as u64,
         };
-        let context = RecordContext {
-            manifest: input.manifest,
-            member: input.manifest.member_at(start),
-        };
-        match parse_one(self.parser, raw, &self.carry, &context) {
+        match parsed {
             Ok((payloads, next)) => {
                 self.carry = next;
-                // A hash panic falls back to bytes rather than stopping the run.
-                let hash = record_hash(self.parser, raw, &context);
                 let order = (input.reading_order)(start);
                 let mut events = Vec::with_capacity(payloads.len());
                 let mut failure = None;
@@ -289,16 +413,19 @@ impl<'a, P: Parser> Drainer<'a, P> {
                     }
                 }
                 match failure {
-                    Some(reason) => RecordOutcome::Failure { location, reason },
+                    Some(reason) => {
+                        self.carry = self.parser.failed_record(&self.carry);
+                        RecordOutcome::Failure { location, reason }
+                    },
                     None => RecordOutcome::Events {
                         location: Some(location),
                         events,
                     },
                 }
             }
-            Err(e) => RecordOutcome::Failure {
-                location,
-                reason: e.0,
+            Err(e) => {
+                self.carry = self.parser.failed_record(&self.carry);
+                RecordOutcome::Failure { location, reason: e.0 }
             },
         }
     }
@@ -353,34 +480,54 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
         }
         while let Some(&(start, end)) = self.input.records.get(self.next) {
             self.next += 1;
-            let raw = match self.input.bytes.record(start, end) {
-                Ok(raw) => raw,
-                Err(error) => {
-                    self.finished = true;
-                    return Some(Err(RecordError::new(format!(
-                        "read record {start}..{end}: {error}"
-                    ))));
+            let (outcome, size) = if <P::Record<'_> as RecordShape>::STREAMING
+                && !crate::drivers::dir_snapshot::is_directory(self.input.manifest)
+            {
+                match self.streamed_outcome(start, end) {
+                    Ok(Some(outcome)) => (outcome, end - start),
+                    Ok(None) => {
+                        current.end = end;
+                        continue;
+                    }
+                    Err(error) => {
+                        self.finished = true;
+                        return Some(Err(RecordError::new(format!(
+                            "read record {start}..{end}: {error}"
+                        ))));
+                    }
                 }
-            };
-            let raw = match crate::drivers::dir_snapshot::decode_record(
-                self.input.manifest,
-                start,
-                raw,
-            ) {
-                Ok(raw) => raw,
-                Err(error) => {
-                    self.finished = true;
-                    return Some(Err(error));
+            } else {
+                let raw = match self.input.bytes.record(start, end) {
+                    Ok(raw) => raw,
+                    Err(error) => {
+                        self.finished = true;
+                        return Some(Err(RecordError::new(format!(
+                            "read record {start}..{end}: {error}"
+                        ))));
+                    }
+                };
+                let raw = match crate::drivers::dir_snapshot::decode_record(
+                    self.input.manifest,
+                    start,
+                    raw,
+                ) {
+                    Ok(raw) => raw,
+                    Err(error) => {
+                        self.finished = true;
+                        return Some(Err(error));
+                    }
+                };
+                // Only spaces and newlines: no record is there, so nothing is
+                // read and nothing fails.
+                if !crate::drivers::dir_snapshot::is_directory(self.input.manifest)
+                    && is_blank(&raw)
+                {
+                    current.end = end;
+                    continue;
                 }
+                let size = raw.len();
+                (self.outcome(&raw, start), size)
             };
-            // Only spaces and newlines: no record is there, so nothing is
-            // read and nothing fails.
-            if !crate::drivers::dir_snapshot::is_directory(self.input.manifest) && is_blank(&raw) {
-                current.end = end;
-                continue;
-            }
-            let outcome = self.outcome(&raw, start);
-            let size = raw.len();
             let events = match &outcome {
                 RecordOutcome::Events { events, .. } => events.len(),
                 RecordOutcome::Failure { .. } => 0,

@@ -13,7 +13,12 @@ async fn shutdown_cleanup_releases_the_writer_claim_even_on_failure(db: devkit::
             .unwrap()
     );
     conn.close().await.unwrap();
-    std::fs::remove_dir(dir.path().join("unadmitted-blobs")).unwrap();
+    let mut fault = connect(&url).await.unwrap();
+    sqlx::query("DROP TABLE core.blob_extents")
+        .execute(&mut fault)
+        .await
+        .unwrap();
+    fault.close().await.unwrap();
     assert!(forget_admitted(&url, &blobs).await.is_err());
     let mut conn = connect(&url).await.unwrap();
     assert!(

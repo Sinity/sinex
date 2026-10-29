@@ -1,4 +1,4 @@
-use sqlx::PgConnection;
+use sqlx::{Executor, PgConnection};
 
 pub(crate) async fn downgrade(conn: &mut PgConnection) {
     sqlx::raw_sql(include_str!(
@@ -23,4 +23,15 @@ pub(crate) async fn catalog(conn: &mut PgConnection) -> Vec<String> {
         }
     }
     rows
+}
+
+pub(crate) async fn remove_foundations(conn: &mut PgConnection) {
+    downgrade(conn).await;
+}
+
+pub(crate) async fn remove_version_4(conn: &mut PgConnection) {
+    sqlx::raw_sql(include_str!("../../sinex-schema/src/tests/version_two.sql"))
+        .execute(conn)
+        .await
+        .unwrap();
 }

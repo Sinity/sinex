@@ -26,7 +26,7 @@
 //!
 //! Each excision is recorded once in `core.operations`. The writer applies the
 //! plan in one transaction, checking that the readings it removes are still
-//! exactly the planned ones, and deletes the old blob files after commit.
+//! exactly the planned ones, and punches the old blob extents after commit.
 //! Running the same request again after a crash finds what is left and
 //! finishes it.
 use crate::admission::{DirtyKeys, mark_archived_dirty, remove_live};
@@ -82,8 +82,7 @@ pub struct Applied {
     /// Stored bytes the excised events cited that nothing else refers to.
     pub blobs_deleted: usize,
     pub dirty_keys: usize,
-    /// Blob files no row refers to any more; the writer deletes them after
-    /// commit.
+    /// Unreferenced blob names; the writer punches their extents after commit.
     pub delete_after_commit: Vec<String>,
 }
 
@@ -518,7 +517,7 @@ pub(crate) async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<
     .await?)
 }
 
-/// Delete the files of blobs left `deleting`, then their rows: after an
+/// Punch the extents of blobs left `deleting`, then remove their rows: after an
 /// excision commits, and at daemon start for any a crash left behind. A blob
 /// registered again meanwhile is `present` and is kept, as is one a row
 /// refers to again. Returns the blobs deleted and those whose file could not
@@ -563,6 +562,10 @@ pub async fn finish_deletions(
         )
         .execute(&mut *tx)
         .await?;
+        sqlx::query("DELETE FROM core.blob_extents WHERE hash=$1")
+            .bind(&name)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         deleted.push(name);
     }

@@ -472,24 +472,24 @@ fn failed_disappearance_is_retried_before_a_reappeared_file() {
     assert_eq!(record(newer.material.as_ref().unwrap(), 0), b"reappeared");
 }
 
-struct FixtureSink(hashed_blobs::Store);
+struct FixtureSink(hashed_blobs::Preparation);
 impl FixtureSink {
     fn open(root: &std::path::Path) -> Result<Self, hashed_blobs::Error> {
-        hashed_blobs::Store::open(root, vec![], 0o600).map(Self)
+        hashed_blobs::Preparation::new(root).map(Self)
     }
 }
 impl super::super::MaterialSink for FixtureSink {
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         self.0
-            .put(bytes, 3)
-            .map(|h| format!("blake3:{}", h.hex()))
+            .plain(bytes, 3)
+            .map(|prepared| prepared.hash().to_string())
             .map_err(|e| e.to_string())
     }
     fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         self.0
-            .put(file, 3)
-            .map(|h| format!("blake3:{}", h.hex()))
+            .plain(file, 3)
+            .map(|prepared| prepared.hash().to_string())
             .map_err(|e| e.to_string())
     }
 }

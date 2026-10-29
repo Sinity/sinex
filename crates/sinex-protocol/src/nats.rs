@@ -307,6 +307,8 @@ pub struct ReplaySelection {
 pub struct ReplayMaterial {
     pub id: MaterialId,
     pub blob: String,
+    pub length: u64,
+    pub extents: Vec<Vec<u8>>,
 }
 
 /// One completely parsed replacement. Acquisition can spool while publication
@@ -390,6 +392,9 @@ pub struct Acknowledgment {
     pub frame: String,
     /// The material a material frame registered.
     pub material: Option<MaterialId>,
+    /// Committed encoded segment descriptors for the acknowledged material.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub material_extents: Vec<Vec<u8>>,
     /// Events admitted as new or newer readings.
     pub admitted: Vec<EventId>,
     /// Counts by what admission did: admitted, repeats, replaced, older,
@@ -407,7 +412,7 @@ impl Acknowledgment {
     }
 }
 
-pub const PRODUCER_VERSION: u32 = 1;
+pub const PRODUCER_VERSION: u32 = 2;
 
 /// Checked before any material or events are sent. Event declarations can
 /// be registered here before checking the names the producer will emit.
@@ -460,6 +465,8 @@ pub struct ProducerMaterial {
     pub number: i64,
     pub frame: String,
     pub material: MaterialFrame,
+    /// Committed encoded segment descriptors; these authorize reads from the shared store.
+    pub extents: Vec<Vec<u8>>,
 }
 
 /// A request on `<root>.excise.<producer>`: permanently delete whole

@@ -177,6 +177,7 @@ async fn fake_ingress_with_configuration(
                             if connections.is_some() && !configuration_refused {
                                 configuration_refused = true;
                                 return Acknowledgment {
+                                    material_extents: vec![],
                                     frame: id.clone(),
                                     material: None,
                                     admitted: vec![],
@@ -188,6 +189,7 @@ async fn fake_ingress_with_configuration(
                                 };
                             }
                             Acknowledgment {
+                                material_extents: vec![],
                                 frame: id.clone(),
                                 material,
                                 admitted,

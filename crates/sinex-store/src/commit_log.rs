@@ -290,6 +290,7 @@ pub async fn set_consumer_position(
 /// What Sinex recorded for one ingress frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredFrame {
+    pub material_extent: Option<Vec<u8>>,
     pub producer: String,
     pub frame: String,
     pub material_id: Option<Uuid>,
@@ -307,9 +308,11 @@ pub async fn frames(
 ) -> Result<Vec<StoredFrame>> {
     Ok(sqlx::query_as!(
         StoredFrame,
-        r#"SELECT producer, frame, material_id, admitted, outcome, refusal, commit_seq
-           FROM core.ingress_frames WHERE producer = $1 AND frame = ANY($2)
-           ORDER BY received_at, frame"#,
+        r#"SELECT f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS material_extent
+           FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
+           LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
+           WHERE f.producer = $1 AND f.frame = ANY($2)
+           ORDER BY f.received_at, f.frame"#,
         producer,
         frames,
     )
@@ -337,6 +340,7 @@ pub async fn producer_material_registered(
 /// One material a producer registered, as its frame described it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProducerMaterial {
+    pub extent: Vec<u8>,
     pub number: i64,
     pub frame: String,
     pub material_id: Uuid,
@@ -365,10 +369,11 @@ pub async fn producer_materials(
         ProducerMaterial,
         r#"SELECT f.number AS "number!", f.frame, m.id AS material_id, i.kind, i.locator, i.host,
                   m.blob, m.length AS length, m.part_index, m.previous_part_id AS previous_part,
-                  m.parser, m.parser_version, m.manifest
+                  m.parser, m.parser_version, m.manifest, x.descriptor AS extent
            FROM core.ingress_frames f
            JOIN raw.materials m ON m.id = f.material_id
            JOIN raw.inputs i ON i.id = m.input_id
+           JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
            WHERE f.producer = $1 AND f.refusal IS NULL AND f.number > $2
              AND NOT EXISTS (SELECT 1 FROM core.operations o
                              WHERE o.kind = 'excise' AND o.scope->'materials' ? m.id::text)

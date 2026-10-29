@@ -116,6 +116,7 @@ async fn verify_store(database: &str, store: &Path) -> Result<Value, String> {
         .await
         .map_err(|e| e.to_string())?;
     let blobs = sinex_store::Blobs::open(store).map_err(|e| e.to_string())?;
+    blobs.load(&mut conn).await.map_err(|e| e.to_string())?;
     let store_path = store.to_path_buf();
     // Verification reads every byte; keep it off the async threads.
     tokio::task::spawn_blocking(move || {

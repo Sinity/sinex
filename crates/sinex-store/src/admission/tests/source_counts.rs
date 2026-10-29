@@ -116,8 +116,6 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         .await
         .unwrap();
 
-    crate::test_schema::remove_foundations(&mut conn).await;
-    // Version 0 is this schema without the counts.
     super::equivalence::version_two_keys(&mut conn).await;
     // Version 0 is this schema without the counts.
     conn.execute("DROP TABLE core.source_counts").await.unwrap();
@@ -205,13 +203,6 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .fetch_all(&mut conn)
         .await
         .unwrap();
-    crate::test_schema::remove_foundations(&mut conn).await;
-    conn.execute("DROP VIEW event_types.operator_mark, event_types.query_saved")
-        .await
-        .unwrap();
-    conn.execute("DELETE FROM registry.event_types WHERE name IN ('operator.mark','query.saved')")
-        .await
-        .unwrap();
     super::equivalence::version_two_keys(&mut conn).await;
     conn.execute("CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)")
         .await.unwrap();
@@ -277,6 +268,12 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
     crate::test_schema::remove_foundations(&mut conn).await;
     if from < 4 {
         crate::test_schema::remove_version_4(&mut conn).await;
+        if from == 3 {
+            conn.execute("CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)").await.unwrap();
+        }
+    }
+    if from >= 5 {
+        restore_blob_tracking(&mut conn).await;
     }
     sqlx::query("UPDATE sinex_schema.applied SET version = $1")
         .bind(from)
@@ -328,6 +325,7 @@ async fn upgrading_refuses_to_drop_a_populated_telemetry_table(db: devkit::pg::T
         .unwrap();
     admit_one(&mut conn, &batch(vec![keyed("synthetic", 1, 1, 1)])).await;
     crate::test_schema::remove_foundations(&mut conn).await;
+    restore_blob_tracking(&mut conn).await;
     conn.execute("INSERT INTO telemetry.events (id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class) SELECT id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class FROM core.events").await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version = 5")
         .await
@@ -359,4 +357,8 @@ async fn upgrading_refuses_to_drop_a_populated_telemetry_table(db: devkit::pg::T
 #[devkit::test]
 async fn upgrading_from_version_5_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
     upgrade_keeps_activity_and_telemetry(db, 5).await;
+}
+
+async fn restore_blob_tracking(conn: &mut PgConnection) {
+    sqlx::raw_sql("INSERT INTO core.counters(name,value) VALUES('blob_changes',0); CREATE FUNCTION core.note_blob_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE core.counters SET value=value+1 WHERE name='blob_changes'; RETURN NULL; END $$; CREATE TRIGGER blob_changes AFTER INSERT OR DELETE OR TRUNCATE ON core.blobs FOR EACH STATEMENT EXECUTE FUNCTION core.note_blob_change();").execute(conn).await.unwrap();
 }

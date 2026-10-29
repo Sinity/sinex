@@ -19,6 +19,13 @@ pub(super) async fn select(
     let rows = sinex_store::replay::producer_materials(conn, producer)
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?;
+    let ids: Vec<_> = rows.iter().map(|row| row.0).collect();
+    let descriptors=sqlx::query!("SELECT m.id,m.length,x.descriptor FROM raw.materials m JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting WHERE m.id=ANY($1)",&ids)
+        .fetch_all(&mut *conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+    let descriptors: BTreeMap<_, _> = descriptors
+        .into_iter()
+        .map(|row| (row.id, (row.length, row.descriptor)))
+        .collect();
     let by_id: BTreeMap<_, _> = rows.iter().map(|r| (r.0, r)).collect();
     for id in &query.materials {
         if !by_id.contains_key(&id.0) {
@@ -43,6 +50,16 @@ pub(super) async fn select(
         grouped.entry(root).or_default().push(ReplayMaterial {
             id: MaterialId(*id),
             blob: blob.clone(),
+            length: u64::try_from(
+                descriptors
+                    .get(id)
+                    .ok_or_else(|| {
+                        Check::Unavailable(format!("material {id} has no committed extent"))
+                    })?
+                    .0,
+            )
+            .map_err(|error| Check::Unavailable(error.to_string()))?,
+            extents: vec![descriptors[id].1.clone()],
         });
     }
     let mut selections = Vec::new();

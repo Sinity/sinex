@@ -24,6 +24,8 @@ A producer sends typed frames on its own ingress subject and receives typed repl
 
 **Material before events.** A producer sends a material's bytes and waits for their acknowledgment before it sends events that cite them. Admission therefore never waits for material, and a refused events frame never loses bytes (see [refusals](#refusals)). How a material is described (inputs, observations, revisions, record anchors) is in [materials](materials.md); how a reading is identified (record coordinates, source record keys, reading order, record hash) is in [events](events.md#identity).
 
+**Extent read authority.** A committed material acknowledgment carries its encoded segment extents. Material and replay listings return the same descriptors with the decoded length; a shared-store reader opens those extents directly. A content digest identifies bytes and does not supply their physical location. This contract is negotiated as producer protocol version 2.
+
 **Event outcomes** are the admission function's: admitted, repeated, superseded, older, removed, failed, superseded-in-batch, and dropped as `superseded_input`, with the committed position and the event IDs Sinex minted. A producer is told success only after commit.
 
 ### Write identity

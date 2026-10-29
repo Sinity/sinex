@@ -81,7 +81,7 @@ Every read model is declared, rebuilt from events, and kept current through its 
 
 ### Raw bytes
 
-Raw bytes are in the segment log of [hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md), written by the one writer in the [durability order](architecture.md#durability-order). Material extents and revision extents are segment extents. Per-file blobs from earlier stores are converted into segments by one upgrade step, after which only the segment reader exists. What a material is and how its bytes are read back is [materials.md](materials.md).
+Raw bytes are in the segment log of [hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md), written by the one writer in the [durability order](architecture.md#durability-order). Material extents and revision extents are segment extents. The numbered schema upgrade adds the extent index and committed segment ends. Existing per-file stores require a separately qualified predecessor exporter: its decoded streams are checked against the retained names and lengths, prepared as segments, then committed without changing material, event, key or cursor identities. Startup refuses catalog rows without a converted extent. Original files remain in custody after conversion; their retirement is a separate operational action. Only the segment reader runs in the new product. What a material is and how its bytes are read back is [materials.md](materials.md).
 
 ## Schema evolution
 

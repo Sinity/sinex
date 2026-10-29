@@ -108,16 +108,16 @@ pub(crate) async fn excise(
     let done = apply(blobs, writer, target, plan, actor).await?;
     let a = &done.applied;
     let mut out = format!(
-        "excised events {} | materials removed {} | inputs removed {} | blob files deleted {}",
+        "excised events {} | materials removed {} | inputs removed {} | blob extents punched {}",
         a.events,
         a.materials_removed,
         a.inputs_removed,
-        a.delete_after_commit.len() - done.files_left.len()
+        a.delete_after_commit.len() - done.blobs_left.len()
     );
-    if !done.files_left.is_empty() {
+    if !done.blobs_left.is_empty() {
         out.push_str(&format!(
-            "\nblob files no row refers to but that could not be deleted: {}",
-            done.files_left.join(", ")
+            "\nunreferenced blob extents that could not be punched: {}",
+            done.blobs_left.join(", ")
         ));
     }
     Ok(out)

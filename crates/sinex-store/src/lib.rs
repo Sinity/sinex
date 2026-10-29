@@ -31,11 +31,10 @@ pub mod telemetry;
 pub mod writer_lock;
 
 pub use admission::{
-    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
-    ReadMark,
+    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, ReadMark,
 };
 pub use blobs::Blobs;
-pub use hashed_blobs::Verified;
+pub use blobs::Verified;
 /// The connection the store's reads take, for crates that call them without
 /// depending on the database driver.
 pub use sqlx::PgConnection as Connection;
@@ -71,3 +70,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod test_schema;
+
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        Self::Blob(error.into())
+    }
+}

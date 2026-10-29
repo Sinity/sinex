@@ -626,6 +626,7 @@ fn refused_unrecorded(reason: &str) -> Acknowledgment {
     Acknowledgment {
         frame: String::new(),
         material: None,
+        material_extents: vec![],
         admitted: vec![],
         outcome: Value::Null,
         refusal: Some(reason.to_owned()),
@@ -637,6 +638,7 @@ fn acknowledgment(s: StoredFrame) -> Acknowledgment {
     Acknowledgment {
         frame: s.frame,
         material: s.material_id.map(sinex_model::MaterialId),
+        material_extents: s.material_extent.into_iter().collect(),
         admitted: s.admitted.into_iter().map(EventId).collect(),
         outcome: s.outcome,
         refusal: s.refusal,
@@ -729,6 +731,7 @@ impl Requests {
         rows.into_iter()
             .map(|row| {
                 Ok(ProducerMaterial {
+                    extents: vec![row.extent],
                     number: row.number,
                     frame: row.frame,
                     material: MaterialFrame {

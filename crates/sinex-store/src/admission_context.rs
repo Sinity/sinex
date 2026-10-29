@@ -9,6 +9,7 @@ use std::ops::{Deref, DerefMut};
 pub struct AdmissionContext {
     connection: PgConnection,
     privacy: privacy::Cache,
+    blobs: Option<crate::Blobs>,
 }
 
 impl AdmissionContext {
@@ -34,7 +35,13 @@ impl AdmissionContext {
         Ok(Self {
             connection,
             privacy: privacy::Cache::new(key),
+            blobs: None,
         })
+    }
+
+    pub fn with_blobs(mut self, blobs: Option<crate::Blobs>) -> Self {
+        self.blobs = blobs;
+        self
     }
 
     pub async fn connect(url: &str) -> Result<Self> {
@@ -47,6 +54,7 @@ impl AdmissionContext {
             transaction: Some(self.connection.begin().await?),
             committed: false,
             privacy: &mut self.privacy,
+            blobs: self.blobs.clone(),
         })
     }
 
@@ -73,6 +81,7 @@ pub struct AdmissionTransaction<'a> {
     transaction: Option<Transaction<'a, Postgres>>,
     committed: bool,
     privacy: &'a mut privacy::Cache,
+    blobs: Option<crate::Blobs>,
 }
 
 impl AdmissionTransaction<'_> {
@@ -86,12 +95,28 @@ impl AdmissionTransaction<'_> {
         .await
     }
     pub async fn commit(mut self) -> Result<()> {
+        let receipt = if let Some(blobs) = &self.blobs {
+            let store = blobs.clone();
+            tokio::task::spawn_blocking(move || store.sync_pending())
+                .await
+                .map_err(|error| crate::Error::Invalid(error.to_string()))??;
+            Some(
+                blobs
+                    .commit_extents(self.transaction.as_mut().expect("open transaction"))
+                    .await?,
+            )
+        } else {
+            None
+        };
         self.transaction
             .take()
             .expect("open transaction")
             .commit()
             .await?;
         self.committed = true;
+        if let (Some(blobs), Some(receipt)) = (&self.blobs, receipt) {
+            blobs.acknowledge(receipt)?;
+        }
         Ok(())
     }
     pub async fn rollback(mut self) -> Result<()> {
