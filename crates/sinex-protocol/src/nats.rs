@@ -711,6 +711,6 @@ mod tests;
 /// The daemon selects and provisions the authenticated identity's scoped consumer.
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ConfirmedConsumer {pub after:i64,pub cache:String}
+pub struct ConfirmedConsumer {pub after:i64,pub cache:String,#[serde(default)]pub status_only:bool}
 #[derive(Clone,Debug,Default,Serialize,Deserialize,PartialEq,Eq)]
-pub struct ConfirmedConsumerReply {pub stream:String,pub consumer:String,pub scope:String,pub refusal:Option<String>,pub gap:Option<String>}
+pub struct ConfirmedConsumerReply {#[serde(default)]pub position:Option<i64>,pub stream:String,pub consumer:String,pub scope:String,pub refusal:Option<String>,pub gap:Option<String>}

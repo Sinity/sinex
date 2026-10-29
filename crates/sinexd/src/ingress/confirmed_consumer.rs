@@ -12,8 +12,9 @@ impl Requests {
             let mut conn=self.reads.acquire().await.map_err(|error|error.to_string())?;
             let head=sqlx::query_scalar!("SELECT value FROM core.counters WHERE name='commit_seq'").fetch_one(&mut *conn).await.map_err(|error|error.to_string())?;
             drop(conn);
-            if request.after>head {return Ok(ConfirmedConsumerReply{scope,gap:Some("requested position exceeds durable commit history".into()),..Default::default()});}
             let stream_name=self.subjects.confirmed_stream();let name=self.subjects.consumer_name(&scope);
+            if request.status_only {return Ok(ConfirmedConsumerReply{position:Some(head),stream:stream_name,consumer:name,scope,..Default::default()});}
+            if request.after>head {return Ok(ConfirmedConsumerReply{position:Some(head),scope,gap:Some("requested position exceeds durable commit history".into()),..Default::default()});}
             let _guard=self.consumer_admin.lock().await;
             let js=jetstream::new(self.client.clone());crate::publisher::ensure_stream(&js,&self.subjects).await?;
             let stream=js.get_stream(&stream_name).await.map_err(|error|error.to_string())?;
@@ -35,7 +36,7 @@ impl Requests {
                 stream.delete_consumer(&name).await.map_err(|error|error.to_string())?;
                 stream.create_consumer(config).await.map_err(|error|error.to_string())?;
             }
-            Ok(ConfirmedConsumerReply{stream:stream_name,consumer:name,scope,refusal:None,gap:None})
+            Ok(ConfirmedConsumerReply{position:Some(head),stream:stream_name,consumer:name,scope,refusal:None,gap:None})
         }.await;
         result.unwrap_or_else(|error|ConfirmedConsumerReply{refusal:Some(error),..Default::default()})
     }
