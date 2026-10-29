@@ -375,10 +375,12 @@ async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::
     assert!(error.to_string().contains("do not support query stages"));
 }
 
-/// A continuation checks only the rows already handed out: a change to a row
-/// not yet handed out shows on its page instead of refusing the question.
+/// Mutable metadata changes invalidate its captured epoch even when the changed
+/// row was not on the first page. A fresh question observes the new status.
 #[devkit::test]
-async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg::TestDatabase) {
+async fn a_metadata_change_invalidates_the_cursor_and_a_fresh_question_observes_it(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -400,7 +402,7 @@ async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg
     let mut tx = conn.begin().await.unwrap();
     crate::runs::end(&mut tx, ids[1]).await.unwrap();
     tx.commit().await.unwrap();
-    let next = ask_at(
+    let error = ask_at(
         &mut conn,
         text,
         &ctx(),
@@ -410,10 +412,15 @@ async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg
         },
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    assert!(matches!(error, Error::StaleCursor), "{error}");
+    let next = ask_at(&mut conn, text, &ctx(), Page::default())
+        .await
+        .unwrap();
     assert_eq!(next.total, 2);
-    assert_eq!(next.rows[0]["id"], json!(ids[1].0.to_string()));
-    assert_ne!(next.rows[0]["status"], json!("running"));
+    assert_eq!(next.rows[0]["id"], json!(ids[0].0.to_string()));
+    assert_eq!(next.rows[1]["id"], json!(ids[1].0.to_string()));
+    assert_ne!(next.rows[1]["status"], json!("running"));
     assert!(next.page.cursor.is_none());
 }
 
@@ -461,8 +468,8 @@ async fn canonical_equivalent_questions_keep_one_keyset(db: devkit::pg::TestData
         .await
         .unwrap();
     world(&mut conn).await;
-    let a = "commands where exit_code >= 0 and cwd exists sort when fields command";
-    let b = "commands where cwd exists and exit_code >= 0 sort when fields command";
+    let a = "commands where exit_code >= 0 AND cwd exists sort when fields command";
+    let b = "commands where cwd exists AND exit_code >= 0 sort when fields command";
     let first = ask_at(
         &mut conn,
         a,
@@ -499,7 +506,7 @@ async fn sql_matches_shared_unknown_and_wildcard_predicates(db: devkit::pg::Test
         ("commands where exit_code:unknown", 1),
         ("commands where exit_code:*", 5),
         ("commands where exit_code = unknown", 0),
-        ("commands where not exit_code = unknown", 0),
+        ("commands where NOT exit_code = unknown", 0),
         ("commands where exit_code = [unknown,0]", 2),
         ("commands where exit_code != [unknown,0]", 0),
     ] {

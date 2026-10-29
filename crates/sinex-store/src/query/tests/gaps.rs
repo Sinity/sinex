@@ -139,7 +139,7 @@ async fn a_live_run_keeps_unrecorded_buckets_unknown(db: devkit::pg::TestDatabas
     .unwrap();
     let a = ask(
         &mut conn,
-        "events where source = terminal.atuin and when in 2026-09 group by day(when) count fill",
+        "events where source = terminal.atuin AND when in 2026-09 group by day(when) count fill",
     )
     .await;
     assert_eq!(a.rows[11]["coverage"], "no_data");
@@ -194,6 +194,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
         },
     )
     .await;
+    let before_record_position = current_seq(&mut conn).await.unwrap();
     let drift_id = event.id;
     let batch = Batch {
         run: RunId::new(),
@@ -256,28 +257,21 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     )
     .await;
     assert_eq!(now.rows[0]["drift"]["count"], 0);
-    let old = ask_page(
-        &mut conn,
-        source_question,
-        Page {
-            size: Some(1),
-            cursor: before_hide.page.cursor,
-        },
-    )
-    .await;
-    assert_eq!(old.rows[0]["source"], "terminal.atuin");
-    assert_eq!(old.rows[0]["drift"]["count"], 1);
-    let old = ask_page(
-        &mut conn,
-        source_question,
-        Page {
-            size: Some(1),
-            cursor: before_record.page.cursor,
-        },
-    )
-    .await;
-    assert_eq!(old.rows[0]["source"], "terminal.atuin");
-    assert_eq!(old.rows[0]["drift"]["count"], 0);
+    for cursor in [before_hide.page.cursor, before_record.page.cursor] {
+        let error = run(
+            &mut conn,
+            source_question,
+            None,
+            &ctx(),
+            &Page {
+                size: Some(1),
+                cursor,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, Error::StaleCursor), "{error}");
+    }
     let old = ask(
         &mut conn,
         &format!("drift where source = terminal.atuin fields id as of seq {before}"),
@@ -288,7 +282,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
         &mut conn,
         &format!(
             "drift where source = terminal.atuin fields id as of seq {}",
-            before - 1
+            before_record_position
         ),
     )
     .await;
@@ -313,7 +307,7 @@ async fn text_lists_compare_members_and_return_the_declared_array(db: devkit::pg
     ] {
         let answer = ask(
             &mut conn,
-            &format!("events where event_type = shell.session and {condition} fields payload.cwds"),
+            &format!("events where event_type = shell.session AND {condition} fields payload.cwds"),
         )
         .await;
         assert_eq!(answer.total, total, "{condition}");
@@ -382,7 +376,7 @@ async fn filled_recall_keeps_recorded_buckets_before_its_window_and_intersects_f
     assert_eq!(answer.rows[0]["coverage"], "recorded");
     assert_eq!(answer.rows[1]["day"], "2026-09-14");
     assert!(answer.rows[1]["count"].is_null());
-    let answer = ask(&mut conn, "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z and when < 2026-09-15T04:00:00Z group by day(when) count fill").await;
+    let answer = ask(&mut conn, "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z AND when < 2026-09-15T04:00:00Z group by day(when) count fill").await;
     assert_eq!(answer.total, 1);
     assert_eq!(answer.rows[0]["day"], "2026-09-14");
     assert_eq!(answer.rows[0]["count"], 10);

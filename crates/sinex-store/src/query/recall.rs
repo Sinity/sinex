@@ -251,7 +251,7 @@ async fn mark_links(
         questions.push((
             "session",
             format!(
-                "shell-sessions where host = {} and overlaps {at}",
+                "shell-sessions where host = {} AND overlaps {at}",
                 quote(host)
             ),
         ));
@@ -259,17 +259,17 @@ async fn mark_links(
     let mut focus = format!("focus where overlaps {at}");
     for field in ["app", "title"] {
         if let Some(value) = mark["payload"][field].as_str() {
-            focus.push_str(&format!(" and {field} = {}", quote(value)));
+            focus.push_str(&format!(" AND {field} = {}", quote(value)));
         }
     }
     questions.push(("focus", focus));
     if let Some(command) = mark["payload"]["command"].as_str() {
         let mut text = format!(
-            "commands where command = {} and when >= {from} and when <= {at}",
+            "commands where command = {} AND when >= {from} AND when <= {at}",
             quote(command)
         );
         if let Some(cwd) = mark["payload"]["cwd"].as_str() {
-            text.push_str(&format!(" and cwd = {}", quote(cwd)));
+            text.push_str(&format!(" AND cwd = {}", quote(cwd)));
         }
         text.push_str(" sort when desc limit 1");
         questions.push(("command", text));

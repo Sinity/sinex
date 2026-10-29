@@ -24,12 +24,14 @@ pub(crate) async fn admit_commands(
 ) -> Vec<(Uuid, Uuid)> {
     let mut events = Vec::new();
     let mut ids = Vec::new();
+    // Source record coordinates remain distinct across fixture acquisitions.
+    let acquisition = Uuid::now_v7();
     for (i, (command, cwd)) in commands.iter().enumerate() {
         let started_at = Timestamp::from_unix_secs(BASE + 60 * i as i64).unwrap();
         let exit_code = if i == 2 { None } else { Some((i % 2) as i64) };
         let observed = Event::build(
             &CommandExecuted {
-                native_id: format!("n{i}"),
+                native_id: format!("{acquisition}-n{i}"),
                 command: command.to_string(),
                 cwd: cwd.to_string(),
                 session: "s".into(),
@@ -158,7 +160,7 @@ async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown(db: devkit:
         column(&a, "command"),
         [json!("git push origin master"), json!("ls -la")]
     );
-    let a = ask(&mut conn, "commands where not exit_code exists").await;
+    let a = ask(&mut conn, "commands where NOT exit_code exists").await;
     assert_eq!(column(&a, "command"), [json!("cargo build")]);
 }
 
@@ -183,7 +185,7 @@ async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatab
     world(&mut conn).await;
     let a = ask(
         &mut conn,
-        "events where source = terminal.atuin and source = derive.shell-fusion",
+        "events where source = terminal.atuin AND source = derive.shell-fusion",
     )
     .await;
     assert_eq!(a.total, 0);
@@ -210,7 +212,7 @@ async fn words_search_ranks_and_marks_snippets(db: devkit::pg::TestDatabase) {
     assert!(a.rows[0]["snippet"].as_str().unwrap().contains("[cargo]"));
     let a = ask(&mut conn, r#"commands where "test --workspace""#).await;
     assert_eq!(column(&a, "command"), [json!("cargo test --workspace")]);
-    let a = ask(&mut conn, "commands where tide* and not cargo").await;
+    let a = ask(&mut conn, "commands where tide* AND NOT cargo").await;
     assert_eq!(column(&a, "command"), [json!("git push origin master")]);
     // Words are case-folded.
     let a = ask(&mut conn, "commands where CARGO").await;
@@ -455,7 +457,7 @@ async fn time_functions_bucket_in_the_zone_with_logical_days(db: devkit::pg::Tes
     assert_eq!(a.total, 5);
     let a = ask(
         &mut conn,
-        "commands where weekday(when) = mon and day(when) = 2026-09-14",
+        "commands where weekday(when) = mon AND day(when) = 2026-09-14",
     )
     .await;
     assert_eq!(a.total, 5);
@@ -620,7 +622,7 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
     assert_eq!(column(&closed, "state"), vec![json!("desktop.focus")]);
     let days = ask(
         &mut conn,
-        "figures where grain = day and dimension != cwd fields day, value",
+        "figures where grain = day AND dimension != cwd fields day, value",
     )
     .await;
     assert_eq!(days.total, 1);

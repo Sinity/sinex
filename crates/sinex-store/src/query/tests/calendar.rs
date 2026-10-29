@@ -31,7 +31,7 @@ async fn sql_logical_days_use_first_fold_boundary_and_preserve_nested_grouping(
         point(&mut conn, name, time).await;
     }
     let ctx = clock(jiff::civil::Time::constant(2, 15, 0, 0), "Europe/Warsaw");
-    let one=at(&mut conn,"runs where producer = calendar-fold-second and day(started) = 2026-10-25 and weekday(started) = sun and month(started) = 2026-10 and month_day(started) = 10-25",&ctx).await;
+    let one=at(&mut conn,"runs where producer = calendar-fold-second AND day(started) = 2026-10-25 AND weekday(started) = sun AND month(started) = 2026-10 AND month_day(started) = 10-25",&ctx).await;
     assert_eq!(
         one.total, 1,
         "second 02:10 occurs after the first 02:15 boundary"
@@ -51,7 +51,7 @@ async fn sql_logical_days_use_first_fold_boundary_and_preserve_nested_grouping(
     );
     let nested=at(&mut conn,"runs where producer ^ calendar-fold group by producer min(started) group by day(min_started) count sort day",&ctx).await;
     assert_eq!(nested.rows, grouped.rows);
-    let filled=at(&mut conn,"runs where producer ^ calendar-fold and started in 2026-10-24 group by day(started) count fill",&ctx).await;
+    let filled=at(&mut conn,"runs where producer ^ calendar-fold AND started in 2026-10-24 group by day(started) count fill",&ctx).await;
     assert_eq!(
         filled.rows,
         json!([{"day":"2026-10-24","count":1,"coverage":"recorded"}])
@@ -74,7 +74,7 @@ async fn sql_gap_and_second_precision_boundaries_match_shared_days_and_weeks(
     assert_eq!(
         at(
             &mut conn,
-            "runs where producer = calendar-gap-before and day(started) = 2026-03-28",
+            "runs where producer = calendar-gap-before AND day(started) = 2026-03-28",
             &gap
         )
         .await
@@ -84,7 +84,7 @@ async fn sql_gap_and_second_precision_boundaries_match_shared_days_and_weeks(
     assert_eq!(
         at(
             &mut conn,
-            "runs where producer = calendar-gap-after and day(started) = 2026-03-29",
+            "runs where producer = calendar-gap-after AND day(started) = 2026-03-29",
             &gap
         )
         .await
@@ -97,10 +97,10 @@ async fn sql_gap_and_second_precision_boundaries_match_shared_days_and_weeks(
     point(&mut conn, "calendar-month-after", "2026-11-01T00:00:15Z").await;
     let seconds = clock(jiff::civil::Time::constant(0, 0, 15, 0), "UTC");
     for text in [
-        "runs where producer = calendar-second-before and day(started) = 2026-09-13 and week(started) = 2026-09-07 and weekday(started) = sun and month_day(started) = 09-13",
-        "runs where producer = calendar-second-after and day(started) = 2026-09-14 and week(started) = 2026-09-14 and weekday(started) = mon",
-        "runs where producer = calendar-month-before and month(started) = 2026-10",
-        "runs where producer = calendar-month-after and month(started) = 2026-11",
+        "runs where producer = calendar-second-before AND day(started) = 2026-09-13 AND week(started) = 2026-09-07 AND weekday(started) = sun AND month_day(started) = 09-13",
+        "runs where producer = calendar-second-after AND day(started) = 2026-09-14 AND week(started) = 2026-09-14 AND weekday(started) = mon",
+        "runs where producer = calendar-month-before AND month(started) = 2026-10",
+        "runs where producer = calendar-month-after AND month(started) = 2026-11",
     ] {
         assert_eq!(at(&mut conn, text, &seconds).await.total, 1, "{text}");
     }

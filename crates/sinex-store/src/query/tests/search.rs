@@ -16,7 +16,7 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
         "events where cargo test",
         "events where \"cargo test\"",
         "events where car*",
-        "events where not absent*",
+        "events where NOT absent*",
     ] {
         let answer = ask(&mut conn, text).await;
         assert_eq!(answer.total, 3, "{text}: {:?}", answer.rows);
@@ -24,7 +24,7 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
     for text in [
         "events where absent*",
         "events where \"test cargo\"",
-        "events where not car*",
+        "events where NOT car*",
     ] {
         assert_eq!(ask(&mut conn, text).await.total, 0, "{text}");
     }
