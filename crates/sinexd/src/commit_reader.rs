@@ -62,7 +62,16 @@ pub(crate) async fn run(
         if *stop.borrow() {
             return Ok(());
         }
-        sinex_store::privacy::projection::ensure_current(&mut conn).await.map_err(|error|error.to_string())?;
+        if sinex_store::privacy::projection::ensure_current(&mut conn).await.is_err() {
+            // Output views remain unavailable until a complete epoch activates.
+            // A transient database failure must not retire the maintainer.
+            eprintln!("sinexd: privacy output projection unavailable; retrying");
+            tokio::select! {
+                _ = tokio::time::sleep(RETRY) => {}
+                _ = stop.changed() => {}
+            }
+            continue;
+        }
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
         let read_started = std::time::Instant::now();
