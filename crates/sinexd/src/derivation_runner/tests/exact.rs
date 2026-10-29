@@ -83,7 +83,7 @@ async fn exact_input_hook_runs_without_a_temporal_window(db: devkit::pg::TestDat
     assert_eq!(outputs[0].command, "a/b");
     assert_eq!(
         w.count(
-            "SELECT cardinality(parents) FROM core.events WHERE source='fixture.exact_targets'"
+            "SELECT cardinality(parents)::bigint FROM core.events WHERE source='fixture.exact_targets'"
         )
         .await,
         2

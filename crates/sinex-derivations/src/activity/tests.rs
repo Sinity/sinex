@@ -515,34 +515,51 @@ fn absence_boundaries_are_parents_of_the_windows_and_spans_they_cut() {
     }
 }
 
+/// Agency comes from a complete atomic producer snapshot; every act cites
+/// that snapshot rather than the retired per-message/session products.
+fn work_snapshot(session: &str, messages: Value, turns: Value) -> Event {
+    let mut snapshot = external(
+        "polylogue.work_snapshot",
+        json!({
+            "session":session,"reducer_version":2,"source_position":1,"complete":true,
+            "kind":"main","machine":"box","repo":"synthetic/repo","branch":"main",
+            "record":{"product":"work_snapshot","snapshot":{
+                "reducer_version":2,"position":1,"session_id":session,"session":{"id":session},
+                "retired":false,"unavailable":[],"sources":[],"native":[],
+                "messages":messages,"calls":[],"turns":turns}}
+        }),
+    );
+    snapshot.kind_version = 4;
+    snapshot
+}
+
 #[devkit::test]
-fn human_prompt_activity_cites_the_session_that_establishes_its_agency() {
-    let session = external(
-        "polylogue.session",
-        json!({"session":"session", "origin":"codex",
-        "kind":"main", "machine":"box", "started":at(0)}),
+fn human_prompt_activity_cites_the_snapshot_that_establishes_its_agency() {
+    let snapshot = work_snapshot(
+        "session",
+        json!([{
+            "message":"message","role":"user","written_by":"human","prompt_kind":"prose",
+            "at":at(10),"at_evidence":{"quality":"intrinsic","precision":"instant","until":null}
+        }]),
+        json!([]),
     );
-    let prompt = external(
-        "polylogue.message",
-        json!({"message":"message", "session":"session",
-        "role":"user", "written_by":"human", "prompt_kind":"prose", "at":at(10), "text":"A synthetic prompt"}),
-    );
-    assert!(windows(std::slice::from_ref(&prompt), 0).is_empty());
-    let session_id = session.id;
-    let prompt_id = prompt.id;
-    let events = [session, prompt];
-    let acts = Keyed::compute(
+    let snapshot_id = snapshot.id;
+    let computed = Keyed::compute(
         &crate::work::WorkActs,
         &json!({"session":"session"}),
-        &events,
+        &[snapshot],
         &env(),
-    )
-    .outputs;
+    );
+    let acts: Vec<_> = computed
+        .outputs
+        .into_iter()
+        .filter(|event| event.event_type == "work.act")
+        .collect();
     assert_eq!(acts.len(), 1);
     let Origin::Derived { parents } = &acts[0].origin else {
         panic!("an act is derived")
     };
-    assert!(parents.contains(&session_id) && parents.contains(&prompt_id));
+    assert_eq!(parents, &[snapshot_id]);
     let out = ActivityWindows.compute(&hour(0), &acts, &env());
     assert_eq!(out.outputs.len(), 1);
     let Origin::Derived { parents } = &out.outputs[0].origin else {
@@ -711,22 +728,24 @@ fn recorder_lifetimes_keep_hosts_separate_when_session_ids_repeat() {
 
 #[devkit::test]
 fn delegated_time_is_retained_when_it_overlaps_operator_presence() {
-    let make = external;
-    let metadata = make(
-        "polylogue.session",
-        json!({"session":"a","origin":"synthetic","kind":"main","cwd":[],"machine":"box","links":[]}),
-    );
-    let turn = make(
-        "polylogue.turn",
-        json!({"turn":"a/0","session":"a","start":at(0),"end":at(100),"prompts":[],"slash_command":false,"tool_calls":0,"errors":0,"abandoned":false}),
+    let snapshot = work_snapshot(
+        "a",
+        json!([]),
+        json!([{
+            "turn":"a/0","session":"a","start":at(0),"end":at(100),"errors":0,
+            "start_evidence":{"quality":"intrinsic","precision":"instant","until":null},
+            "end_evidence":{"quality":"intrinsic","precision":"instant","until":null}
+        }]),
     );
     let acts = Keyed::compute(
         &crate::work::WorkActs,
         &json!({"session":"a"}),
-        &[metadata, turn],
+        &[snapshot],
         &env(),
     )
-    .outputs;
+    .outputs
+    .into_iter()
+    .filter(|event| event.event_type == "work.act");
     let mut events = vec![physical(0), physical(20)];
     for event in &mut events {
         event.payload["extra"]

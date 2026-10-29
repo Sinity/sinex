@@ -150,6 +150,16 @@ async fn changing_the_activity_break_profile_recomputes_existing_sessions(
         .driver_with(sinex_derivations::keyed_with(&configuration), vec![])
         .await;
     changed.clock = Some(at(86_400 * 5));
+    // Installing a profile preserves the selected producer until comparison.
+    assert_eq!(world.live::<ActivitySession>().await.len(), 1);
+    let comparison = changed
+        .compare("activity.sessions", None, 10)
+        .await
+        .unwrap();
+    changed
+        .switch("activity.sessions", comparison.id.unwrap(), "test")
+        .await
+        .unwrap();
     changed.catch_up().await.unwrap();
     let sessions = world.live::<ActivitySession>().await;
     assert_eq!(sessions.len(), 2);

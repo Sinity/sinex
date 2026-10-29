@@ -686,10 +686,10 @@ mod shutdown;
 mod superseded_inputs;
 mod versions;
 
-/// A new version's recompute that stops before its keys are marked is marked
-/// again at the next start: the registry keeps the old version until then.
+/// A failed explicit switch leaves the selection and dirty keys unchanged;
+/// the next runner can compare and select the available producer atomically.
 #[devkit::test]
-async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
+async fn an_interrupted_switch_preserves_selection_until_the_next_explicit_switch(
     db: devkit::pg::TestDatabase,
 ) {
     let w = World::new(db).await;
@@ -712,27 +712,40 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
     .execute(&mut conn)
     .await
     .unwrap();
-    // The daemon stops before the recompute is marked: its writer is gone.
+    // Startup registers availability without selecting a new version. Only
+    // the explicit switch needs the writer, which has already stopped here.
     let (stopped, queues) = writer::channels();
     drop(queues);
     let read = PgConnection::connect(&w.url).await.unwrap();
+    let mut stopped = DerivationRunner::start(
+        read,
+        stopped,
+        sinex_derivations::keyed(),
+        vec![],
+        "test",
+        TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
+    let comparison = stopped.compare("command.fusion", None, 10).await.unwrap();
     assert!(
-        DerivationRunner::start(
-            read,
-            stopped,
-            sinex_derivations::keyed(),
-            vec![],
-            "test",
-            TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")
-        )
-        .await
-        .is_err()
+        stopped
+            .switch("command.fusion", comparison.id.unwrap(), "test")
+            .await
+            .is_err()
     );
     assert_eq!(w.count(stored_version).await, version - 1);
     assert_eq!(w.count(fusion_dirty).await, 0);
 
-    // The next start marks every key and then records the version.
-    let _d = w.runner().await;
+    // Restart also preserves the selection; a successful explicit switch
+    // selects the version and schedules all keys in its writer transaction.
+    let mut next = w.runner().await;
+    assert_eq!(w.count(stored_version).await, version - 1);
+    assert_eq!(w.count(fusion_dirty).await, 0);
+    let comparison = next.compare("command.fusion", None, 10).await.unwrap();
+    next.switch("command.fusion", comparison.id.unwrap(), "test")
+        .await
+        .unwrap();
     assert!(w.count(fusion_dirty).await > 0);
     assert_eq!(w.count(stored_version).await, version);
 }

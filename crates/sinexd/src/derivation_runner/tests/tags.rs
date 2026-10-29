@@ -203,7 +203,7 @@ async fn removing_rules_and_disabling_every_rule_cleans_up_real_tag_assignments(
 ) {
     let world = World::new(db).await;
     world.admit(vec![zsh("make", 0, 1)]).await;
-    for (rules, expected) in [
+    for (iteration, (rules, expected)) in [
         (
             json!([{"tag":"one", "event_type":"command.imported"}, {"tag":"two", "event_type":"command.imported"}]),
             2,
@@ -214,9 +214,13 @@ async fn removing_rules_and_disabling_every_rule_cleans_up_real_tag_assignments(
             0,
         ),
         (json!([]), 0),
-    ] {
+    ].into_iter().enumerate() {
         let tagger = TagApplier::new(serde_json::from_value(rules).unwrap()).unwrap();
         let mut runner = world.driver_with(vec![], vec![Box::new(tagger)]).await;
+        if iteration > 0 {
+            let comparison = runner.compare("tag.applier", None, 10).await.unwrap();
+            runner.switch("tag.applier", comparison.id.unwrap(), "test").await.unwrap();
+        }
         runner.catch_up().await.unwrap();
         assert_eq!(world.live::<TagApplied>().await.len(), expected);
         runner.end_runs().await.unwrap();
