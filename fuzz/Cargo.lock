@@ -583,7 +583,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#aadab2c13ca70638c8e433274d2d01298e1f0069"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#a12ab6823a8f6827915b438852f97dc14c1c502d"
 dependencies = [
  "blake3",
  "clap",
@@ -601,7 +601,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#aadab2c13ca70638c8e433274d2d01298e1f0069"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#a12ab6823a8f6827915b438852f97dc14c1c502d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1035,7 +1035,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#aadab2c13ca70638c8e433274d2d01298e1f0069"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#a12ab6823a8f6827915b438852f97dc14c1c502d"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -3205,7 +3205,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
