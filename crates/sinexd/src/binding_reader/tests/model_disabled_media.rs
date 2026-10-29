@@ -96,7 +96,7 @@ async fn model_disabled_capture_keeps_exact_screen_and_audio_materials_after_res
         let original = if kind == "screen" { &frame } else { &audio };
         assert!(row.material_id.is_some());
         assert_eq!(row.anchor, Some(0));
-        assert_eq!(row.output_index, Some(0));
+        assert_eq!(row.output_index, 0);
         assert_eq!(row.length as usize, original.len());
         assert_eq!(ctx.blobs.read(&row.blob).unwrap(), *original);
         assert_eq!(row.payload["bytes"], original.len() as u64);

@@ -418,8 +418,11 @@ fn emergency_policy(
         return Err("emergency observation clocks contradict invocation and receipt order".into());
     }
     let zone = jiff::tz::TimeZone::get(&day.zone).map_err(|error| error.to_string())?;
-    let calendar =
-        ::signals::DayCalendar::new(day.resolve(zone).map_err(|error| error.to_string())?);
+    let calendar = ::signals::DayCalendar::new(
+        day.clone()
+            .resolve(zone)
+            .map_err(|error| error.to_string())?,
+    );
     let at = i64::try_from(completion.invoked_at.unix_ns() / 1_000_000)
         .map_err(|_| "emergency invocation clock exceeds milliseconds")?;
     if quiet_hours
