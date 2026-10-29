@@ -4,8 +4,8 @@ use serde_json::json;
 #[devkit::test]
 fn computed_outputs_require_the_read_mark() {
     for mut scope in [
-        json!({"keys": {"keys": [], "read": {"changes": 0, "excised": 0}}}),
-        json!({"position": {"inputs": [], "position": 0, "read": {"changes": 0, "excised": 0}}}),
+        json!({"keys": {"keys": [], "read": {"changes": 0, "excised": 0, "policy_epoch": null}}}),
+        json!({"position": {"inputs": [], "position": 0, "read": {"changes": 0, "excised": 0, "policy_epoch": null}}}),
     ] {
         let parsed: DerivedScope = serde_json::from_value(scope.clone()).unwrap();
         assert_eq!(parsed.to_value(), scope);
@@ -23,4 +23,6 @@ fn computed_outputs_require_the_read_mark() {
     }
 
     assert!(serde_json::from_value::<DerivedScope>(json!({"recompute": {"keys": []}})).is_ok());
+    let legacy:DerivedScope=serde_json::from_value(json!({"keys":{"keys":[],"read":{"changes":0,"excised":0}}})).unwrap();
+    assert!(matches!(legacy,DerivedScope::Keys{read,..} if read.policy_epoch.is_none()),"historical marks never acquire an invented policy epoch");
 }

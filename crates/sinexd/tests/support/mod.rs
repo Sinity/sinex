@@ -4,19 +4,21 @@ async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(conn).await.unwrap()
 }
 
-/// Events and visibility changes share positions, not row kinds. These fixtures
-/// keep the hot log; excision may leave gaps in its positions.
+/// Readings, erased skeletons and visibility changes share global positions.
+/// Excision keeps the original event slot and adds its lifecycle position.
 pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
-    let events = count(conn, "SELECT count(*) FROM core.events").await;
+    let events = count(conn, "SELECT (SELECT count(*) FROM core.events)+(SELECT count(*) FROM core.event_tombstones)").await;
     let logged = count(
         conn,
         "SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL",
     )
     .await;
-    assert_eq!(logged, events, "one event-bearing commit-log row per Event");
+    assert_eq!(logged, events, "one original event-bearing commit row per retained reading or excised skeleton");
     let disagree = count(
         conn,
-        "SELECT count(*) FROM core.events e FULL JOIN
+        "SELECT count(*) FROM
+         (SELECT id,event_type,commit_seq FROM core.events
+          UNION ALL SELECT event_id,event_type,original_commit_seq FROM core.event_tombstones) e FULL JOIN
          (SELECT * FROM core.commit_log WHERE event_id IS NOT NULL) c ON c.event_id=e.id
          WHERE e.id IS NULL OR c.event_id IS NULL
             OR (e.event_type,e.commit_seq) IS DISTINCT FROM (c.event_type,c.commit_seq)",

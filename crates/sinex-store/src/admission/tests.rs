@@ -519,7 +519,7 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(out.dirty_keys, 2);
+    assert_eq!(out.dirty_keys, 4,"both original and projected input keys are marked for each event");
     let n: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM derivation.dirty WHERE derivation = 'daily'"#
     )
@@ -527,6 +527,8 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     .await
     .unwrap();
     assert_eq!(n, 1, "both events fall on the same day");
+    let dirty_seq:i64=sqlx::query_scalar("SELECT dirty_seq FROM derivation.dirty WHERE derivation='daily'").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(Some(dirty_seq),out.commit_seq.map(|(_,last)|last),"the one dirty key covers every original and projected input through the last admitted reading");
 }
 
 #[devkit::test]

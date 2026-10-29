@@ -353,10 +353,8 @@ async fn every_reading_goes_with_its_materials(db: devkit::pg::TestDatabase) {
         2,
         "the other records stay live"
     );
-    assert_eq!(
-        count(&mut conn, "SELECT count(*) FROM audit.archived").await,
-        0
-    );
+    let archived:Vec<Uuid>=sqlx::query_scalar("SELECT event_id FROM audit.archived ORDER BY event_id").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(archived,[old.id.0],"payload-free archive history survives with the excised reading's tombstone");
     assert_eq!(
         count(&mut conn, "SELECT events FROM core.source_counts").await,
         2,

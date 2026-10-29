@@ -31,9 +31,6 @@ async fn input_provenance_keeps_parser_versions_and_missing_manifests(
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let ids =
-        crate::query::tests::admit_commands(&mut conn, &[("pwd", "/work/a"), ("ls", "/work/b")])
-            .await;
     let run = crate::runs::start(
         &mut conn,
         &crate::runs::Manifest {
@@ -55,28 +52,29 @@ async fn input_provenance_keeps_parser_versions_and_missing_manifests(
     .execute(&mut *conn)
     .await
     .unwrap();
-    for (index, (_, observed)) in ids.iter().enumerate() {
-        let material =
-            sqlx::query_scalar!("SELECT material_id FROM core.events WHERE id=$1", observed)
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap()
-                .unwrap();
-        sqlx::query!("INSERT INTO raw.materials (id,blob,length,manifest,parser,parser_version) VALUES ($1,$2,0,'{}','atuin-history',$3)",material,hash,index as i32+1)
+    let mut selected=Vec::new();
+    for (index,command) in ["pwd","ls"].into_iter().enumerate() {
+        let material=sinex_model::MaterialId::new();
+        sqlx::query!("INSERT INTO raw.materials (id,blob,length,manifest,parser,parser_version) VALUES ($1,$2,0,'{}','atuin-history',$3)",material.0,hash,i32::try_from(index+1).unwrap())
             .execute(&mut *conn).await.unwrap();
-        sqlx::query!(
-            "UPDATE core.events SET run_id=$1 WHERE id=$2",
-            run.0,
-            observed
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+        let at=sinex_model::Timestamp::from_unix_secs(1_800_000_000+i64::try_from(index).unwrap()).unwrap();
+        let observed=(sinex_model::event_types::find("command.executed").unwrap().build)(
+            &serde_json::json!({"native_id":format!("provenance-{index}"),"command":command,"cwd":"/work","session":"synthetic","hostname":"synthetic-host","started_at":at,"duration_ns":null,"exit_code":null,"deleted_at":null,"author":null,"intent":null,"shell":null}),
+            "terminal.atuin",sinex_model::Origin::Record{location:sinex_model::RecordLocation{material,anchor:0},output_index:0},sinex_model::ReadingOrder(1),[1;32],sinex_model::Class::Open,
+        ).unwrap();
+        let fused=(sinex_model::event_types::find("command.fused").unwrap().build)(
+            &serde_json::json!({"record":format!("command.executed:{}",observed.id),"command":command,"host":"synthetic-host","started_at":at,"cwd":"/work","session":"synthetic","duration_ns":null,"exit_code":null,"observed_by":["terminal.atuin"]}),
+            "derive.shell-fusion",sinex_model::Origin::Derived{parents:vec![observed.id]},sinex_model::ReadingOrder(1),[2;32],sinex_model::Class::Open,
+        ).unwrap();
+        selected.push(fused.id);
+        // The source manifest belongs to the immutable reading on first append;
+        // the derived reading deliberately has no run manifest.
+        for (event,event_run) in [(observed,run),(fused,sinex_model::RunId::new())] {
+            let mut tx=conn.begin().await.unwrap();
+            tx.admit(&sinex_model::Batch{run:event_run,kind:sinex_model::BatchKind::Api{actor:"synthetic".into()},records:vec![sinex_model::RecordOutcome::Events{location:None,events:vec![event]}],archive:vec![]},&crate::NoDerivations).await.unwrap();
+            tx.commit().await.unwrap();
+        }
     }
-    let selected: Vec<_> = ids
-        .into_iter()
-        .map(|(derived, _)| sinex_model::EventId(derived))
-        .collect();
     let versions = producer_versions(&mut conn, &selected).await.unwrap();
     let rows = versions.as_array().unwrap();
     let readings: Vec<_> = rows
