@@ -373,6 +373,9 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
         }
         fields.extend(times.iter().map(String::as_str));
     }
+    if let Some(TimeRule::InstantEvidence{field,evidence_field})=&d.time_rule {
+        fields.push(field);fields.push(evidence_field);
+    }
     if let Some(RemovedRule::WhenPresent { field }) = &d.removed_rule {
         fields.push(field);
     }
