@@ -21,6 +21,7 @@ pub mod payloads;
 pub mod positions;
 pub mod privacy;
 pub mod query;
+pub mod producer_reads;
 pub mod read_models;
 pub mod registry;
 pub mod replay;

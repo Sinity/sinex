@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub(crate) struct Grants {
     #[serde(default)]
+    pub public_context: bool,
+    #[serde(default)]
     pub write: Option<super::authority::WriteGrant>,
     pub kind_prefixes: Vec<String>,
     pub classes: Vec<Class>,
@@ -150,10 +152,15 @@ impl Requests {
         let grant = self.grants(producer)?;
         let mut connection = self.reads.acquire().await.map_err(unavailable)?;
         let mut conn = connection.begin().await.map_err(unavailable)?;
-        sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            .execute(&mut *conn)
+        sinex_store::query::read_one_snapshot(&mut conn)
             .await
             .map_err(unavailable)?;
+        let epoch = sinex_store::privacy::projection::epoch(&mut conn)
+            .await
+            .map_err(unavailable)?;
+        if !epoch.ready() {
+            return Err(unavailable("current privacy projection is not ready"));
+        }
         let tombstone=sqlx::query!("SELECT event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=$1",id.0).fetch_optional(&mut *conn).await.map_err(unavailable)?;
         if let Some(erased) = tombstone {
             if !grant.kind(&erased.event_type) {
@@ -200,6 +207,28 @@ impl Requests {
         sinex_store::query::set_grants(&mut conn, &classes)
             .await
             .map_err(unavailable)?;
+        let output = sinex_store::producer_reads::event_output(&mut conn, id.0)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
+        if output.epoch != Some(epoch.active) || output.state.as_deref() != Some("complete") {
+            return Err(unavailable("event privacy projection is incomplete"));
+        }
+        let output_class: Class = serde_json::from_value(Value::String(
+            output
+                .class
+                .ok_or_else(|| unavailable("event privacy class is unavailable"))?,
+        ))
+        .map_err(unavailable)?;
+        if !grant.kind(&output.kind) || !grant.class(output_class) {
+            return Err(denied());
+        }
+        if output_class == Class::Sealed {
+            return Err(Refusal {
+                kind: FetchRefusalKind::Locked,
+                reason: "sealed producer reads require an operator unlock".into(),
+            });
+        }
         let view = sinex_store::query::show(&mut conn, &sinex_model::query::Reference::Event(id.0))
             .await
             .map_err(|error| match error {
@@ -217,7 +246,6 @@ impl Requests {
                 reason: "sealed producer reads require an operator unlock".into(),
             });
         }
-        let view = crate::api::mask::mask_json(view).map_err(unavailable)?;
         let location = if view["material"].is_null() {
             None
         } else {
@@ -247,8 +275,11 @@ impl Requests {
                 equivalence_key: field(&view, "key")?,
                 reading_order: field(&view, "reading_order")?,
                 record_hash: field(&view, "record_hash")?,
-                payload: Some(view["payload"].clone()),
-                withheld: None,
+                projection: sinex_protocol::ProjectionIdentity::for_payload(
+                    epoch.active,
+                    &view["payload"],
+                ),
+                payload: view["payload"].clone(),
             }),
             ..Default::default()
         })
@@ -272,30 +303,125 @@ impl Requests {
         producer: &str,
         request: &FetchMaterial,
     ) -> FetchMaterialReply {
-        let result:ReadResult<_>=async {
-            let grant=self.grants(producer)?;
-            let mut connection=self.reads.acquire().await.map_err(unavailable)?;
-        let mut conn=connection.begin().await.map_err(unavailable)?;
-        sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").execute(&mut *conn).await.map_err(unavailable)?;
-            let ownership=sqlx::query!("SELECT family,write_kind_prefixes FROM core.ingress_frames WHERE material_id=$1 AND refusal IS NULL ORDER BY number LIMIT 1",request.material.0).fetch_optional(&mut *conn).await.map_err(unavailable)?.ok_or_else(missing)?;
-            let (Some(_family),Some(prefixes))=(ownership.family,ownership.write_kind_prefixes) else {return Err(unavailable("historical material family ownership is unknown"));};
-            let owner_scope=Grants{write:None,kind_prefixes:prefixes,classes:vec![]};
-            if !grant.intersects(&owner_scope) {return Err(denied());}
-            let classes=grant.classes.iter().map(|class|serde_json::to_value(class).unwrap().as_str().unwrap().to_owned()).collect::<Vec<_>>().join(",");
-            sinex_store::query::set_grants(&mut conn,&classes).await.map_err(unavailable)?;
-            let events=sqlx::query!(r#"SELECT event_type AS "event_type!",class AS "class!" FROM core.events WHERE material_id=$1"#,request.material.0).fetch_all(&mut *conn).await.map_err(unavailable)?;
-            if events.is_empty() && !(grant.class(Class::Open)&&grant.class(Class::Guarded)) {return Err(denied());}
-            for event in events {
-                let class:Class=serde_json::from_value(Value::String(event.class)).map_err(unavailable)?;
-                if !grant.kind(&event.event_type)||!grant.class(class) {return Err(denied());}
-                if class==Class::Sealed {return Err(Refusal{kind:FetchRefusalKind::Locked,reason:"sealed material requires an operator unlock".into()});}
+        let result: ReadResult<_> = async {
+            let grant = self.grants(producer)?;
+            let mut connection = self.reads.acquire().await.map_err(unavailable)?;
+            let mut conn = connection.begin().await.map_err(unavailable)?;
+            sinex_store::query::read_one_snapshot(&mut conn)
+                .await
+                .map_err(unavailable)?;
+            let ownership =
+                sinex_store::producer_reads::material_family(&mut conn, request.material.0)
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or_else(missing)?;
+            let (Some(_family), Some(prefixes)) = ownership else {
+                return Err(unavailable(
+                    "historical material family ownership is unknown",
+                ));
+            };
+            let owner_scope = Grants {
+                public_context: false,
+                write: None,
+                kind_prefixes: prefixes,
+                classes: vec![],
+            };
+            if !grant.intersects(&owner_scope) {
+                return Err(denied());
             }
-            let material=sinex_store::material_bytes::reference(&mut conn,request.material).await.map_err(unavailable)?.ok_or_else(missing)?;
-            let input=sqlx::query!("SELECT i.kind,i.locator,i.host FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1",request.material.0).fetch_optional(&mut *conn).await.map_err(unavailable)?.ok_or_else(missing)?;
-            let descriptor=sqlx::query_scalar!("SELECT descriptor FROM core.blob_extents WHERE hash=$1 AND NOT deleting",material.blob).fetch_optional(&mut *conn).await.map_err(unavailable)?.ok_or_else(missing)?;
-            if self.blobs.is_sealed(&material.blob).map_err(unavailable)? {return Err(Refusal{kind:FetchRefusalKind::Locked,reason:"sealed material requires an operator unlock".into()});}
-            Ok(FetchMaterialReply{material:Some(MaterialFrame{id:material.id,input:sinex_model::InputRef{kind:input.kind,locator:input.locator,host:input.host},blob:material.blob,length:material.length,parser:material.parser,parser_version:material.parser_version,part_index:material.part_index,previous_part:material.previous_part,manifest:material.manifest}),extents:vec![descriptor],..Default::default()})
-        }.await;
+            let classes = grant
+                .classes
+                .iter()
+                .map(|class| {
+                    serde_json::to_value(class)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            sinex_store::query::set_grants(&mut conn, &classes)
+                .await
+                .map_err(unavailable)?;
+            let epoch = sinex_store::privacy::projection::epoch(&mut conn)
+                .await
+                .map_err(unavailable)?;
+            if !epoch.ready() {
+                return Err(unavailable(
+                    "current privacy projection is not ready for raw material access",
+                ));
+            }
+            let events =
+                sinex_store::producer_reads::material_classes(&mut conn, request.material.0)
+                    .await
+                    .map_err(unavailable)?;
+            if events.is_empty() && !(grant.class(Class::Open) && grant.class(Class::Guarded)) {
+                return Err(denied());
+            }
+            for event in events {
+                if event.epoch != Some(epoch.active) || event.state.as_deref() != Some("complete") {
+                    return Err(unavailable(
+                        "material privacy output is incomplete at the current policy epoch",
+                    ));
+                }
+                if event.changed != Some(false) {
+                    return Err(Refusal {
+                        kind: FetchRefusalKind::Denied,
+                        reason: "current privacy rules withhold raw material bytes".into(),
+                    });
+                }
+                let class: Class = serde_json::from_value(Value::String(
+                    event
+                        .class
+                        .ok_or_else(|| unavailable("material privacy class is unavailable"))?,
+                ))
+                .map_err(unavailable)?;
+                if !grant.kind(&event.kind) || !grant.class(class) {
+                    return Err(denied());
+                }
+                if class == Class::Sealed {
+                    return Err(Refusal {
+                        kind: FetchRefusalKind::Locked,
+                        reason: "sealed material requires an operator unlock".into(),
+                    });
+                }
+            }
+            let material = sinex_store::material_bytes::reference(&mut conn, request.material)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            let input = sinex_store::producer_reads::material_input(&mut conn, request.material.0)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            let descriptor = sinex_store::producer_reads::extent(&mut conn, &material.blob)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            if self.blobs.is_sealed(&material.blob).map_err(unavailable)? {
+                return Err(Refusal {
+                    kind: FetchRefusalKind::Locked,
+                    reason: "sealed material requires an operator unlock".into(),
+                });
+            }
+            Ok(FetchMaterialReply {
+                material: Some(MaterialFrame {
+                    id: material.id,
+                    input: input,
+                    blob: material.blob,
+                    length: material.length,
+                    parser: material.parser,
+                    parser_version: material.parser_version,
+                    part_index: material.part_index,
+                    previous_part: material.previous_part,
+                    manifest: material.manifest,
+                }),
+                extents: vec![descriptor],
+                ..Default::default()
+            })
+        }
+        .await;
         result.unwrap_or_else(|error| FetchMaterialReply {
             refusal: Some(error.reason),
             refusal_kind: Some(error.kind),

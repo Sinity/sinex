@@ -831,15 +831,16 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
     let h = Harness::start(db).await;
     let (material, frame) = h.material_frame("m1", b"ls\n");
     h.send("kitty", &frame).await;
-    h.send(
-        "kitty",
-        &Ingress::Events {
-            frame: "e1".into(),
-            events: vec![imported(material, 0, "ls")],
-            failures: vec![],
-        },
-    )
-    .await;
+    let receipt = h
+        .send(
+            "kitty",
+            &Ingress::Events {
+                frame: "e1".into(),
+                events: vec![imported(material, 0, "ls")],
+                failures: vec![],
+            },
+        )
+        .await;
     let js = jetstream::new(h.client.clone());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     crate::publisher::ensure_stream(&js, &h.subjects)
@@ -854,12 +855,16 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         .await
         .unwrap();
     let confirmed: Confirmed = serde_json::from_slice(&message.payload).unwrap();
-    let Confirmed::Event(event) = confirmed else {
-        panic!("event")
-    };
-    assert_eq!(event.source, "kitty");
-    assert!(event.payload.is_none());
-    assert_eq!(event.withheld, Some(sinex_protocol::Withheld::Grants));
+    assert_eq!(
+        confirmed,
+        Confirmed::EventReference {
+            commit_seq: receipt.commit_seq.unwrap(),
+            event: receipt.admitted[0]
+        }
+    );
+    let wire: Value = serde_json::from_slice(&message.payload).unwrap();
+    assert!(wire.get("payload").is_none());
+    assert_eq!(wire.as_object().unwrap().len(), 3);
     let _ = &h.nats;
 }
 

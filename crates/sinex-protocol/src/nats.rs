@@ -643,7 +643,6 @@ pub enum Confirmed {
     Gap {
         reason: String,
     },
-    Event(Box<ConfirmedEvent>),
     /// Metadata exceeding a transfer unit is fetched under the same scoped grants.
     EventReference {
         commit_seq: i64,
@@ -666,8 +665,7 @@ pub enum Confirmed {
     },
 }
 
-/// Committed metadata on a class-and-kind-scoped stream topic. Shared-stream
-/// payloads are fetched under the authenticated consumer's grants.
+/// A successful current-policy fetch. Stream messages carry only event references.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
     pub kind_version: u64,
@@ -689,22 +687,10 @@ pub struct ConfirmedEvent {
     pub equivalence_key: Option<String>,
     /// Which of two readings of one record is newer.
     pub reading_order: i64,
-    /// The BLAKE3 of the record as read, in hex: what tells a repeat from a
-    /// changed reading, so a consumer can check its copy against Sinex's.
+    /// Canonical source-reading hash, distinct from the current projected payload identity.
     pub record_hash: String,
-    pub payload: Option<Value>,
-    /// Why `payload` is absent, when it is. The event itself is stored whole;
-    /// read it from Sinex by ID.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub withheld: Option<Withheld>,
-}
-
-/// Why a confirmed-stream message carries no payload.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "reason", rename_all = "snake_case")]
-pub enum Withheld {
-    /// Shared stream payloads are fetched under the authenticated consumer grants.
-    Grants,
+    pub payload:Value,
+    pub projection:crate::ProjectionIdentity,
 }
 
 /// A reading taken out of the live set.

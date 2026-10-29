@@ -8,6 +8,8 @@ pub mod cli;
 mod commands;
 pub mod nats;
 pub mod replies;
+mod projection;
+pub use projection::ProjectionIdentity;
 mod request;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
@@ -18,7 +20,7 @@ pub use nats::{
     PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello, ProducerMaterial,
     ProducerReplay, ProducerWelcome, ReceiptHint, RecordedPage, RecordedQuery, ReplayBatch,
     ReplayMaterial, ReplayScopePage, ReplayScopeQuery, ReplaySelection, Subjects, Unhidden,
-    Withheld,
+
 };
 pub use request::{Reply, Request};
 

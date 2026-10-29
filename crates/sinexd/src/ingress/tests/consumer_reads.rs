@@ -23,6 +23,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     db: devkit::pg::TestDatabase,
 ) {
     let grant = crate::ingress::fetch::Grants {
+        public_context: false,
         write: None,
         kind_prefixes: vec!["command".into()],
         classes: vec![sinex_model::Class::Open],
@@ -107,11 +108,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         let message = message.unwrap();
         let item: Confirmed = serde_json::from_slice(&message.payload).unwrap();
         match item {
-            Confirmed::Event(event) => {
-                assert!(event.payload.is_none());
-                assert_eq!(event.withheld, Some(sinex_protocol::Withheld::Grants));
-                events.push(event.id);
-            }
+            Confirmed::EventReference { event, .. } => events.push(event),
             Confirmed::PositionComplete { commit_seq } => complete = commit_seq,
             other => panic!("unexpected scoped message: {other:?}"),
         }

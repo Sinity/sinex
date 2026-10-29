@@ -4,11 +4,14 @@ use sinex_protocol::{
 };
 
 #[devkit::test]
-async fn authenticated_fetch_uses_configured_kind_and_class_grants(db: devkit::pg::TestDatabase) {
+async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_grants(
+    db: devkit::pg::TestDatabase,
+) {
     let grants = std::collections::BTreeMap::from([
         (
             "kitty".into(),
             crate::ingress::fetch::Grants {
+                public_context: false,
                 write: None,
                 kind_prefixes: vec!["command".into()],
                 classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
@@ -17,6 +20,7 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db: devkit::p
         (
             "replica".into(),
             crate::ingress::fetch::Grants {
+                public_context: false,
                 write: None,
                 kind_prefixes: vec!["command.".into()],
                 classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
@@ -25,6 +29,7 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db: devkit::p
         (
             "near-prefix".into(),
             crate::ingress::fetch::Grants {
+                public_context: false,
                 write: None,
                 kind_prefixes: vec!["command.import".into()],
                 classes: vec![sinex_model::Class::Guarded],
@@ -33,6 +38,7 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db: devkit::p
         (
             "open-only".into(),
             crate::ingress::fetch::Grants {
+                public_context: false,
                 write: None,
                 kind_prefixes: vec!["command".into()],
                 classes: vec![sinex_model::Class::Open],
@@ -40,9 +46,12 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db: devkit::p
         ),
     ]);
     let h = Harness::start_with_grants(db, grants).await;
-    let (material, frame) = h.material_frame("fetch-material", b"retained command\n");
+    let command = format!("--secret=synthetic-value ghp_{}", "q".repeat(36));
+    let (material, frame) = h.material_frame("fetch-material", format!("{command}\n").as_bytes());
     assert_eq!(h.send("kitty", &frame).await.refusal, None);
-    let mut event = imported(material, 0, "retained command");
+    let mut event = imported(material, 0, &command);
+    event.payload["paths"] = json!(["--secret=synthetic-path", "--token=synthetic-value"]);
+    let expected = event.payload.clone();
     event.class = sinex_model::Class::Guarded;
     let ack = h
         .send(
@@ -65,7 +74,8 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db: devkit::p
         if producer == "replica" {
             assert_eq!(reply.refusal, None);
             let event = reply.event.unwrap();
-            assert_eq!(event.payload.unwrap()["command"], "retained command");
+            assert_eq!(event.payload, expected);
+            assert!(event.projection.verifies(&event.payload));
             assert_eq!(Some(event.commit_seq), ack.commit_seq);
         } else {
             assert_eq!(reply.refusal_kind, Some(FetchRefusalKind::Denied));
@@ -104,6 +114,7 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     db: devkit::pg::TestDatabase,
 ) {
     let grant = || crate::ingress::fetch::Grants {
+        public_context: false,
         write: None,
         kind_prefixes: vec!["command".into()],
         classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
@@ -164,7 +175,7 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     .await
     .unwrap();
     assert_eq!(event.refusal, None);
-    assert_eq!(event.event.unwrap().payload.unwrap()["command"], command);
+    assert_eq!(event.event.unwrap().payload["command"], command);
     let result: FetchMaterialReply = sinex_transport::replies::request_json(
         &h.client,
         h.subjects.fetch_material("replica"),
@@ -198,6 +209,7 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
     db: devkit::pg::TestDatabase,
 ) {
     let grant = |classes| crate::ingress::fetch::Grants {
+        public_context: false,
         write: None,
         kind_prefixes: vec!["command".into()],
         classes,
@@ -212,7 +224,9 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
     .await;
     let (material, frame) = h.material_frame("erasure-race", b"retained command\n");
     assert_eq!(h.send("kitty", &frame).await.refusal, None);
-    let mut event = imported(material, 0, "retained command");
+    let mut event = imported(material, 0, &command);
+    event.payload["paths"] = json!(["--secret=synthetic-path", "--token=synthetic-value"]);
+    let expected = event.payload.clone();
     event.class = sinex_model::Class::Guarded;
     let receipt = h
         .send(
@@ -318,4 +332,138 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
             .unwrap()
             .contains("unknown historical class")
     );
+}
+
+#[devkit::test]
+async fn raw_material_fetch_requires_complete_unchanged_current_policy_outputs(
+    db: devkit::pg::TestDatabase,
+) {
+    let grant = crate::ingress::fetch::Grants {
+        kind_prefixes: vec!["command".into()],
+        classes: vec![
+            sinex_model::Class::Open,
+            sinex_model::Class::Guarded,
+            sinex_model::Class::Sealed,
+        ],
+        ..Default::default()
+    };
+    let h = Harness::start_with_grants(
+        db,
+        std::collections::BTreeMap::from([("replica".into(), grant)]),
+    )
+    .await;
+    let (material, frame) = h.material_frame("policy-material", b"synthetic exact raw bytes\n");
+    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    let receipt = h
+        .send(
+            "kitty",
+            &Ingress::Events {
+                frame: "policy-event".into(),
+                events: vec![imported(material, 0, "synthetic exact raw bytes")],
+                failures: vec![],
+            },
+        )
+        .await;
+    assert_eq!(receipt.refusal, None);
+    let event = receipt.admitted[0];
+    let request = FetchMaterial { material };
+    let fetch = || {
+        sinex_transport::replies::request_json::<FetchMaterialReply>(
+            &h.client,
+            h.subjects.fetch_material("replica"),
+            "replica",
+            &request,
+            Duration::from_secs(20),
+        )
+    };
+    let original = fetch().await.unwrap();
+    assert!(original.material.is_some());
+    let extents = original
+        .extents
+        .iter()
+        .map(|bytes| hashed_blobs::Extent::decode(bytes).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        hashed_blobs::Reader::new(&h.store_dir)
+            .read(&extents, None)
+            .unwrap(),
+        b"synthetic exact raw bytes\n"
+    );
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let source = sqlx::query_scalar!("SELECT source FROM core.events WHERE id=$1", event.0)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    let raw_hash = sqlx::query_scalar!(
+        "SELECT encode(record_hash,'hex') FROM core.events WHERE id=$1",
+        event.0
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    sinex_store::privacy::add_rule(
+        &mut conn,
+        &sinex_store::privacy::NewRule {
+            name: "synthetic-hidden-command".into(),
+            source,
+            event_type: Some("command.imported".into()),
+            field: Some("/command".into()),
+            matcher: "all".into(),
+            matcher_arg: None,
+            class: sinex_model::Class::Guarded,
+            action: sinex_store::privacy::Action::DropField,
+            author: "synthetic-test".into(),
+        },
+    )
+    .await
+    .unwrap();
+    sinex_store::privacy::projection::ensure_current(&mut conn)
+        .await
+        .unwrap();
+    let refused = fetch().await.unwrap();
+    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Denied));
+    assert!(refused.material.is_none());
+    assert!(refused.extents.is_empty());
+    assert!(refused.refusal.unwrap().contains("privacy rules"));
+    let projected: FetchEventReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_event("replica"),
+        "replica",
+        &FetchEvent { event },
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    let projected = projected.event.unwrap();
+    assert!(projected.payload.get("command").is_none());
+    assert!(projected.projection.verifies(&projected.payload));
+    assert_eq!(Some(projected.record_hash), raw_hash);
+    sinex_store::privacy::end_rule(&mut conn, "synthetic-hidden-command", "synthetic-test")
+        .await
+        .unwrap();
+    sinex_store::privacy::projection::ensure_current(&mut conn)
+        .await
+        .unwrap();
+    assert!(fetch().await.unwrap().material.is_some());
+    sqlx::query!("UPDATE privacy.event_outputs SET changed=false,state='unavailable_original' WHERE event_id=$1",event.0).execute(&mut conn).await.unwrap();
+    let refused = fetch().await.unwrap();
+    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Unavailable));
+    assert!(refused.material.is_none());
+    sqlx::query!(
+        "UPDATE privacy.event_outputs SET state='complete',class='sealed' WHERE event_id=$1",
+        event.0
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let refused = fetch().await.unwrap();
+    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Locked));
+    assert!(refused.extents.is_empty());
+    sqlx::query!("UPDATE privacy.policy_state SET desired_epoch=active_epoch+1 WHERE id")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let refused = fetch().await.unwrap();
+    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Unavailable));
+    assert!(refused.material.is_none());
 }
