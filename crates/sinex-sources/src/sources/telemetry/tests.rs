@@ -33,6 +33,18 @@ fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
 #[devkit::test]
 fn telemetry_discovery_reads_the_supplied_spool_without_starting_a_capture() {
     use sinex_source_core::discovery::{DiscoveryContext, SourceConfig};
+    assert_eq!(
+        FORMAT.discovery.owner,
+        sinex_source_core::discovery::Owner::System
+    );
+    assert!(
+        FORMAT
+            .discovery
+            .streams
+            .iter()
+            .any(|stream| stream.spool == "telemetry"),
+        "the daemon-owned telemetry spool has a declared stream role"
+    );
     let mut context = DiscoveryContext::default();
     context.host = "fixture".into();
     let initial = (FORMAT.discover)(&FORMAT, &context);

@@ -194,7 +194,6 @@ async fn retained_edge_cycles_terminate_with_shortest_depths(db: devkit::pg::Tes
         (ids[2], ids[0]),
         (ids[0], ids[3]),
         (ids[2], ids[3]),
-        (ids[3], ids[3]),
     ] {
         sqlx::query("INSERT INTO core.event_children(parent,child) VALUES($1,$2)")
             .bind(parent)
@@ -203,6 +202,18 @@ async fn retained_edge_cycles_terminate_with_shortest_depths(db: devkit::pg::Tes
             .await
             .unwrap();
     }
+    let self_loop = sqlx::query("INSERT INTO core.event_children(parent,child) VALUES($1,$1)")
+        .bind(ids[3])
+        .execute(&mut conn)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        self_loop
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("23514")
+    );
     let up = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         walk(&mut conn, Walk::Trace, &Reference::Event(ids[3])),

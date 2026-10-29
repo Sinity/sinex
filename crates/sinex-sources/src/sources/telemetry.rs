@@ -89,7 +89,11 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             locations: &[],
             capabilities: &[],
             credentials: &[],
-            streams: &[],
+            streams: &[sinex_source_core::discovery::CaptureStream {
+                spool: "telemetry",
+                options: &[],
+                capabilities: &[],
+            }],
             requests: &[],
             request_only: false,
         },
