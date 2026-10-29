@@ -462,19 +462,18 @@ async fn run_owned(
                     .checked_add(1)
                     .ok_or("passive summary count exceeds u64")?;
             }
-            state.outbox.insert(
-                delivery.id.clone(),
-                PendingDelivery {
-                    handed_at: now,
-                    delivery: delivery.clone(),
-                    rule,
-                    notice,
-                    producer: forwarded.map(|forwarded| forwarded.producer.clone()),
-                    import: None,
-                    settings_identity: state.settings_identity.clone(),
-                    parents,
-                },
-            );
+            let mut pending = PendingDelivery {
+                handed_at: now,
+                delivery: delivery.clone(),
+                rule,
+                notice,
+                producer: forwarded.map(|forwarded| forwarded.producer.clone()),
+                import: None,
+                settings_identity: state.settings_identity.clone(),
+                parents,
+            };
+            outlets::freeze_notice(&mut pending);
+            state.outbox.insert(delivery.id.clone(), pending);
             records.push(SignalRecord::Handoff(HandoffRecorded {
                 delivery_id: delivery.id.clone(),
                 channel: delivery.channel,

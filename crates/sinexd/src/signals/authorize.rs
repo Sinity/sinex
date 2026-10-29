@@ -175,6 +175,36 @@ impl<'a> Diagnostic<'a> {
     }
 }
 
+fn frozen_notice_matches(
+    offered: &Notice,
+    pending: &PendingDelivery,
+    historical: Option<&Notice>,
+) -> bool {
+    let mut pending = pending.clone();
+    // An inherited held attempt already owns its exact words even if the old
+    // outbox predates the explicit frozen Notice field.
+    if pending.notice.is_none() {
+        pending.notice = historical.cloned();
+    }
+    let mut offered = offered.clone();
+    // The count is presentation progress; its presence still identifies the
+    // passive-budget group and must match the frozen handoff decision.
+    offered.budget_passive_count = offered.budget_passive_count.map(|_| 0);
+    offered == outlets::notice(&pending, 0)
+}
+
+fn same_input_basis(
+    original: &sinex_store::signals::MatchBasis,
+    current: &sinex_store::signals::MatchBasis,
+) -> bool {
+    // Global archive/excision watermarks are progress, not input identity.
+    // Fresh parent reads still verify the actual liveness and policy below.
+    original.read.policy_epoch.is_some()
+        && current.read.policy_epoch == original.read.policy_epoch
+        && current.parents == original.parents
+        && current.settings_identity == original.settings_identity
+}
+
 struct AuthorityBasis {
     epoch: i64,
     revision: u64,
@@ -223,6 +253,14 @@ impl AuthorityBasis {
                 diagnostic.record(Some(&notice.delivery_id), Refusal::AuthoritySettingsChanged);
                 return Err(PolicyFailure::Unavailable);
             }
+            let historical = state
+                .notifications
+                .attempt(&notice.delivery_id)
+                .map(|attempt| &attempt.notice);
+            if !frozen_notice_matches(notice, outbox, historical) {
+                diagnostic.record(Some(&notice.delivery_id), Refusal::AuthorityIntentChanged);
+                return Err(PolicyFailure::Unavailable);
+            }
             inputs.insert(notice.delivery_id.clone(), basis.clone());
             pending.insert(notice.delivery_id.clone(), outbox.clone());
         }
@@ -253,10 +291,7 @@ impl AuthorityBasis {
                 diagnostic.record(Some(id), Refusal::AuthorityBasisMissing);
                 PolicyFailure::Unavailable
             })?;
-            if current.read != original.read
-                || current.parents != original.parents
-                || current.settings_identity != original.settings_identity
-            {
+            if !same_input_basis(original, current) {
                 diagnostic.record(Some(id), Refusal::AuthorityInputsChanged);
                 return Err(PolicyFailure::Unavailable);
             }
@@ -274,6 +309,8 @@ impl AuthorityBasis {
                 || pending.producer != frozen.producer
                 || pending.settings_identity != frozen.settings_identity
                 || pending.handed_at != frozen.handed_at
+                || pending.parents != frozen.parents
+                || pending.import != frozen.import
             {
                 diagnostic.record(Some(id), Refusal::AuthorityIntentChanged);
                 return Err(PolicyFailure::Unavailable);

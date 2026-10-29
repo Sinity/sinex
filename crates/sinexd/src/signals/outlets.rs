@@ -111,6 +111,12 @@ pub(super) fn notice(pending: &PendingDelivery, passive_count: u64) -> Notice {
     notice
 }
 
+pub(super) fn freeze_notice(pending: &mut PendingDelivery) {
+    if pending.notice.is_none() {
+        pending.notice = Some(notice(pending, 0));
+    }
+}
+
 pub(super) async fn effect(
     config: &Config,
     pending: &PendingDelivery,
