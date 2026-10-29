@@ -551,9 +551,13 @@ impl Default for ProducerHello {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ProducerWelcome {
     pub refusal: Option<String>,
+    #[serde(default)]
+    pub family:Option<String>,
+    #[serde(default)]
+    pub canonical_publisher:bool,
 }
 
 /// A request on `<root>.recorded.<producer>`: which of these frames Sinex has

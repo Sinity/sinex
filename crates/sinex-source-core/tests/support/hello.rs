@@ -13,7 +13,7 @@ pub(crate) async fn hello(nats: &devkit::nats::TestNats, subjects: &Subjects, pr
             client
                 .publish(
                     message.reply.unwrap(),
-                    serde_json::to_vec(&ProducerWelcome { refusal: None })
+                    serde_json::to_vec(&ProducerWelcome { refusal: None,..Default::default() })
                         .unwrap()
                         .into(),
                 )

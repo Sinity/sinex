@@ -708,7 +708,7 @@ impl Requests {
                 })
                 .map(|name| format!("producer event type {name} is not registered for {producer}"))
         };
-        Ok(ProducerWelcome { refusal })
+        Ok(ProducerWelcome { refusal,..Default::default() })
     }
 
     /// Answer a recorded query: the recorded acknowledgments of these frames.
@@ -800,6 +800,7 @@ impl Requests {
                 },
                 Err(error) => ProducerWelcome {
                     refusal: Some(format!("not a producer declaration: {error}")),
+                    ..Default::default()
                 },
             };
             serde_json::json!(welcome)
