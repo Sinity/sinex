@@ -36,14 +36,18 @@ async fn other_rows(
         let value = if table == "live_equivalence" && compact {
             "to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(equivalence_key))"
         } else if matches!(table.as_str(), "events" | "admission_stage") {
-            "to_jsonb(t)-'kind_version'-'validation'"
+            "to_jsonb(t)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint'"
+        } else if table == "event_tombstones" {
+            "to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'"
+        } else if table == "ingress_frames" {
+            "to_jsonb(t)-'family'-'write_kind_prefixes'-'source_name'-'source_version'-'source_fingerprint'-'producer_host'"
         } else if table == "search_text" {
             "to_jsonb(t)-'trigram_indexed'"
         } else {
             "to_jsonb(t)"
         };
         let predicate = if table == "counters" {
-            " WHERE name <> 'blob_changes'"
+            " WHERE name NOT IN ('blob_changes','excised','privacy_outputs','query_metadata')"
         } else {
             ""
         };
@@ -118,7 +122,7 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         .await
         .unwrap();
     let tombstones: serde_json::Value =
-        sqlx::query_scalar("SELECT jsonb_agg(t) FROM core.event_tombstones t")
+        sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class') FROM core.event_tombstones t")
             .fetch_one(&mut conn)
             .await
             .unwrap();
@@ -146,13 +150,20 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         }
     );
     assert_eq!(pairs(&mut conn).await, before);
-    assert_eq!(other_rows(&mut conn).await, other_before);
+    let mut other_after=other_rows(&mut conn).await;
+    other_after.retain(|name,_|other_before.contains_key(name));
+    assert_eq!(other_after,other_before,"every predecessor table preserves its stored values; new tables have no predecessor rows");
+    let unknown:(Option<i64>,Option<i64>,Option<String>)=sqlx::query_as("SELECT commit_seq,original_commit_seq,class FROM core.event_tombstones WHERE event_id=$1").bind(before[1000].0).fetch_one(&mut conn).await.unwrap();
+    assert_eq!(unknown,(None,None,None),"a publication placement does not invent missing erasure history");
+    let edges:Vec<(Uuid,Uuid)>=sqlx::query_as("SELECT parent,child FROM core.event_children ORDER BY parent,child").fetch_all(&mut conn).await.unwrap();
+    let retained:Vec<(Uuid,Uuid)>=sqlx::query_as("SELECT parent,id FROM core.events CROSS JOIN LATERAL unnest(parents) parent ORDER BY parent,id").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(edges,retained);
     assert_eq!(
         consumer_position(&mut conn, "publisher").await.unwrap(),
         (4500, 150)
     );
     let after: serde_json::Value =
-        sqlx::query_scalar("SELECT jsonb_agg(t) FROM core.event_tombstones t")
+        sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class') FROM core.event_tombstones t")
             .fetch_one(&mut conn)
             .await
             .unwrap();

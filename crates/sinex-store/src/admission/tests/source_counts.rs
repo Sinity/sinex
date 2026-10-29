@@ -263,7 +263,7 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
     };
     admit_one(&mut conn, &sample).await;
     let before: Vec<Value> =
-        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY e.id")
+        sqlx::query_scalar("SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id")
             .fetch_all(&mut conn)
             .await
             .unwrap();
@@ -290,20 +290,25 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
         }
     );
     let after: Vec<Value> =
-        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY e.id")
+        sqlx::query_scalar("SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id")
             .fetch_all(&mut conn)
             .await
             .unwrap();
     assert_eq!(before, after);
+    let metadata:Vec<(i64,String)>=sqlx::query_as("SELECT kind_version,validation FROM core.events ORDER BY id").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(metadata,vec![(1,"unvalidated".into());3],"the versionless predecessor has unknown version-one declarations, never inferred current metadata");
     let edges: Vec<(uuid::Uuid, uuid::Uuid)> =
         sqlx::query_as("SELECT parent, child FROM core.event_children")
             .fetch_all(&mut conn)
             .await
             .unwrap();
     assert_eq!(edges, [(parent.id.0, child.id.0)]);
-    let kinds: i64 = sqlx::query_scalar("SELECT count(*) FROM registry.event_types WHERE name IN ('sinex.telemetry', 'tag.applied', 'activity.window', 'activity.session', 'activity.span', 'conversation.day', 'rest.fused', 'document.text')")
-        .fetch_one(&mut conn).await.unwrap();
-    assert_eq!(kinds, 8);
+    let names=["sinex.telemetry","tag.applied","activity.window","activity.session","activity.span","conversation.day","rest.fused","document.text"];
+    let expected=sinex_model::event_types::declarations().into_iter().filter(|kind|names.contains(&kind.kind.name.as_str())).collect::<Vec<_>>();
+    assert_eq!(expected.len(),names.len());
+    let references=expected.iter().map(|kind|kind.kind.clone()).collect::<Vec<_>>();
+    let stored=sinex_schema::kinds::load(&mut conn,&references).await.unwrap();
+    for definition in expected {assert_eq!(stored.get(&definition.kind),Some(&definition),"current typed definition remains immutable beside historical unknown version one");}
     assert!(matches!(
         sinex_schema::apply(&mut conn).await.unwrap(),
         sinex_schema::Applied::Current { .. }
