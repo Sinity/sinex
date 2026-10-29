@@ -2,7 +2,7 @@
 use serde_json::Value;
 
 async fn live(conn: &mut sqlx::PgConnection) -> Vec<(String, String, Value)> {
-    sqlx::query_as("SELECT e.event_type, e.class::text, e.payload FROM (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id ORDER BY e.event_type,e.payload::text")
+    sqlx::query_as("SELECT e.event_type, e.class::text, e.payload FROM (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id WHERE e.event_type IN ('transaction.posted','journal.directive','command.imported') ORDER BY e.event_type,e.payload::text")
         .fetch_all(conn).await.unwrap()
 }
 
@@ -51,6 +51,15 @@ async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
     .unwrap();
     let before = live(&mut ctx.read_conn).await;
     assert_eq!(before.len(), 6);
+    let coverage: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='source.coverage'")
+            .fetch_one(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        coverage, 4,
+        "both source reads retain an observation on each import attempt"
+    );
     assert!(before.iter().all(|(_, class, _)| class == "guarded"));
     let transactions = before
         .iter()

@@ -191,6 +191,9 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     );
     let refs = lines.lines().collect::<std::collections::BTreeSet<_>>();
     assert_eq!(refs.len(), 2, "unknown occurrence was not executed twice");
+    // Action and value outlets finish independently. The action receipt does
+    // not establish that either value handoff has reached its file yet.
+    wait_scalar(&mut conn,"SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='value' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",2).await;
     let value: Value = serde_json::from_slice(&std::fs::read(&value).unwrap()).unwrap();
     assert_eq!(value["channel"], "value");
     assert!(

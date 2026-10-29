@@ -219,7 +219,7 @@ async fn no_server_retry_keeps_frozen_input_parents_across_an_unchanged_evaluati
     let mut watched = rule("held-group", "notice");
     watched["interrupt"] = json!(true);
     watched["query"] = json!(
-        "events where event_type = operator.mark and text = \"synthetic watched input\" group by event_type count"
+        "events where event_type = operator.mark AND text = \"synthetic watched input\" group by event_type count"
     );
     ok(
         &socket,

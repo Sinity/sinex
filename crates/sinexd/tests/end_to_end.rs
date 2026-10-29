@@ -365,10 +365,10 @@ async fn delivering_everything_twice_changes_nothing() {
     consistent(&mut c).await;
 }
 
-/// Re-staging the same export, and the same bytes under a new name, registers
-/// new material but admits nothing new.
+/// Rereading one native input suppresses repeats. A separate input copy keeps
+/// independent reading identity while sharing identical physical blob bytes.
 #[devkit::test]
-async fn restaging_the_same_bytes_admits_nothing_new() {
+async fn rereading_one_native_input_repeats_but_a_separate_copy_keeps_its_identity() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = small_zsh();
@@ -378,6 +378,16 @@ async fn restaging_the_same_bytes_admits_nothing_new() {
     t.backfill(Some(&dir.file("a/zsh", text.as_bytes())), Some(&atuin));
     let mut c = t.connect().await;
     let before = live(&mut c).await;
+    sqlx::query("DELETE FROM raw.positions")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    t.backfill(Some(&dir.0.join("a/zsh")), Some(&atuin));
+    assert_eq!(
+        live(&mut c).await,
+        before,
+        "the same input and bytes keep exact reading IDs and keys"
+    );
     let materials = scalar(
         &mut c,
         "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'",
@@ -398,17 +408,34 @@ async fn restaging_the_same_bytes_admits_nothing_new() {
         "identical bytes under a new name are new material"
     );
     let after = live(&mut c).await;
-    let new: Vec<_> = after
-        .keys()
-        .filter(|k| !before.contains_key(*k))
-        .take(3)
-        .collect();
-    assert!(
-        after.len() == before.len() && new.is_empty(),
-        "re-staged records were admitted again: {} live before, {} after; e.g. {new:?}",
-        before.len(),
-        after.len()
+    assert_eq!(
+        after.len(),
+        2 * before.len(),
+        "a distinct input copy has independent native keys"
     );
+    for (key, reading) in &before {
+        assert_eq!(
+            after.get(key),
+            Some(reading),
+            "a copied input cannot replace the original reading"
+        );
+    }
+    let copies: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding LIKE 'terminal.zsh-history:%' ORDER BY m.input_id"
+    ).fetch_all(&mut c).await.unwrap();
+    assert_eq!(
+        copies.len(),
+        2,
+        "each zsh path has its own retained logical input"
+    );
+    assert_ne!(copies[0].0, copies[1].0);
+    assert_eq!(
+        copies[0].1, copies[1].1,
+        "equal raw bytes share the physical hash without merging inputs"
+    );
+    let blobs = sinex_store::Blobs::open(&t.store).unwrap();
+    blobs.load(&mut c).await.unwrap();
+    assert_eq!(blobs.read(&copies[0].1).unwrap(), text.as_bytes());
     consistent(&mut c).await;
 }
 
@@ -536,15 +563,20 @@ async fn rows_that_change_are_read_to_their_final_values() {
     )];
     rows.extend((1..=5_000).map(atuin_row));
     atuin_db(&path, &rows);
+    eprintln!("mutable rows: initial backfill (5001 rows)");
     t.backfill(None, Some(&path));
+    eprintln!("mutable rows: initial backfill committed");
 
     rows[0].2 = 7_000_000_000;
     rows[0].3 = 2;
     rows[5].5 = Some(1_700_000_000_000_000_000);
     rows.extend((5_001..=5_100).map(atuin_row));
     atuin_db(&path, &rows);
+    eprintln!("mutable rows: revised backfill (5101 rows)");
     t.backfill(None, Some(&path));
+    eprintln!("mutable rows: revised backfill committed; replay starts");
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
+    eprintln!("mutable rows: replay committed; checking final readings");
 
     let mut c = t.connect().await;
     let running = sqlx::query(
@@ -627,10 +659,10 @@ async fn repeated_commands_are_kept() {
     );
 }
 
-/// A hidden record stays hidden across replay and re-import, and comes back
-/// once unhidden and read again.
+/// A hidden record stays hidden across replay and reread of its native input.
+/// An independent copy remains visible; unhide restores only the original input.
 #[devkit::test]
-async fn hidden_stays_hidden_across_replay_and_reimport() {
+async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let path = dir.0.join("a/history.db");
@@ -645,17 +677,46 @@ async fn hidden_stays_hidden_across_replay_and_reimport() {
     .await
     .unwrap();
     t.admin(&["hide", &id.to_string()]);
-    assert_eq!(visible_a3(&mut c).await, 0);
+    assert_eq!(visible_a3(&mut c, &path).await, 0);
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
-    assert_eq!(visible_a3(&mut c).await, 0, "replay brought it back");
+    assert_eq!(visible_a3(&mut c, &path).await, 0, "replay brought it back");
+    sqlx::query("DELETE FROM raw.positions")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    t.backfill(None, Some(&path));
+    assert_eq!(
+        visible_a3(&mut c, &path).await,
+        0,
+        "rereading the same native input cannot lift its hidden key"
+    );
     let copy = dir.0.join("b/history.db");
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
     std::fs::copy(&path, &copy).unwrap();
     t.backfill(None, Some(&copy));
-    assert_eq!(visible_a3(&mut c).await, 0, "re-import brought it back");
+    assert_eq!(
+        visible_a3(&mut c, &path).await,
+        0,
+        "copying another input cannot lift the original hidden key"
+    );
+    assert_eq!(
+        visible_a3(&mut c, &copy).await,
+        1,
+        "hide authority does not cross native input scope"
+    );
+    let retained: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=ANY($1) ORDER BY m.input_id"
+    ).bind(vec![atuin_binding(&path), atuin_binding(&copy)]).fetch_all(&mut c).await.unwrap();
+    assert_eq!(retained.len(), 2);
+    assert_ne!(retained[0].0, retained[1].0);
+    assert_eq!(
+        retained[0].1, retained[1].1,
+        "independent inputs retain byte-identical row materials"
+    );
     t.admin(&["unhide", &id.to_string()]);
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
-    assert_eq!(visible_a3(&mut c).await, 1);
+    assert_eq!(visible_a3(&mut c, &path).await, 1);
+    assert_eq!(visible_a3(&mut c, &copy).await, 1);
     assert_eq!(
         support::marker_count(&mut c).await,
         4,
@@ -664,12 +725,16 @@ async fn hidden_stays_hidden_across_replay_and_reimport() {
     consistent(&mut c).await;
 }
 
-async fn visible_a3(c: &mut PgConnection) -> i64 {
-    scalar(
-        c,
-        "SELECT count(*) FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id WHERE e.payload->>'native_id' = 'a000003'",
+async fn visible_a3(c: &mut PgConnection, path: &Path) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
+         JOIN raw.materials m ON m.id=e.material_id JOIN raw.inputs i ON i.id=m.input_id
+         WHERE e.payload->>'native_id'='a000003' AND i.binding=$1",
     )
+    .bind(atuin_binding(path))
+    .fetch_one(c)
     .await
+    .unwrap()
 }
 
 /// A clipboard spool holding one copy of each of `texts`: a source whose

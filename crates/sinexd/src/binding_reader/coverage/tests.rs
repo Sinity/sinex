@@ -51,19 +51,6 @@ async fn binding_reads_store_empty_unchanged_and_failed_evidence_with_bytes(
         &input,
         Settings::new("synthetic"),
     );
-    let run = sinex_store::runs::start(
-        &mut context.read_conn,
-        &sinex_store::runs::Manifest {
-            name: "synthetic reads",
-            kind: "source",
-            version: "1",
-            build: "synthetic",
-            emits: &["command.executed", "source.coverage"],
-        },
-        "synthetic",
-    )
-    .await
-    .unwrap();
     let mut readers = vec![crate::binding_reader::BindingReader::new(format, binding).unwrap()];
     let (_stop, stop) = tokio::sync::watch::channel(false);
     for failed in [false, false, true] {
@@ -91,6 +78,7 @@ async fn binding_reads_store_empty_unchanged_and_failed_evidence_with_bytes(
     assert_eq!(evidence[0].0["state"], "recorded_unknown_coverage");
     assert_eq!(evidence[1].0["state"], "recorded_unknown_coverage");
     assert_eq!(evidence[2].0["state"], "missing");
+    let mut observed_runs = std::collections::BTreeSet::new();
     for (payload, material) in evidence {
         let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials WHERE id=$1")
             .bind(material.expect("coverage has retained material"))
@@ -101,7 +89,26 @@ async fn binding_reads_store_empty_unchanged_and_failed_evidence_with_bytes(
         let retained: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(retained, payload);
         assert_eq!(payload["observed_source"], "terminal.zsh-history");
-        assert_eq!(payload["observed_run"], serde_json::to_value(run).unwrap());
+        let observed_run: uuid::Uuid =
+            serde_json::from_value(payload["observed_run"].clone()).unwrap();
+        assert!(
+            observed_runs.insert(observed_run),
+            "each read has its own native run"
+        );
+        let native: (String, String, String, String, String) = sqlx::query_as(
+            "SELECT m.name,m.kind,m.version,m.build,r.host FROM core.runs r JOIN core.manifests m ON m.id=r.manifest_id WHERE r.id=$1"
+        ).bind(observed_run).fetch_one(&mut context.read_conn).await.unwrap();
+        assert_eq!(native.0, "terminal.zsh-history");
+        assert_eq!(native.1, "source");
+        assert_eq!(
+            native.2,
+            sinex_sources::sources::zsh::SPEC.parser_version.to_string()
+        );
+        assert!(
+            !native.3.is_empty(),
+            "the actual native run records its build"
+        );
+        assert_eq!(native.4, "synthetic");
         let identity: (String, String) = sqlx::query_as("SELECT m.name,m.kind FROM core.events e JOIN core.runs r ON r.id=e.run_id JOIN core.manifests m ON m.id=r.manifest_id WHERE e.material_id=$1")
             .bind(material.unwrap()).fetch_one(&mut context.read_conn).await.unwrap();
         assert_eq!(

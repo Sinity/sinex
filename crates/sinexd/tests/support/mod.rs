@@ -44,15 +44,25 @@ pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
     );
     let invalid_history = count(
         conn,
-        "SELECT count(*) FROM audit.archive_changes a LEFT JOIN core.commit_log c USING(commit_seq)
+        "WITH RECURSIVE replaced_descendants(commit_seq,event_id) AS (
+             SELECT a.commit_seq,edge.child FROM audit.archive_changes a
+             JOIN core.event_children edge ON edge.parent=a.event_id
+             WHERE a.reason='newer_reading' AND a.archived
+             UNION
+             SELECT d.commit_seq,edge.child FROM replaced_descendants d
+             JOIN core.event_children edge ON edge.parent=d.event_id)
+         SELECT count(*) FROM audit.archive_changes a LEFT JOIN core.commit_log c USING(commit_seq)
          WHERE a.commit_seq < 1
             OR a.commit_seq > (SELECT value FROM core.counters WHERE name='commit_seq')
-            OR (a.reason <> 'newer_reading' AND c.event_id IS NOT NULL)",
+            OR (c.event_id IS NOT NULL AND a.reason <> 'newer_reading'
+                AND NOT (a.reason='recomputed' AND a.archived
+                    AND EXISTS(SELECT 1 FROM replaced_descendants d
+                               WHERE d.commit_seq=a.commit_seq AND d.event_id=a.event_id)))",
     )
     .await;
     assert_eq!(
         invalid_history, 0,
-        "visibility transitions use their own positions; replacements may share an Event position"
+        "only replacements and their exact recomputed descendants may share the replacement Event position"
     );
     let projection = count(
         conn,

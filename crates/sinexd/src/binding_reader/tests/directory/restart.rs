@@ -285,6 +285,19 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
     )
     .await
     .unwrap();
+    // The synthetic parser is a real owner-installed version, with the same
+    // immutable emitted schemas and a distinct parser version.
+    let mut declaration = crate::catalog::source_declarations()
+        .into_iter()
+        .find(|declaration| {
+            declaration.source.name == notes::SPEC.name
+                && declaration.source.version == notes::SPEC.parser_version
+        })
+        .unwrap();
+    declaration.source.version = 99;
+    sinex_store::source_declarations::register(&mut ctx.read_conn, &[declaration])
+        .await
+        .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let mut b = BindingReader::new(&notes::FORMAT, binding.clone()).unwrap();
@@ -433,7 +446,25 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     .await
     .unwrap();
     assert_eq!(class, "guarded");
-    let shown:Value=sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'").fetch_one(&mut ctx.read_conn).await.unwrap();
+    assert!(
+        !sinex_store::privacy::projection::epoch(&mut ctx.read_conn)
+            .await
+            .unwrap()
+            .ready()
+    );
+    let pending = sqlx::query_scalar::<_, Value>("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'")
+        .fetch_one(&mut ctx.read_conn).await.unwrap_err();
+    assert_eq!(
+        pending
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("55000")
+    );
+    sinex_store::privacy::projection::ensure_current(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    let shown: Value = sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(shown, json!({"withheld":"guarded"}));
     ctx.close().await.unwrap();
 }

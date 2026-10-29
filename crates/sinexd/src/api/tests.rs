@@ -27,9 +27,17 @@ struct World {
     commits: watch::Sender<u64>,
     /// Kept so the commit reader runs until the test ends.
     _stop: watch::Sender<bool>,
+    read_model_task: Option<tokio::task::JoinHandle<Result<(), String>>>,
+    read_models: watch::Sender<()>,
     writer: writer::WriterHandle,
     reads: sqlx::PgPool,
     blobs: sinex_store::Blobs,
+}
+
+impl Drop for World {
+    fn drop(&mut self) {
+        self._stop.send_replace(true);
+    }
 }
 
 fn command(text: &str, i: i64) -> Event {
@@ -176,31 +184,43 @@ async fn world_with_config(
     let (commits, rx) = watch::channel(0u64);
     let (read_models_tx, read_models) = watch::channel(());
     let (stop, stopped) = watch::channel(false);
-    tokio::spawn(crate::commit_reader::run(
-        <sqlx::PgConnection as sqlx::Connection>::connect(&url)
-            .await
-            .unwrap(),
-        crate::commit_reader::read_models()
-            .into_iter()
-            .map(|m| {
-                Box::new(crate::commit_reader::ReadModelRunner(m))
-                    as Box<dyn crate::commit_reader::Consumer>
-            })
-            .collect(),
-        rx.clone(),
-        read_models_tx,
-        stopped,
-    ));
+    let read_model_task =
+        start_read_models(&url, rx.clone(), read_models_tx.clone(), stopped).await;
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));
     World {
         _db: db,
         app: router(api, tokens, rx, read_models),
         commits,
         _stop: stop,
+        read_model_task: Some(read_model_task),
+        read_models: read_models_tx,
         writer: handle,
         reads,
         blobs,
     }
+}
+
+async fn start_read_models(
+    url: &str,
+    commits: watch::Receiver<u64>,
+    completed: watch::Sender<()>,
+    stop: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<Result<(), String>> {
+    tokio::spawn(crate::commit_reader::run(
+        <sqlx::PgConnection as sqlx::Connection>::connect(url)
+            .await
+            .unwrap(),
+        crate::commit_reader::read_models()
+            .into_iter()
+            .map(|model| {
+                Box::new(crate::commit_reader::ReadModelRunner(model))
+                    as Box<dyn crate::commit_reader::Consumer>
+            })
+            .collect(),
+        commits,
+        completed,
+        stop,
+    ))
 }
 
 async fn call(w: &World, token: Option<&str>, body: Value) -> (StatusCode, Value) {
@@ -488,8 +508,19 @@ async fn follow_notice_waits_for_the_initial_cursor(db: devkit::pg::TestDatabase
 
 #[devkit::test]
 async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::TestDatabase) {
-    let w = world(db).await;
+    let mut w = world(db).await;
     admit(&w, &["before"], 0).await;
+    // Pause the actual maintainer after a durable baseline. Search text itself
+    // is also projected by admission, so locking it would block the writer.
+    w._stop.send_replace(true);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        w.read_model_task.take().unwrap(),
+    )
+    .await
+    .expect("read-model maintainer did not stop")
+    .unwrap()
+    .unwrap();
     let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
         .header("authorization", format!("Bearer {READ}"))
         .body(Body::empty())
@@ -498,12 +529,6 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
     let mut seen = String::new();
     read_until(&mut body, &mut seen, "event: notice").await;
 
-    let mut projection = w.reads.acquire().await.unwrap();
-    let mut projection_lock = sqlx::Connection::begin(&mut *projection).await.unwrap();
-    sqlx::query("LOCK TABLE core.search_text IN ACCESS EXCLUSIVE MODE")
-        .execute(&mut *projection_lock)
-        .await
-        .unwrap();
     let mut positions = w.reads.acquire().await.unwrap();
     let positions_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *positions)
@@ -517,7 +542,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
     submit_events(&w, vec![command("cargo build", 1)]).await;
     let mut monitor = w.reads.acquire().await.unwrap();
     // The writer wake has been consumed when follow reaches its blocked
-    // materialization watermark query. The search maintainer is still held.
+    // materialization watermark query. The search maintainer is stopped.
     let follow_pid = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             let pid: Option<i32> = sqlx::query_scalar(
@@ -553,8 +578,18 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
     })
     .await
     .expect("follow did not finish inspecting the old projection watermark");
-    projection_lock.rollback().await.unwrap();
-    drop((projection, monitor));
+    drop(monitor);
+    let (stop, stopped) = watch::channel(false);
+    w._stop = stop;
+    w.read_model_task = Some(
+        start_read_models(
+            &w._db.url(None),
+            w.commits.subscribe(),
+            w.read_models.clone(),
+            stopped,
+        )
+        .await,
+    );
 
     // No second writer commit occurs: only durable read-model progress can wake it.
     read_until(&mut body, &mut seen, "cargo build").await;
