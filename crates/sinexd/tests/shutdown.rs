@@ -171,9 +171,33 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
         for (name, expected) in blobs.iter().zip(&original_bytes) {
             assert_eq!(bytes.read(name).unwrap(), *expected);
         }
+        let log = std::fs::read_to_string(&log).unwrap();
+        let summaries: Vec<serde_json::Value> = log
+            .lines()
+            .filter_map(|line| line.strip_prefix("sinexd: shutdown "))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(summaries.len(), 1, "one actual shutdown result: {log}");
+        let summary = &summaries[0];
+        let requested = summary["requested"].as_u64().unwrap();
         assert!(
-            elapsed < Duration::from_secs(3),
-            "idle shutdown spent {elapsed:?} waiting for forced abort"
+            requested > 0,
+            "the daemon owned supervised tasks: {summary}"
+        );
+        assert_eq!(summary["joined"].as_u64(), Some(requested), "{summary}");
+        for field in ["failed", "cancelled", "panicked", "abort_requested"] {
+            assert_eq!(summary[field].as_u64(), Some(0), "{field}: {summary}");
+        }
+        assert_eq!(summary["writer_joined"], true, "{summary}");
+        let tasks = summary["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len() as u64, requested, "{summary}");
+        assert!(
+            tasks.iter().all(|task| task["outcome"] == "complete"),
+            "every owned task completed: {summary}"
+        );
+        assert!(
+            tasks.iter().any(|task| task["name"] == "writer"),
+            "writer completion is an actual joined result: {summary}"
         );
     }
 }

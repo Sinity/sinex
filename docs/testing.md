@@ -53,6 +53,8 @@ Sources are explicit in a development run: `--sources FILE` selects daemon bindi
 
 The two multi-batch native interruption scenarios reserve all configured nextest slots while they exercise both histories and their replay continuations. Other crash cases share a two-slot group. These reservations change scheduling; fixture sizes and per-test deadlines stay fixed.
 
+The daemon shutdown law reads the supervisor's actual task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness retain their own bounded deadlines.
+
 `cargo xtask coverage --output DIR --format html -- -p CRATE` uses a separate instrumented build. Formats are `html`, `lcov` and `json`; `coverage.json` retains LLVM data and `summary.json` records arguments, line coverage and function regions. `--threshold PERCENT` is an optional caller-selected threshold. Output directories are new; failed children, empty selections and malformed or missing reports are errors. The shared runner mechanics belong to [devkit](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/devkit/README.md).
 
 ## The synthetic world

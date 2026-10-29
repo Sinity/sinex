@@ -31,6 +31,63 @@ const RUNNER_IDLE: Duration = Duration::from_secs(30);
 /// How often the binding runner reads every configured binding again.
 const BINDINGS_EVERY: Duration = Duration::from_secs(5);
 
+#[derive(Default, serde::Serialize)]
+struct ShutdownSummary {
+    requested: usize,
+    joined: usize,
+    failed: usize,
+    cancelled: usize,
+    panicked: usize,
+    abort_requested: usize,
+    writer_joined: bool,
+    tasks: Vec<StoppedTask>,
+}
+
+#[derive(serde::Serialize)]
+struct StoppedTask {
+    name: Option<&'static str>,
+    outcome: StopOutcome,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StopOutcome {
+    Complete,
+    Failed,
+    Cancelled,
+    Panicked,
+    JoinError,
+}
+
+impl ShutdownSummary {
+    fn record(&mut self, done: Result<(&'static str, Result<(), String>), tokio::task::JoinError>) {
+        self.joined += 1;
+        let (name, outcome) = match done {
+            Ok((name, Ok(()))) => {
+                self.writer_joined |= name == "writer";
+                (Some(name), StopOutcome::Complete)
+            }
+            Ok((name, Err(_))) => {
+                self.failed += 1;
+                (Some(name), StopOutcome::Failed)
+            }
+            Err(error) if error.is_cancelled() => {
+                self.cancelled += 1;
+                (None, StopOutcome::Cancelled)
+            }
+            Err(error) if error.is_panic() => {
+                self.panicked += 1;
+                (None, StopOutcome::Panicked)
+            }
+            Err(_) => {
+                self.failed += 1;
+                (None, StopOutcome::JoinError)
+            }
+        };
+        self.tasks.push(StoppedTask { name, outcome });
+    }
+}
+
 pub(crate) struct Options {
     pub database: String,
     pub store: PathBuf,
@@ -402,13 +459,28 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         },
     };
     let _ = stop_tx.send(true);
+    // JoinSet::len includes completed tasks whose results are not yet joined.
+    // No task is spawned after this snapshot.
+    let mut shutdown = ShutdownSummary {
+        requested: tasks.len(),
+        ..Default::default()
+    };
     // Give tasks a moment to finish their current step, then stop the rest.
     let drained = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while tasks.join_next().await.is_some() {}
+        while let Some(done) = tasks.join_next().await {
+            shutdown.record(done);
+        }
     })
     .await
     .is_ok();
-    tasks.abort_all();
+    shutdown.abort_requested = tasks.len();
+    if shutdown.abort_requested != 0 {
+        tasks.abort_all();
+    }
+    eprintln!(
+        "sinexd: shutdown {}",
+        serde_json::to_string(&shutdown).expect("shutdown result serializes")
+    );
     if drained && let Err(error) = forget_admitted(&o.database, &blobs).await {
         eprintln!("sinexd: forgetting admitted blob names at shutdown: {error}");
     }
