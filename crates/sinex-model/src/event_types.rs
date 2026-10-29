@@ -277,6 +277,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<portfolio::RhythmDeviation>(),
     info::<portfolio::MarkLink>(),
     info::<work::WorkAct>(),
+    info::<work::WorkCoverage>(),
     info::<work::WorkEpisode>(),
     info::<work::WorkSuspension>(),
     info::<work::WorkResumption>(),

@@ -152,6 +152,10 @@ The resume card is an activity trail: a stored [`context.pack`](#context-packs-a
 
 Asked with no argument, the answer is the top three candidate episodes, ranked by most recent operator act, then open failures and waits, then interruptions from an agent or an external source; one line each, with the full card for the first. Asked with a project, task, session, episode or time, it returns that episode's card.
 
+Polylogue supplies work as an atomic `polylogue.work_snapshot` (kind version 3), keyed by logical session and reducer version. WorkActs reads only this complete set of typed human message metadata, calls and turns. Each act cites the exact snapshot as its sole parent. Replacing a snapshot archives its previous derived chain before recomputation; an empty replacement retires omitted calls, turns and episodes. The adapter does not combine old per-entry work records with the snapshot.
+
+`work.coverage` records complete, partial or unavailable interpretation, with eligible, timed and untimed entry counts and reason codes. Snapshot positions are commit positions, never wall times. Entries without a recorded start remain readable in the snapshot and contribute an explicit unknown-time count. Unsupported reducers produce unavailable coverage and no fallback to an older reducer's acts.
+
 Cards are recomputed on suspension and on new evidence. The session-start hook reads a prepared card; a stale or missing card returns the episode's reference and age, never a synchronous rebuild or a model call (deadline and request shape: [agent arrival](recall.md#agent-arrival)). Polylogue's session-start brief embeds the card by reference with its budget share; Sinex owns presence, agency, attribution, episodes and the machine-side trail, and Polylogue owns its own half ([Polylogue agents](https://github.com/Sinity/polylogue/blob/master/docs/agents.md)).
 
 ## Figures

@@ -33,6 +33,25 @@ pub struct TerminalIdentity {
     pub parent_process_id: Option<u32>,
 }
 
+/// Whether an atomic work snapshot can establish its candidate acts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkCoverageState { Complete, Partial, Unavailable }
+
+/// Exact snapshot coverage; unknown source times never become zero activity.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2, type = "work.coverage", key = ["session"], replace = newer)]
+pub struct WorkCoverage {
+    pub session: String,
+    pub snapshot: ActivityEvidence,
+    pub reducer_version: Option<u32>,
+    pub state: WorkCoverageState,
+    pub eligible_entries: Option<u64>,
+    pub timed_entries: Option<u64>,
+    pub untimed_entries: Option<u64>,
+    pub reasons: std::collections::BTreeMap<String, u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "work.act", key = ["act"], replace = newer, time = at, quality = intrinsic)]
 pub struct WorkAct {

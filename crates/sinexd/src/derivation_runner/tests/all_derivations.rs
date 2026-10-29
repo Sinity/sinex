@@ -69,15 +69,7 @@ fn world() -> Vec<Event> {
             next(),
         ));
     }
-    out.push(polylogue("session", json!({
-        "session":"test-session","origin":"synthetic","kind":"main","cwd":["/synthetic/repo"],
-        "repo":"synthetic/repo","branch":"task","machine":"box","started":at(0),
-        "last_activity":at(2 * 86_400),"links":[]
-    }), next()));
-    out.push(polylogue("message", json!({
-        "message":"test-prompt","session":"test-session","role":"user","written_by":"human","prompt_kind":"prose",
-        "at":at(100),"text":"Resume the recorded task","usage":{},"attachments":[],"copies":[]
-    }), next()));
+    out.push(polylogue("work_snapshot",external::snapshot("test-session","task",&[at(100)],1),next()));
     let key = sinex_model::event_types::library::item_key("box", "/library", "example.png");
     out.push(captured(
         &sinex_model::event_types::library::FileCopy {

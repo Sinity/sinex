@@ -18,21 +18,8 @@ fn record(kind: &str, payload: Value, anchor: u64) -> Event {
     )
     .unwrap()
 }
-fn session(id: &str, branch: &str) -> Event {
-    record(
-        "polylogue.session",
-        json!({"session":id,"origin":"synthetic","kind":"main", "cwd":["/synthetic/repo"],
-        "repo":"synthetic/repo","branch":branch,"machine":"box","started":null,"last_activity":null,"links":[]}),
-        0,
-    )
-}
-fn prompt(id: &str, seconds: i64) -> Event {
-    record(
-        "polylogue.message",
-        json!({"message":format!("{id}/{seconds}"),"session":id,"role":"user","written_by":"human",
-        "prompt_kind":"prose","at":at(seconds),"text":"Continue the objective","usage":{},"attachments":[],"copies":[]}),
-        seconds as u64,
-    )
+fn snapshot(id:&str,branch:&str,prompts:&[i64],position:i64)->Event {
+    record("polylogue.work_snapshot",external::snapshot(id,branch,&prompts.iter().map(|seconds|at(*seconds)).collect::<Vec<_>>(),position),position as u64)
 }
 fn work_derivations() -> Vec<Box<dyn AnyKeyed>> {
     vec![
@@ -60,16 +47,7 @@ async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
-    w.admit(vec![
-        session("a", "first"),
-        session("b", "second"),
-        prompt("a", 0),
-        prompt("b", 300),
-        prompt("a", 1000),
-        prompt("b", 100_000),
-        prompt("b", 100_001),
-    ])
-    .await;
+    w.admit(vec![snapshot("a","first",&[0,1000],1),snapshot("b","second",&[300,100_000,100_001],1)]).await;
     let mut runner = runner(&w).await;
     runner.catch_up().await.unwrap();
     let episodes = w.live::<WorkEpisode>().await;
@@ -100,12 +78,12 @@ async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
             .iter()
             .all(|entry| entry.event_type == "work.act")
     }));
-    w.admit(vec![prompt("b", 500)]).await;
-    let dirty: i64 = sqlx::query_scalar("SELECT count(*) FROM derivation.dirty WHERE derivation='work.episodes' AND key->>'episode'=$1")
-        .bind(&first.episode).fetch_one(&mut conn).await.unwrap();
+    w.admit(vec![snapshot("b","second",&[300,500,100_000,100_001],2)]).await;
+    let dirty: i64 = sqlx::query_scalar("SELECT count(*) FROM derivation.dirty WHERE derivation='work.acts' AND key->>'session'='b'")
+        .fetch_one(&mut conn).await.unwrap();
     assert_eq!(
-        dirty, 0,
-        "the source message first dirties its session's acts"
+        dirty, 1,
+        "the complete snapshot schedules its session's work reduction"
     );
     runner.catch_up().await.unwrap();
     assert_eq!(
@@ -125,10 +103,8 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
-    let first = prompt("a", 0);
-    let later = prompt("a", 1000);
-    w.admit(vec![session("a", "task"), first.clone(), later])
-        .await;
+    let first = snapshot("a","task",&[0,1000],1);
+    w.admit(vec![first.clone()]).await;
     let mut runner = runner(&w).await;
     runner.catch_up().await.unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
@@ -148,7 +124,7 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
     .await;
     assert!(w.live::<ContextPack>().await.is_empty());
     assert!(w.live::<WorkEpisode>().await.is_empty());
-    assert_eq!(w.live::<WorkAct>().await.len(), 1);
+    assert!(w.live::<WorkAct>().await.is_empty());
     assert_eq!(w.count(LIVE_WITH_ARCHIVED_PARENT).await, 0);
     let before: Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
         .bind(old_pack)
@@ -156,7 +132,7 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
         .await
         .unwrap();
     runner.catch_up().await.unwrap();
-    assert_eq!(w.live::<ContextPack>().await[0].trail.len(), 1);
+    assert!(w.live::<ContextPack>().await.is_empty());
     w.batch(
         vec![],
         vec![ArchiveRequest::Unhide {
@@ -225,7 +201,7 @@ async fn wake_day_reads_stop_at_the_next_recorded_wake(db: devkit::pg::TestDatab
 #[devkit::test]
 async fn an_episode_becomes_dormant_without_a_new_act(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    w.admit(vec![session("a", "task"), prompt("a", 0)]).await;
+    w.admit(vec![snapshot("a","task",&[0],1)]).await;
     let mut runner = w.driver_with(work_derivations(), vec![]).await;
     runner.clock = Some(at(0));
     runner.catch_up().await.unwrap();
@@ -282,4 +258,36 @@ async fn an_open_wake_day_updates_for_later_spans_without_dirtying_itself(
             .await,
         0
     );
+}
+
+#[devkit::test]
+async fn complete_snapshot_replacement_retires_omitted_calls_turns_and_empty_session(db:devkit::pg::TestDatabase){
+    let w=world(db).await;
+    let mut full=snapshot("a","task",&[0],1);
+    full.payload["record"]["snapshot"]["calls"]=json!([{"call":"call:edit","session":"a","action":"file_edit","path":"/synthetic/repo/lib.rs","at":at(1),"result_at":at(2),"outcome":{"kind":"ok"}}]);
+    full.payload["record"]["snapshot"]["turns"]=json!([{"turn":"turn:1","session":"a","start":at(0),"end":at(3),"errors":0}]);
+    w.admit(vec![full.clone()]).await;
+    let mut runner=runner(&w).await;runner.catch_up().await.unwrap();
+    assert_eq!(w.live::<WorkAct>().await.len(),3);
+    let mut conn=PgConnection::connect(&w.url).await.unwrap();
+    let acts:Vec<Vec<uuid::Uuid>>=sqlx::query_scalar("SELECT parents FROM core.events WHERE event_type='work.act' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=core.events.id)").fetch_all(&mut conn).await.unwrap();
+    assert!(acts.iter().all(|parents|parents==&[full.id.0]));
+    w.admit(vec![snapshot("a","task",&[0],2)]).await;
+    assert!(w.live::<WorkAct>().await.is_empty());
+    assert!(w.live::<WorkEpisode>().await.is_empty());
+    assert!(w.live::<ContextPack>().await.is_empty());
+    assert_eq!(w.count(LIVE_WITH_ARCHIVED_PARENT).await,0);
+    runner.catch_up().await.unwrap();
+    assert_eq!(w.live::<WorkAct>().await.len(),1);
+    assert_eq!(w.live::<ContextPack>().await[0].trail.len(),1);
+    w.admit(vec![snapshot("a","task",&[],3)]).await;
+    runner.catch_up().await.unwrap();
+    assert!(w.live::<WorkAct>().await.is_empty());
+    assert!(w.live::<WorkEpisode>().await.is_empty());
+    assert!(w.live::<ContextPack>().await.is_empty());
+    let coverage=w.live::<sinex_model::event_types::work::WorkCoverage>().await;
+    assert_eq!(coverage.len(),1);
+    assert_eq!(coverage[0].state,sinex_model::event_types::work::WorkCoverageState::Complete);
+    assert_eq!(coverage[0].eligible_entries,Some(0));
+    assert_eq!(w.count(LIVE_WITH_ARCHIVED_PARENT).await,0);
 }

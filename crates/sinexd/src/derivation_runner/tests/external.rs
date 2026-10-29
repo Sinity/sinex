@@ -1,40 +1,27 @@
-//! Synthetic outside records follow stored producer declarations and normal
-//! admission validation. Sinex owns no duplicate Polylogue payload types.
+//! Synthetic complete work snapshots use stored producer declarations and
+//! normal admission validation. No bundled outside payload types are restored.
 use super::*;
 
-fn declarations() -> Vec<sinex_model::KindDeclaration> {
-    [("session", "session", "started"), ("message", "message", "at")]
-        .into_iter()
-        .map(|(name, key, time)| {
-            let mut declaration = sinex_model::KindDeclaration::schemaless(
-                sinex_model::KindRef { name: format!("polylogue.{name}"), version: 2 },
-                "polylogue".into(),
-            );
-            declaration.key_rule = Some(sinex_model::kinds::KeyRule::Fields { fields: vec![key.into()] });
-            declaration.time_rule = Some(sinex_model::kinds::TimeRule::FirstPresent {
-                fields: vec![time.into()], quality: sinex_model::TimeQuality::Intrinsic,
-            });
-            declaration.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
-            if name == "message" {
-                declaration.field_hints = vec![sinex_model::kinds::FieldHint {
-                    field: "/text".into(), class: Class::Guarded,
-                }];
-            }
-            declaration
-        })
-        .collect()
+pub(super) async fn register(url:&str){
+    let mut declaration=sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef{name:"polylogue.work_snapshot".into(),version:3},"polylogue".into());
+    declaration.key_rule=Some(sinex_model::kinds::KeyRule::Fields{fields:vec!["session".into(),"reducer_version".into()]});
+    declaration.replace_rule=Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
+    let mut conn=PgConnection::connect(url).await.unwrap();
+    sinex_schema::kinds::register(&mut conn,"polylogue",&[declaration]).await.unwrap();
 }
 
-pub(super) async fn register(url: &str) {
-    let mut conn = PgConnection::connect(url).await.unwrap();
-    sinex_schema::kinds::register(&mut conn, "polylogue", &declarations()).await.unwrap();
+pub(super) fn snapshot(session:&str,branch:&str,prompts:&[Timestamp],position:i64)->Value{
+    json!({"session":session,"reducer_version":1,"source_position":position,"complete":true,
+        "repo":"synthetic/repo","branch":branch,"kind":"main","mode":null,"machine":"box","cwd":["/synthetic/repo"],"objectives":[],
+        "record":{"product":"work_snapshot","snapshot":{"reducer_version":1,"position":position,"session":{"id":session},
+            "messages":prompts.iter().map(|at|json!({"message":format!("{session}/{at}"),"role":"user","written_by":"human","prompt_kind":"prose","at":at,"source_event":"synthetic-source"})).collect::<Vec<_>>(),
+            "calls":[],"turns":[],"sources":[],"native":[]}}})
 }
 
-pub(super) fn record(kind: &str, payload: Value, origin: Origin) -> Event {
-    assert!(matches!(kind, "polylogue.session" | "polylogue.message"));
-    let hash = *blake3::hash(&serde_json::to_vec(&payload).unwrap()).as_bytes();
-    Event::submitted(
-        sinex_model::KindRef { name: kind.into(), version: 2 },
-        payload, "polylogue".into(), origin, ReadingOrder(0), hash, Class::Open,
-    )
+pub(super) fn record(kind:&str,payload:Value,origin:Origin)->Event{
+    assert_eq!(kind,"polylogue.work_snapshot");
+    let hash=*blake3::hash(&serde_json::to_vec(&payload).unwrap()).as_bytes();
+    let order=payload["source_position"].as_i64().unwrap();
+    Event::submitted(sinex_model::KindRef{name:kind.into(),version:3},payload,"polylogue".into(),origin,ReadingOrder(order),hash,Class::Open)
 }

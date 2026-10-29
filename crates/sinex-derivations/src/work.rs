@@ -40,147 +40,25 @@ fn objective(metadata: &Value) -> Option<Objective> {
     })
 }
 
+mod snapshot;
+
 pub struct WorkActs;
 impl Keyed for WorkActs {
     const NAME: &'static str = "work.acts";
-    const VERSION: u32 = 3;
-    const INPUTS: &'static [&'static str] = &[
-        "polylogue.session",
-        "polylogue.message",
-        "polylogue.tool_call",
-        "polylogue.turn",
-    ];
-    const OUTPUTS: &'static [&'static str] = &["work.act"];
+    const VERSION: u32 = 4;
+    const INPUTS: &'static [&'static str] = &["polylogue.work_snapshot"];
+    const OUTPUTS: &'static [&'static str] = &["work.act", "work.coverage"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        input
-            .payload
-            .get("session")
-            .filter(|id| id.as_str().is_some_and(|id| !id.is_empty()))
-            .map(|id| vec![json!({"session": id})])
-            .unwrap_or_default()
+        input.payload.get("session").filter(|id|id.as_str().is_some_and(|id|!id.is_empty()))
+            .map(|id|vec![json!({"session":id})]).unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect())
-            .only("session", key.get("session")?.clone());
-        query.unknown_times = true;
+        let mut query=InputQuery::all(vec![Kind::all("polylogue.work_snapshot")]).only("session",key.get("session")?.clone());
+        query.unknown_times=true;
         Some(query)
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
-        let mut sessions: Vec<_> = inputs
-            .iter()
-            .filter(|event| event.event_type == "polylogue.session")
-            .collect();
-        sessions.sort_by_cached_key(|event| stable(event));
-        let Some(session) = sessions.first().copied() else {
-            return Computed::default();
-        };
-        let metadata = &session.payload;
-        if sessions.iter().any(|event| {
-            [
-                "repo",
-                "branch",
-                "machine",
-                "kind",
-                "mode",
-                "objectives",
-                "git_identity",
-                "terminal",
-            ]
-            .iter()
-            .any(|field| event.payload[*field] != metadata[*field])
-        }) {
-            return Computed::default();
-        }
-        let objective = objective(metadata);
-        let label = objective
-            .as_ref()
-            .map(|objective| objective.reference.clone());
-        let episode = objective.as_ref().map(|objective| {
-            json!([objective.kind, objective.repository, objective.reference]).to_string()
-        });
-        let mut ordered: Vec<_> = inputs
-            .iter()
-            .filter(|event| event.ts_orig.at.is_some())
-            .collect();
-        ordered.sort_by_cached_key(|event| (event.ts_orig.at, stable(event)));
-        let outputs = ordered
-            .into_iter()
-            .filter_map(|event| {
-                let operator = event.event_type == "polylogue.message"
-                    && event.payload["written_by"] == "human"
-                    && event.payload["role"] == "user"
-                    && event.payload["prompt_kind"] == "prose"
-                    && metadata["kind"] == "main"
-                    && metadata.get("mode").is_none_or(Value::is_null);
-                let delegated = matches!(
-                    event.event_type.as_str(),
-                    "polylogue.tool_call" | "polylogue.turn"
-                );
-                if !operator && !delegated {
-                    return None;
-                }
-                Some(derived(
-                    &WorkAct {
-                        act: stable(event),
-                        session: metadata["session"].as_str()?.to_owned(),
-                        episode: episode.clone(),
-                        objective: objective.clone(),
-                        label: label.clone(),
-                        label_source: evidence(session),
-                        machine: metadata["machine"].as_str().map(str::to_owned),
-                        at: event.ts_orig.at.unwrap(),
-                        ended_at: event
-                            .payload
-                            .get("end")
-                            .and_then(|value| {
-                                serde_json::from_value::<Timestamp>(value.clone()).ok()
-                            })
-                            .filter(|end| Some(*end) >= event.ts_orig.at),
-                        evidence: evidence(event),
-                        agency: if operator {
-                            Agency::Operator
-                        } else {
-                            Agency::Delegated
-                        },
-                        action: if operator {
-                            "prompt".into()
-                        } else {
-                            event.payload["action"].as_str().unwrap_or("turn").into()
-                        },
-                        path: event.payload["path"].as_str().map(str::to_owned),
-                        failed: event.payload["outcome"] == "error"
-                            || event.payload["check_passed"] == false,
-                        revision: event.payload["revision"].as_str().map(str::to_owned),
-                        check_name: event.payload["check_name"].as_str().map(str::to_owned),
-                        check_passed: event.payload["check_passed"].as_bool(),
-                        cwd: metadata["cwd"]
-                            .as_array()
-                            .and_then(|paths| paths.first())
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                        git_identity: metadata
-                            .get("git_identity")
-                            .cloned()
-                            .and_then(|value| serde_json::from_value(value).ok()),
-                        terminal: metadata
-                            .get("terminal")
-                            .cloned()
-                            .and_then(|value| serde_json::from_value(value).ok()),
-                    },
-                    Self::NAME,
-                    [event].into_iter().chain(sessions.iter().copied()),
-                ))
-            })
-            .collect();
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
-    }
+    fn key_state(&self, _: &Value, _: &Env) -> KeyState {KeyState::Closed}
+    fn compute(&self,key:&Value,inputs:&[Event],_:&Env)->Computed {snapshot::compute(key,inputs)}
 }
 
 fn episode_kind(episode: &Value) -> Kind {

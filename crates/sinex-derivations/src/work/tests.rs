@@ -44,43 +44,50 @@ fn record(kind: &str, payload: Value, anchor: u64) -> Event {
     event
 }
 fn session(id: &str, branch: Option<&str>) -> Event {
-    record(
-        "polylogue.session",
-        json!({"session":id,"origin":"test","kind":"main","cwd":["/synthetic/repo"],
-        "repo":"synthetic/repo","branch":branch,"started":at(0),"last_activity":at(1_000_000),"links":[]}),
-        0,
-    )
+    let mut event=record("polylogue.work_snapshot",json!({
+        "session":id,"reducer_version":1,"source_position":1,"complete":true,
+        "repo":"synthetic/repo","branch":branch,"machine":"box","kind":"main","mode":null,"cwd":["/synthetic/repo"],
+        "objectives":[],"record":{"product":"work_snapshot","snapshot":{
+            "reducer_version":1,"position":1,"session":{"id":id},"messages":[],"calls":[],"turns":[],"sources":[],"native":[]}}}),0);
+    event.kind_version=3;
+    event
 }
-fn prompt(id: &str, at_s: i64) -> Event {
-    record(
-        "polylogue.message",
-        json!({"message":format!("{id}/{at_s}"),"session":id,"role":"user", "written_by":"human",
-        "prompt_kind":"prose","at":at(at_s),"text":"Continue the recorded objective", "usage":{},"attachments":[],"copies":[]}),
-        at_s as u64,
-    )
+fn prompt(id: &str, seconds: i64) -> Event {
+    let mut snapshot=session(id,None);
+    snapshot.payload["record"]["snapshot"]["messages"]=json!([{"message":format!("{id}/{seconds}"),"role":"user","written_by":"human","prompt_kind":"prose","at":at(seconds),"source_event":"synthetic-source"}]);
+    snapshot
 }
-fn work_acts(inputs: &[Event], env: &Env) -> Vec<Event> {
-    let mut acts = Vec::new();
-    for session in inputs
-        .iter()
-        .filter(|event| event.event_type == "polylogue.session")
-    {
-        let selected: Vec<_> = inputs
-            .iter()
-            .filter(|event| event.payload["session"] == session.payload["session"])
-            .cloned()
-            .collect();
-        acts.extend(
-            Keyed::compute(
-                &WorkActs,
-                &json!({"session":session.payload["session"]}),
-                &selected,
-                env,
-            )
-            .outputs,
-        );
+fn tool(payload:Value,anchor:u64)->Event {
+    let id=payload["session"].as_str().unwrap().to_owned();let mut snapshot=session(&id,None);
+    let mut call=payload;
+    if call.get("call").is_none(){call["call"]=json!(format!("{id}/{anchor}"));}
+    if call.get("outcome").is_none(){call["outcome"]=json!({"kind":"no_result"});}
+    else if call["outcome"].is_string(){call["outcome"]=json!({"kind":call["outcome"]});}
+    snapshot.payload["record"]["snapshot"]["calls"]=json!([call]);snapshot
+}
+/// Assemble fixture parts before invoking the consumer. Every production
+/// computation below receives only complete atomic snapshots, never per-entry events.
+fn complete_snapshots(parts:&[Event])->Vec<Event>{
+    let mut by_session=BTreeMap::<String,Vec<&Event>>::new();
+    for part in parts.iter().filter(|event|event.event_type=="polylogue.work_snapshot"){
+        by_session.entry(part.payload["session"].as_str().unwrap().into()).or_default().push(part);
     }
-    acts
+    let mut result=Vec::new();
+    for parts in by_session.values(){
+        let metadata:Vec<_>=parts.iter().copied().filter(|part|["messages","calls","turns"].iter().all(|kind|part.payload["record"]["snapshot"][*kind].as_array().unwrap().is_empty())).collect();
+        if metadata.len()>1 {result.extend(metadata.into_iter().map(|event|event.clone()));continue}
+        let mut snapshot:Event=(*metadata.first().copied().unwrap_or(parts[0])).clone();
+        for kind in ["messages","calls","turns"] {
+            snapshot.payload["record"]["snapshot"][kind]=Value::Array(parts.iter().flat_map(|part|part.payload["record"]["snapshot"][kind].as_array().unwrap().clone()).collect());
+        }
+        result.push(snapshot);
+    }
+    result
+}
+fn work_acts(inputs:&[Event],env:&Env)->Vec<Event>{
+    complete_snapshots(inputs).into_iter().flat_map(|snapshot|{
+        Keyed::compute(&WorkActs,&json!({"session":snapshot.payload["session"]}),&[snapshot],env).outputs
+    }).filter(|event|event.event_type=="work.act").collect()
 }
 fn compute(inputs: &[Event]) -> Vec<Event> {
     let env = Env::at(at(2_000_000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
@@ -204,8 +211,7 @@ fn removing_the_last_objective_evidence_removes_all_outputs() {
 
 #[devkit::test]
 fn resume_trail_keeps_edit_locations_and_unresolved_failures() {
-    let tool = record(
-        "polylogue.tool_call",
+    let tool = tool(
         json!({"call":"tool:a#1","session":"a","message":"a/0","tool":"edit",
         "action":"file_edit","path":"/synthetic/repo/main.rs","outcome":"error","at":at(10)}),
         10,
@@ -296,7 +302,7 @@ fn work_queries_select_a_session_then_the_recorded_objective_range() {
     let output = Keyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
-        &[input, prompt("a", 0)],
+        &complete_snapshots(&[input, prompt("a", 0)]),
         &env,
     );
     let key = Keyed::keys_for(
@@ -334,8 +340,7 @@ fn conflicting_recorded_objectives_do_not_choose_by_arrival_order() {
             &inputs,
             &Env::at(at(100), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
         )
-        .outputs
-        .is_empty()
+        .outputs.iter().all(|event|event.event_type=="work.coverage"&&event.payload["state"]=="unavailable")
     );
 }
 
@@ -345,10 +350,10 @@ fn act_instants_without_duration_never_extend_into_later_hour_queries() {
     let acts = Keyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
-        &[session("a", None), prompt("a", 0)],
+        &complete_snapshots(&[session("a", None), prompt("a", 0)]),
         &env,
     )
-    .outputs;
+    .outputs.into_iter().filter(|event|event.event_type=="work.act").collect::<Vec<_>>();
     assert_eq!(
         acts.len(),
         1,
@@ -494,7 +499,7 @@ fn explicit_task_then_pull_request_anchors_outrank_a_branch_without_reading_pros
     let acts = work_acts(&[metadata, prompt("a", 0)], &Env::at(at(10), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
     assert_eq!(acts[0].payload["objective"]["kind"], "pull_request");
     let mut prose = prompt("a", 0);
-    prose.payload["text"] = json!("Task task-99. gh pr checkout 99");
+    prose.payload["record"]["snapshot"]["messages"][0]["text"] = json!("Task task-99. gh pr checkout 99");
     let acts = work_acts(&[session("a", None), prose], &Env::at(at(10), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
     assert!(acts[0].payload["objective"].is_null());
 }
@@ -512,9 +517,8 @@ fn work_acts_retain_exact_terminal_repository_and_revision_check_evidence() {
     let mut metadata = session("a", Some("branch"));
     metadata.payload["git_identity"] = json!({"common_dir":"/captured/repo/.git","root_commits":["root"],"head":"rev-a","branch":"branch"});
     metadata.payload["terminal"] = json!({"host":"box","adapter":"test-terminal","process_id":11,"window_id":"native-7","parent_process_id":9});
-    let tool = record(
-        "polylogue.tool_call",
-        json!({"session":"a","at":at(1),"action":"check",
+    let tool = tool(
+        json!({"session":"a","at":at(1),"action":"shell",
         "outcome":"error","revision":"rev-a","check_name":"compile","check_passed":false}),
         1,
     );
@@ -533,15 +537,13 @@ fn what_was_i_doing_keeps_last_edit_and_only_resolves_checks_on_the_same_revisio
     metadata.payload["objectives"] =
         json!([{"kind":"task","repository":"synthetic/repo","reference":"task-7"}]);
     let check = |seconds, revision, passed| {
-        record(
-            "polylogue.tool_call",
+        tool(
             json!({"session":"a","at":at(seconds),
-        "action":"check","revision":revision,"check_name":"compile","check_passed":passed}),
+        "action":"shell","revision":revision,"check_name":"compile","check_passed":passed}),
             seconds as u64,
         )
     };
-    let edit = record(
-        "polylogue.tool_call",
+    let edit = tool(
         json!({"session":"a","at":at(1),"action":"file_edit","path":"/synthetic/repo/lib.rs"}),
         1,
     );
@@ -577,4 +579,48 @@ fn what_was_i_doing_keeps_last_edit_and_only_resolves_checks_on_the_same_revisio
         before.pack, after.pack,
         "the prepared resume card keeps its identity"
     );
+}
+
+#[devkit::test]
+fn atomic_snapshot_entries_cite_only_the_snapshot_and_unknown_times_are_visible(){
+    let env=Env::at(at(100),sinex_model::time_settings::TimeSettings::new("Europe/Warsaw",4,0).unwrap());
+    let mut snapshot=session("atomic",Some("task"));
+    snapshot.payload["record"]["snapshot"]["messages"]=json!([
+        {"message":"timed","role":"user","written_by":"human","prompt_kind":"prose","at":at(0)},
+        {"message":"untimed","role":"user","written_by":"human","prompt_kind":"prose","at":null}]);
+    snapshot.payload["record"]["snapshot"]["calls"]=json!([{"call":"call","session":"atomic","action":"file_edit","path":"/synthetic/repo/file.rs","at":at(1),"result_at":at(2),"outcome":{"kind":"error"},"check_passed":false}]);
+    snapshot.payload["record"]["snapshot"]["turns"]=json!([{"turn":"turn","session":"atomic","start":at(0),"end":at(3),"errors":1}]);
+    let computed=Keyed::compute(&WorkActs,&json!({"session":"atomic"}),&[snapshot.clone()],&env);
+    let acts:Vec<_>=computed.outputs.iter().filter(|event|event.event_type=="work.act").collect();
+    assert_eq!(acts.len(),3);
+    for event in &computed.outputs {assert_eq!(event.origin,Origin::Derived{parents:vec![snapshot.id]});}
+    assert!(acts.iter().all(|event|event.payload["evidence"]["event_type"]=="polylogue.work_snapshot"));
+    let coverage=computed.outputs.iter().find_map(|event|event.payload_as::<WorkCoverage>()).unwrap();
+    assert_eq!(coverage.state,WorkCoverageState::Partial);
+    assert_eq!((coverage.eligible_entries,coverage.timed_entries,coverage.untimed_entries),(Some(4),Some(3),Some(1)));
+    assert_eq!(coverage.reasons["entry_time_unknown"],1);
+    assert!(computed.outputs.last().unwrap().ts_orig.at.is_none());
+    let failed=acts.iter().find(|event|event.payload["action"]=="file_edit").unwrap();
+    assert_eq!(failed.payload["check_passed"],false);
+}
+
+#[devkit::test]
+fn empty_snapshot_and_newer_unsupported_reducer_do_not_fall_back_to_old_acts(){
+    let env=Env::at(at(100),sinex_model::time_settings::TimeSettings::new("Europe/Warsaw",4,0).unwrap());
+    let empty=session("atomic",Some("task"));
+    let outputs=Keyed::compute(&WorkActs,&json!({"session":"atomic"}),&[empty.clone()],&env).outputs;
+    assert_eq!(outputs.len(),1);
+    let coverage=outputs[0].payload_as::<WorkCoverage>().unwrap();
+    assert_eq!(coverage.state,WorkCoverageState::Complete);
+    assert_eq!((coverage.eligible_entries,coverage.timed_entries,coverage.untimed_entries),(Some(0),Some(0),Some(0)));
+    let old=complete_snapshots(&[empty,prompt("atomic",0)]).remove(0);
+    let mut unsupported=old.clone();unsupported.id=sinex_model::EventId::new();
+    unsupported.payload["reducer_version"]=json!(2);
+    unsupported.payload["record"]["snapshot"]["reducer_version"]=json!(2);
+    let outputs=Keyed::compute(&WorkActs,&json!({"session":"atomic"}),&[old,unsupported],&env).outputs;
+    assert_eq!(outputs.len(),1);
+    let coverage=outputs[0].payload_as::<WorkCoverage>().unwrap();
+    assert_eq!(coverage.state,WorkCoverageState::Unavailable);
+    assert_eq!(coverage.timed_entries,None);
+    assert_eq!(coverage.reasons["unsupported_reducer_or_kind_version"],1);
 }
