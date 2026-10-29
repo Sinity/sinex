@@ -32,7 +32,7 @@ fn stated(command: &str, secs: i64) -> Event {
 /// or filtered out for its value.
 #[devkit::test]
 async fn implausible_times_are_kept_and_labelled(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let batch = Batch {
@@ -52,13 +52,7 @@ async fn implausible_times_are_kept_and_labelled(db: devkit::pg::TestDatabase) {
         archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
-    assert_eq!(
-        admit(&mut tx, &batch, &NoDerivations)
-            .await
-            .unwrap()
-            .admitted,
-        4
-    );
+    assert_eq!(tx.admit(&batch, &NoDerivations).await.unwrap().admitted, 4);
     tx.commit().await.unwrap();
 
     let all = ask(&mut conn, "events fields when, time_suspect sort when").await;
@@ -81,7 +75,7 @@ async fn implausible_times_are_kept_and_labelled(db: devkit::pg::TestDatabase) {
 /// derivation versions live side by side during a recompute are told apart.
 #[devkit::test]
 async fn events_name_their_producer_version(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     for (version, command) in [("1", "first"), ("2", "second")] {
@@ -110,7 +104,7 @@ async fn events_name_their_producer_version(db: devkit::pg::TestDatabase) {
             archive: vec![],
         };
         let mut tx = conn.begin().await.unwrap();
-        admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+        tx.admit(&batch, &NoDerivations).await.unwrap();
         tx.commit().await.unwrap();
     }
     let a = ask(
@@ -125,7 +119,7 @@ async fn events_name_their_producer_version(db: devkit::pg::TestDatabase) {
 
 #[devkit::test]
 async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let event = Event::build(
@@ -160,13 +154,7 @@ async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDat
         archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
-    assert_eq!(
-        admit(&mut tx, &batch, &NoDerivations)
-            .await
-            .unwrap()
-            .admitted,
-        1
-    );
+    assert_eq!(tx.admit(&batch, &NoDerivations).await.unwrap().admitted, 1);
     tx.commit().await.unwrap();
     let answer = ask(&mut conn, "telemetry fields payload").await;
     assert_eq!(column(&answer, "payload"), [json!({"withheld": "guarded"})]);
@@ -201,7 +189,7 @@ async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDat
 async fn telemetry_uses_ordinary_admission_commit_order_and_visibility(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let event = Event::build(
@@ -239,10 +227,7 @@ async fn telemetry_uses_ordinary_admission_commit_order_and_visibility(
     for admitted in [1, 0] {
         let mut tx = conn.begin().await.unwrap();
         assert_eq!(
-            admit(&mut tx, &batch, &NoDerivations)
-                .await
-                .unwrap()
-                .admitted,
+            tx.admit(&batch, &NoDerivations).await.unwrap().admitted,
             admitted
         );
         tx.commit().await.unwrap();
@@ -267,7 +252,7 @@ async fn telemetry_uses_ordinary_admission_commit_order_and_visibility(
         operation: OperationId::new(),
     });
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &batch, &NoDerivations).await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     assert_eq!(ask(&mut conn, "telemetry").await.total, 0);
     assert!(
