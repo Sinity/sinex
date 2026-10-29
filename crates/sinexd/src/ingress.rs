@@ -196,6 +196,7 @@ impl Ingest {
             Ok((progress, records)) => Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
+                    assign_orders:assigned_orders(details,&records),
                     producer: producer.to_owned(),
                     frame: name.clone(),
                     material: progress,
@@ -497,7 +498,7 @@ impl Ingest {
                 e.payload.clone(),
                 producer.into(),
                 origin,
-                ReadingOrder(e.reading_order),
+                ReadingOrder(e.reading_order.unwrap_or(0)),
                 record_hash(&e.kind.name, &e.payload),
                 e.class,
             );
@@ -512,6 +513,12 @@ impl Ingest {
         }));
         Ok(records)
     }
+}
+
+fn assigned_orders(frame:Option<&Ingress>,records:&[RecordOutcome])->Vec<EventId> {
+    let Some(Ingress::Events{events,..})=frame else {return Vec::new();};
+    let stored=records.iter().flat_map(|record|match record {RecordOutcome::Events{events,..}=>events.as_slice(),RecordOutcome::Failure{..}=>&[]});
+    events.iter().zip(stored).filter_map(|(offered,stored)|offered.reading_order.is_none().then_some(stored.id)).collect()
 }
 
 fn sealed(privacy: &sinex_store::privacy::RuleSet) -> bool {
@@ -608,6 +615,7 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
     Batch {
         run,
         kind: BatchKind::Ingress(Box::new(IngressFrame {
+            assign_orders:vec![],
             producer: producer.to_owned(),
             frame: frame.to_owned(),
             material: None,

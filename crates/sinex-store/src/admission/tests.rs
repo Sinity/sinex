@@ -834,3 +834,29 @@ fn outcomes_add_all_counts_positions_and_ids() {
         }
     );
 }
+
+#[devkit::test]
+async fn assigned_order_retry_and_rollback_share_the_admission_transaction(db:devkit::pg::TestDatabase) {
+    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let ingress=|name:&str,content:u8| {
+        let event=keyed("atuin",1,content,0);
+        let mut batch=batch(vec![event.clone()]);
+        batch.kind=BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            assign_orders:vec![event.id],producer:"atuin".into(),frame:name.into(),material:None,refusal:None,declarations:vec![],refusal_kind:None,source:None,event_types:vec![],
+        }));batch
+    };
+    let first=ingress("first",1);
+    let mut tx=conn.begin().await.unwrap();
+    let admitted=tx.admit(&first,&NoDerivations).await.unwrap();
+    let duplicate=tx.admit(&first,&NoDerivations).await.unwrap();
+    assert_eq!(admitted.admitted_ids,duplicate.admitted_ids);assert_eq!(admitted.commit_seq,duplicate.commit_seq);
+    tx.commit().await.unwrap();
+    let rolled_back=ingress("rolled-back",2);
+    let mut tx=conn.begin().await.unwrap();tx.admit(&rolled_back,&NoDerivations).await.unwrap();drop(tx);
+    let final_batch=ingress("final",3);admit_one(&mut conn,&final_batch).await;
+    let mut read=PgConnection::connect(&db.url(None)).await.unwrap();
+    let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE source='atuin' ORDER BY commit_seq").fetch_all(&mut read).await.unwrap();assert_eq!(orders,vec![0,1]);
+    let frames=sqlx::query_scalar!("SELECT count(*) FROM core.ingress_frames WHERE frame='rolled-back'").fetch_one(&mut read).await.unwrap();assert_eq!(frames,Some(0));
+}
+
+mod output_ordinals;

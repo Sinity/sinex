@@ -33,7 +33,7 @@ A producer sends typed frames on its own ingress subject and receives typed repl
 - **Each frame has a durable identity and immutable contents.** A producer prepares a write, saves it, and only then sends it. A retry reuses the identity and the contents; a later write gets a new identity even when its contents are equal.
 - **A redelivered or resent frame gets its recorded outcome** and is never admitted twice. Sinex records each frame's outcome in the transaction that admits it, so the answer to a resend after any crash or outage is the original answer.
 - **Material digests deduplicate bytes**: the same bytes sent twice are stored once; whether they make one material or two follows [materials](materials.md).
-- **Reading order** for a stable key is assigned or checked by Sinex and never taken from a producer's clock ([reading order](events.md#identity)).
+- **Reading order** for a stable key is assigned or checked by Sinex and never taken from a producer's clock ([reading order](events.md#identity)). Protocol version 2 accepts `reading_order: null` for writer assignment. In the admission transaction, each `(source, kind, record key)` advances a durable order counter; retrying the same acknowledged frame returns its saved result without advancing it. An explicit integer keeps the source's reading order and updates the counter's high-water mark.
 
 ### Producer identity and credentials
 
@@ -161,3 +161,9 @@ Producer replay frames are described under [the ingress](#producer-replay).
 - **kind-conflict-refused**: a kind registration that conflicts with the registry is refused and changes nothing.
 - **lifecycle-request-matches-cli**: a lifecycle request on the wire gives the same cascade, outcome and refusals as the same operation through the CLI, and records the producer as actor.
 - **no-producer-deletion-route**: the ingress has no subject or frame that removes materials or events outside the lifecycle.
+
+### Confirmed position boundaries and authenticated fetches
+
+`PositionComplete { commit_seq }` closes a global commit position after its events and lifecycle changes have been published. Consumers advance their durable scalar position only on this control message. `Gap { reason }` reports historical evidence that cannot establish an exact position and never advances it.
+
+Producer read grants are operator-configured kind prefixes and classes, with no access granted by registration alone. Fetch subjects use the authenticated producer identity. Event fetches apply the public visibility and redaction rules and return exact kind, version, record hash and commit position. Oversized payloads or complete events carry a BLAKE3-bound reference; bounded range replies repeat the reference hash and reject changed output. Material fetches return authoritative encoded segment descriptors after checking the same grants and producer-family ownership. Sealed bytes require an explicit unlocked access path.

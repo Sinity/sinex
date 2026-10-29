@@ -390,12 +390,12 @@ pub struct ProducerEvent {
     pub location: Option<RecordLocation>,
     /// Output number when one record yields several events.
     #[serde(default)]
-    pub output_index: u16,
+    pub output_index: u64,
     #[serde(default)]
     pub parents: Vec<EventId>,
-    /// Which of two readings of one record is newer; only a newer reading
-    /// replaces a live one.
-    pub reading_order: i64,
+    /// An explicit source order, or `None` for a writer-assigned order for this stable record key.
+    #[serde(default)]
+    pub reading_order: Option<i64>,
     #[serde(default)]
     pub class: Class,
 }
@@ -440,6 +440,9 @@ pub enum FetchRefusalKind {Denied,Missing,Locked,Invalid,Changed,Unavailable}
 pub struct FetchEventReply {
     pub event:Option<ConfirmedEvent>,
     pub payload_ref:Option<PayloadReference>,
+    /// The entire event when even its metadata exceeds a transport message.
+    #[serde(default)]
+    pub event_ref:Option<PayloadReference>,
     pub refusal:Option<String>,
     pub refusal_kind:Option<FetchRefusalKind>,
 }
@@ -543,6 +546,10 @@ pub struct ExciseReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Confirmed {
+    /// Every change through this position has been delivered. Only this boundary advances a scalar consumer.
+    PositionComplete {commit_seq:i64},
+    /// Historical evidence cannot establish an exact position; consumers report a gap without advancing.
+    Gap {reason:String},
     Event(Box<ConfirmedEvent>),
     Archived(Archived),
     /// A previously hidden reading is live again at a new position.
@@ -570,7 +577,7 @@ pub struct ConfirmedEvent {
     pub source: String,
     pub run: RunId,
     pub location: Option<RecordLocation>,
-    pub output_index: u16,
+    pub output_index: u64,
     pub parents: Vec<EventId>,
     pub ts_orig: Option<Timestamp>,
     pub ts_quality: String,

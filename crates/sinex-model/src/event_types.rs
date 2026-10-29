@@ -4,6 +4,8 @@
 use crate::EventPayload;
 
 pub mod account;
+pub mod analysis;
+pub mod coverage;
 pub mod activity;
 pub mod browser;
 pub mod capture;
@@ -132,6 +134,12 @@ pub fn declarations() -> &'static [crate::KindDeclaration] {
 
 /// Every bundled payload validator. Outside kinds are stored declarations.
 pub const ALL: &[RegisteredEventType] = &[
+    info::<analysis::AnalysisRequest>(),
+    info::<analysis::AnalysisPanel>(),
+    info::<analysis::AnalysisAnswer>(),
+    info::<analysis::AnalysisFinding>(),
+    info::<coverage::SourceCoverage>(),
+    info::<work::ProjectSpan>(),
     info::<query::Mark>(),
     info::<query::Saved>(),
     info::<documents::DocumentCaptured>(),

@@ -27,3 +27,30 @@ async fn authenticated_fetch_uses_configured_kind_and_class_grants(db:devkit::pg
     let message=h.client.request(h.subjects.fetch_material("replica"),serde_json::to_vec(&FetchMaterial{material}).unwrap().into()).await.unwrap();
     let reply:FetchMaterialReply=serde_json::from_slice(&message.payload).unwrap();assert_eq!(reply.refusal,None);assert_eq!(reply.material.unwrap().id,material);assert!(!reply.extents.is_empty());
 }
+
+#[devkit::test]
+async fn oversized_fetched_payloads_use_verified_bounded_transfers(db:devkit::pg::TestDatabase) {
+    use sinex_protocol::{FetchPayload,FetchPayloadReply};
+    let grant=||crate::ingress::fetch::Grants{kind_prefixes:vec!["command".into()],classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded]};
+    let h=Harness::start_with_grants(db,std::collections::BTreeMap::from([("kitty".into(),grant()),("replica".into(),grant())])).await;
+    let (material,frame)=h.material_frame("large-fetch-material",b"retained source\n");assert_eq!(h.send("kitty",&frame).await.refusal,None);
+    let command="x ".repeat(h.client.server_info().max_payload);
+    let inner=Ingress::Events{frame:"large-fetch-event".into(),events:vec![imported(material,0,&command)],failures:vec![]};
+    let encoded=serde_json::to_vec(&inner).unwrap();let blob=h.fixture_blob(&encoded);
+    let ack=h.send("kitty",&Ingress::LargeFrame{frame:"large-fetch-event".into(),blob,length:encoded.len() as u64}).await;assert_eq!(ack.refusal,None,"{ack:?}");
+    let event=ack.admitted[0];
+    let response=h.client.request(h.subjects.fetch_event("replica"),serde_json::to_vec(&FetchEvent{event}).unwrap().into()).await.unwrap();
+    assert!(response.payload.len()<=h.client.server_info().max_payload);
+    let reply:FetchEventReply=serde_json::from_slice(&response.payload).unwrap();assert_eq!(reply.refusal,None);assert!(reply.event.unwrap().payload.is_none());
+    let reference=reply.payload_ref.unwrap();let mut bytes=Vec::new();let mut transfers=0;
+    while (bytes.len() as u64)<reference.length {
+        let request=FetchPayload{event,offset:bytes.len() as u64,length:u64::MAX,hash:reference.hash.clone()};
+        let response=h.client.request(h.subjects.fetch_payload("replica"),serde_json::to_vec(&request).unwrap().into()).await.unwrap();assert!(response.payload.len()<=h.client.server_info().max_payload);
+        let reply:FetchPayloadReply=serde_json::from_slice(&response.payload).unwrap();assert_eq!(reply.refusal,None);assert_eq!(reply.offset,bytes.len() as u64);assert_eq!(reply.total,reference.length);assert_eq!(reply.hash,reference.hash);
+        let data=base64::engine::general_purpose::STANDARD.decode(reply.data).unwrap();assert!(!data.is_empty());bytes.extend(data);transfers+=1;
+    }
+    assert!(transfers>1);assert_eq!(format!("blake3:{}",blake3::hash(&bytes).to_hex()),reference.hash);
+    let payload:Value=serde_json::from_slice(&bytes).unwrap();assert_eq!(payload["command"],command);
+    let request=FetchPayload{event,offset:0,length:1,hash:"blake3:changed".into()};
+    let response=h.client.request(h.subjects.fetch_payload("replica"),serde_json::to_vec(&request).unwrap().into()).await.unwrap();let reply:FetchPayloadReply=serde_json::from_slice(&response.payload).unwrap();assert_eq!(reply.refusal_kind,Some(FetchRefusalKind::Changed));assert!(reply.data.is_empty());
+}

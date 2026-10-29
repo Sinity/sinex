@@ -1,5 +1,7 @@
 //! Every source, one module per family, registered in one list.
 #[cfg(feature = "full")]
+pub mod coverage;
+#[cfg(feature = "full")]
 pub mod activitywatch;
 #[cfg(feature = "full")]
 pub mod arbtt;
@@ -232,8 +234,10 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &session_socket::FORMAT,
         &media_capture::FORMAT,
         &library::FORMAT,
+        &coverage::FORMAT,
         &forecast::FORMAT,
         &query::FORMAT,
+        &analysis::FORMAT,
         &page_crawl::FORMAT,
         &telemetry::FORMAT,
     ];

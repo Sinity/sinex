@@ -12,7 +12,7 @@ fn event(n: usize) -> ProducerEvent {
         location: None,
         output_index: 0,
         parents: vec![],
-        reading_order: 0,
+        reading_order: Some(0),
         class: Default::default(),
     }
 }

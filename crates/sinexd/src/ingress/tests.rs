@@ -256,7 +256,7 @@ fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
         location: Some(RecordLocation { material, anchor }),
         output_index: 0,
         parents: vec![],
-        reading_order: 0,
+        reading_order: Some(0),
         class: sinex_model::Class::Open,
     }
 }
@@ -398,7 +398,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             location: at(anchor),
             output_index: 0,
             parents: vec![],
-            reading_order: order,
+            reading_order: Some(order),
             class: sinex_model::Class::Open,
         };
     let session = json!({

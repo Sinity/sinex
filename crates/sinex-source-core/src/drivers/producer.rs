@@ -890,7 +890,7 @@ impl Producer {
                                 location,
                                 output_index,
                                 parents: vec![],
-                                reading_order: e.reading_order.0,
+                                reading_order: Some(e.reading_order.0),
                                 class: e.class,
                             });
                         }

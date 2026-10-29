@@ -352,9 +352,12 @@ impl Ingest {
             }],
         }];
         for batch in &s.batches {
+            let records=self.events(&request.producer,&batch.events,&batch.failures).await?;
+            let assign_orders=batch.events.iter().zip(records.iter().flat_map(|record|match record {RecordOutcome::Events{events,..}=>events.as_slice(),RecordOutcome::Failure{..}=>&[]})).filter_map(|(offered,stored)|offered.reading_order.is_none().then_some(stored.id)).collect();
             batches.push(Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
+                    assign_orders,
                     producer: request.producer.clone(),
                     frame: String::new(),
                     material: None,
@@ -364,9 +367,7 @@ impl Ingest {
                     source: None,
                     event_types: vec![],
                 })),
-                records: self
-                    .events(&request.producer, &batch.events, &batch.failures)
-                    .await?,
+                records,
                 archive: vec![],
             });
         }

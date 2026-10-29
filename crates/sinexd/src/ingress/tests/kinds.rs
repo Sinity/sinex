@@ -31,7 +31,7 @@ fn event(d: &KindDeclaration, material: MaterialId, text: &str, order: i64) -> P
         }),
         output_index: 0,
         parents: vec![],
-        reading_order: order,
+        reading_order: Some(order),
         class: sinex_model::Class::Open,
     }
 }
@@ -637,4 +637,23 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
     assert_eq!(ack.refusal, None, "{ack:?}");
     assert_eq!(ack.admitted.len(), 1);
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE payload->>'text'='outside' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
+}
+
+#[devkit::test]
+async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(db:devkit::pg::TestDatabase) {
+    let h=Harness::start(db).await;
+    let d=declaration("example.assigned");
+    assert_eq!(h.send("example",&Ingress::RegisterKinds{frame:"assigned-kind".into(),declarations:vec![d.clone()]}).await.refusal,None);
+    let (material,frame)=h.material_frame("assigned-material",b"synthetic source\n");
+    assert_eq!(h.send("example",&frame).await.refusal,None);
+    for (ordinal,text) in ["A","B","A"].into_iter().enumerate() {
+        let mut offered=event(&d,material,text,0);offered.reading_order=None;
+        let frame=Ingress::Events{frame:format!("assigned-{ordinal}"),events:vec![offered],failures:vec![]};
+        let first=h.send("example",&frame).await;assert_eq!(first.refusal,None,"{first:?}");assert_eq!(first.admitted.len(),1);
+        let again=h.send("example",&frame).await;assert_eq!(again.admitted,first.admitted);assert_eq!(again.commit_seq,first.commit_seq);
+    }
+    let mut conn=PgConnection::connect(&h.url).await.unwrap();
+    let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE event_type='example.assigned' ORDER BY commit_seq").fetch_all(&mut conn).await.unwrap();assert_eq!(orders,vec![0,1,2]);
+    let live=sqlx::query_scalar!("SELECT payload->>'text' FROM core.events e WHERE event_type='example.assigned' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();assert_eq!(live.as_deref(),Some("A"));
+    let counter=sqlx::query_scalar!("SELECT reading_order FROM core.producer_orders WHERE event_type='example.assigned'").fetch_one(&mut conn).await.unwrap();assert_eq!(counter,2);
 }

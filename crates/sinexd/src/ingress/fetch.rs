@@ -76,9 +76,16 @@ impl Requests {
                 let mut reply=FetchEventReply{event:Some(event),..Default::default()};
                 if serde_json::to_vec(&reply).is_ok_and(|bytes|bytes.len() as u64+1024>self.max_payload) {
                     let event=reply.event.as_mut().expect("event set");
-                    let payload=serde_json::to_vec(&event.payload.take().expect("visible payload")).expect("JSON serializes");
+                    let original=event.payload.take().expect("visible payload");
+                    let payload=serde_json::to_vec(&original).expect("JSON serializes");
                     event.withheld=Some(Withheld::Size{payload_bytes:payload.len() as u64,limit:self.max_payload});
                     reply.payload_ref=Some(PayloadReference{event:event.id,length:payload.len() as u64,hash:format!("blake3:{}",blake3::hash(&payload).to_hex())});
+                    if serde_json::to_vec(&reply).is_ok_and(|bytes|bytes.len() as u64+1024>self.max_payload) {
+                        let event=reply.event.as_mut().expect("event set");event.payload=Some(original);event.withheld=None;
+                        let bytes=serde_json::to_vec(&event).expect("event serializes");
+                        reply.event_ref=Some(PayloadReference{event:event.id,length:bytes.len() as u64,hash:format!("blake3:{}",blake3::hash(&bytes).to_hex())});
+                        reply.event=None;reply.payload_ref=None;
+                    }
                 }
                 reply
             }
@@ -88,9 +95,13 @@ impl Requests {
     pub(super) async fn fetch_payload(&self,producer:&str,request:&FetchPayload)->FetchPayloadReply {
         let result:ReadResult<_>=async {
             let event=self.event_for(producer,request.event).await?;
-            let payload=serde_json::to_vec(&event.payload.expect("visible payload")).map_err(unavailable)?;
-            let hash=format!("blake3:{}",blake3::hash(&payload).to_hex());
-            if hash!=request.hash {return Err(Refusal{kind:FetchRefusalKind::Changed,reason:"visible payload changed; fetch its event again".into()});}
+            let mut payload=serde_json::to_vec(event.payload.as_ref().expect("visible payload")).map_err(unavailable)?;
+            let mut hash=format!("blake3:{}",blake3::hash(&payload).to_hex());
+            if hash!=request.hash {
+                payload=serde_json::to_vec(&event).map_err(unavailable)?;
+                hash=format!("blake3:{}",blake3::hash(&payload).to_hex());
+                if hash!=request.hash {return Err(Refusal{kind:FetchRefusalKind::Changed,reason:"visible payload changed; fetch its event again".into()});}
+            }
             let start=usize::try_from(request.offset).ok().filter(|offset|*offset<=payload.len()).ok_or_else(||Refusal{kind:FetchRefusalKind::Invalid,reason:"payload offset is outside its length".into()})?;
             let transfer=self.max_payload.saturating_sub(2048)*3/4;
             if transfer==0 {return Err(unavailable("NATS message limit cannot hold a payload transfer"));}
@@ -108,7 +119,7 @@ impl Requests {
             if !grant.intersects(owner_grant) {return Err(denied());}
             let classes=grant.classes.iter().map(|class|serde_json::to_value(class).unwrap().as_str().unwrap().to_owned()).collect::<Vec<_>>().join(",");
             sinex_store::query::set_grants(&mut conn,&classes).await.map_err(unavailable)?;
-            let events=sqlx::query!(r#"SELECT event_type AS "event_type!",class AS "class!" FROM core.visible_events WHERE material_id=$1"#,request.material.0).fetch_all(&mut *conn).await.map_err(unavailable)?;
+            let events=sqlx::query!(r#"SELECT event_type AS "event_type!",class AS "class!" FROM core.events WHERE material_id=$1"#,request.material.0).fetch_all(&mut *conn).await.map_err(unavailable)?;
             if events.is_empty() && !(grant.class(Class::Open)&&grant.class(Class::Guarded)) {return Err(denied());}
             for event in events {
                 let class:Class=serde_json::from_value(Value::String(event.class)).map_err(unavailable)?;
