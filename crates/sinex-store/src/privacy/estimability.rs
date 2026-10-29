@@ -17,7 +17,7 @@ fn overlaps(required:&str,affected:&str)->bool {
     let (Some(required),Some(affected))=(components(required),components(affected)) else{return true};
     required.iter().zip(&affected).all(|(r,a)|r=="*"||r==a)
 }
-fn valid(requirements:&[InputRequirement])->bool {
+pub(crate) fn valid(requirements:&[InputRequirement])->bool {
     requirements.iter().all(|r|r.kind.database_version().is_ok()
         &&r.paths.iter().all(|p|components(p).is_some())
         &&r.when.iter().all(|(p,_)|components(p).is_some_and(|parts|!parts.iter().any(|part|part=="*"))))
@@ -25,15 +25,18 @@ fn valid(requirements:&[InputRequirement])->bool {
 /// Classification retains estimability. A transforming action is evidence
 /// even when it produced the same visible value as the original.
 pub fn reason(event:&Event,trace:&[AffectedPath],requirements:Option<&[InputRequirement]>)->Option<InputUnavailableReason>{
+    reason_fields(&event.event_type,event.kind_version,&event.payload,trace,requirements)
+}
+fn reason_fields(kind_name:&str,kind_version:u64,payload:&serde_json::Value,trace:&[AffectedPath],requirements:Option<&[InputRequirement]>)->Option<InputUnavailableReason>{
     let affected:Vec<_>=trace.iter().filter(|p|p.action.transforms()).collect();
     if affected.is_empty(){return None}
     let Some(requirements)=requirements.filter(|r|valid(r)) else{return Some(InputUnavailableReason::UndeclaredAffectedInput)};
-    let same:Vec<_>=requirements.iter().filter(|r|r.kind.name==event.event_type&&r.kind.version==event.kind_version).collect();
+    let same:Vec<_>=requirements.iter().filter(|r|r.kind.name==kind_name&&r.kind.version==kind_version).collect();
     if same.is_empty(){return Some(InputUnavailableReason::UndeclaredAffectedInput)}
     if same.iter().flat_map(|r|&r.when).any(|(p,_)|affected.iter().any(|a|overlaps(p,&a.path))){
         return Some(InputUnavailableReason::RequiredPathTransformed)
     }
-    let applicable:Vec<_>=same.into_iter().filter(|r|r.when.iter().all(|(p,v)|event.payload.pointer(p)==Some(v))).collect();
+    let applicable:Vec<_>=same.into_iter().filter(|r|r.when.iter().all(|(p,v)|payload.pointer(p)==Some(v))).collect();
     if applicable.is_empty(){return Some(InputUnavailableReason::UndeclaredAffectedInput)}
     applicable.iter().flat_map(|r|&r.paths).any(|p|affected.iter().any(|a|overlaps(p,&a.path)))
         .then_some(InputUnavailableReason::RequiredPathTransformed)
@@ -116,22 +119,22 @@ fn present(value:&serde_json::Value,path:&[String])->bool {
     }}
 }
 
-fn selector_reason(event:&Event,trace:&[AffectedPath],requirements:&[InputRequirement])->Option<SelectorUnavailable>{
-    match reason(event,trace,Some(requirements)) {
+pub(crate) fn selector_reason(kind:&KindRef,payload:&serde_json::Value,validation:sinex_model::Validation,trace:&[AffectedPath],requirements:&[InputRequirement])->Option<SelectorUnavailable>{
+    match reason_fields(&kind.name,kind.version,payload,trace,Some(requirements)) {
         Some(InputUnavailableReason::RequiredPathTransformed)=>return Some(SelectorUnavailable::RequiredPathTransformed),
         Some(_)=>return Some(SelectorUnavailable::UndeclaredSelector),None=>{},
     }
-    let same:Vec<_>=requirements.iter().filter(|r|r.kind.name==event.event_type&&r.kind.version==event.kind_version).collect();
+    let same:Vec<_>=requirements.iter().filter(|r|r.kind.name==kind.name&&r.kind.version==kind.version).collect();
     if same.is_empty(){return Some(SelectorUnavailable::UndeclaredSelector)}
-    if same.iter().flat_map(|r|&r.when).any(|(p,_)|!present(&event.payload,&components(p).expect("validated pointer"))){
+    if same.iter().flat_map(|r|&r.when).any(|(p,_)|!present(payload,&components(p).expect("validated pointer"))){
         return Some(SelectorUnavailable::RequiredPathMissing)
     }
-    let applicable:Vec<_>=same.into_iter().filter(|r|r.when.iter().all(|(p,v)|event.payload.pointer(p)==Some(v))).collect();
+    let applicable:Vec<_>=same.into_iter().filter(|r|r.when.iter().all(|(p,v)|payload.pointer(p)==Some(v))).collect();
     if applicable.is_empty(){return Some(SelectorUnavailable::UndeclaredSelector)}
-    if event.validation!=sinex_model::Validation::Validated&&applicable.iter().any(|r|!r.paths.is_empty()||!r.when.is_empty()){
+    if validation!=sinex_model::Validation::Validated&&applicable.iter().any(|r|!r.paths.is_empty()||!r.when.is_empty()){
         return Some(SelectorUnavailable::UnvalidatedSelector)
     }
-    applicable.iter().flat_map(|r|&r.paths).any(|p|!present(&event.payload,&components(p).expect("validated pointer")))
+    applicable.iter().flat_map(|r|&r.paths).any(|p|!present(payload,&components(p).expect("validated pointer")))
         .then_some(SelectorUnavailable::RequiredPathMissing)
 }
 
@@ -193,9 +196,9 @@ pub async fn selector_coverage(conn:&mut PgConnection,read:crate::ReadMark,throu
             let (Some(payload),Some(trace))=(row.payload,row.trace) else{return Ok(unavailable(SelectorUnavailable::ProjectionUnavailable))};
             if sinex_sealing::is_sealed(&payload){return Ok(unavailable(SelectorUnavailable::ProjectionUnavailable))}
             let Ok(trace)=serde_json::from_value::<Vec<AffectedPath>>(trace) else{return Ok(unavailable(SelectorUnavailable::ProjectionUnavailable))};
-            let mut event=Event::submitted(KindRef{name:row.event_type,version:row.kind_version as u64},payload,String::new(),sinex_model::Origin::Derived{parents:vec![]},sinex_model::ReadingOrder(0),[0;32],sinex_model::Class::Open);
-            event.id=sinex_model::EventId(row.id);event.validation=if row.validation=="validated"{sinex_model::Validation::Validated}else{sinex_model::Validation::Unvalidated};
-            if let Some(reason)=selector_reason(&event,&trace,requirements){return Ok(unavailable(reason))}
+            let kind=KindRef{name:row.event_type,version:row.kind_version as u64};
+            let validation=if row.validation=="validated"{sinex_model::Validation::Validated}else{sinex_model::Validation::Unvalidated};
+            if let Some(reason)=selector_reason(&kind,&payload,validation,&trace,requirements){return Ok(unavailable(reason))}
         }
     }
 }

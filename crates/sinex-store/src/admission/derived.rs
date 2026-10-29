@@ -377,7 +377,7 @@ pub(super) async fn without_superseded_inputs(
     Ok(Some((kept, dropped)))
 }
 
-pub(super) async fn mark_dirty(
+pub(crate) async fn mark_dirty(
     conn: &mut PgConnection,
     dirty: Vec<(String, Value)>,
     seq: i64,
@@ -501,6 +501,8 @@ pub(crate) async fn mark_archived_dirty(
         })
         .collect();
     let mut marked = mark_inputs_dirty(conn, &inputs, seq, keys).await?;
+    let deferred:Vec<_>=recomputing.into_iter().flat_map(|batch|batch.events()).map(|event|event.id.0).collect();
+    marked += crate::model_calls::references::mark_changed_deferring(conn,&all,seq,keys,&deferred).await?;
     // A key may come from a request or a semantic join rather than from the
     // output's fields. Its existing ownership also makes it dirty.
     let owners = sqlx::query!(

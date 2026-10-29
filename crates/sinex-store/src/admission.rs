@@ -34,7 +34,7 @@ mod orders;
 mod write;
 
 pub(crate) use archive::remove_live;
-pub(crate) use derived::mark_archived_dirty;
+pub(crate) use derived::{mark_archived_dirty,mark_dirty};
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
@@ -61,6 +61,7 @@ pub struct AffectedRange {
 /// The key functions of the keyed derivations, supplied by the daemon, which
 /// owns the derivation registry. Admission marks every returned key dirty.
 pub trait DirtyKeys: Send + Sync {
+    fn reference_consumers(&self)->Vec<(String,sinex_model::ReferenceInput)>{vec![]}
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)>;
     fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
         Vec::new()
@@ -444,5 +445,6 @@ async fn mark_projected_inputs_dirty(conn:&mut PgConnection,ids:&[Uuid],keys:&dy
     let rows:Vec<(Uuid,String,Option<time::OffsetDateTime>,Value,i64)>=sqlx::query_as("SELECT e.id,e.event_type,e.ts_orig,o.payload,e.commit_seq FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id JOIN privacy.policy_state p ON p.id WHERE e.id=ANY($1) AND o.epoch=p.desired_epoch AND o.state='complete'").bind(ids).fetch_all(&mut *conn).await?;
     let seq=rows.iter().map(|row|row.4).max().unwrap_or(0);
     let inputs:Vec<_>=rows.iter().map(|row|KeyInput{event_id:EventId(row.0),event_type:&row.1,ts_orig:row.2,payload:&row.3}).collect();
-    outcome.dirty_keys+=derived::mark_inputs_dirty(conn,&inputs,seq,keys).await?;Ok(())
+    outcome.dirty_keys+=derived::mark_inputs_dirty(conn,&inputs,seq,keys).await?;
+    outcome.dirty_keys+=crate::model_calls::references::mark_changed(conn,ids,seq,keys).await?;Ok(())
 }

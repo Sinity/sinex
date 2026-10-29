@@ -103,6 +103,7 @@ pub(super) async fn descendants(
                 "cannot restore the derived chain: a parent is not live".into(),
             ));
         }
+        let reference_ids:Vec<_>=ready.iter().map(|event|event.id).collect();
         for event in ready {
             reading(conn, event.id, seq, operation).await?;
             dirty += mark_inputs_dirty(
@@ -119,6 +120,7 @@ pub(super) async fn descendants(
             .await?;
             pending.retain(|id| *id != event.id);
         }
+        dirty += crate::model_calls::references::mark_changed(conn,&reference_ids,seq,keys).await?;
     }
     Ok(dirty)
 }
