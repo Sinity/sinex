@@ -246,6 +246,38 @@ async fn largest_stored_output_round_trips_through_live_lookup_and_show(
             .await
             .unwrap();
     assert_eq!(staged, (i64::MAX, i64::MAX));
+    let hide = Batch {
+        archive: vec![ArchiveRequest::Hide {
+            target: EventId(id),
+            operation: OperationId::new(),
+        }],
+        ..batch(vec![])
+    };
+    admit_one(&mut conn, &hide).await;
+    let hidden: i64 =
+        sqlx::query_scalar("SELECT output_index FROM core.hidden_records WHERE material_id=$1")
+            .bind(location.material.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(hidden, i64::MAX);
+    assert_eq!(
+        crate::live::at(&mut conn, location, output).await.unwrap(),
+        None
+    );
+    let unhide = Batch {
+        archive: vec![ArchiveRequest::Unhide {
+            target: EventId(id),
+            operation: OperationId::new(),
+        }],
+        ..batch(vec![])
+    };
+    admit_one(&mut conn, &unhide).await;
+    assert_eq!(
+        crate::live::at(&mut conn, location, output).await.unwrap(),
+        Some(id)
+    );
+
     assert!(
         crate::live::at(&mut conn, location, output + 1)
             .await
