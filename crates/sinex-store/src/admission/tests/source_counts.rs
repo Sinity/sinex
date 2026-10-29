@@ -225,7 +225,7 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
 }
 
 async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from: i32) {
-    let mut conn = <PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let parent = keyed("source", 1, 1, 1);
@@ -320,7 +320,7 @@ async fn upgrading_from_version_3_keeps_activity_and_telemetry(db: devkit::pg::T
 
 #[devkit::test]
 async fn upgrading_refuses_to_drop_a_populated_telemetry_table(db: devkit::pg::TestDatabase) {
-    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     admit_one(&mut conn, &batch(vec![keyed("synthetic", 1, 1, 1)])).await;

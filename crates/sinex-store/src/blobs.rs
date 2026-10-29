@@ -126,7 +126,7 @@ impl Blobs {
         if state.writer.is_none() {
             state.writer = Some(SegmentWriter::open(
                 self.root(),
-                SEGMENT.into(),
+                SEGMENT,
                 state.committed_end,
                 &[],
                 self.0.mode,
@@ -280,7 +280,7 @@ impl Blobs {
             if state.writer.is_none() {
                 state.writer = Some(SegmentWriter::open(
                     self.root(),
-                    SEGMENT.into(),
+                    SEGMENT,
                     state.committed_end,
                     &[],
                     self.0.mode,

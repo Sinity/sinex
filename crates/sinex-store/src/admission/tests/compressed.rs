@@ -27,7 +27,7 @@ fn material_of(e: &Event) -> MaterialId {
 async fn total(conn: &mut PgConnection, text: &str) -> i64 {
     let ctx = Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
     let q = bind(text, &ctx).unwrap();
-    run(conn, text, &q, &ctx, &Page::default())
+    run(conn, text, Some(&q), &ctx, &Page::default())
         .await
         .unwrap()
         .total
@@ -35,7 +35,7 @@ async fn total(conn: &mut PgConnection, text: &str) -> i64 {
 
 #[devkit::test]
 async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     let history: Vec<Event> = (0..20).map(|k| old(k, 30)).collect();
     admit_one(&mut conn, &batch(history.clone())).await;
     let compressed: i64 =

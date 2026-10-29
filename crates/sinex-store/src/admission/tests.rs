@@ -665,7 +665,7 @@ mod library_upgrade;
 async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestDatabase) {
     use sinex_model::{EventId, Origin};
     use sqlx::Connection;
-    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     let parent = keyed("source", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![parent.clone()])).await;
     for id in [EventId::new(), parent.id] {
@@ -680,7 +680,7 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
         let mut child = keyed("derived", 2, 2, 1);
         child.origin = Origin::Derived { parents: vec![id] };
         let mut tx = conn.begin().await.unwrap();
-        let result = crate::admit(&mut tx, &batch(vec![child]), &crate::NoDerivations).await;
+        let result = tx.admit(&batch(vec![child]), &crate::NoDerivations).await;
         assert!(
             matches!(result, Err(crate::Error::Invalid(_))),
             "{result:?}"
@@ -693,7 +693,7 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
 async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     let root = keyed("chain", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![root.clone()])).await;
     let mut child = keyed("chain", 2, 2, 1);
@@ -745,7 +745,7 @@ async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
 
 #[devkit::test]
 async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
     let root = keyed("chain", 1, 1, 1);
     let other = keyed("chain", 2, 2, 1);
     admit_one(&mut conn, &batch(vec![root.clone(), other.clone()])).await;
@@ -769,7 +769,7 @@ async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::
     });
     let mut tx = conn.begin().await.unwrap();
     assert!(matches!(
-        admit(&mut tx, &restore, &NoDerivations).await,
+        tx.admit(&restore, &NoDerivations).await,
         Err(crate::Error::Invalid(_))
     ));
     tx.rollback().await.unwrap();
