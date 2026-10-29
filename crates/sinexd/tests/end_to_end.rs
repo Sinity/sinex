@@ -564,15 +564,7 @@ async fn rows_that_change_are_read_to_their_final_values() {
     rows.extend((1..=5_000).map(atuin_row));
     atuin_db(&path, &rows);
     eprintln!("mutable rows: initial backfill (5001 rows)");
-    let mut initial = t.sinexd(&["backfill", "--host", HOST]);
-    initial
-        .arg("--read")
-        .arg(format!("atuin={}", path.display()))
-        .env("SINEX_BENCH_TIMINGS", "1")
-        // Keep completed stage measurements available even if the child
-        // never returns to the fixture's output collector.
-        .stderr(Stdio::inherit());
-    finish(&mut initial);
+    t.backfill(None, Some(&path));
     eprintln!("mutable rows: initial backfill committed");
 
     rows[0].2 = 7_000_000_000;
