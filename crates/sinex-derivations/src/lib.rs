@@ -26,7 +26,9 @@ pub mod fusion;
 pub mod health;
 pub mod library;
 pub mod presence;
+pub mod portfolio;
 pub mod session;
+pub mod selected;
 pub mod state_interval;
 pub mod tags;
 pub mod work;
@@ -148,9 +150,20 @@ pub enum InputRange {
     },
     /// From the first through the last selected event, including both.
     Extent { kinds: Vec<Kind> },
+    /// A day's transitions with the last prior state and the first different
+    /// state after it, per captured scope. Same-state refreshes stay in range.
+    StateTransitions {
+        start: Timestamp,
+        end: Timestamp,
+        kinds: Vec<Kind>,
+        scope_field: &'static str,
+        subject_fields: Vec<&'static str>,
+    },
     /// From `start` until the next selected payload time, or `now` while open.
     UntilNext {
         start: Timestamp,
+        /// Search for the boundary after this time, while reading from start.
+        after: Option<Timestamp>,
         kinds: Vec<Kind>,
         field: &'static str,
     },
@@ -231,10 +244,10 @@ pub struct Env {
 }
 
 impl Env {
-    pub fn at(now: Timestamp) -> Self {
+    pub fn at(now: Timestamp, time_settings: TimeSettings) -> Self {
         Self {
             now,
-            time_settings: TimeSettings::operator_default(),
+            time_settings,
             settings: Value::Null,
         }
     }
@@ -252,6 +265,7 @@ pub struct Computed {
 }
 
 pub trait Keyed: Send + Sync {
+    const HISTORY: sinex_model::DerivationHistory = sinex_model::DerivationHistory::Recompute;
     /// Registered name, also the `derivation.dirty` key.
     const NAME: &'static str;
     const VERSION: u32;
@@ -274,6 +288,13 @@ pub trait Keyed: Send + Sync {
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
+
+    fn selected_query(&self, _: &Value, _: &Env) -> Option<sinex_model::event_types::analysis::QuerySelection> { None }
+    /// Exact live readings required by a receipt, including readings with unknown time.
+    fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> { None }
+    fn reads_type(&self, event_type: &str) -> bool { Self::INPUTS.contains(&event_type) }
+    fn compute_selected(&self, key: &Value, inputs: &[Event], _: &selected::SelectedInputs, env: &Env) -> Computed { Keyed::compute(self, key, inputs, env) }
+
 
     fn affected_ranges(&self, _: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
         Vec::new()
@@ -314,6 +335,7 @@ pub enum Reads {
 }
 
 pub trait PerEvent: Send + Sync {
+    const HISTORY: sinex_model::DerivationHistory = sinex_model::DerivationHistory::Recompute;
     const NAME: &'static str;
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
@@ -344,6 +366,9 @@ pub trait PerEvent: Send + Sync {
 /// A keyed derivation with its type erased, for the registry, admission's
 /// dirty-key marking and the driver.
 pub trait AnyKeyed: Send + Sync {
+    fn history_policy(&self) -> sinex_model::DerivationHistory {
+        sinex_model::DerivationHistory::Recompute
+    }
     /// Exact input kind/version and computational payload footprint. None
     /// conservatively refuses inputs touched by transforming policy actions.
     fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { None }
@@ -359,6 +384,11 @@ pub trait AnyKeyed: Send + Sync {
     fn output_types(&self) -> &'static [&'static str];
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
+    fn selected_query(&self, _: &Value, _: &Env) -> Option<sinex_model::event_types::analysis::QuerySelection> { None }
+    fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> { None }
+    fn reads_type(&self, event_type: &str) -> bool { self.inputs_types().contains(&event_type) }
+    fn compute_selected(&self, key: &Value, inputs: &[Event], _: &selected::SelectedInputs, env: &Env) -> Computed { self.compute(key, inputs, env) }
+
     fn affected_ranges(&self, _: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
         Vec::new()
     }
@@ -376,6 +406,9 @@ impl<K: Keyed> AnyKeyed for K {
     fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { Keyed::input_requirements(self) }
     fn unavailable_inputs(&self,key:&Value,inputs:&[Event],issues:&[sinex_model::UnavailableInput],env:&Env)->Computed {Keyed::unavailable_inputs(self,key,inputs,issues,env)}
 
+    fn history_policy(&self) -> sinex_model::DerivationHistory {
+        K::HISTORY
+    }
     fn name(&self) -> &'static str {
         K::NAME
     }
@@ -403,6 +436,10 @@ impl<K: Keyed> AnyKeyed for K {
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         Keyed::inputs(self, key, env)
     }
+    fn selected_query(&self, key: &Value, env: &Env) -> Option<sinex_model::event_types::analysis::QuerySelection> { Keyed::selected_query(self, key, env) }
+    fn exact_inputs(&self, key: &Value, env: &Env) -> Option<Vec<EventId>> { Keyed::exact_inputs(self, key, env) }
+    fn reads_type(&self, event_type: &str) -> bool { Keyed::reads_type(self, event_type) }
+    fn compute_selected(&self, key: &Value, inputs: &[Event], selected: &selected::SelectedInputs, env: &Env) -> Computed { Keyed::compute_selected(self, key, inputs, selected, env) }
     fn affected_ranges(&self, input: &KeyView<'_>, env: &Env) -> Vec<AffectedRange> {
         Keyed::affected_ranges(self, input, env)
     }
@@ -425,6 +462,9 @@ pub trait AnyPerEvent: Send + Sync {
     fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { None }
     fn unavailable_inputs(&self, _: Input<'_>, _: &[sinex_model::UnavailableInput], _: &Env) -> Result<Vec<Event>, String> {Err("required_input_unavailable".into())}
 
+    fn history_policy(&self) -> sinex_model::DerivationHistory {
+        sinex_model::DerivationHistory::Recompute
+    }
     fn name(&self) -> &'static str;
     fn version(&self) -> u32;
     fn inputs_types(&self) -> &'static [&'static str];
@@ -437,6 +477,9 @@ impl<P: PerEvent> AnyPerEvent for P {
     fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { PerEvent::input_requirements(self) }
     fn unavailable_inputs(&self,input:Input<'_>,issues:&[sinex_model::UnavailableInput],env:&Env)->Result<Vec<Event>,String> {PerEvent::unavailable_inputs(self,input,issues,env)}
 
+    fn history_policy(&self) -> sinex_model::DerivationHistory {
+        P::HISTORY
+    }
     fn name(&self) -> &'static str {
         P::NAME
     }
@@ -466,6 +509,8 @@ pub struct Configuration {
     pub activity: activity::ActivityProfile,
     #[serde(default)]
     pub project_attribution: attribution::AttributionProfile,
+    #[serde(default)]
+    pub rhythm: portfolio::rhythm::RhythmProfile,
 }
 
 /// Every keyed derivation, in dependency order.
@@ -482,10 +527,12 @@ fn builtin(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
         .iter()
         .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 19]>([
+    all.extend::<[Box<dyn AnyKeyed>; 22]>([
         Box::new(library::LibraryItems),
         Box::new(session::ShellSessions),
         Box::new(activity::InputCoverage),
+        Box::new(portfolio::input::InputWorkloads),
+        Box::new(portfolio::rhythm::RhythmDeviations(configuration.rhythm.clone())),
         Box::new(work::WorkActs),
         Box::new(activity::ActivitySpans),
         Box::new(attribution::ProjectSpans(
@@ -504,6 +551,7 @@ fn builtin(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
         Box::new(health::HourlyFigures),
         Box::new(health::DailyFigures),
         Box::new(calendar::Instances),
+        Box::new(portfolio::marks::MarkLinks),
     ]);
     all
 }

@@ -17,6 +17,14 @@ pub enum SubmitError {
         reason: String,
         kind: sinex_model::FrameRefusal,
     },
+    /// The authenticated owner recorded a different logical body under this
+    /// producer's exact frame name. This evidence is not an ACK for the offer.
+    #[error("Sinex recorded different bytes for frame {frame}")]
+    ReceiptConflict {
+        frame: String,
+        offered_hash: String,
+        receipt: Box<Acknowledgment>,
+    },
 }
 /// Retrieve every matching owned receipt through native catalog pages.
 /// This eager convenience method owns the resulting DTOs; callers needing a lazy traversal may request RecordedPage directly.
@@ -120,6 +128,30 @@ pub async fn recorded(
     }
     Ok(receipts)
 }
+/// The frozen logical JSON byte identity survives a LargeFrame envelope.
+pub fn content_hash(frame:&Ingress)->Result<String,SubmitError>{
+    if let Ingress::LargeFrame{blob,..}=frame{return Ok(blob.clone())}
+    let bytes=serde_json::to_vec(frame).map_err(|error|SubmitError::Transport(error.to_string()))?;
+    Ok(format!("blake3:{}",blake3::hash(&bytes).to_hex()))
+}
+/// Resolve an owned receipt fetched on this authenticated producer's RPC.
+/// A conflicting prior receipt is evidence only, never admission of the offer.
+pub fn check_receipt(frame:&Ingress,receipt:Acknowledgment)->Result<Acknowledgment,SubmitError>{
+    let expected=content_hash(frame)?;
+    if receipt.frame!=frame.frame() {
+        return Err(SubmitError::Refused{frame:frame.frame().into(),reason:"receipt_frame_identity_mismatch".into(),kind:sinex_model::FrameRefusal::Conflict});
+    }
+    if receipt.content_hash().is_none() && matches!(receipt.refusal_kind(),Some(sinex_model::FrameRefusal::Excised|sinex_model::FrameRefusal::PartiallyExcised)){return Ok(receipt);}
+    if receipt.content_hash()!=Some(expected.as_str()) {
+        if receipt.number.is_none_or(|number|number<=0){return Err(SubmitError::NoReceipt(frame.frame().into()));}
+        return Err(SubmitError::ReceiptConflict{frame:frame.frame().into(),offered_hash:expected,receipt:Box::new(receipt)});
+    }
+    Ok(receipt)
+}
+
+#[cfg(test)]
+mod tests;
+
 /// Submit an already prepared ingress frame. Large bodies use the existing LargeFrame byte transport.
 /// Broadcast hints never establish durability: only a complete integrity-verified owned receipt is returned.
 pub async fn submit_frame(
@@ -170,14 +202,15 @@ pub async fn submit_frame(
         )
         .await?
     };
-    receipts
+    let receipt=receipts
         .into_iter()
         .find(|receipt| {
             receipt.frame == id
                 || (receipt.frame == malformed
                     && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
         })
-        .ok_or_else(|| SubmitError::NoReceipt(id.into()))
+        .ok_or_else(|| SubmitError::NoReceipt(id.into()))?;
+    check_receipt(frame,receipt)
 }
 
 /// Transfer encoded custody under the original authenticated frame namespace.

@@ -496,7 +496,7 @@ fn generated_write_histories_are_classified_and_nothing_is_missed() {
             match &a.material {
                 Some(m) => {
                     read.extend(records(&a));
-                    *cursor = (m.cursor_at)(m.body().len()).unwrap();
+                    *cursor = (m.cursor_at)(crate::test_support::body(m).len()).unwrap();
                     a.revision
                 }
                 None => {

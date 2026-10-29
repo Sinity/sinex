@@ -143,8 +143,8 @@ pub(super) async fn stage_and_classify(
 }
 
 /// A newer reading keeps the replaced reading's value for the fields its type
-/// declares `keep_known` when it leaves them unknown. Inherited values retain
-/// the replaced reading's class, since its rules already ran on those values.
+/// declares `keep_known` when it leaves them unknown. Private original values
+/// and their baseline class are carried before current output rules run.
 pub(super) async fn keep_known(
     conn: &mut PgConnection,
     events: &mut [Event],

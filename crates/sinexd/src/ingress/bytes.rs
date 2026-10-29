@@ -102,11 +102,12 @@ impl Ingest {
     /// Store a material's bytes from the frame directory of `frame`, unless the
     /// content store already holds them.
     pub(super) async fn store_material(
-        &self,
+        &mut self,
         producer: &str,
         frame: &str,
         material: &MaterialFrame,
     ) -> Result<(), Check> {
+        self.native_declaration(producer,&material.source).await?;
         if self
             .blobs
             .contains(&material.blob)

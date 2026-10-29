@@ -140,6 +140,7 @@ fn reference_text(r: &Reference) -> String {
 
 fn expr(e: &Expr) -> String {
     match e {
+        Expr::Truth{value,operand:field}=>format!("{} matches {value:?}",operand(field)),
         Expr::And(a, b) => format!("{} and {}", grouped(a, true), grouped(b, true)),
         Expr::Or(a, b) => format!("{} or {}", grouped(a, false), grouped(b, false)),
         Expr::Not(inner) => format!("not ({})", expr(inner)),
@@ -177,6 +178,7 @@ fn expr(e: &Expr) -> String {
         Expr::Within { lhs, from, to } => {
             format!("{} is from {} until {}", operand(lhs), time(from), time(to))
         }
+        Expr::Similar{reference}=>format!("ranked by supplied vector sinex:ev/{reference}"),
         Expr::Overlaps { from, to } => match to {
             Some(to) => format!("its span overlaps {from} until {to}"),
             None => format!("its span contains {from}"),
@@ -221,6 +223,7 @@ fn field_phrase(f: &FieldRef) -> String {
 
 fn value(v: &Value) -> String {
     match v {
+        Value::Unknown=>"unknown".into(),
         Value::Text(s) | Value::PlaceholderText(s) => format!("\"{s}\""),
         Value::Glob(s) => format!("\"{s}\""),
         Value::Integer(i) => i.to_string(),

@@ -32,7 +32,7 @@ fn event() -> Event {
 }
 fn read(applier: &TagApplier, event: &Event) -> Vec<Event> {
     applier
-        .derive(Input { event, bytes: None }, &Env::at(Timestamp::now()))
+        .derive(Input { event, bytes: None }, &Env::at(Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")))
         .unwrap()
 }
 fn rules() -> Value {

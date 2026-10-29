@@ -34,7 +34,7 @@ pub struct ActivityCounts {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "activity.window", key = ["window_id"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "activity.window", key = ["window_id"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct ActivityWindow {
     pub window_id: String,
     /// A captured host and seat, or an explicitly unknown scope.
@@ -66,7 +66,7 @@ pub struct ActivityMember {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "activity.session", key = ["session_id"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "activity.session", key = ["session_id"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct ActivitySession {
     pub session_id: String,
     pub scope: String,
@@ -89,7 +89,7 @@ pub struct ActivitySession {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "activity.span", key = ["span_id"], replace = newer, time = started_at, quality = intrinsic)]
+#[event(version = 2, type = "activity.span", key = ["span_id"], replace = newer, time = started_at, quality = intrinsic)]
 pub struct ActivitySpan {
     pub span_id: String,
     pub scope: String,
@@ -121,7 +121,7 @@ pub struct ActivitySpan {
 
 /// A recorded start and stop of a non-virtual physical input recorder.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "input.coverage", key = ["coverage_id"], replace = newer, time = started_at, quality = captured)]
+#[event(version = 2, type = "input.coverage", key = ["coverage_id"], replace = newer, time = started_at, quality = captured)]
 pub struct InputCoverageInterval {
     pub coverage_id: String,
     pub scope: String,

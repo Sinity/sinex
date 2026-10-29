@@ -89,7 +89,7 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
             .await
             .unwrap();
     let events: Vec<serde_json::Value> = sqlx::query_scalar(
-        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY id",
+        "SELECT to_jsonb(e)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint' FROM core.events e ORDER BY id",
     )
     .fetch_all(&mut conn)
     .await
@@ -110,7 +110,7 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
     assert_eq!(after, before);
     assert_eq!(
         sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY id"
+            "SELECT to_jsonb(e)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint' FROM core.events e ORDER BY id"
         )
         .fetch_all(&mut conn)
         .await
@@ -154,13 +154,8 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
     );
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     conn.execute("SET ROLE sinex_reader").await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.visible_search_text")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap(),
-        2
-    );
+    let stale=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM core.visible_search_text").fetch_one(&mut conn).await.unwrap_err();
+    assert_eq!(stale.as_database_error().unwrap().code().as_deref(),Some("55000"));
     assert!(
         sqlx::query("SELECT text FROM core.search_text")
             .execute(&mut conn)

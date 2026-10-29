@@ -338,7 +338,7 @@ pub async fn frames(
 ) -> Result<Vec<StoredFrame>> {
     Ok(sqlx::query_as!(
         StoredFrame,
-        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS material_extent
+        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS "material_extent?"
            FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
            LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
            WHERE f.producer = $1 AND f.frame = ANY($2)
@@ -359,7 +359,7 @@ pub async fn frames_page(
     after: i64,
 ) -> Result<(Vec<StoredFrame>, Option<i64>)> {
     const PAGE: i64 = 64;
-    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,x.descriptor AS material_extent
+    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,x.descriptor AS "material_extent?"
       FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
       LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
       WHERE f.producer=$1 AND (f.frame=ANY($2) OR f.number=ANY($3)) AND f.number>$4 ORDER BY f.number LIMIT $5"#,producer,frames,numbers,after,PAGE).fetch_all(conn).await?;
@@ -542,11 +542,22 @@ pub async fn record_replay_frame(
     operation: sinex_model::OperationId,
     ids: &[Uuid],
     last: Option<i64>,
+    number:i64,
+    content_hash:&str,
+    source:&sinex_model::SourceRef,
+    fingerprint:&str,
+    host:Option<&str>,
 ) -> Result<()> {
-    let outcome = serde_json::json!({"admitted":ids.len(),"replay":operation});
-    sqlx::query!("INSERT INTO core.ingress_frames (producer,frame,admitted,outcome,commit_seq,family,write_kind_prefixes) VALUES ($1,$2,$3,$4,$5,$6,$7)",producer,frame,ids,outcome,last,family,write_kind_prefixes).execute(conn).await?;
+    let outcome = serde_json::json!({"admitted":ids.len(),"replay":operation,"frame_content_hash":content_hash});
+    sqlx::query("INSERT INTO core.ingress_frames (producer,frame,admitted,outcome,commit_seq,family,write_kind_prefixes,number,source_name,source_version,source_fingerprint,producer_host) OVERRIDING SYSTEM VALUE VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
+        .bind(producer).bind(frame).bind(ids).bind(outcome).bind(last).bind(family).bind(write_kind_prefixes).bind(number).bind(&source.name).bind(i64::from(source.version)).bind(fingerprint).bind(host).execute(conn).await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests;
+
+/// Reserve the existing receipt identity inside the owning admission transaction.
+pub async fn reserve_frame_number(conn:&mut PgConnection)->Result<i64>{
+    Ok(sqlx::query_scalar("SELECT nextval(pg_get_serial_sequence('core.ingress_frames','number'))").fetch_one(conn).await?)
+}

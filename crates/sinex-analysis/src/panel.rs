@@ -78,9 +78,6 @@ pub struct PanelCell {
     pub reference: Option<String>,
 }
 
-/// A day counts as fully observed when coverage misses less than this.
-const OBSERVED_FRACTION: f64 = 0.999;
-
 /// What the metric's sources covered, any of them sufficing, and whether any
 /// of the coverage is of unknown completeness (which makes figures lower
 /// bounds).
@@ -137,10 +134,10 @@ pub fn cells(
                 None => Cell::Missing {
                     reason: Missing::NotApplicable,
                 },
-                Some(value) if fraction >= OBSERVED_FRACTION => Cell::Observed { value },
+                Some(value) if observed.len() == unit.span.len() => Cell::Observed { value },
                 Some(value) => Cell::Partial {
                     value,
-                    observed_fraction: (fraction * 1000.0).round() / 1000.0,
+                    observed_fraction: fraction,
                 },
             }
         };

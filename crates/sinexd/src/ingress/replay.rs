@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone)]
 pub(crate) struct CheckedReplay {
+    pub content_hash:String,
+    pub host:Option<String>,
     pub family: String,
     pub write_kind_prefixes: Vec<String>,
     pub producer: String,
@@ -23,17 +25,16 @@ pub(super) async fn select(
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?;
     let ids: Vec<_> = rows.iter().map(|row| row.0).collect();
-    let unknown=sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1 AND material_id=ANY($2) AND family IS DISTINCT FROM $3) AS "unknown!""#,producer,&ids,family).fetch_one(&mut *conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+    let unknown=sinex_store::producer_reads::family_unknown(conn,producer,&ids,family).await.map_err(|error|Check::Unavailable(error.to_string()))?;
     if unknown {
         return Err(Check::Refused(
             "historical material family ownership requires an explicit mapping".into(),
         ));
     }
-    let descriptors=sqlx::query!("SELECT m.id,m.length,x.descriptor FROM raw.materials m JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting WHERE m.id=ANY($1)",&ids)
-        .fetch_all(&mut *conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+    let descriptors=sinex_store::producer_reads::material_extents(conn,&ids).await.map_err(|error|Check::Unavailable(error.to_string()))?;
     let descriptors: BTreeMap<_, _> = descriptors
         .into_iter()
-        .map(|row| (row.id, (row.length, row.descriptor)))
+        .map(|(id,length,descriptor)| (id, (length, descriptor)))
         .collect();
     let by_id: BTreeMap<_, _> = rows.iter().map(|r| (r.0, r)).collect();
     for id in &query.materials {
@@ -136,6 +137,10 @@ pub(crate) async fn recorded(
     )
     .await
     .map_err(|e| Check::Unavailable(e.to_string()))?;
+    if let Some(frame)=frames.first(){
+        if frame.outcome.get("frame_content_hash").and_then(Value::as_str).is_some_and(|hash|hash!=request.content_hash){return Err(Check::Refused("frame_body_conflict".into()));}
+        if let Some(reason)=&frame.refusal{return Err(Check::Refused(format!("recorded_frame_refused: {reason}")));}
+    }
     Ok(frames.first().map(|_| sinex_store::Outcome::default()))
 }
 
@@ -144,6 +149,14 @@ pub(crate) async fn check_scope(
     request: &CheckedReplay,
 ) -> Result<BTreeMap<KindRef, KindDeclaration>, Check> {
     let sequence = &request.sequence;
+    let source=sinex_store::source_declarations::load(conn,&sequence.source).await.map_err(|error|Check::Unavailable(error.to_string()))?
+        .ok_or_else(||Check::Configuration("replay source version is not in the immutable owner catalog".into()))?;
+    if source.family!=request.family {return Err(Check::Configuration("replay source belongs to another family".into()));}
+    let material_ids=sequence.materials.iter().map(|material|material.id.0).collect::<Vec<_>>();
+    let material_sources=sinex_store::producer_reads::material_sources(conn,&material_ids).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+    if material_ids.iter().any(|id|!material_sources.iter().any(|(known,name,_)|known==id&&name.as_deref()==Some(sequence.source.name.as_str()))) {
+        return Err(Check::Configuration("replay cannot relabel a material source or invent historical source authority".into()));
+    }
     if sequence.parser_build.trim().is_empty() || sequence.parser_version.trim().is_empty() {
         return Err("replay needs the producer parser build and version".into());
     }
@@ -176,6 +189,7 @@ pub(crate) async fn check_scope(
         .await
         .map_err(|e| Check::Unavailable(e.to_string()))?;
     for supplied in &sequence.declarations {
+        if !source.allows(&supplied.kind,&supplied.hash){return Err(Check::Configuration("replay kind is outside its exact owner source declaration".into()));}
         if !declarations
             .get(&supplied.kind)
             .is_some_and(|d| d.definition_hash() == supplied.hash)
@@ -245,6 +259,7 @@ pub(crate) async fn finish(
     conn: &mut PgConnection,
     request: &CheckedReplay,
     outcomes: &[sinex_store::Outcome],
+    number:i64,
 ) -> Result<(), Check> {
     let ids: Vec<_> = outcomes
         .iter()
@@ -271,6 +286,7 @@ pub(crate) async fn finish(
         .iter()
         .filter_map(|o| o.commit_seq.map(|s| s.1))
         .max();
+    let declaration=sinex_store::source_declarations::load(conn,&request.sequence.source).await.map_err(|error|Check::Unavailable(error.to_string()))?.ok_or("replay source declaration disappeared")?;
     commit_log::record_replay_frame(
         conn,
         &request.producer,
@@ -279,7 +295,7 @@ pub(crate) async fn finish(
         &request.write_kind_prefixes,
         s.operation,
         &ids,
-        last,
+        last,number,&request.content_hash,&request.sequence.source,&declaration.fingerprint(),request.host.as_deref(),
     )
     .await
     .map_err(|e| Check::Unavailable(e.to_string()))?;
@@ -293,9 +309,12 @@ impl Ingest {
         frame: &str,
         run: RunId,
         sequence: ProducerReplay,
+        content_hash:String,
     ) -> Result<Acknowledgment, String> {
+        self.native_declaration(producer,&sequence.source).await.map_err(|error|error.to_string())?;
         let write = authority::write(&self.grants, producer).map_err(|error| error.to_string())?;
         let request = CheckedReplay {
+            content_hash,host:write.host.clone(),
             family: write.family.clone(),
             write_kind_prefixes: write.kind_prefixes.clone(),
             producer: producer.into(),
@@ -312,13 +331,13 @@ impl Ingest {
                     self.writer
                         .submit(
                             Priority::Live,
-                            refusal(
+                            frozen_refusal(refusal(
                                 run,
                                 producer,
                                 frame,
                                 sinex_model::FrameRefusal::Content,
                                 reason,
-                            ),
+                            ),&request.content_hash),
                         )
                         .await
                         .map_err(|e| e.to_string())?;
@@ -335,7 +354,7 @@ impl Ingest {
                     }
                 };
                 self.writer
-                    .submit(Priority::Live, refusal(run, producer, frame, kind, reason))
+                    .submit(Priority::Live, frozen_refusal(refusal(run, producer, frame, kind, reason),&request.content_hash))
                     .await
                     .map_err(|e| e.to_string())?;
             }
@@ -357,7 +376,7 @@ impl Ingest {
         let mut batches = vec![Batch {
             run,
             kind: BatchKind::Replay {
-                operation: s.operation,
+                operation: s.operation,source:None,host:None,
             },
             records: vec![],
             archive: vec![ArchiveRequest::Replay {
@@ -372,7 +391,7 @@ impl Ingest {
         }];
         for batch in &s.batches {
             let records = self
-                .events(&request.producer, &batch.events, &batch.failures)
+                .events(&request.producer, Some(&request.sequence.source), &batch.events, &batch.failures, true)
                 .await?;
             let assign_orders = batch
                 .events
@@ -388,6 +407,7 @@ impl Ingest {
             batches.push(Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
+                    content_hash:None,receipt_number:None,coverage:None,native_source:Some(request.sequence.source.clone()),source_fingerprint:None,host:self.grants.get(&request.producer).and_then(|grant|grant.write.as_ref()).and_then(|write|write.host.clone()),
                     family: Some(request.family.clone()),
                     write_kind_prefixes: request.write_kind_prefixes.clone(),
                     assign_orders,
@@ -426,4 +446,9 @@ impl Ingest {
             ingress: Some(request.clone()),
         })
     }
+}
+
+fn frozen_refusal(mut batch:Batch,hash:&str)->Batch{
+    if let BatchKind::Ingress(frame)=&mut batch.kind{frame.content_hash=Some(hash.into());}
+    batch
 }

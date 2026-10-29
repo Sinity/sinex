@@ -43,7 +43,7 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
     let before = state(&mut conn).await;
     let store = tempfile::tempdir().unwrap();
     let error = if derive {
-        match crate::local_runner(&url, "startup-fixture", Some(store.path()), &configuration).await
+        match crate::local_runner(&url, "startup-fixture", Some(store.path()), &configuration, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")).await
         {
             Err(error) => Some(error),
             Ok((runner, task)) => {
@@ -56,7 +56,7 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
         match ReaderContext::open(
             &url,
             store.path(),
-            sinex_model::time_settings::TimeSettings::operator_default(),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
         )
         .await
         {
@@ -99,7 +99,7 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
     let mut competing = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
-    let (runner, task) = crate::local_runner(&url, "startup-fixture", None, &configuration)
+    let (runner, task) = crate::local_runner(&url, "startup-fixture", None, &configuration, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
         .await
         .unwrap();
     let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -121,7 +121,7 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
         "the derivation writer must keep its advisory claim"
     );
     let competing = writer::claim(competing).await.unwrap();
-    let startup = crate::local_runner(&url, "startup-fixture", None, &configuration);
+    let startup = crate::local_runner(&url, "startup-fixture", None, &configuration, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     tokio::pin!(startup);
     tokio::select! {
         result = &mut startup => {
@@ -157,7 +157,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
     let refused = match ReaderContext::open(
         &url,
         store.path(),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
     )
     .await
     {
@@ -172,7 +172,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
         "ordinary startup must not initialize an empty database"
     );
     assert!(
-        crate::local_runner(&url, "startup-fixture", None, &configuration)
+        crate::local_runner(&url, "startup-fixture", None, &configuration, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
             .await
             .is_err()
     );
@@ -192,7 +192,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
     let ctx = ReaderContext::open(
         &url,
         store.path(),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
     )
     .await
     .unwrap();

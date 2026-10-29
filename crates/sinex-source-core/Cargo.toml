@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+hashed-blobs.workspace = true
 sinex-model.workspace = true
 sinex-protocol.workspace = true
 sinex-transport.workspace = true
@@ -34,7 +35,6 @@ flate2 = { version = "1", optional = true }
 allocation-counter = "0.8.1"
 proptest.workspace = true
 devkit.workspace = true
-hashed-blobs.workspace = true
 
 [lints]
 workspace = true

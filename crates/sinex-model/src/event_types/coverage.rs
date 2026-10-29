@@ -23,10 +23,14 @@ pub enum CoverageCompleteness {
 /// A successful read proves access, including when the input was unchanged.
 /// It establishes temporal coverage only when the source declares its bounds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "source.coverage", key = ["observation"], replace = repeat, time = ended_at, quality = captured)]
+#[event(version = 2, type = "source.coverage", key = ["observation"], replace = repeat, time = ended_at, quality = captured)]
 pub struct SourceCoverage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_run: Option<crate::RunId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_class: Option<crate::Class>,
     pub observation: String,
-    pub source: String,
+    pub observed_source: String,
     pub binding: String,
     pub host: String,
     pub started_at: Timestamp,

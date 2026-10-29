@@ -202,6 +202,17 @@ in
       };
     };
 
+    signals = mkOption {
+      type = types.nullOr types.attrs;
+      default = null;
+      description = "Shared host signal policy and deployment-owned outlets. The daemon validates interrupt_budget_per_hour, quiet_hours, private, notifications, values, actions and outlet_timeout_ms as one configuration.";
+    };
+    modelAccounting.actualReceipts = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Permit operator-authorized accounting of recorded actual model receipts; this enables no provider call.";
+    };
+
     nats = {
       address = mkOption {
         type = types.str;
@@ -219,6 +230,37 @@ in
           options.passwordFile = mkOption {
             type = types.path;
             description = "This producer's NATS password (an agenix secret).";
+          };
+          options.writeFamily = mkOption {
+            type = types.nullOr types.str; default = null;
+            description = "Logical family this authenticated credential may write; null grants no write authority.";
+          };
+          options.attestedHost = mkOption { type = types.nullOr types.str; default = null; description = "Host attested by this credential; input labels remain separate declared claims."; };
+          options.writeSourcePrefixes = mkOption { type = types.listOf types.str; default = []; description = "Registered native source namespaces this credential may use."; };
+          options.sourceDeclarations = mkOption { type = types.listOf types.attrs; default = []; description = "Immutable owner-installed versioned native source artifacts with full emitted kind declarations."; };
+          options.canonicalKinds = mkOption { type = types.listOf types.attrs; default = []; description = "Exact owner-installed canonical kind declarations allowed without a native SourceRef."; };
+          options.writeKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Kind prefixes this credential may write for its configured family."; };
+          options.writeClasses = mkOption { type = types.listOf (types.enum [ "open" "guarded" "sealed" ]); default = []; description = "Classes this credential may offer for admission."; };
+          options.emergencySinexBlockedHost = mkOption { type = types.nullOr types.str; default = null; description = "Host for which this canonical producer may import its compiled Sinex-blocked emergency completion with owner-issued context proof."; };
+          options.emergencyLeaseSeconds = mkOption { type = types.nullOr (types.ints.between 1 3600); default = null; description = "Explicit bounded offline permission for the compiled desktop Sinex-blocked alert. Requires its emergency host grant; ordinary cached settings keep their separate lifetime."; };
+          options.authorAttestation = mkOption { type = types.nullOr types.attrs; default = null; description = "Explicit family author attestation: operator permission and exact shipped rule ID/revision/fingerprint allowlist. Canonical write authority alone grants neither."; };
+          options.forwardSignals = mkOption { type = types.bool; default = false; description = "Allow this canonical family publisher to forward shared signal intents and owned outlet receipts."; };
+          options.canonicalKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Canonical summary prefixes assigned exclusively to this credential within its family; at most one credential per family may have this role."; };
+          options.readKindPrefixes = mkOption {
+            type = types.listOf types.str; default = [];
+            description = "Kind families this authenticated producer may fetch (for example polylogue). Registration grants no read access.";
+          };
+          options.readClasses = mkOption {
+            type = types.listOf (types.enum [ "open" "guarded" "sealed" ]); default = [];
+            description = "Classes this producer may fetch within its allowed kind families; sealed reads still require operator unlock.";
+          };
+          options.publicContext = mkOption {
+            type = types.bool; default = false;
+            description = "Allow this authenticated producer to request owner public policy and read-coverage context.";
+          };
+          options.indexedCatalog = mkOption {
+            type = types.nullOr types.attrs; default = null;
+            description = "Versioned owner-installed indexed projection catalog with exact kind definitions; read grants still restrict its scope.";
           };
         });
         default = { };
@@ -248,6 +290,17 @@ in
       type = types.ints.positive;
       default = 900;
       description = "Break threshold in seconds between operator activity windows in one session.";
+    };
+
+    rhythm.window_days = mkOption {
+      type = types.ints.positive;
+      default = 28;
+      description = "Calendar days before the target day in the rhythm baseline.";
+    };
+    rhythm.minimum_days = mkOption {
+      type = types.ints.positive;
+      default = 14;
+      description = "Observed prior days required before estimating a rhythm deviation.";
     };
 
     project_attribution.projects = mkOption {
@@ -421,7 +474,29 @@ in
 
       # Bindings from the registry-generated options, for the daemon's sources.
       # Each system capture's spool is its source's input.
+      environment.etc."sinex/producer-grants.json".text = builtins.toJSON (mapAttrs (_: producer: {
+        kind_prefixes = producer.readKindPrefixes or [];
+        classes = producer.readClasses or [];
+        public_context = producer.publicContext or false;
+        indexed_catalog = producer.indexedCatalog or null;
+        write = if (producer.writeFamily or null) == null then null else {
+          family = producer.writeFamily;
+          host = producer.attestedHost or null;
+          source_prefixes = producer.writeSourcePrefixes or [];
+          source_declarations = producer.sourceDeclarations or [];
+          canonical_kinds = producer.canonicalKinds or [];
+          kind_prefixes = producer.writeKindPrefixes or [];
+          classes = producer.writeClasses or [];
+          canonical_prefixes = producer.canonicalKindPrefixes or [];
+          forward_signals = producer.forwardSignals or false;
+          author_attestation = producer.authorAttestation or null;
+          emergency_sinex_blocked_host = producer.emergencySinexBlockedHost or null;
+          emergency_lease_seconds = producer.emergencyLeaseSeconds or null;
+        };
+      }) producers);
       environment.etc."sinex/sources.json".text = builtins.toJSON {
+        signals = cfg.signals;
+        model_accounting.actual_receipts = cfg.modelAccounting.actualReceipts;
         sources = cfg.sources;
         exclude = cfg.exclude;
         discovery = cfg.discovery // {
@@ -430,7 +505,7 @@ in
           inputs = discoveryInputs;
         };
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
-        inherit (cfg) tags activity project_attribution;
+        inherit (cfg) tags activity project_attribution rhythm;
       };
 
       systemd.tmpfiles.rules = [
@@ -495,10 +570,8 @@ in
         after = [ "postgresql.service" "postgresql-setup.service" ];
         requires = [ "postgresql.service" ];
         wantedBy = [ "multi-user.target" ];
-        # sinexd requires this unit, so restarting it on every package change
-        # would restart sinexd too, which activation leaves to the operator.
-        # Restart both by hand to apply new extensions or roles.
-        restartIfChanged = false;
+        # Privileged function and role changes precede dependent daemon startup.
+        restartIfChanged = true;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
@@ -511,11 +584,12 @@ in
       };
 
       systemd.services.sinex-nats = {
+        restartTriggers = [ config.environment.etc."sinex/producer-grants.json".source ];
         description = "NATS JetStream for Sinex: the ingress and the confirmed stream";
         after = [ "network.target" ];
         wantedBy = [ "multi-user.target" ];
         unitConfig = startLimit;
-        restartIfChanged = false;
+        restartIfChanged = true;
         serviceConfig = restartPolicy // {
           User = cfg.user;
           Group = cfg.group;
@@ -540,6 +614,7 @@ in
               echo 'tls { cert_file: "${cfg.nats.tls.certFile}", key_file: "${cfg.nats.tls.keyFile}" }'
             ''}
             ${cfg.package}/bin/sinexd admin nats-authorization \
+              --producer-grants /etc/sinex/producer-grants.json \
               --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
               --daemon-password-file "$CREDENTIALS_DIRECTORY/daemon" \
               ${concatMapStringsSep " " (name: "--producer ${escapeShellArg name}=\"$CREDENTIALS_DIRECTORY/producer-${name}\"") (lib.attrNames producers)}
@@ -549,14 +624,14 @@ in
       };
 
       systemd.services.sinexd = {
+        restartTriggers = [ config.environment.etc."sinex/producer-grants.json".source ];
         description = "Sinex daemon";
         after = [ "sinex-db-setup.service" "sinex-nats.service" "network.target" ];
         requires = [ "sinex-db-setup.service" "sinex-nats.service" ];
         wantedBy = [ "multi-user.target" ];
         unitConfig = startLimit;
-        # A deploy is verified by checking the running binary, not by a
-        # restart on every switch.
-        restartIfChanged = false;
+        # Configured read grants and the NATS capability must change together.
+        restartIfChanged = true;
         # Tesseract reads text from screen segments (screen.text).
         path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
         serviceConfig = restartPolicy // {
@@ -590,6 +665,7 @@ in
             --store ${escapeShellArg cfg.storeDir} \
             ${natsArgs { user = "sinexd"; passwordFile = "$CREDENTIALS_DIRECTORY/nats"; address = natsListen; }} \
             --subject-root ${escapeShellArg cfg.nats.subjectRoot} \
+            --producer-grants /etc/sinex/producer-grants.json \
             --host ${escapeShellArg cfg.host} \
             --socket ${escapeShellArg cfg.api.socket} \
             ${optionalString (cfg.api.listen != null) "--listen ${escapeShellArg cfg.api.listen}"} \
@@ -738,6 +814,7 @@ in
               --store ${escapeShellArg cfg.storeDir} \
               --host ${escapeShellArg cfg.host} \
               ${optionalString (cfg.zone != null) "--zone ${escapeShellArg cfg.zone}"} \
+              --day-start ${escapeShellArg cfg.dayStart} \
               ${concatMapStringsSep " " (input: "--read ${escapeShellArg input}") inputs}
           '';
         })

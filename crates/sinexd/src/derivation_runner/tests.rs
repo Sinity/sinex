@@ -75,6 +75,8 @@ fn zsh(command: &str, secs: i64, anchor: u64) -> Event {
 fn focus(window: &str, secs: i64) -> Event {
     Event::build(
         &sinex_model::event_types::desktop::WindowFocused {
+            scope: Some("synthetic-compositor".into()),
+            host: Some("box".into()),
             received_at: at(secs),
             window: Some(window.into()),
             class: Some("kitty".into()),
@@ -112,7 +114,7 @@ impl World {
             url.clone(),
             writer::claim(connection).await.unwrap(),
             queues,
-            Arc::new(Keys::new(keyed, TimeSettings::operator_default())),
+            Arc::new(Keys::new(keyed, TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))),
             None,
         ));
         Self {
@@ -158,7 +160,7 @@ impl World {
             keyed,
             per_event,
             "test",
-            TimeSettings::operator_default(),
+            TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
         )
         .await
         .unwrap()
@@ -480,6 +482,7 @@ async fn compare_shows_a_derivation_update_before_switching(db: devkit::pg::Test
     let w = World::new(db).await;
     w.admit(vec![zsh("a", 0, 1), zsh("b", 10, 2)]).await;
     let mut v1 = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;
+    v1.recompute_all("test.count",None).await.unwrap();
     v1.catch_up().await.unwrap();
     let same = v1.compare("test.count", None, 3).await.unwrap();
     assert_eq!((same.keys, same.same, same.changed), (1, 1, 0));
@@ -498,7 +501,9 @@ async fn compare_shows_a_derivation_update_before_switching(db: devkit::pg::Test
     assert_eq!(Some(kept[0].id), cmp.id);
     assert_eq!((kept[0].version, kept[0].changed), (2, 1));
     assert_eq!(kept[0].examples[0]["kind"], "changed");
-    // Starting version 2 queued its recompute; settling switches.
+    // Comparing alone preserves outputs; selecting the comparison schedules history.
+    assert_eq!(v2.pass().await.unwrap(),0);
+    v2.switch("test.count",cmp.id.unwrap(),"test").await.unwrap();
     v2.catch_up().await.unwrap();
     let out: Vec<CommandFused> = w.live().await;
     assert!(out.iter().any(|f| f.command == "v2:2"), "{out:?}");
@@ -713,7 +718,7 @@ async fn a_recompute_stopped_part_way_is_marked_again_at_the_next_start(
             sinex_derivations::keyed(),
             vec![],
             "test",
-            TimeSettings::operator_default()
+            TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")
         )
         .await
         .is_err()
@@ -735,7 +740,11 @@ mod activity;
 
 mod work;
 
+mod state_closers;
+
 mod external;
+
+mod selected_provenance;
 
 mod embedding;
 

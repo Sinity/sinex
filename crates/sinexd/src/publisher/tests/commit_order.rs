@@ -155,7 +155,7 @@ async fn references_expose_no_source_key_and_route_by_current_policy_class(db:de
     assert_eq!(commit_log::consumer_position(&mut conn,&consumer_for(&instance(&js,&subjects).await)).await.unwrap().0,0);
     sinex_store::privacy::projection::ensure_current(&mut conn).await.unwrap();publish_pending(&mut conn,&js,&subjects).await.unwrap();
     let stream=js.get_stream(subjects.confirmed_stream()).await.unwrap();let raw=stream.get_raw_message(1).await.unwrap();
-    assert_eq!(raw.subject,subjects.confirmed_event("guarded","command.executed"));assert!(!String::from_utf8_lossy(&raw.payload).contains("route-secret"));
+    assert_eq!(raw.subject,subjects.confirmed_event("guarded","command.executed").into());assert!(!String::from_utf8_lossy(&raw.payload).contains("route-secret"));
     let wire:Confirmed=serde_json::from_slice(&raw.payload).unwrap();assert_eq!(wire,Confirmed::EventReference{commit_seq:1,event:id});
     let key:String=sqlx::query_scalar("SELECT equivalence_key FROM core.events WHERE id=$1").bind(id.0).fetch_one(&mut *conn).await.unwrap();assert!(key.contains("route-secret"),"the exact original remains private");
 }

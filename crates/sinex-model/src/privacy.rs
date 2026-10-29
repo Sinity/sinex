@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     crate::DbCheck,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Class {

@@ -1,4 +1,4 @@
-//! The shipped recipes, each run over logical days when asked for:
+//! The shipped recipes, maintained over the logical days of stored questions:
 //!
 //! - `correlations`: the declared family over the tracked metrics, with
 //!   Benjamini-Hochberg q-values (Lynchpin's `lifestyle_correlations`);
@@ -7,10 +7,10 @@
 //! - `deviations`: each day against its own prior-only robust baseline
 //!   (Lynchpin's `anomaly_crossref`, prior-only instead of window-relative).
 //!
-//! A recipe reads the panel at one commit position, so the same question
-//! asked again at the same position gives the same answer.
+//! The keyed product derivation evaluates the pure methods. Read surfaces
+//! retrieve its admitted answer and selected coverage instead of computing.
 use super::Settings;
-use super::panel::{Panel, panel};
+use super::panel::Panel;
 use serde_json::{Value, json};
 use sinex_analysis::Eligibility;
 use sinex_analysis::finding::{self, Caveat, Finding, Template};
@@ -39,6 +39,14 @@ impl Recipe {
             .ok_or_else(|| format!("no recipe {name}; recipes: correlations, trends, deviations"))
     }
 
+    pub(crate) fn version(self) -> u32 { 1 }
+    pub(super) fn methods(self) -> &'static [&'static str] {
+        match self {
+            Recipe::Correlations => &["lagged_correlation"],
+            Recipe::Trends => &["trend", "change_points"],
+            Recipe::Deviations => &["anomaly"],
+        }
+    }
     pub(crate) fn id(self) -> &'static str {
         match self {
             Recipe::Correlations => "correlations",
@@ -51,6 +59,9 @@ impl Recipe {
 /// A recipe's answer: what each method estimated or why it refused, the
 /// findings worth reading, and the commit position it was read at.
 pub(crate) struct RecipeRun {
+    pub definition: Value,
+    pub citation: Option<String>,
+    pub producer_versions: Option<Value>,
     pub tables: Value,
     pub findings: Vec<Finding>,
     pub as_of: i64,
@@ -82,8 +93,39 @@ pub(crate) async fn run(
     to: jiff::civil::Date,
     eligibility: Eligibility,
 ) -> Result<RecipeRun, String> {
-    let p = panel(conn, ctx, settings, &tracked(), from, to).await?;
-    let input = input(&p, eligibility);
+    let question = super::access::question(
+        conn,
+        ctx,
+        settings,
+        "recipe",
+        Some(recipe.id()),
+        &tracked(),
+        from,
+        to,
+        eligibility,
+    )
+    .await?;
+    let payload = super::access::find(conn, "recipe.answer", &question.request)
+        .await?
+        .ok_or("analysis answer is not materialized; submit its canonical request first")?;
+    Ok(RecipeRun {
+        definition: json!({"recipe_version":payload["recipe_version"],"method_versions":payload["method_versions"],"parameters":payload["parameters"],"day_setting":payload["day_setting"],"coverage_hash":payload["coverage_hash"]}),
+        citation: payload["_citation"].as_str().map(str::to_owned),
+        producer_versions: payload.get("producer_versions").cloned(),
+        tables: payload["tables"].clone(),
+        findings: serde_json::from_value(payload["findings"].clone()).map_err(|e| e.to_string())?,
+        as_of: payload["read_as"]
+            .as_i64()
+            .ok_or("stored answer has no selected read context")?,
+    })
+}
+
+pub(super) fn evaluate(
+    p: &Panel,
+    recipe: Recipe,
+    eligibility: Eligibility,
+) -> Result<RecipeRun, String> {
+    let input = input(p, eligibility);
     let names: Vec<&str> = tracked().iter().map(|m| m.name).collect();
     let (tables, findings) = match recipe {
         Recipe::Correlations => correlations(&input, &family(&names))?,
@@ -91,6 +133,9 @@ pub(crate) async fn run(
         Recipe::Deviations => deviations(&input, &names)?,
     };
     Ok(RecipeRun {
+        definition: Value::Null,
+        citation: None,
+        producer_versions: p.producer_versions.clone(),
         tables,
         findings,
         as_of: p.as_of,
@@ -101,7 +146,7 @@ type Outputs = (Value, Vec<Finding>);
 
 fn method_row(r: &Result<methods::MethodResult, methods::NotEstimable>) -> Value {
     match r {
-        Ok(m) => json!({"status": "estimated", "method": m.method, "output": m.output, "n": m.n,
+        Ok(m) => json!({"status": "estimated", "method": m.method, "version": m.version, "output": m.output, "n": m.n,
                         "n_excluded": m.n_excluded, "diagnostics": m.diagnostics, "estimand": m.estimand}),
         Err(e) => {
             json!({"status": "not_estimable", "reason": e.reason, "n": e.n, "n_excluded": e.n_excluded})

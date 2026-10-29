@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub(crate) struct Grants {
     #[serde(default)]
+    pub indexed_catalog: Option<sinex_model::ProjectionCatalog>,
+    #[serde(default)]
     pub public_context: bool,
     #[serde(default)]
     pub write: Option<super::authority::WriteGrant>,
@@ -21,6 +23,8 @@ pub(crate) struct Grants {
 }
 pub(crate) type ProducerGrants = BTreeMap<String, Grants>;
 impl Grants {
+    pub(crate) fn allows(&self,kind:&str,class:Class)->bool { self.kind(kind)&&self.class(class) }
+
     pub(crate) fn consumer_scope(
         &self,
         producer: &str,
@@ -214,6 +218,9 @@ impl Requests {
         if output.epoch != Some(epoch.active) || output.state.as_deref() != Some("complete") {
             return Err(unavailable("event privacy projection is incomplete"));
         }
+        if super::coverage::required_kind(&output.kind)&&output.changed!=Some(false) {
+            return Err(unavailable("required canonical input is affected by current privacy rules"));
+        }
         let output_class: Class = serde_json::from_value(Value::String(
             output
                 .class
@@ -254,9 +261,16 @@ impl Requests {
                 anchor: field(&view, "offset")?,
             })
         };
+        let (source_name,source_version,source_fingerprint,producer_family,producer_identity)=sinex_store::producer_reads::event_source(&mut conn,id.0).await.map_err(unavailable)?.ok_or_else(missing)?;
+        let source_ref=source_version.map(|version|u32::try_from(version).map(|version|sinex_model::SourceRef{name:source_name,version})).transpose().map_err(unavailable)?;
+        let kind_version:u64=field(&view,"kind_version")?;
+        let reference=sinex_model::KindRef{name:event_type.clone(),version:kind_version};
+        let declarations=sinex_schema::kinds::load(&mut conn,std::slice::from_ref(&reference)).await.map_err(unavailable)?;
+        let kind_definition_hash=declarations.get(&reference).ok_or_else(||unavailable("event kind definition is unavailable"))?.definition_hash();
         Ok(FetchEventReply {
             event: Some(ConfirmedEvent {
-                kind_version: field(&view, "kind_version")?,
+                source_ref,source_fingerprint,producer_family,producer_identity,
+                kind_version,kind_definition_hash,
                 validation: field(&view, "validation")?,
                 commit_seq: field(&view, "commit_seq")?,
                 id: field(&view, "id")?,
@@ -321,6 +335,7 @@ impl Requests {
                 ));
             };
             let owner_scope = Grants {
+                indexed_catalog: None,
                 public_context: false,
                 write: None,
                 kind_prefixes: prefixes,
@@ -387,10 +402,14 @@ impl Requests {
                     });
                 }
             }
+            sinex_store::material_bytes::authorize_raw(&mut conn,request.material).await.map_err(|error|Refusal{kind:FetchRefusalKind::Denied,reason:error.to_string()})?;
             let material = sinex_store::material_bytes::reference(&mut conn, request.material)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
+            let sources=sinex_store::producer_reads::material_sources(&mut conn,&[request.material.0]).await.map_err(unavailable)?;
+            let (_,name,version)=sources.into_iter().next().ok_or_else(||unavailable("material source authority is unknown; explicit historical mapping required"))?;
+            let source=sinex_model::SourceRef{name:name.ok_or_else(||unavailable("material source authority is unknown"))?,version:u32::try_from(version.ok_or_else(||unavailable("material source version is unknown"))?).map_err(unavailable)?};
             let input = sinex_store::producer_reads::material_input(&mut conn, request.material.0)
                 .await
                 .map_err(unavailable)?
@@ -407,6 +426,7 @@ impl Requests {
             }
             Ok(FetchMaterialReply {
                 material: Some(MaterialFrame {
+                    source,
                     id: material.id,
                     input: input,
                     blob: material.blob,

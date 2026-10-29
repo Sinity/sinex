@@ -26,8 +26,10 @@
 pub(crate) mod authority;
 mod bytes;
 mod confirmed_consumer;
+mod coverage;
 pub(crate) mod fetch;
 pub(crate) mod replay;
+mod signals;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
 use async_nats::jetstream::{self, AckKind, consumer, stream};
@@ -94,6 +96,8 @@ pub(crate) async fn ensure_stream(
 
 /// What the ingress needs from the daemon.
 pub(crate) struct Ingest {
+    pub public_context:Option<crate::public_context::Provider>,
+    pub transport_client:Option<async_nats::Client>,
     pub grants: std::sync::Arc<fetch::ProducerGrants>,
     pub subjects: Subjects,
     pub writer: WriterHandle,
@@ -115,6 +119,7 @@ impl Ingest {
         grants: std::sync::Arc<fetch::ProducerGrants>,
     ) -> Result<Self, String> {
         Ok(Self {
+            public_context:None,transport_client:None,
             grants,
             subjects,
             writer,
@@ -142,11 +147,14 @@ impl Ingest {
             .filter(|name| !name.is_empty() && !name.contains('\0'))
             .map(str::to_owned)
             .unwrap_or_else(|| format!("malformed/{}", blake3::hash(body).to_hex()));
+        let content_hash=match decoded.as_ref(){Ok(Ingress::LargeFrame{blob,..})=>blob.clone(),_=>format!("blake3:{}",blake3::hash(body).to_hex())};
         if let Some(stored) = self.stored(producer, &name).await? {
+            if stored.outcome.get("frame_content_hash").and_then(Value::as_str).is_some_and(|saved|saved!=content_hash) {
+                return Ok(Acknowledgment{number:Some(stored.number),frame:name.clone(),material:None,material_extents:vec![],admitted:vec![],outcome:serde_json::json!({"refusal_kind":FrameRefusal::Conflict}),refusal:Some("frame_body_conflict".into()),commit_seq:None});
+            }
             self.discard_recorded(producer, &stored, decoded.as_ref().ok());
             return Ok(acknowledgment(stored));
         }
-        let run = self.run(producer).await?;
         let mut declarations = Vec::new();
         let configuration = self.configuration(producer).await?;
         let offered = decoded.as_ref().ok().cloned();
@@ -161,7 +169,10 @@ impl Ingest {
             Err(error) => Err(Check::Malformed(format!("not a frame: {error}"))),
         };
         let details = decoded.as_ref().ok().or(offered.as_ref());
-        let checked = if let Some(reason) = configuration {
+        let source_authority=if let Some(source)=native_source(details){self.native_declaration(producer,source).await.map(drop)}else{Ok(())};
+        let run=if matches!(details,Some(Ingress::Signals{..})){self.signal_run(producer).await?}
+            else {self.run(producer,if source_authority.is_ok(){native_source(details)}else{None}).await?};
+        let checked = if let Err(check)=source_authority {Err(check)}else if let Some(reason) = configuration {
             Err(Check::Configuration(reason))
         } else {
             match &decoded {
@@ -178,7 +189,7 @@ impl Ingest {
                 },
                 Ok(Ingress::ReplaySequence { sequence, .. }) => {
                     return self
-                        .replay_sequence(producer, &name, run, *sequence.clone())
+                        .replay_sequence(producer, &name, run, *sequence.clone(),content_hash)
                         .await;
                 }
                 Ok(Ingress::Material { material, .. }) => {
@@ -187,10 +198,14 @@ impl Ingest {
                         Err(check) => Err(check),
                     }
                 }
+                Ok(frame @ Ingress::Signals { .. }) => {
+                    self.signals_frame(producer, frame, offered.as_ref(), body)
+                        .await
+                }
                 Ok(Ingress::Events {
-                    events, failures, ..
+                    source, events, failures, ..
                 }) => self
-                    .events(producer, events, failures)
+                    .events(producer, source.as_ref(), events, failures, false)
                     .await
                     .map(|records| (None, records)),
                 Ok(chunk @ Ingress::Chunk { .. }) => self
@@ -200,10 +215,15 @@ impl Ingest {
                 Ok(Ingress::LargeFrame { .. }) => unreachable!("large frame was decoded"),
             }
         };
-        let batch = match checked {
-            Ok((progress, records)) => Batch {
+        let checked=match checked {Ok(value)=>match self.coverage_claim(producer,details).await{Ok(coverage)=>Ok((value,coverage)),Err(error)=>Err(error)},Err(error)=>Err(error)};
+        let mut batch = match checked {
+            Ok(((progress, records),coverage)) => Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
+                    content_hash:Some(content_hash.clone()),receipt_number:None,coverage,
+                    native_source: native_source(details).cloned(),
+                    source_fingerprint: native_source(details).and_then(|source|self.grants.get(producer)?.write.as_ref()?.source_declarations.iter().find(|decl|&decl.source==source).map(|decl|decl.fingerprint())),
+                    host: self.grants.get(producer).and_then(|grant|grant.write.as_ref()).and_then(|write|write.host.clone()),
                     family: self
                         .grants
                         .get(producer)
@@ -231,6 +251,7 @@ impl Ingest {
             Err(Check::Unavailable(error)) => return Err(error),
             Err(check) => self.refusal(run, producer, &name, details, check).await?,
         };
+        if let BatchKind::Ingress(frame)=&mut batch.kind{frame.content_hash=Some(content_hash.clone());}
         match self.writer.submit(Priority::Live, batch).await {
             Ok(_) => {}
             Err(WriteError::Unavailable(error)) => return Err(error),
@@ -241,7 +262,7 @@ impl Ingest {
                     self.discard_recorded(producer, &stored, decoded.as_ref().ok());
                     return Ok(acknowledgment(stored));
                 }
-                let refused = self
+                let mut refused = self
                     .refusal(
                         run,
                         producer,
@@ -250,6 +271,7 @@ impl Ingest {
                         Check::Refused(format!("admission refused it: {reason}")),
                     )
                     .await?;
+                if let BatchKind::Ingress(frame)=&mut refused.kind{frame.content_hash=Some(content_hash.clone());}
                 self.writer
                     .submit(Priority::Live, refused)
                     .await
@@ -270,7 +292,7 @@ impl Ingest {
         if stored.refusal.is_none()
             || matches!(
                 kind,
-                Some(FrameRefusal::Content | FrameRefusal::Bytes | FrameRefusal::Configuration)
+                Some(FrameRefusal::Content | FrameRefusal::Bytes | FrameRefusal::Configuration |FrameRefusal::Excised|FrameRefusal::PartiallyExcised|FrameRefusal::Conflict)
             )
         {
             self.discard(producer, &stored.frame);
@@ -391,24 +413,29 @@ impl Ingest {
     }
 
     /// One run per producer per daemon start: every event names its run.
-    async fn run(&mut self, producer: &str) -> Result<RunId, String> {
-        if let Some(run) = self.runs.get(producer) {
+    async fn run(&mut self, producer: &str, source:Option<&sinex_model::SourceRef>) -> Result<RunId, String> {
+        let key=format!("{producer}/{}",source.map(|source|format!("{}/{}",source.name,source.version)).unwrap_or_else(||"canonical".into()));
+        if let Some(run) = self.runs.get(&key) {
             return Ok(*run);
         }
+        let mut emitted=if let Some(source)=source {sinex_store::source_declarations::load(&mut self.conn,source).await.map_err(|error|error.to_string())?.ok_or("native source declaration disappeared")?.kinds.into_iter().map(|kind|kind.kind.name).collect::<Vec<_>>()}else{vec![]};
+        emitted.sort();emitted.dedup();let emits=emitted.iter().map(String::as_str).collect::<Vec<_>>();
+        let name=source.map(|source|source.name.as_str()).unwrap_or_else(||self.grants.get(producer).and_then(|grant|grant.write.as_ref()).map_or(producer,|write|write.family.as_str()));
+        let version=source.map(|source|source.version.to_string()).unwrap_or_else(||"1".into());
         let run = runs::start(
             &mut self.conn,
             &runs::Manifest {
-                name: producer,
-                kind: "producer",
-                version: "1",
-                build: env!("CARGO_PKG_VERSION"),
-                emits: &[],
+                name,
+                kind: if source.is_some(){"source"}else{"producer"},
+                version: &version,
+                build: crate::build_identity::current()?,
+                emits: &emits,
             },
-            &self.host,
+            self.grants.get(producer).and_then(|grant|grant.write.as_ref()).and_then(|write|write.host.as_deref()).unwrap_or(""),
         )
         .await
         .map_err(|e| e.to_string())?;
-        self.runs.insert(producer.to_owned(), run);
+        self.runs.insert(key, run);
         Ok(run)
     }
 
@@ -419,6 +446,9 @@ impl Ingest {
         producer: &str,
         m: &MaterialFrame,
     ) -> Result<(Option<SourceProgress>, Vec<RecordOutcome>), Check> {
+        if m.parser=="signals" {
+            return Err(Check::Configuration("host signal material requires the typed signal ingress".into()));
+        }
         let present = self
             .blobs
             .contains(&m.blob)
@@ -431,8 +461,10 @@ impl Ingest {
         }
         Ok((
             Some(SourceProgress {
+                source:Some(m.source.clone()),
+                host:self.grants.get(producer).and_then(|grant|grant.write.as_ref()).and_then(|write|write.host.clone()),
                 data_keys: Vec::new(),
-                binding: format!("ingress:{producer}"),
+                binding: format!("ingress:{producer}:{}:{}",m.source.name,self.grants.get(producer).and_then(|grant|grant.write.as_ref()).and_then(|write|write.host.as_deref()).map(|host|blake3::hash(host.as_bytes()).to_hex().to_string()).unwrap_or_else(||"unattested".into())),
                 input: m.input.clone(),
                 observation: ObservationFacts {
                     observed_at: Some(Timestamp::now()),
@@ -459,6 +491,15 @@ impl Ingest {
         ))
     }
 
+    async fn native_declaration(&mut self,producer:&str,source:&sinex_model::SourceRef)->Result<sinex_model::SourceDeclaration,Check> {
+        let write=authority::write(&self.grants,producer).map_err(Check::Configuration)?;
+        if !authority::matches(&write.source_prefixes,&source.name){return Err(Check::Configuration("native source is outside the configured credential capability".into()));}
+        let declaration=sinex_store::source_declarations::load(&mut self.conn,source).await.map_err(|error|Check::Unavailable(error.to_string()))?
+            .ok_or_else(||Check::Configuration("native source version is not installed in the owner catalog".into()))?;
+        if declaration.family!=write.family{return Err(Check::Configuration("native source belongs to another configured family".into()));}
+        Ok(declaration)
+    }
+
     fn check_declarations(
         &self,
         producer: &str,
@@ -468,6 +509,7 @@ impl Ingest {
         for declaration in declarations {
             if declaration.declaring_producer != write.family
                 || !authority::matches(&write.kind_prefixes, &declaration.kind.name)
+                || !write.source_declarations.iter().flat_map(|source|&source.kinds).chain(&write.canonical_kinds).any(|known|known.kind==declaration.kind&&known.definition_hash()==declaration.definition_hash())
             {
                 return Err(Check::Configuration(
                     "declaration is outside the configured logical family".into(),
@@ -480,8 +522,10 @@ impl Ingest {
     async fn events(
         &mut self,
         producer: &str,
+        source: Option<&sinex_model::SourceRef>,
         events: &[ProducerEvent],
         failures: &[ProducerFailure],
+        replay: bool,
     ) -> Result<Vec<RecordOutcome>, Check> {
         let family = authority::write(&self.grants, producer)
             .map_err(Check::Configuration)?
@@ -500,12 +544,27 @@ impl Ingest {
         let declarations = sinex_schema::kinds::load(&mut self.conn, &references)
             .await
             .map_err(|error| Check::Unavailable(error.to_string()))?;
+        if let Some(reference)=references.iter().find(|reference|!declarations.contains_key(reference)) {
+            return Err(Check::Refused(format!("namespace_refused: exact kind declaration {}@{} is not registered",reference.name,reference.version)));
+        }
         if declarations.values().any(|declaration| {
             declaration.declaring_producer != "sinex" && declaration.declaring_producer != family
         }) {
             return Err(Check::Refused(
                 "kind belongs to another logical family".into(),
             ));
+        }
+        let native=match source {Some(source)=>Some(self.native_declaration(producer,source).await?),None=>None};
+        let write=authority::write(&self.grants,producer).map_err(Check::Configuration)?;
+        for declaration in declarations.values() {
+            let allowed=match &native {
+                Some(native)=>native.allows(&declaration.kind,&declaration.definition_hash()),
+                None=>write.canonical_kinds.iter().any(|known|known.kind==declaration.kind&&known.definition_hash()==declaration.definition_hash()),
+            };
+            if !allowed{return Err(Check::Configuration("event is outside its exact owner source or canonical declaration".into()));}
+        }
+        if source.is_none() && (!failures.is_empty()||events.iter().any(|event|event.location.is_some())) {
+            return Err(Check::Configuration("material readings require an explicit registered native source".into()));
         }
         // Every cited material must be registered first.
         let mut cited: Vec<Uuid> = events
@@ -526,14 +585,22 @@ impl Ingest {
             }
         }
         if !cited.is_empty() {
-            let ownership=sqlx::query!("SELECT material_id,family FROM core.ingress_frames WHERE material_id=ANY($1) AND refusal IS NULL",&cited).fetch_all(&mut self.conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+            let ownership=sinex_store::producer_reads::material_owners(&mut self.conn,&cited).await.map_err(|error|Check::Unavailable(error.to_string()))?;
             if cited.iter().any(|id| {
                 !ownership.iter().any(|owner| {
-                    owner.material_id == Some(*id)
-                        && owner.family.as_deref() == Some(family.as_str())
+                    owner.0 == Some(*id)
+                        && owner.1.as_deref() == Some(family.as_str())
                 })
             }) {
                 return Err(Check::Refused("material family ownership is unavailable or belongs to another family; explicit mapping is required for historical material".into()));
+            }
+        }
+        if let Some(source)=source {
+            let known=sinex_store::producer_reads::material_sources(&mut self.conn,&cited).await.map_err(|error|Check::Unavailable(error.to_string()))?;
+            for material in &cited {
+                if !known.iter().any(|(id,name,version)|id==material&&name.as_deref()==Some(source.name.as_str())&&(replay||*version==Some(i64::from(source.version)))) {
+                    return Err(Check::Configuration("material and event native sources differ or historical source authority is unknown".into()));
+                }
             }
         }
         let sizes = sinex_store::material_bytes::lengths(&mut self.conn, &cited)
@@ -573,7 +640,7 @@ impl Ingest {
             let event = sinex_model::Event::submitted(
                 e.kind.clone(),
                 e.payload.clone(),
-                family.clone(),
+                source.map(|source|source.name.clone()).unwrap_or_else(||family.clone()),
                 origin,
                 ReadingOrder(e.reading_order.unwrap_or(0)),
                 record_hash(&e.kind.name, &e.payload),
@@ -618,25 +685,29 @@ fn sealed(privacy: &sinex_store::privacy::RuleSet) -> bool {
             .any(|rule| rule.class == sinex_model::Class::Sealed)
 }
 
+fn native_source(frame:Option<&Ingress>)->Option<&sinex_model::SourceRef>{
+    match frame? {Ingress::Material{material,..}=>Some(&material.source),Ingress::Events{source,..}=>source.as_ref(),Ingress::ReplaySequence{sequence,..}=>Some(&sequence.source),_=>None}
+}
 fn frame_source(frame: Option<&Ingress>) -> Option<String> {
-    let frame = frame?;
-    let name = match frame {
-        Ingress::Chunk { for_frame, .. } => for_frame,
-        _ => frame.frame(),
-    };
-    name.rsplit_once("/events/")
-        .or_else(|| name.rsplit_once("/material/"))
-        .map(|(binding, _)| {
-            binding
-                .split_once(':')
-                .map_or(binding, |(source, _)| source)
-                .replace('\0', "\\0")
-        })
-        .filter(|source| !source.is_empty())
+    if matches!(frame,Some(Ingress::Signals{..})){return Some(sinex_sources::sources::signals::SPEC.name.into());}
+    native_source(frame).map(|source|source.name.clone())
 }
 
 fn frame_event_types(frame: Option<&Ingress>) -> Vec<String> {
     let mut names = match frame {
+        Some(Ingress::Signals {
+            signals, receipts, emergency, ..
+        }) => {
+            let mut names = Vec::new();
+            if !signals.is_empty() {
+                names.push("signal.intent".into());
+            }
+            if !receipts.is_empty() {
+                names.push("signal.receipt".into());
+            }
+            if !emergency.is_empty(){names.extend(["signal.emergency","signal.delivery","signal.desktop_receipt"].into_iter().map(str::to_owned));}
+            names
+        }
         Some(Ingress::Events { events, .. }) => events
             .iter()
             // PostgreSQL JSONB cannot represent NUL; diagnostic names use a visible escape.
@@ -701,6 +772,7 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
     Batch {
         run,
         kind: BatchKind::Ingress(Box::new(IngressFrame {
+            content_hash:None,receipt_number:None,coverage:None,native_source:None,source_fingerprint:None,host:None,
             family: None,
             write_kind_prefixes: vec![],
             assign_orders: vec![],
@@ -754,6 +826,7 @@ const REQUESTS_AT_ONCE: usize = 4;
 #[derive(Clone)]
 pub(crate) struct Requests {
     pub client: async_nats::Client,
+    pub public_context: crate::public_context::Provider,
     pub consumer_admin: std::sync::Arc<tokio::sync::Mutex<()>>,
     pub read_grants: std::sync::Arc<fetch::ProducerGrants>,
     pub subjects: Subjects,
@@ -765,13 +838,14 @@ pub(crate) struct Requests {
 #[derive(serde::Serialize)]
 #[serde(untagged)]
 enum ResponseBody {
+    Context(sinex_protocol::PublicContext),
     Welcome(ProducerWelcome),
     Consumer(sinex_protocol::ConfirmedConsumerReply),
     Event(sinex_protocol::FetchEventReply),
     Material(sinex_protocol::FetchMaterialReply),
     Recorded(sinex_protocol::RecordedPage),
     Materials(sinex_protocol::MaterialsPage),
-    Replay(sinex_protocol::ReplayScopePage),
+    Replay(sinex_protocol::ReplayReply),
     Excise(ExciseReply),
     Error { refusal: String },
 }
@@ -803,7 +877,9 @@ impl Requests {
                     .iter()
                     .any(|kind| !authority::matches(&write.kind_prefixes, kind))
         }) {
-            Some("producer hello is outside its write kind or class capability".into())
+            let write=write.expect("capability branch requires a write grant");
+            let undelegated=hello.event_types.iter().filter(|kind|!authority::matches(&write.kind_prefixes,kind)).collect::<Vec<_>>();
+            Some(format!("producer hello is outside its write kind or class capability: offered_class={:?}, class_authorized={}, undelegated_kinds={undelegated:?}",hello.class,write.classes.contains(&hello.class)))
         } else if hello.class == sinex_model::Class::Sealed || sealed(&privacy) {
             Some("producer bytes cannot be stored sealed".into())
         } else {
@@ -877,13 +953,18 @@ impl Requests {
         )
         .await
         .map_err(|e| e.to_string())?;
+        let ids=rows.iter().map(|row|row.material_id).collect::<Vec<_>>();
+        let sources=sinex_store::producer_reads::material_sources(&mut conn,&ids).await.map_err(|error|error.to_string())?;
         rows.into_iter()
             .map(|row| {
+                let (_,name,version)=sources.iter().find(|(id,_,_)|*id==row.material_id).ok_or("material source authority is unknown; explicit historical mapping required")?;
+                let source=sinex_model::SourceRef{name:name.clone().ok_or("material source authority is unknown")?,version:u32::try_from(version.ok_or("material source version is unknown")?).map_err(|error|error.to_string())?};
                 Ok(ProducerMaterial {
                     extents: vec![row.extent],
                     number: row.number,
                     frame: row.frame,
                     material: MaterialFrame {
+                        source,
                         id: sinex_model::MaterialId(row.material_id),
                         input: sinex_model::InputRef {
                             kind: row.kind,
@@ -927,7 +1008,17 @@ impl Requests {
     /// producer.
     async fn answer(&self, subject: &str, payload: &[u8]) -> Option<ResponseBody> {
         let producer = self.subjects.producer_of(subject)?.to_owned();
-        let response = if subject == self.subjects.connect(&producer) {
+        let response = if subject == self.subjects.public_context(&producer) {
+            let response=if !self.read_grants.get(&producer).is_some_and(|grant|grant.public_context) {
+                sinex_protocol::PublicContext::Refused{reason:"public_context_not_authorized".into()}
+            } else {
+                match serde_json::from_slice::<sinex_protocol::PublicContextRequest>(payload) {
+                    Err(error)=>sinex_protocol::PublicContext::Refused{reason:error.to_string()},
+                    Ok(request)=>self.public_context_snapshot(&producer,&request).await,
+                }
+            };
+            ResponseBody::Context(response)
+        } else if subject == self.subjects.connect(&producer) {
             match serde_json::from_slice::<ProducerHello>(payload) {
                 Ok(hello) => {
                     ResponseBody::Welcome(self.connect(&producer, &hello).await.unwrap_or_else(
@@ -998,30 +1089,16 @@ impl Requests {
                 },
             }
         } else if subject == self.subjects.replay_scope(&producer) {
-            match serde_json::from_slice::<sinex_protocol::ReplayScopeQuery>(payload) {
-                Ok(query) => {
-                    let family = match authority::write(&self.read_grants, &producer) {
-                        Ok(write) => write.family.clone(),
-                        Err(error) => return Some(ResponseBody::Error { refusal: error }),
-                    };
-                    let mut conn = match self.reads.acquire().await {
-                        Ok(conn) => conn,
-                        Err(error) => {
-                            return Some(ResponseBody::Error {
-                                refusal: error.to_string(),
-                            });
-                        }
-                    };
-                    match replay::select_page(&mut conn, &producer, &family, &query).await {
-                        Ok(page) => ResponseBody::Replay(page),
-                        Err(error) => ResponseBody::Error {
-                            refusal: error.to_string(),
-                        },
+            match serde_json::from_slice::<sinex_protocol::ReplayQuery>(payload) {
+                Ok(sinex_protocol::ReplayQuery::Inputs{cache,cursor})=>ResponseBody::Replay(sinex_protocol::ReplayReply::Inputs{result:self.replay_inputs(&producer,&cache,cursor.as_deref()).await}),
+                Ok(sinex_protocol::ReplayQuery::Materials{query})=>{
+                    let family=match authority::write(&self.read_grants,&producer){Ok(write)=>write.family.clone(),Err(error)=>return Some(ResponseBody::Error{refusal:error})};
+                    let mut conn=match self.reads.acquire().await{Ok(conn)=>conn,Err(error)=>return Some(ResponseBody::Error{refusal:error.to_string()})};
+                    match replay::select_page(&mut conn,&producer,&family,&query).await {
+                        Ok(page)=>ResponseBody::Replay(sinex_protocol::ReplayReply::Materials{page}),Err(error)=>ResponseBody::Error{refusal:error.to_string()},
                     }
                 }
-                Err(error) => ResponseBody::Error {
-                    refusal: error.to_string(),
-                },
+                Err(error)=>ResponseBody::Error{refusal:error.to_string()},
             }
         } else {
             match serde_json::from_slice::<Excise>(payload) {
@@ -1047,10 +1124,12 @@ impl Requests {
 /// `stop` is set.
 pub(crate) async fn run(
     client: async_nats::Client,
-    ingest: Ingest,
+    mut ingest: Ingest,
     requests: Requests,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    ingest.public_context=Some(requests.public_context.clone());
+    ingest.transport_client=Some(client.clone());
     let stopped = async move {
         while stop.changed().await.is_ok() {
             if *stop.borrow() {
@@ -1139,6 +1218,7 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
     };
     let mut incoming = futures::stream::select_all([
         subscribe(requests.subjects.connect_all()).await?,
+        subscribe(requests.subjects.public_context_all()).await?,
         subscribe(requests.subjects.confirmed_consumer_all()).await?,
         subscribe(requests.subjects.recorded_all()).await?,
         subscribe(requests.subjects.materials_all()).await?,

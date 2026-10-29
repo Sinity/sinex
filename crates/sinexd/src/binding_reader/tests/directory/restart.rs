@@ -17,7 +17,8 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
     let mut ctx = ReaderContext::open(
         &url,
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -29,7 +30,6 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut readers,
         stop.clone(),
@@ -48,7 +48,6 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut restarted,
         stop,
@@ -89,7 +88,6 @@ async fn turn(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         readers,
         stop,
@@ -161,7 +159,8 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     let mut ctx = ReaderContext::open(
         &url,
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -281,7 +280,8 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
     let mut ctx = ReaderContext::open(
         &url,
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -333,7 +333,8 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
     let mut ctx = ReaderContext::open(
         &url,
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -355,7 +356,6 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut restarted,
         stop,
@@ -394,7 +394,8 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     let mut ctx = ReaderContext::open(
         &url,
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::operator_default(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();

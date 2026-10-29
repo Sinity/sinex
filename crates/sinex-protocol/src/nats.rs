@@ -11,7 +11,7 @@
 //! | `<root>.recorded.<producer>` | the producer, as a request | [`RecordedQuery`]: what Sinex recorded for these frames |
 //! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
 //! | `<root>.excise.<producer>` | the producer, as a request | [`Excise`]: excise whole materials it registered |
-//! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::Event`] |
+//! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::EventReference`] |
 //! | `<root>.confirmed.lifecycle.<class>.<event type>` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Unhidden`] or [`Confirmed::Excised`] message |
 //!
 //! Each producer's credentials allow only its own subjects
@@ -19,6 +19,7 @@
 //! the producer that sent it.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use sinex_model::SourceRef;
 use sinex_model::{Class, EventId, InputRef, MaterialId, RecordLocation, RunId, Timestamp};
 
 /// Subject and stream names under one root.
@@ -97,6 +98,12 @@ impl Subjects {
         format!("{}.ingress.{producer}", self.root)
     }
 
+    /// Only this authenticated producer can receive condition requests and
+    /// reply through its scoped inbox. The host owns the request side.
+    pub fn signal_condition(&self, producer: &str) -> String {
+        format!("{}.signal_condition.{producer}", self.root)
+    }
+
     pub fn ingress_all(&self) -> String {
         format!("{}.ingress.*", self.root)
     }
@@ -158,10 +165,18 @@ impl Subjects {
             .or_else(|| rest.strip_prefix("materials."))
             .or_else(|| rest.strip_prefix("excise."))
             .or_else(|| rest.strip_prefix("replay_scope."))
+            .or_else(|| rest.strip_prefix("public_context."))
             .or_else(|| rest.strip_prefix("fetch_event."))
             .or_else(|| rest.strip_prefix("fetch_material."))
             .or_else(|| rest.strip_prefix("confirmed_consumer."))?;
         valid_producer(producer).then_some(producer)
+    }
+
+    pub fn public_context(&self, producer: &str) -> String {
+        format!("{}.public_context.{producer}", self.root)
+    }
+    pub fn public_context_all(&self) -> String {
+        format!("{}.public_context.*", self.root)
     }
 
     pub fn fetch_event(&self, producer: &str) -> String {
@@ -193,6 +208,7 @@ impl Subjects {
             self.materials(producer),
             self.excise(producer),
             self.replay_scope(producer),
+            self.public_context(producer),
             self.fetch_event(producer),
             self.fetch_material(producer),
             self.confirmed_consumer(producer),
@@ -212,6 +228,7 @@ impl Subjects {
             publish,
             vec![
                 self.ack(producer),
+                self.signal_condition(producer),
                 format!("{}.>", self.inbox_prefix(producer)),
             ],
         )
@@ -299,8 +316,23 @@ pub enum Ingress {
         frame: String,
         material: Box<MaterialFrame>,
     },
+    /// Shared evaluator intents from a configured canonical product. Host
+    /// policy and effects are applied only by Sinex after durable admission.
+    Signals {
+        frame: String,
+        coverage:Option<crate::CoverageProof>,
+        signals: Vec<ForwardedSignal>,
+        #[serde(default)]
+        receipts: Vec<signals::DeliveryReceipt>,
+        #[serde(default)]
+        emergency: Vec<crate::signals::EmergencyCompletion>,
+        class: Class,
+    },
     Events {
         frame: String,
+        /// Native source declaration; absent only for owner-declared canonical contracts.
+        source: Option<SourceRef>,
+        coverage: Option<crate::context::CoverageProof>,
         events: Vec<ProducerEvent>,
         /// Records the producer's parser could not read. Their bytes stay in
         /// the cited material, so a replay can read them again.
@@ -340,10 +372,35 @@ impl Ingress {
             | Ingress::ReplaySequence { frame, .. }
             | Ingress::Material { frame, .. }
             | Ingress::Events { frame, .. }
+            | Ingress::Signals { frame, .. }
             | Ingress::Chunk { frame, .. }
             | Ingress::LargeFrame { frame, .. } => frame,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForwardedSignal {
+    pub active_rule:Option<signals::ActiveRule>,
+    /// Exact owner-resolved canonical input readings, separate from product UI references.
+    pub inputs:Vec<sinex_model::EventId>,
+    pub intent: signals::FiredIntent,
+    pub notice: signals::notifications::Notice,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignalCondition {
+    pub delivery_id: String,
+    pub at: signals::Instant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignalConditionReply {
+    pub condition: signals::Condition,
+    pub reason: Option<String>,
 }
 
 /// Exact declarations a producer used while parsing a replacement.
@@ -383,6 +440,7 @@ pub struct ReplayMaterial {
 /// for this sequence waits for its atomic acknowledgment.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ProducerReplay {
+    pub source: SourceRef,
     pub operation: sinex_model::OperationId,
     pub root: MaterialId,
     pub materials: Vec<ReplayMaterial>,
@@ -413,6 +471,7 @@ pub struct ProducerFailure {
 /// named by their BLAKE3 hash.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MaterialFrame {
+    pub source: SourceRef,
     pub id: MaterialId,
     /// What the material was read from.
     pub input: InputRef,
@@ -477,6 +536,7 @@ pub struct Acknowledgment {
 }
 
 impl Acknowledgment {
+    pub fn content_hash(&self)->Option<&str>{self.outcome.get("frame_content_hash").and_then(Value::as_str)}
     pub fn refusal_kind(&self) -> Option<sinex_model::FrameRefusal> {
         serde_json::from_value(self.outcome["refusal_kind"].clone()).ok()
     }
@@ -668,7 +728,14 @@ pub enum Confirmed {
 /// A successful current-policy fetch. Stream messages carry only event references.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
+    /// Historical readings retain unknown source authority explicitly.
+    pub source_ref: Option<SourceRef>,
+    pub source_fingerprint: Option<String>,
+    pub producer_family: Option<String>,
+    pub producer_identity: Option<String>,
     pub kind_version: u64,
+    /// Exact immutable owner registry definition for this reading's kind.
+    pub kind_definition_hash: String,
     pub validation: sinex_model::Validation,
     pub commit_seq: i64,
     pub id: EventId,
@@ -689,8 +756,8 @@ pub struct ConfirmedEvent {
     pub reading_order: i64,
     /// Canonical source-reading hash, distinct from the current projected payload identity.
     pub record_hash: String,
-    pub payload:Value,
-    pub projection:crate::ProjectionIdentity,
+    pub payload: Value,
+    pub projection: crate::ProjectionIdentity,
 }
 
 /// A reading taken out of the live set.
@@ -721,6 +788,8 @@ mod tests;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmedConsumer {
+    #[serde(default)]
+    pub basis:Option<crate::FullProjectionComplete>,
     pub after: i64,
     pub cache: String,
     #[serde(default)]
@@ -731,6 +800,7 @@ pub struct ConfirmedConsumerReply {
     #[serde(default)]
     pub position: Option<i64>,
     pub stream: String,
+    pub stream_instance: Option<String>,
     pub consumer: String,
     pub scope: String,
     pub refusal: Option<String>,

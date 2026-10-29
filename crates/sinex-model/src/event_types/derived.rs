@@ -111,7 +111,7 @@ pub struct FigureValue {
 /// matched, and the record identity survives replay. Each rule is recorded
 /// as its JSON declaration; an unknown input time stays unknown.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "tag.applied", key = ["tag", "record"], replace = newer, time = at, quality = intrinsic)]
+#[event(version = 2, type = "tag.applied", key = ["tag", "record"], replace = newer, time = at, quality = intrinsic)]
 pub struct TagApplied {
     pub tag: String,
     pub record: String,
@@ -124,7 +124,7 @@ pub struct TagApplied {
 /// thread (Messenger, SMS) or a mail thread, with who wrote and when. A
 /// thread over many days is its days.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
+#[event(version = 2,
     type = "conversation.day",
     key = ["channel", "conversation", "day"],
     replace = newer,

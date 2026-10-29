@@ -18,9 +18,6 @@ pub(crate) const VECTORS:&str="CREATE TABLE core.embedding_vectors (
   reason text
 )";
 pub(crate) const LOOKUP:&str="CREATE INDEX embedding_target_space ON core.embedding_vectors (target_id,space)";
-pub(crate) const VISIBLE:&str="CREATE VIEW core.visible_embedding_vectors AS SELECT v.embedding_id,v.target_id,v.space,v.dimensions,v.projected,v.coverage,v.reason
-FROM core.embedding_vectors v JOIN core.events e ON e.id=v.embedding_id
-WHERE core.class_visible(e.class)";
 pub(crate) fn tables()->Vec<String>{vec![SPACES.into(),VECTORS.into(),LOOKUP.into()]}
 pub(crate) fn statements()->Vec<String>{
     let mut out=tables();out.extend([

@@ -1,4 +1,8 @@
 //! The API against a real database and the real writer.
+mod exact_payloads;
+mod model_calls;
+mod sql_boundary;
+mod versions;
 use super::*;
 use crate::writer;
 use axum::body::Body;
@@ -12,6 +16,7 @@ use sinex_model::{
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
+const READ_CONNECTIONS: u32 = 4;
 const READ: &str = "read-token";
 const AGENT: &str = "agent-token";
 const OPERATOR: &str = "operator-token";
@@ -68,7 +73,7 @@ async fn admit(w: &World, texts: &[&str], from: i64) {
     admit_events(w, events).await;
 }
 
-async fn admit_events(w: &World, events: Vec<Event>) {
+async fn submit_events(w: &World, events: Vec<Event>) -> i64 {
     w.writer
         .submit(
             writer::Priority::Live,
@@ -90,6 +95,11 @@ async fn admit_events(w: &World, events: Vec<Event>) {
         .await
         .unwrap();
     w.commits.send_replace(seq as u64);
+    seq
+}
+
+async fn admit_events(w: &World, events: Vec<Event>) {
+    let seq = submit_events(w, events).await;
     // The commit reader indexes the new events' text.
     loop {
         let (indexed, _) = sinex_store::commit_log::consumer_position(
@@ -128,7 +138,7 @@ async fn world_with_config(
         Some(blobs.clone()),
     ));
     let reads = PgPoolOptions::new()
-        .max_connections(4)
+        .max_connections(READ_CONNECTIONS)
         .connect(&url)
         .await
         .unwrap();
@@ -137,7 +147,7 @@ async fn world_with_config(
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
-        zone: jiff::tz::TimeZone::UTC,
+        zone: jiff::tz::TimeZone::get("UTC").unwrap(),
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         derivations: Default::default(),
         agent_grants: vec![],
@@ -146,6 +156,7 @@ async fn world_with_config(
         library_roots: Vec::new(),
     };
     let (commits, rx) = watch::channel(0u64);
+    let (read_models_tx, read_models) = watch::channel(());
     let (stop, stopped) = watch::channel(false);
     tokio::spawn(crate::commit_reader::run(
         <sqlx::PgConnection as sqlx::Connection>::connect(&url)
@@ -159,12 +170,13 @@ async fn world_with_config(
             })
             .collect(),
         rx.clone(),
+        read_models_tx,
         stopped,
     ));
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));
     World {
         _db: db,
-        app: router(api, tokens, rx),
+        app: router(api, tokens, rx, read_models),
         commits,
         _stop: stop,
         writer: handle,
@@ -209,204 +221,6 @@ async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-}
-
-#[devkit::test]
-async fn crossing_quoted_credentials_are_masked_in_refusals_and_follow_query_errors(
-    db: devkit::pg::TestDatabase,
-) {
-    let w = world(db).await;
-    for quote in ['"', '\''] {
-        let text =
-            format!("--secret={quote}unfinished --token={quote}synthetic-error-value{quote} tail");
-        let (status, body) = call(
-            &w,
-            Some(OPERATOR),
-            json!({"method": "recompute", "derivation": "synthetic", "from": text}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["outcome"], "refused", "{body}");
-        let reason = body["reason"].as_str().unwrap();
-        assert!(reason.contains("not an RFC 3339 time"), "{body}");
-        assert!(
-            reason.contains("[credential: CLI secret, masked]"),
-            "{body}"
-        );
-        assert!(!reason.contains("synthetic-error-value"), "{body}");
-        let query = format!("events where {text}");
-        let encoded: String = query.bytes().map(|byte| format!("%{byte:02X}")).collect();
-        let request = HttpRequest::get(format!("/v1/follow?query={encoded}"))
-            .header("authorization", format!("Bearer {READ}"))
-            .body(Body::empty())
-            .unwrap();
-        let response = w.app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes = response.into_body().collect().await.unwrap().to_bytes();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["outcome"], "refused", "{body}");
-        assert!(
-            !body.to_string().contains("synthetic-error-value"),
-            "{body}"
-        );
-        assert!(
-            body["reason"]
-                .as_str()
-                .unwrap()
-                .contains("[credential: CLI secret, masked]")
-        );
-    }
-    let (_, body) = call(
-        &w,
-        Some(READ),
-        json!({"method": "query", "query": "related x"}),
-    )
-    .await;
-    assert_eq!(body["not_built"], true, "{body}");
-}
-
-#[devkit::test]
-async fn nested_credential_keys_refuse_replies_and_complete_follow_pages_without_advancing_cursors(
-    db: devkit::pg::TestDatabase,
-) {
-    let w = world(db).await;
-    let req = HttpRequest::get("/v1/follow?query=events%20sort%20when")
-        .header("authorization", format!("Bearer {READ}"))
-        .body(Body::empty())
-        .unwrap();
-    let response = w.app.clone().oneshot(req).await.unwrap();
-    let mut stream = response.into_body();
-    let mut seen = String::new();
-    read_until(&mut stream, &mut seen, "event: notice").await;
-    let key = "--secret=\"unfinished --token=\"synthetic-key-value\" tail";
-    let mut bad = command("late-key-row", 1);
-    bad.payload["extra"] = json!({"nested": [{key: "kept", "ordinary": false}]});
-    let original = bad.payload.clone();
-    admit_events(&w, vec![command("safe-first-row", 0), bad]).await;
-    let before = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
-        .await
-        .unwrap();
-    read_until(&mut stream, &mut seen, "event: error").await;
-    assert!(
-        !seen.contains("safe-first-row"),
-        "a partial successful page escaped: {seen}"
-    );
-    assert!(!seen.contains("late-key-row"));
-    assert!(!seen.contains("synthetic-key-value"));
-    assert!(seen.contains("result contains a credential-shaped object key"));
-    let request = json!({"method": "query", "query": "events sort when"});
-    let (_, refused) = call(&w, Some(READ), request.clone()).await;
-    assert_eq!(refused["outcome"], "refused", "{refused}");
-    assert!(!refused.to_string().contains("synthetic-key-value"));
-    assert!(refused.get("result").is_none());
-    let first = json!({"method": "query", "query": "events sort when", "page": 1});
-    let (_, page) = call(&w, Some(READ), first.clone()).await;
-    assert_eq!(page["outcome"], "ok", "{page}");
-    let cursor = page["result"]["page"]["cursor"].as_str().unwrap();
-    let next = json!({"method": "query", "query": "events sort when", "page": 1, "cursor": cursor});
-    for _ in 0..2 {
-        let (_, reply) = call(&w, Some(READ), next.clone()).await;
-        assert_eq!(reply, refused);
-    }
-    let (_, retry) = call(&w, Some(READ), first).await;
-    assert_eq!(retry["result"]["rows"], page["result"]["rows"]);
-    assert_eq!(retry["result"]["total"], page["result"]["total"]);
-    assert_eq!(
-        retry["result"]["resolved"]["commit_seq"],
-        page["result"]["resolved"]["commit_seq"]
-    );
-    let after = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
-        .await
-        .unwrap();
-    assert_eq!(before, after);
-    let stored = sqlx::query_scalar::<_, Value>(
-        "SELECT payload FROM core.events WHERE payload->>'native_id' = 'n1'",
-    )
-    .fetch_one(&w.reads)
-    .await
-    .unwrap();
-    assert_eq!(stored, original);
-}
-
-#[devkit::test]
-async fn crossing_quoted_credentials_are_masked_in_queries_and_follow_but_not_storage(
-    db: devkit::pg::TestDatabase,
-) {
-    let w = world(db).await;
-    let req = HttpRequest::get("/v1/follow?query=events")
-        .header("authorization", format!("Bearer {READ}"))
-        .body(Body::empty())
-        .unwrap();
-    let response = w.app.clone().oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut stream = response.into_body();
-    let mut seen = String::new();
-    read_until(&mut stream, &mut seen, "event: notice").await;
-    let texts = [
-        "--secret=\"unfinished --token=\"synthetic-later-value\" tail-double",
-        "--secret='unfinished --token='synthetic-later-value' tail-single",
-    ];
-    admit(&w, &texts, 0).await;
-    for tail in ["tail-double", "tail-single"] {
-        read_until(&mut stream, &mut seen, tail).await;
-    }
-    assert!(!seen.contains("synthetic-later-value"), "{seen}");
-    assert_eq!(seen.matches("[credential: CLI secret, masked]").count(), 2);
-    let (status, body) = call(
-        &w,
-        Some(READ),
-        json!({"method": "query", "query": "events"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["outcome"], "ok", "{body}");
-    assert_eq!(body["result"]["total"], 2);
-    assert!(
-        !body.to_string().contains("synthetic-later-value"),
-        "{body}"
-    );
-    let stored = sqlx::query_scalar::<_, Value>("SELECT payload FROM core.events ORDER BY ts_orig")
-        .fetch_all(&w.reads)
-        .await
-        .unwrap();
-    assert_eq!(stored.len(), 2);
-    for (payload, text) in stored.iter().zip(texts) {
-        assert_eq!(payload["command"], text);
-    }
-}
-
-#[devkit::test]
-async fn queries_come_back_masked_with_the_data_notice(db: devkit::pg::TestDatabase) {
-    let w = world(db).await;
-    let secret = format!("ghp_{}", "b".repeat(36));
-    admit(
-        &w,
-        &[
-            "cargo test",
-            &format!("git clone https://x:{secret}@github.com/a/b"),
-        ],
-        0,
-    )
-    .await;
-    let (_, body) = call(
-        &w,
-        Some(READ),
-        json!({"method": "query", "query": "events sort when"}),
-    )
-    .await;
-    assert_eq!(body["outcome"], json!("ok"), "{body}");
-    let result = &body["result"];
-    assert_eq!(result["notice"], json!(DATA_NOTICE));
-    assert_eq!(result["total"], json!(2));
-    let text = result.to_string();
-    assert!(!text.contains(&secret), "{text}");
-    let (_, body) = call(
-        &w,
-        Some(READ),
-        json!({"method": "search", "words": "cargo"}),
-    )
-    .await;
-    assert_eq!(body["result"]["total"], json!(1), "{body}");
 }
 
 #[devkit::test]
@@ -573,6 +387,163 @@ async fn follow_streams_new_matching_events_once(db: devkit::pg::TestDatabase) {
     read_until(&mut body, &mut seen, "cargo build").await;
     assert!(!seen.contains("\"before\""));
     assert_eq!(seen.matches("cargo build").count(), 1);
+}
+
+#[devkit::test]
+async fn follow_notice_waits_for_the_initial_cursor(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["before"], 0).await;
+
+    // Leave exactly one known backend for the subscription's cursor query.
+    let mut connections = Vec::new();
+    for _ in 0..READ_CONNECTIONS {
+        connections.push(w.reads.acquire().await.unwrap());
+    }
+    let mut snapshot = connections.pop().unwrap();
+    let snapshot_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *snapshot)
+        .await
+        .unwrap();
+    let mut locker = connections.pop().unwrap();
+    let locker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *locker)
+        .await
+        .unwrap();
+    let mut monitor = connections.pop().unwrap();
+    let mut locked = sqlx::Connection::begin(&mut *locker).await.unwrap();
+    sqlx::query("LOCK TABLE core.counters IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *locked)
+        .await
+        .unwrap();
+    drop(snapshot);
+
+    let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
+        .header("authorization", format!("Bearer {READ}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = w.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT $1 = ANY(pg_blocking_pids($2))")
+                .bind(locker_pid)
+                .bind(snapshot_pid)
+                .fetch_one(&mut *monitor)
+                .await
+                .unwrap();
+            if blocked {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("subscription cursor did not reach the held counter lock");
+
+    let premature_notice = {
+        let frame = body.frame();
+        tokio::pin!(frame);
+        std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(std::future::Future::poll(frame.as_mut(), cx))
+        })
+        .await
+        .is_ready()
+    };
+    // Release owned database resources before reporting an ordering failure.
+    locked.rollback().await.unwrap();
+    drop((locker, monitor, connections));
+    assert!(
+        !premature_notice,
+        "follow notice preceded its initial cursor"
+    );
+
+    let mut seen = String::new();
+    read_until(&mut body, &mut seen, "event: notice").await;
+    admit(&w, &["cargo build", "ls"], 1).await;
+    read_until(&mut body, &mut seen, "cargo build").await;
+    assert!(!seen.contains("\"before\""));
+    assert_eq!(seen.matches("cargo build").count(), 1);
+    drop(body);
+    drop(w);
+}
+
+#[devkit::test]
+async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["before"], 0).await;
+    let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
+        .header("authorization", format!("Bearer {READ}"))
+        .body(Body::empty())
+        .unwrap();
+    let mut body = w.app.clone().oneshot(req).await.unwrap().into_body();
+    let mut seen = String::new();
+    read_until(&mut body, &mut seen, "event: notice").await;
+
+    let mut projection = w.reads.acquire().await.unwrap();
+    let mut projection_lock = sqlx::Connection::begin(&mut *projection).await.unwrap();
+    sqlx::query("LOCK TABLE core.search_text IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *projection_lock)
+        .await
+        .unwrap();
+    let mut positions = w.reads.acquire().await.unwrap();
+    let positions_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *positions)
+        .await
+        .unwrap();
+    let mut positions_lock = sqlx::Connection::begin(&mut *positions).await.unwrap();
+    sqlx::query("LOCK TABLE core.consumer_positions IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *positions_lock)
+        .await
+        .unwrap();
+    submit_events(&w, vec![command("cargo build", 1)]).await;
+    let mut monitor = w.reads.acquire().await.unwrap();
+    // The writer wake has been consumed when follow reaches its blocked
+    // materialization watermark query. The search maintainer is still held.
+    let follow_pid = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let pid: Option<i32> = sqlx::query_scalar(
+                "SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) LIMIT 1",
+            )
+            .bind(positions_pid)
+            .fetch_optional(&mut *monitor)
+            .await
+            .unwrap();
+            if let Some(pid) = pid {
+                break pid;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("follow did not inspect the delayed projection watermark");
+    positions_lock.rollback().await.unwrap();
+    drop(positions);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let idle: bool =
+                sqlx::query_scalar("SELECT state = 'idle' FROM pg_stat_activity WHERE pid = $1")
+                    .bind(follow_pid)
+                    .fetch_one(&mut *monitor)
+                    .await
+                    .unwrap();
+            if idle {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("follow did not finish inspecting the old projection watermark");
+    projection_lock.rollback().await.unwrap();
+    drop((projection, monitor));
+
+    // No second writer commit occurs: only durable read-model progress can wake it.
+    read_until(&mut body, &mut seen, "cargo build").await;
+    assert_eq!(seen.matches("cargo build").count(), 1);
+    assert!(!seen.contains("\"before\""));
+    drop(body);
+    drop(w);
 }
 
 #[devkit::test]
@@ -764,7 +735,7 @@ async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDataba
     assert_eq!(status, StatusCode::OK, "{body}");
     let text = body["result"]["text"].as_str().unwrap();
     assert!(
-        text.contains("## Data quality") && text.contains("days 04:00 Europe/Warsaw"),
+        text.contains("## Data quality") && text.contains("days 04:00:00 UTC"),
         "{text}"
     );
 

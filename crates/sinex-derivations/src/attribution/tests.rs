@@ -61,7 +61,7 @@ fn span(id: &str, scope: &str, acts: &[Event], start: i64, end: i64) -> Event {
     )
 }
 fn compute(events: &[Event], projects: Value) -> Vec<ProjectSpan> {
-    let env = Env::at(at(3600));
+    let env = Env::at(at(3600), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     ProjectSpans(AttributionProfile {
         projects: projects.as_array().unwrap().clone(),
     })
@@ -158,15 +158,24 @@ fn a_background_agent_at_the_same_time_never_takes_the_focused_span() {
 
 #[devkit::test]
 fn cited_delegated_context_does_not_establish_operator_ownership() {
-    let mut act = act("/a",Some("org/a")); act.payload["agency"] = json!("delegated");
-    let span = span("span","box",std::slice::from_ref(&act),0,600);
-    let output = compute(&[act,span],json!([{"project":"a","repositories":["org/a"]}]));
-    assert_eq!(output[0].reason,"unknown"); assert!(output[0].shares.is_empty());
+    let mut act = act("/a", Some("org/a"));
+    act.payload["agency"] = json!("delegated");
+    let span = span("span", "box", std::slice::from_ref(&act), 0, 600);
+    let output = compute(
+        &[act, span],
+        json!([{"project":"a","repositories":["org/a"]}]),
+    );
+    assert_eq!(output[0].reason, "unknown");
+    assert!(output[0].shares.is_empty());
 }
 
 #[devkit::test]
 fn a_malformed_effective_until_does_not_turn_a_historical_root_into_a_current_one() {
-    let act = act("/a",None); let span = span("span","box",std::slice::from_ref(&act),0,600);
-    let output = compute(&[act,span],json!([{"project":"a","roots":[{"path":"/a","from":at(-1),"until":"invalid"}]}]));
-    assert_eq!(output[0].reason,"unknown");
+    let act = act("/a", None);
+    let span = span("span", "box", std::slice::from_ref(&act), 0, 600);
+    let output = compute(
+        &[act, span],
+        json!([{"project":"a","roots":[{"path":"/a","from":at(-1),"until":"invalid"}]}]),
+    );
+    assert_eq!(output[0].reason, "unknown");
 }

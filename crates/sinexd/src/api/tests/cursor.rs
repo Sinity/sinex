@@ -151,21 +151,14 @@ async fn public_run_metadata_changes_invalidate_a_question_without_new_event_com
 
 #[devkit::test]
 async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::TestDatabase) {
-    use sinex_model::query::cursor as encoding;
     let w = world(db).await;
     admit(&w, &["one", "two"], 0).await;
     let page = first(&w, READ, "events sort when").await;
     let raw = page["result"]["page"]["cursor"].as_str().unwrap();
-    let value: Value = encoding::decode(raw).unwrap();
-    let mut tokens = vec!["1.1".to_owned(), "broken".to_owned()];
-    for (field, bad) in [
-        ("version", json!(0)),
-        ("offset", json!(u64::MAX)),
-        ("seq", json!(-1)),
-    ] {
-        let mut changed = value.clone();
-        changed[field] = bad;
-        tokens.push(encoding::encode(&changed).unwrap());
+    let mut tokens=vec!["1.1".to_owned(),"broken".to_owned()];
+    for index in [0,raw.len()/2,raw.len()-1] {
+        let mut bytes=raw.as_bytes().to_vec();bytes[index]=if bytes[index]==b'0'{b'1'}else{b'0'};
+        tokens.push(String::from_utf8(bytes).unwrap());
     }
     for token in tokens {
         let (_, answer) = call(

@@ -15,7 +15,7 @@
 //! the request's own JSON lines and read back by the request parser. The
 //! parser takes the author and time from the material's manifest, which the
 //! daemon fills from the authenticated caller, never from the lines.
-use serde_json::{Value, json};
+use serde_json::json;
 use sinex_model::Class;
 use sinex_source_core::registry::{Driver, SourceSpec};
 

@@ -61,6 +61,14 @@ RETURNS text LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   END
 $$"#;
 
+/// Stable authentication key for query continuations. This is independent of
+/// sealed payload keys and is never granted to the public SQL reader role.
+pub(crate) const QUERY_CURSOR_KEY: &str = "CREATE TABLE core.query_cursor_key (
+  id boolean PRIMARY KEY CHECK (id),
+  secret bytea NOT NULL CHECK (length(secret) = 32)
+)";
+pub(crate) const QUERY_CURSOR_KEY_INIT: &str = "INSERT INTO core.query_cursor_key (id, secret) VALUES (true, decode(replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''), 'hex'))";
+
 /// Coverage probes one source and run for its last recorded time.
 pub(crate) const COVERAGE_RUNS: &str =
     "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
@@ -84,7 +92,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   run_id uuid NOT NULL,
   material_id uuid,
   anchor bigint,
-  output_index smallint NOT NULL DEFAULT 0,
+  output_index bigint NOT NULL DEFAULT 0,
   parents uuid[],
   ts_orig timestamptz,
   ts_quality text NOT NULL {time_quality},
@@ -109,7 +117,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         record_state = c.record_state,
         class = c.class,
     );
-    vec![
+    let mut tables=vec![
+        crate::signals::CHECKPOINT.into(),
         ENCODE_EQUIVALENCE_KEY.into(),
         DECODE_EQUIVALENCE_KEY.into(),
         // Events. No foreign key points into a hypertable.
@@ -121,10 +130,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   material_id uuid NOT NULL,
   anchor bigint NOT NULL,
   event_type text NOT NULL,
-  output_index smallint NOT NULL,
+  output_index bigint NOT NULL,
   event_id uuid NOT NULL,
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
+  CONSTRAINT output_index_in_range CHECK (output_index >= 0),
   PRIMARY KEY (material_id, anchor, event_type, output_index)
 )".into(),
         // One live reading per equivalence key.
@@ -149,9 +159,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   equivalence_key text,
   material_id uuid,
   anchor bigint,
-  output_index smallint,
+  output_index bigint,
   operation_id uuid NOT NULL,
   hidden_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT output_index_in_range CHECK (output_index >= 0),
   CONSTRAINT keyed_or_located CHECK ((equivalence_key IS NOT NULL AND material_id IS NULL AND anchor IS NULL AND output_index IS NULL) OR (equivalence_key IS NULL AND material_id IS NOT NULL AND anchor IS NOT NULL AND output_index IS NOT NULL))
 )".into(),
         "CREATE UNIQUE INDEX hidden_by_key ON core.hidden_records (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL".into(),
@@ -163,7 +174,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   event_type text NOT NULL,
   ts_orig timestamptz,
   operation_id uuid NOT NULL,
-  removed_at timestamptz NOT NULL DEFAULT now()
+  removed_at timestamptz NOT NULL DEFAULT now(),
+  commit_seq bigint,
+  original_commit_seq bigint,
+  class text
 )".into(),
         // Replay runs one transaction per part sequence; a finished sequence is
         // recorded here, so a resumed replay skips it.
@@ -184,6 +198,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
         "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0), ('excised', 0)".into(),
+        QUERY_CURSOR_KEY.into(),
+        QUERY_CURSOR_KEY_INIT.into(),
+        crate::query_cursors::INIT.into(),
         SOURCE_COUNTS.into(),
         EXCISED_MATERIALS.into(),
         EXCISED_MATERIALS_BLOB.into(),
@@ -213,6 +230,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   refusal text,
   commit_seq bigint,
   received_at timestamptz NOT NULL DEFAULT now(),
+  family text,
+  write_kind_prefixes text[],
   PRIMARY KEY (producer, frame)
 )".into(),
         // The archive is logical: archived rows stay in core.events. This is
@@ -241,13 +260,19 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   CHECK (archived = (reason <> 'unhide'))
 )", archive_change_reason = c.archive_change_reason),
         "CREATE INDEX archive_changes_position ON audit.archive_changes (event_id, commit_seq DESC)".into(),
+        "CREATE INDEX events_feed ON core.events (commit_seq,id)".into(),
+        "CREATE INDEX archive_changes_feed ON audit.archive_changes (commit_seq,change_seq,event_id)".into(),
+        "CREATE INDEX tombstones_feed ON core.event_tombstones (commit_seq,event_id)".into(),
+        "CREATE INDEX tombstones_original_position ON core.event_tombstones (original_commit_seq)".into(),
+        PRODUCER_ORDERS.into(),
+        BLOB_SEGMENTS.into(),
+        BLOB_EXTENTS.into(),
         "CREATE TABLE core.blobs (
   hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),
   size bigint NOT NULL CHECK (size >= 0),
-  -- The file is written before the admission that inserts this row.
-  -- `deleting`: an excision left the bytes unreferenced; the writer deletes
-  -- the file under this row's lock, then the row, after commit or when the
-  -- daemon starts. The writer admits no row whose file is missing.
+  -- Segment extents are synced before this row and its citations commit.
+  -- `deleting` records an excision before its extents are punched; ordinary
+  -- writer startup finishes that work before admitting new references.
   status text NOT NULL CHECK (status IN ('present', 'deleting')),
   registered_at timestamptz NOT NULL DEFAULT now()
 )".into(),
@@ -382,7 +407,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE registry.derivations (
   name text PRIMARY KEY,
   kind text NOT NULL CHECK (kind IN ('per_event', 'keyed')),
-  version integer NOT NULL,
+  version bigint NOT NULL,
+  build text NOT NULL DEFAULT '',
   inputs text[] NOT NULL,
   outputs text[] NOT NULL
 )".into(),
@@ -419,7 +445,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE derivation.comparisons (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   derivation text NOT NULL,
-  version integer NOT NULL,
+  version bigint NOT NULL,
   range_from timestamptz,
   range_until timestamptz,
   made_at timestamptz NOT NULL DEFAULT now(),
@@ -428,7 +454,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   added bigint NOT NULL,
   changed bigint NOT NULL,
   removed bigint NOT NULL,
-  examples jsonb NOT NULL
+  examples jsonb NOT NULL,
+  context jsonb NOT NULL DEFAULT '{}'::jsonb
 )".into(),
         // Privacy rules: insert-only. A change is a new row with the same name;
         // a removal is a row with `ended`. The newest row per name is in force;
@@ -487,13 +514,13 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.
         format!("CREATE UNLOGGED TABLE core.admission_stage (
-  ord integer PRIMARY KEY,
+  ord bigint PRIMARY KEY CHECK (ord >= 0),
   id uuid NOT NULL,
   event_type text NOT NULL,
   source text NOT NULL,
   material_id uuid,
   anchor bigint,
-  output_index smallint NOT NULL,
+  output_index bigint NOT NULL CHECK (output_index >= 0),
   parents uuid[],
   ts_orig timestamptz,
   ts_quality text NOT NULL,
@@ -506,7 +533,16 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   class text NOT NULL,
   {kind_columns}
 )", kind_columns = kind_columns),
-    ]
+    ];
+    for statement in &mut tables {
+        crate::source_declarations::fresh(statement);
+    }
+    tables.push(crate::source_declarations::TABLE.into());
+    tables.extend(crate::model_calls::tables());
+    tables.extend(crate::vectors::tables());
+    tables.extend(crate::privacy_epoch::tables());
+    tables.extend(crate::owner_protocol::statements());
+    tables
 }
 
 /// Hypertables, indexes and guards. Events are partitioned by `id` (UUIDv7, so
@@ -514,6 +550,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 /// `ts_orig` can be unknown and historical imports put old times in new chunks.
 pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
+    out.extend(crate::query_cursors::triggers());
+    out.extend(crate::privacy_epoch::hooks());
+    out.extend(crate::source_declarations::hooks());
     for table in ["core.events"] {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",
@@ -613,7 +652,8 @@ fn kind_columns() -> String {
 pub(crate) const PUBLISHED: &str = "CREATE TABLE core.published (
   event_id uuid NOT NULL,
   stream_seq bigint NOT NULL,
-  CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq)
+  stream_instance text NOT NULL DEFAULT '',
+  CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq, stream_instance)
 )";
 
 /// Blob-only admissions also need a position when pairing a store with a restored database.
@@ -631,3 +671,22 @@ END $$"
             .into(),
     ]
 }
+
+pub(crate) const BLOB_SEGMENTS: &str = "CREATE TABLE core.blob_segments (
+  segment text PRIMARY KEY,
+  committed_end bigint NOT NULL CHECK (committed_end >= 0)
+)";
+pub(crate) const BLOB_EXTENTS: &str = "CREATE TABLE core.blob_extents (
+  hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),
+  descriptor bytea NOT NULL,
+  deleting boolean NOT NULL DEFAULT false
+)";
+
+/// Writer-owned order counters retain digests rather than source record keys.
+pub(crate) const PRODUCER_ORDERS: &str = "CREATE TABLE core.producer_orders (
+  source text NOT NULL,
+  event_type text NOT NULL,
+  key_hash bytea NOT NULL CHECK (octet_length(key_hash) = 32),
+  reading_order bigint NOT NULL,
+  PRIMARY KEY (source, event_type, key_hash)
+)";

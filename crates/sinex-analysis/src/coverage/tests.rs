@@ -1,44 +1,45 @@
 use super::*;
+use sinex_model::Timestamp;
 
 #[devkit::test]
-fn a_polled_source_is_covered_until_it_was_last_read() {
-    let e = CoverageEvidence {
-        records: Some(Span::new(100, 500)),
-        last_read: Some(900),
-        runs: vec![],
-    };
-    let o = coverage("atuin", CaptureMode::Polled, Completeness::Complete, &e);
-    assert_eq!(o[0].span, Span::new(100, 900));
-    let ex = coverage("spotify", CaptureMode::Export, Completeness::Complete, &e);
-    assert_eq!(ex[0].span, Span::new(100, 501));
-    let live = CoverageEvidence {
-        runs: vec![Span::new(10, 20), Span::new(30, 40)],
-        ..Default::default()
+fn access_failure_and_unknown_temporal_bounds_never_supply_observed_coverage() {
+    let mut row = SourceCoverage {
+        observed_run: None,
+        observed_class: None,
+        observation: "synthetic".into(),
+        observed_source: "synthetic".into(),
+        binding: "synthetic".into(),
+        host: "synthetic".into(),
+        started_at: Timestamp::from_unix_secs(100).unwrap(),
+        ended_at: Timestamp::from_unix_secs(200).unwrap(),
+        state: CoverageState::RecordedUnknownCoverage,
+        reason: None,
+        completeness: CoverageCompleteness::Complete,
+        bounded_by: "successful access".into(),
+        events: 0,
+        failures: 0,
     };
     assert_eq!(
-        coverage("journald", CaptureMode::Live, Completeness::Complete, &live).len(),
-        2
+        from_observation(&row).unwrap().completeness,
+        Completeness::Unknown
     );
-    assert!(
-        coverage(
-            "x",
-            CaptureMode::Polled,
-            Completeness::Sample,
-            &CoverageEvidence::default()
-        )
-        .is_empty()
+    row.state = CoverageState::Missing;
+    assert!(from_observation(&row).is_none());
+    row.state = CoverageState::Observed;
+    assert_eq!(
+        from_observation(&row).unwrap().span,
+        Span::new(100_000_000, 200_000_000)
+    );
+    assert_eq!(
+        from_observation(&row).unwrap().completeness,
+        Completeness::Complete
     );
 }
 
 #[devkit::test]
-fn every_source_a_metric_names_declares_what_it_sees() {
-    for m in sinex_derivations::figures::METRICS {
-        for s in m.sources {
-            assert_ne!(
-                completeness(s),
-                Completeness::Unknown,
-                "{s} has no declared completeness"
-            );
-        }
-    }
+fn rounded_display_preserves_partial_coverage_at_both_ends() {
+    assert_eq!(percent_label(0.000001),">0%");
+    assert_eq!(percent_label(0.999999),"<100%");
+    assert_eq!(percent_label(0.0),"0%");
+    assert_eq!(percent_label(1.0),"100%");
 }

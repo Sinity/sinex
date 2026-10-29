@@ -3,7 +3,7 @@
 //! day starts (04:00 by default), so 01:30 belongs to the day before.
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::TimeZone;
-use jiff::{Timestamp, ToSpan, Zoned};
+use jiff::{Timestamp, Zoned};
 
 #[derive(Clone, Debug)]
 pub struct Context {
@@ -23,67 +23,52 @@ impl Context {
         }
     }
 
-    /// UTC, logical days from 04:00. For tests and callers without a zone.
+    /// An explicit UTC clock with logical days from 04:00.
     pub fn utc(now: Timestamp) -> Self {
-        Self::new(now, TimeZone::UTC, Time::constant(4, 0, 0, 0))
+        Self::new(now, TimeZone::get("UTC").expect("UTC zone"), Time::constant(4, 0, 0, 0))
     }
 
-    /// The zone's IANA name, or `UTC` for a fixed zone without one.
     pub fn zone_name(&self) -> String {
-        self.zone.iana_name().unwrap_or("UTC").to_string()
+        self.zone.iana_name().expect("validated named query zone").to_string()
     }
 
-    /// The logical day an instant falls on.
+    /// Explicit clock passed to the shared resolver; no zone database lookup.
+    pub fn clock(&self) -> Result<query_language::time::Clock, super::QueryError> {
+        let day = query_language::time::DaySetting::new(self.zone.clone(), self.day_start)
+            .map_err(super::syntax::error)?;
+        Ok(query_language::time::Clock::new(self.now, day))
+    }
+
     pub fn logical_date(&self, at: Timestamp) -> Date {
-        let local = at.to_zoned(self.zone.clone()).datetime();
-        if local.time() < self.day_start {
-            local.date().yesterday().unwrap_or(local.date())
-        } else {
-            local.date()
-        }
+        self.clock().expect("validated query clock").day.logical_day(at)
+            .expect("logical date is in the supported calendar")
     }
-
-    /// Where a local wall-clock time falls. A time skipped or repeated by a
-    /// change of offset resolves the way the zone's rules say (compatible).
     pub fn local(&self, at: DateTime) -> Option<Timestamp> {
-        self.zone
-            .to_ambiguous_zoned(at)
-            .compatible()
-            .ok()
-            .map(|z| z.timestamp())
+        self.clock().ok()?.day.local(at).ok().map(|r| r.instant)
     }
-
-    /// `[start, end)` of a logical day.
     pub fn day(&self, date: Date) -> Option<(Timestamp, Timestamp)> {
-        let start = self.local(date.to_datetime(self.day_start))?;
-        let end = self.local(date.tomorrow().ok()?.to_datetime(self.day_start))?;
-        Some((start, end))
+        let r = self.clock().ok()?.day.day(date).ok()?;
+        Some((r.start, r.end))
     }
-
-    /// `[start, end)` of logical days `from ..= to`.
     pub fn days(&self, from: Date, to: Date) -> Option<(Timestamp, Timestamp)> {
-        Some((self.day(from)?.0, self.day(to)?.1))
+        let r = self.clock().ok()?.day.days(from, to).ok()?;
+        Some((r.start, r.end))
     }
-
-    pub fn today(&self) -> Date {
-        self.logical_date(self.now)
-    }
-
-    /// The logical week (Monday first) containing `date`.
+    pub fn today(&self) -> Date { self.logical_date(self.now) }
     pub fn week_of(&self, date: Date) -> Option<(Timestamp, Timestamp)> {
-        let monday = date
-            .checked_sub((date.weekday().to_monday_zero_offset() as i64).days())
-            .ok()?;
-        self.days(monday, monday.checked_add(6.days()).ok()?)
+        let at = self.day(date)?.0;
+        let mut clock = self.clock().ok()?;
+        clock.now = at;
+        let r = query_language::time::resolve("this week", &clock).ok()?.value.range()?;
+        Some((r.start, r.end))
     }
-
     pub fn month_of(&self, year: i16, month: i8) -> Option<(Timestamp, Timestamp)> {
-        let first = Date::new(year, month, 1).ok()?;
-        self.days(first, first.last_of_month())
+        let r = query_language::time::resolve(&format!("{year:04}-{month:02}"), &self.clock().ok()?).ok()?.value.range()?;
+        Some((r.start, r.end))
     }
-
     pub fn year_of(&self, year: i16) -> Option<(Timestamp, Timestamp)> {
-        self.days(Date::new(year, 1, 1).ok()?, Date::new(year, 12, 31).ok()?)
+        let r = query_language::time::resolve(&format!("{year:04}"), &self.clock().ok()?).ok()?.value.range()?;
+        Some((r.start, r.end))
     }
 
     pub fn zoned(&self, at: Timestamp) -> Zoned {
@@ -93,20 +78,7 @@ impl Context {
 
 /// `30s`, `5m`, `2h`, `3d`, `2w`, in seconds.
 pub fn duration(word: &str) -> Option<f64> {
-    let split = word.find(|c: char| !c.is_ascii_digit())?;
-    let (digits, unit) = word.split_at(split);
-    let n: f64 = digits.parse().ok()?;
-    let scale = match unit {
-        "s" => 1.0,
-        "m" => 60.0,
-        "h" => 3600.0,
-        "d" => 86_400.0,
-        "w" => 604_800.0,
-        _ => return None,
-    };
-    let seconds = n * scale;
-    jiff::SignedDuration::try_from_secs_f64(seconds).ok()?;
-    Some(seconds)
+    query_language::time::duration(word).map(|value| value.as_secs_f64())
 }
 
 pub fn date(word: &str) -> Option<Date> {
@@ -148,30 +120,7 @@ pub fn clock(word: &str) -> Option<Time> {
 
 /// An instant: RFC 3339 with an offset, or a local `2026-03-02T14:05[:30]`.
 pub fn instant(ctx: &Context, word: &str) -> Option<Timestamp> {
-    if let Ok(ts) = word.parse::<Timestamp>() {
-        return Some(ts);
-    }
-    match word {
-        "now" => return Some(ctx.now),
-        "today" => return ctx.day(ctx.today()).map(|r| r.0),
-        "yesterday" => {
-            return ctx
-                .today()
-                .yesterday()
-                .ok()
-                .and_then(|d| ctx.day(d))
-                .map(|r| r.0);
-        }
-        _ => {}
-    }
-    if let Some(date) = date(word) {
-        return ctx.day(date).map(|r| r.0);
-    }
-    if let Some(clock) = clock(word) {
-        return ctx.local(ctx.zoned(ctx.now).date().to_datetime(clock));
-    }
-    let (d, t) = word.split_once('T')?;
-    ctx.local(date(d)?.to_datetime(clock(t)?))
+    query_language::time::resolve(word, &ctx.clock().ok()?).ok().map(|r| r.value.start())
 }
 
 #[cfg(test)]

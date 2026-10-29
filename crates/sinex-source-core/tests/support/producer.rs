@@ -190,6 +190,7 @@ pub(crate) async fn refusing(
                     .and_then(|receipt| receipt.number)
                     .unwrap_or(rows.len() as i64 + 1)
             };
+            let content_hash = sinex_transport::producer::content_hash(&frame).unwrap();
             let ack = Acknowledgment {
                 number: Some(number),
                 material_extents: vec![],
@@ -201,9 +202,9 @@ pub(crate) async fn refusing(
                 material,
                 admitted,
                 outcome: if refusal.is_some() {
-                    json!({"refusal_kind": if matches!(frame, Ingress::Chunk { .. }) { FrameRefusal::Bytes } else { refusal_kind }, "failures": 1})
+                    json!({"refusal_kind": if matches!(frame, Ingress::Chunk { .. }) { FrameRefusal::Bytes } else { refusal_kind }, "failures": 1, "frame_content_hash": content_hash})
                 } else {
-                    json!({})
+                    json!({"frame_content_hash": content_hash})
                 },
                 refusal,
                 commit_seq,

@@ -5,16 +5,27 @@
 //! field names; times are UTC.
 mod compile;
 mod cursor;
+pub mod continuation;
 mod fields;
+mod follow;
 mod recall;
+mod selected;
+pub mod signals;
+mod saved;
+mod products;
+pub use products::{current_grants, key_dirty, live_payload,event_payload};
+pub use saved::{saved_records, saved_definitions};
+pub use selected::{SelectedAnswer, resolve_recall, selected_query, selected_query_in_snapshot, check_selected_question, selected_page};
 mod source_views;
-mod sql;
+pub(crate) mod sql;
 mod walk;
 
 pub mod read_sql;
 
 use crate::{Error, Result};
-use compile::{Compiled, Compiler};
+use compile::Compiled;
+use compile::calendar::compile as compile_query;
+pub use compile::calendar::initialize as initialize_calendar;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use sinex_model::query::{
@@ -24,6 +35,7 @@ use sql::SqlFragment;
 use sqlx::{Connection, PgConnection};
 
 pub use cursor::context_for_page;
+pub use follow::{follow_position, follow_query};
 pub use walk::{resolve, show};
 
 /// Which page of an answer to return.
@@ -108,8 +120,25 @@ pub async fn run(
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
+    run_inner(conn, text, query, ctx, page, None, false, false)
+        .await
+        .map(|selected| selected.answer)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_inner(
+    conn: &mut PgConnection,
+    text: &str,
+    query: Option<&Query>,
+    ctx: &Context,
+    page: &Page,
+    retained: Option<&sinex_model::event_types::analysis::QuerySelection>,
+    capture_selection: bool,
+    in_snapshot: bool,
+) -> Result<selected::SelectedPage> {
+    if !in_snapshot {initialize_calendar(conn).await?;}
     let mut tx = conn.begin().await?;
-    read_one_snapshot(&mut tx).await?;
+    if !in_snapshot { read_one_snapshot(&mut tx).await?; }
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
         .execute(&mut *tx)
         .await?;
@@ -117,12 +146,13 @@ pub async fn run(
     if size > i64::MAX as u64 {
         return Err(Error::Invalid("page size is out of range".into()));
     }
-    let mut ctx = context_for_page(ctx, page)?;
-    let pinned = page
-        .cursor
-        .as_deref()
-        .map(cursor::Cursor::decode)
-        .transpose()?;
+    let mut ctx=ctx.clone();
+    if ctx.catalog.is_none() {ctx.catalog=Some(sinex_model::query::QueryCatalog::new(sinex_schema::kinds::all(&mut tx).await?.into_values()));}
+    let grants=current_grants(&mut tx).await?;
+    let question_id=continuation::identity("query",&continuation::query_identity(text,&ctx)?,&grants)?;
+    let seal=continuation::seal_key(&mut tx).await?;
+    let pinned=page.cursor.as_deref().map(|raw|cursor::Cursor::decode(&seal,raw,question_id,&ctx)).transpose()?;
+    if let Some(pinned)=&pinned {ctx.now=pinned.ctx.now;}
     let declarations = match &pinned {
         Some(cursor) => {
             let refs: Vec<_> = cursor.declarations.iter().map(|d| d.0.clone()).collect();
@@ -138,14 +168,46 @@ pub async fn run(
             }
             declarations
         }
+        None if retained.is_some() => {
+            let expected: Vec<(sinex_model::KindRef, String)> =
+                serde_json::from_value(retained.expect("retained context").declarations.clone())
+                    .map_err(|error| Error::Invalid(error.to_string()))?;
+            let refs: Vec<_> = expected
+                .iter()
+                .map(|(reference, _)| reference.clone())
+                .collect();
+            let declarations = sinex_schema::kinds::load(&mut tx, &refs).await?;
+            if expected.iter().any(|(reference, hash)| {
+                declarations
+                    .get(reference)
+                    .is_none_or(|declaration| declaration.definition_hash() != *hash)
+            }) {
+                return Err(Error::Invalid(
+                    "query declaration snapshot is unavailable".into(),
+                ));
+            }
+            declarations
+        }
         None => sinex_schema::kinds::all(&mut tx).await?,
     };
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
         declarations.into_values(),
     ));
+    let programmatic=query.and_then(|q|{
+        let parsed=sinex_model::query::bind(text,&ctx).ok();
+        (parsed.as_ref()!=Some(q)).then(||format!("{q:?}"))
+    });
+    let mut saved_context = None;
     let mut bound = match query {
         Some(query) => query.clone(),
-        None => sinex_model::query::bind(text, &ctx)?,
+        None => if let Some(name) = sinex_model::query::saved::reference_name(text) {
+            let definitions = if let Some(snapshot) = retained.and_then(|retained| retained.selected.get("_saved")) {
+                serde_json::from_value(snapshot.clone()).map_err(|error| Error::Invalid(error.to_string()))?
+            } else { saved::saved_definitions(&mut tx,&name).await? };
+            let bound = sinex_model::query::saved::bind_saved(text,&ctx,&definitions)?;
+            saved_context = Some(definitions);
+            bound
+        } else {sinex_model::query::bind(text,&ctx)?},
     };
     ctx.catalog
         .as_ref()
@@ -159,24 +221,12 @@ pub async fn run(
     .fetch_one(&mut *tx)
     .await?;
     let scope = (scope.user, scope.grants);
-    let question = cursor::question(text, query, &ctx, &scope)?;
+    let question = cursor::question(text,programmatic,saved_context.as_ref(),&ctx,&scope)?;
     let current = current_seq(&mut tx).await?;
-    let prior = page
-        .cursor
-        .as_deref()
-        .map(cursor::Cursor::decode)
-        .transpose()?;
-    let (mut seq, offset) = match &prior {
-        Some(cursor) => {
-            cursor.check_question(&question)?;
-            if cursor.seq > current {
-                return Err(Error::Invalid(
-                    "query cursor is ahead of the archive".into(),
-                ));
-            }
-            (cursor.seq, cursor.offset)
-        }
-        None => (current, 0),
+    let prior=pinned;
+    let mut seq=match &prior {
+        Some(cursor)=>{cursor.check_question(&question)?;if cursor.seq>current {return Err(Error::Invalid("query cursor is ahead of the archive".into()));}cursor.seq},
+        None=>current,
     };
     if page.cursor.is_none() {
         for stage in &query.stages {
@@ -187,11 +237,17 @@ pub async fn run(
             }
         }
     }
+    if page.cursor.is_none()
+        && let Some(position) = retained.and_then(|retained| retained.read_as)
+    {
+        seq = position;
+    }
     if seq < 0 || seq > current {
         return Err(Error::Invalid(
             "as-of position is outside the known archive".into(),
         ));
     }
+    if let Some(reference)=query.similar_reference()? {crate::vectors::validate_reference(&mut tx,reference,seq).await?;}
     if matches!(query.source, Source::Walk { .. })
         && (query.filter.is_some() || !query.stages.is_empty())
     {
@@ -199,13 +255,16 @@ pub async fn run(
             "provenance walks do not support query stages; use a separate event query".into(),
         ));
     }
-    let read = ReadPage {
+    let availability=availability(&mut tx,query).await?;
+    let mut read = ReadPage {
         question,
         ctx,
         seq,
-        offset,
         size,
         prior,
+        seal,
+        question_id,
+        availability,
     };
     let table = match &query.source {
         Source::Table { alias: Some(a), .. } => a.name.to_string(),
@@ -215,9 +274,14 @@ pub async fn run(
             "recall".to_string()
         }
     };
+    let mut captured = None;
+    let mut selected_parents = Vec::new();
+    let mut selected_class = sinex_model::Class::Open;
     let mut answer = match &query.source {
         Source::Walk { walk, reference } => {
             let rows = walk::walk(&mut tx, *walk, reference).await?;
+            read.availability["graph"]=serde_json::json!(cursor::digest(&serde_json::json!(rows))?);
+            read.check_availability()?;
             let total = rows.len() as i64;
             let columns = rows
                 .first()
@@ -225,239 +289,158 @@ pub async fn run(
                 .map(|o| o.keys().cloned().collect())
                 .unwrap_or_default();
             let reading = read_as(query);
-            let mut hash = blake3::Hasher::new();
-            for (output_index, row) in rows.iter().enumerate() {
-                let bytes = serde_json::to_vec(row)
-                    .map_err(|_| Error::Invalid("query row cannot be encoded".into()))?;
-                hash.update(&(output_index as u64).to_le_bytes());
-                hash.update(&(bytes.len() as u64).to_le_bytes());
-                hash.update(&bytes);
+            use continuation::{Position,Direction,compare_positions};
+            let position=|row:&Json|Position {values:vec![row["depth"].clone(),if matches!(query.source,Source::Walk{walk:sinex_model::query::Walk::Trace,..}){Json::Null}else{row["when"].clone()}],row_identity:row["id"].as_str().unwrap_or("").to_owned()};
+            let directions=[Direction::Ascending,Direction::Ascending];
+            let mut chosen=Vec::new();let mut more=false;
+            for row in rows {
+                if let Some(prior)=&read.prior && !compare_positions(&position(&row),&prior.after,&directions).map_err(|e|Error::Invalid(e.to_string()))?.is_gt(){continue;}
+                if chosen.len() as u64==read.size {more=true;break;}chosen.push(row);
             }
-            let view = cursor::digest(&serde_json::json!([
-                table,
-                reading,
-                columns,
-                total,
-                hash.finalize().to_hex().to_string()
-            ]))?;
-            read.check_view(&view)?;
-            let start = (read.offset as usize).min(rows.len());
-            let end = start
-                .saturating_add(usize::try_from(read.size).unwrap_or(usize::MAX))
-                .min(rows.len());
-            Answer {
-                table,
-                query: text.to_string(),
-                read_as: read_as(query),
-                resolved: read.resolved(),
-                columns,
-                rows: rows[start..end].to_vec(),
-                total,
-                page: read.info(&view, total, end - start)?,
-                recall: None,
-            }
+            let last=chosen.last().map(|row|(position(row),vec!["numeric".into(),"timestamp with time zone".into()]));
+            Answer{table,query:text.into(),read_as:reading,resolved:read.resolved(),columns,total,page:read.info(total,more,last)?,rows:chosen,recall:None}
         }
         Source::Table { .. } => {
+            read.check_availability()?;
             let rendered = render_page(
-                Compiler::new(&read.ctx, read.seq).compile(query)?,
-                read.offset,
-                read.size,
-                read.prior.is_none(),
-            );
+                compile_query(&mut tx,&read.ctx,read.seq,query).await?,
+                &read,
+            )?;
             page_of(&mut tx, rendered, table, text, query, &read, None).await?
         }
         Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. } => {
-            let selection = recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?;
+            read.check_availability()?;
+            let selection = match retained {
+                Some(retained) => recall::retained(&mut tx, retained, &read.ctx, read.seq).await?,
+                None => recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?,
+            };
             let as_events = Query {
                 source: Source::Table {
                     table: Table::Events,
                     alias: None,
                 },
-                filter: Some(selection.filter()),
+                filter: Some(Expr::And(
+                    Box::new(selection.filter()),
+                    Box::new(recall::input_filter()),
+                )),
                 stages: query.stages.clone(),
                 ranked: query.ranked,
             };
             let rendered = render_page(
-                Compiler::new(&read.ctx, read.seq).compile(&as_events)?,
-                read.offset,
-                read.size,
-                read.prior.is_none(),
-            );
+                compile_query(&mut tx,&read.ctx,read.seq,&as_events).await?,
+                &read,
+            )?;
             let account = selection
                 .account(&mut tx, read.seq, &as_events, &read.ctx)
                 .await?;
+            if capture_selection {
+                let (context, parents, class) = selected::capture(
+                    &mut tx, text, query, &read.ctx, read.seq, &scope.1, &selection, &as_events, &account,
+                )
+                .await?;
+                let mut context = context;
+                if let Some(definitions) = &saved_context { context.selected["_saved"] = serde_json::to_value(definitions).map_err(|error| Error::Invalid(error.to_string()))?; }
+                captured = Some(context);
+                selected_parents = parents;
+                selected_class = class;
+            }
             page_of(&mut tx, rendered, table, text, query, &read, Some(account)).await?
         }
     };
     answer.read_as = read_as(query);
     tx.commit().await?;
-    Ok(answer)
-}
-
-/// The validated clock and position shared by every answer shape in this read.
-struct ReadPage {
-    question: String,
-    ctx: Context,
-    seq: i64,
-    offset: u64,
-    size: u64,
-    prior: Option<cursor::Cursor>,
-}
-
-impl ReadPage {
-    fn resolved(&self) -> Resolved {
-        Resolved {
-            now: self.ctx.now.to_string(),
-            zone: self.ctx.zone_name(),
-            day_start: self.ctx.day_start.to_string(),
-            commit_seq: self.seq,
-        }
-    }
-
-    fn check_view(&self, view: &str) -> Result<()> {
-        match &self.prior {
-            Some(cursor) => cursor.check_view(view),
-            None => Ok(()),
-        }
-    }
-
-    fn info(&self, view: &str, total: i64, returned: usize) -> Result<PageInfo> {
-        let next = self
-            .offset
-            .checked_add(returned as u64)
-            .ok_or_else(|| Error::Invalid("query page offset is out of range".into()))?;
-        let cursor = if next < total.max(0) as u64 {
-            if returned == 0 {
-                return Err(Error::Invalid("query page did not advance".into()));
-            }
-            Some(cursor::Cursor::encode(
-                &self.question,
-                &self.ctx,
-                self.seq,
-                next,
-                total,
-                view,
-            )?)
-        } else {
-            None
-        };
-        Ok(PageInfo {
-            size: self.size,
-            cursor,
-        })
-    }
-}
-
-/// The statements of one page, rendered before anything is awaited. Each
-/// reads the numbered answer only as far as this page: PostgreSQL stops
-/// numbering rows once `_n` passes the bound, so a page costs the rows up to
-/// its end, never the whole answer. Only the first page counts the answer.
-struct Rendered {
-    /// The answer's size, when asked to count it (on a first page).
-    total: Option<(String, Vec<sql::Param>)>,
-    /// Hashes of the rows handed out before this page and of those up to its
-    /// end, and their counts.
-    seen: (String, Vec<sql::Param>),
-    rows: (String, Vec<sql::Param>),
-    columns: Vec<String>,
-}
-
-fn render_page(compiled: Compiled, offset: u64, size: u64, count: bool) -> Rendered {
-    let object = json_object(&compiled.columns);
-    let end = offset.saturating_add(size).min(i64::MAX as u64) as i64;
-    let total = count.then(|| compiled.count.render());
-    // Ordinary change detection, never an access or integrity check. Two seeded
-    // row hashes; including _n avoids XOR cancellation when projected rows
-    // happen to be equal.
-    let row = format!("q.\"_n\"::text || ':' || ({object})::text");
-    let hash = |seed: u64| format!("hashtextextended(({row}) COLLATE \"C\", {seed})");
-    let mut seen = SqlFragment::text(format!(
-        "SELECT jsonb_build_array(\
-         coalesce(bit_xor({h0}) FILTER (WHERE q.\"_n\" <= {offset}), 0), \
-         coalesce(bit_xor({h1}) FILTER (WHERE q.\"_n\" <= {offset}), 0), \
-         count(*) FILTER (WHERE q.\"_n\" <= {offset}), \
-         coalesce(bit_xor({h0}), 0), coalesce(bit_xor({h1}), 0), count(*)) FROM (",
-        h0 = hash(0),
-        h1 = hash(982_451_653),
-        offset = offset as i64,
-    ));
-    seen.append(compiled.answer.clone())
-        .push(") q WHERE q.\"_n\" <= ")
-        .param(sea_query::Value::BigInt(Some(end)));
-    let mut rows = SqlFragment::text(format!("SELECT {object} FROM ("));
-    rows.append(compiled.answer)
-        .push(") q WHERE q.\"_n\" > ")
-        .param(sea_query::Value::BigInt(Some(offset as i64)))
-        .push(" AND q.\"_n\" <= ")
-        .param(sea_query::Value::BigInt(Some(end)))
-        .push(" ORDER BY q.\"_n\"");
-    Rendered {
-        total,
-        seen: seen.render(),
-        rows: rows.render(),
-        columns: compiled.columns,
-    }
-}
-
-async fn page_of(
-    tx: &mut PgConnection,
-    rendered: Rendered,
-    table: String,
-    text: &str,
-    query: &Query,
-    read: &ReadPage,
-    recall: Option<Json>,
-) -> Result<Answer> {
-    let total = match (rendered.total, &read.prior) {
-        (Some((sql_text, values)), _) => {
-            sql::bind_scalar(sqlx::query_scalar::<_, i64>(&sql_text), values)
-                .fetch_one(&mut *tx)
-                .await?
-        }
-        (None, Some(cursor)) => cursor.total,
-        (None, None) => unreachable!("a first page is rendered with its count"),
-    };
-    let (sql_text, values) = rendered.seen;
-    let sqlx::types::Json((before_0, before_1, before, upto_0, upto_1, upto)): sqlx::types::Json<
-        (i64, i64, i64, i64, i64, i64),
-    > = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
-        .fetch_one(&mut *tx)
-        .await?;
-    let view = |count: i64, first: i64, second: i64| {
-        cursor::digest(&serde_json::json!([
-            table,
-            read_as(query),
-            rendered.columns,
-            count,
-            first,
-            second,
-            recall
-        ]))
-    };
-    if before != read.offset as i64 {
-        return Err(Error::StaleCursor);
-    }
-    read.check_view(&view(before, before_0, before_1)?)?;
-    let (sql_text, values) = rendered.rows;
-    let rows: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
-        .fetch_all(&mut *tx)
-        .await?;
-    // The answer shrank past the rows already handed out.
-    if rows.is_empty() && read.prior.is_some() {
-        return Err(Error::StaleCursor);
-    }
-    let page = read.info(&view(upto, upto_0, upto_1)?, total, rows.len())?;
-    Ok(Answer {
-        table,
-        query: text.to_string(),
-        read_as: read_as(query),
-        resolved: read.resolved(),
-        columns: rendered.columns,
-        rows,
-        total,
-        page,
-        recall,
+    Ok(selected::SelectedPage {
+        answer,
+        selection: captured,
+        parents: selected_parents,
+        class: selected_class,
     })
+}
+
+/// Current policies can make an otherwise reconstructable read unavailable.
+/// Mutable metadata has one atomic write epoch; event rows use their commit
+/// position and only privacy/excision changes invalidate their continuations.
+async fn availability(conn:&mut PgConnection,query:&Query)->Result<Json> {
+    let mut policy:Json=sqlx::query_scalar("SELECT jsonb_build_object('policy_epoch',privacy.require_active_epoch(),'privacy_outputs',coalesce((SELECT value FROM core.counters WHERE name='privacy_outputs'),0),'rules',coalesce((SELECT max(seq) FROM privacy.rules),0),'floors',coalesce((SELECT max(seq) FROM privacy.source_classes),0),'excised',coalesce((SELECT value FROM core.counters WHERE name='excised'),0))").fetch_one(&mut *conn).await?;
+    if matches!(query.source,Source::Table{table,..} if !table.is_events()) {
+        let metadata:Json=sqlx::query_scalar("SELECT jsonb_build_object('epoch',(SELECT value FROM core.counters WHERE name='query_metadata'),'head',(SELECT value FROM core.counters WHERE name='commit_seq'))").fetch_one(conn).await?;
+        policy["metadata"]=metadata;
+    }
+    Ok(policy)
+}
+
+/// One authenticated question and immutable read position.
+struct ReadPage {
+    question:String,question_id:query_language::identity::QuestionId,
+    seal:query_language::cursor::CursorSeal,ctx:Context,seq:i64,size:u64,prior:Option<cursor::Cursor>,availability:Json,
+}
+impl ReadPage {
+    fn check_availability(&self)->Result<()> {
+        if self.prior.as_ref().is_some_and(|prior|prior.availability!=self.availability) {return Err(Error::StaleCursor);}Ok(())
+    }
+    fn resolved(&self)->Resolved {Resolved{now:self.ctx.now.to_string(),zone:self.ctx.zone_name(),day_start:self.ctx.day_start.to_string(),commit_seq:self.seq}}
+    fn info(&self,total:i64,more:bool,last:Option<(query_language::cursor::OrderPosition,Vec<String>)>)->Result<PageInfo> {
+        let cursor=if more {
+            let (position,types)=last.ok_or_else(||Error::Invalid("query page did not advance".into()))?;
+            Some(cursor::Cursor::encode(&self.seal,self.question_id,&self.question,&self.ctx,self.seq,total,types,position,self.availability.clone())?)
+        }else{None};
+        Ok(PageInfo{size:self.size,cursor})
+    }
+}
+struct Rendered {
+    total:Option<(String,Vec<sql::Param>)>,rows:(String,Vec<sql::Param>),columns:Vec<String>,
+}
+fn typed_boundary(value:&Json,ty:&str)->Result<SqlFragment> {
+    let cast=match ty {
+        "smallint"|"integer"|"bigint"|"numeric"|"real"|"double precision"|"boolean"|"uuid"|"timestamp with time zone"|"timestamp without time zone"|"date"|"text"|"character varying"=>ty,
+        _=>return Err(Error::Invalid(format!("{ty} cannot be used as a scalar page key"))),
+    };
+    let mut f=SqlFragment::text("(");f.param(sea_query::Value::String(Some(value.to_string()))).push("::jsonb #>> '{}')::").push(cast);
+    Ok(f)
+}
+fn render_page(compiled:Compiled,read:&ReadPage)->Result<Rendered> {
+    let object=json_object(&compiled.columns);
+    let values=compiled.keys.iter().map(|(name,_)|format!("q.\"{name}\"")).collect::<Vec<_>>();
+    let order=compiled.keys.iter().map(|(name,desc)|format!("q.\"{name}\" {} NULLS LAST",if *desc {"DESC"}else{"ASC"})).collect::<Vec<_>>().join(", ");
+    let total=read.prior.is_none().then(||compiled.count.render());
+    let mut rows=SqlFragment::text(format!("SELECT jsonb_build_object('row',({object}),'keys',jsonb_build_array({}),'types',q.\"_key_types\",'id',q.\"_row_identity\") FROM (",values.join(", ")));
+    rows.append(compiled.answer).push(") q");
+    if let Some(prior)=&read.prior {
+        if prior.after.values.len()!=compiled.keys.len() || prior.key_types.len()!=compiled.keys.len() {return Err(Error::StaleCursor);}
+        let mut disjunction=Vec::new();
+        let mut equals=Vec::new();
+        for (i,((name,desc),value)) in compiled.keys.iter().zip(&prior.after.values).enumerate() {
+            let key=format!("q.\"{name}\"");
+            if !value.is_null() {
+                let mut next=SqlFragment::text(format!("({key} IS NULL OR {key} {} ",if *desc {"<"}else{">"}));
+                next.append(typed_boundary(value,&prior.key_types[i])?).push(")");
+                let mut chain=equals.clone();chain.push(next);disjunction.push(SqlFragment::join(chain," AND "));
+            }
+            let mut equal=SqlFragment::text(format!("{key} IS NOT DISTINCT FROM "));
+            equal.append(typed_boundary(value,&prior.key_types[i])?);equals.push(equal);
+        }
+        rows.push(" WHERE (").append(if disjunction.is_empty(){SqlFragment::text("false")}else{SqlFragment::join(disjunction," OR ")}).push(")");
+    }
+    rows.push(format!(" ORDER BY {order} LIMIT ")).param(sea_query::Value::BigInt(Some(i64::try_from(read.size.checked_add(1).ok_or_else(||Error::Invalid("page size overflow".into()))?).map_err(|_|Error::Invalid("page size overflow".into()))?)));
+    Ok(Rendered{total,rows:rows.render(),columns:compiled.columns})
+}
+async fn page_of(tx:&mut PgConnection,rendered:Rendered,table:String,text:&str,query:&Query,read:&ReadPage,recall:Option<Json>)->Result<Answer> {
+    let total=match (rendered.total,&read.prior) {
+        (Some((sql,values)),_)=>sql::bind_scalar(sqlx::query_scalar::<_,i64>(&sql),values).fetch_one(&mut *tx).await?,
+        (None,Some(cursor))=>cursor.total,_=>unreachable!("first page counts the result"),
+    };
+    let (sql,values)=rendered.rows;
+    let mut selected:Vec<Json>=sql::bind_scalar(sqlx::query_scalar(&sql),values).fetch_all(&mut *tx).await?;
+    let more=selected.len() as u64>read.size;if more {selected.pop();}
+    let last=selected.last().map(|row|->Result<_>{
+        let values=row["keys"].as_array().ok_or_else(||Error::Invalid("missing page keys".into()))?.clone();
+        if values.iter().any(|v|v.is_array()||v.is_object()) {return Err(Error::Invalid("page keys must be scalar".into()));}
+        let types=serde_json::from_value(row["types"].clone()).map_err(|e|Error::Invalid(e.to_string()))?;
+        let identity=row["id"].as_str().ok_or_else(||Error::Invalid("missing row identity".into()))?.into();
+        Ok((query_language::cursor::OrderPosition{values,row_identity:identity},types))
+    }).transpose()?;
+    let page=read.info(total,more,last)?;
+    Ok(Answer{table,query:text.into(),read_as:read_as(query),resolved:read.resolved(),columns:rendered.columns,rows:selected.into_iter().map(|mut row|row["row"].take()).collect(),total,page,recall})
 }
 
 /// `jsonb_build_object` over the columns, in order, in chunks the function's

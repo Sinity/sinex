@@ -256,9 +256,7 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
     )
     .unwrap();
     let mut sample = batch(vec![telemetry]);
-    sample.kind = BatchKind::Replay {
-        operation: OperationId::new(),
-    };
+    sample.kind = BatchKind::Replay {operation: OperationId::new(),source:None,host:None};
     admit_one(&mut conn, &sample).await;
     let before: Vec<Value> =
         sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e ORDER BY e.id")

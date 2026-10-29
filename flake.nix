@@ -22,6 +22,7 @@
           # Git dependencies are fetched at the SHA recorded in Cargo.lock.
           allowBuiltinFetchGit = true;
         };
+        SINEX_BUILD = "${builtins.substring 0 40 (self.rev or self.dirtyRev or (throw "Sinex requires a Git source revision"))};dirty=${if self ? rev then "false" else "true"}";
         nativeBuildInputs = [ postgres ];
         # sinex-sources tests start a throwaway NATS server and make git
         # repositories.

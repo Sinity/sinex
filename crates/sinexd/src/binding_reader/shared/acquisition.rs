@@ -57,6 +57,7 @@ pub(super) async fn retain(
         cursor_without_material: cursor,
     };
     crate::intake::Intake {
+        host:Some(&binding.binding.settings.host),
         writer,
         source: binding.source.clone(),
         binding: &binding.binding.name,

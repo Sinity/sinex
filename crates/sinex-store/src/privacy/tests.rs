@@ -5,6 +5,21 @@ use sinex_model::{
     event_types::CommandImported,
 };
 
+#[devkit::test]
+async fn effective_rule_reads_use_read_only_snapshots_without_initializing_hash_material(db:devkit::pg::TestDatabase){
+    use sqlx::Connection;
+    let mut conn=PgConnection::connect(&db.url(None)).await.unwrap();
+    let before:i64=sqlx::query_scalar("SELECT count(*) FROM privacy.settings").fetch_one(&mut conn).await.unwrap();
+    add_rule(&mut conn,&NewRule{name:"read-only-rule".into(),source:"synthetic".into(),event_type:None,field:Some("/command".into()),matcher:"all".into(),matcher_arg:None,class:Class::Guarded,action:Action::Mask,author:"synthetic-test".into()}).await.unwrap();
+    let mut read=conn.begin().await.unwrap();crate::query::read_one_snapshot(&mut read).await.unwrap();
+    assert_eq!(active_rules(&mut read,&["synthetic".into()]).await.unwrap().len(),1);read.rollback().await.unwrap();
+    end_rule(&mut conn,"read-only-rule","synthetic-test").await.unwrap();
+    let mut read=conn.begin().await.unwrap();crate::query::read_one_snapshot(&mut read).await.unwrap();
+    assert!(active_rules(&mut read,&["synthetic".into()]).await.unwrap().is_empty());
+    let after:i64=sqlx::query_scalar("SELECT count(*) FROM privacy.settings").fetch_one(&mut *read).await.unwrap();assert_eq!(after,before);
+    read.rollback().await.unwrap();
+}
+
 fn event(command: &str) -> Event {
     Event::build(
         &CommandImported {

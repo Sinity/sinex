@@ -42,11 +42,12 @@ pub(crate) trait Consumer: Send + Sync {
 }
 
 /// Run the reader until `stop` is set. `commits` changes whenever the writer
-/// commits a batch.
+/// commits a batch. `completed` wakes readers after durable consumer progress.
 pub(crate) async fn run(
     mut conn: PgConnection,
     mut consumers: Vec<Box<dyn Consumer>>,
     mut commits: watch::Receiver<u64>,
+    completed: watch::Sender<()>,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
     if consumers.is_empty() {
@@ -88,6 +89,7 @@ pub(crate) async fn run(
         };
         let read_time = read_started.elapsed();
         let mut failed = false;
+        let mut progressed = false;
         for (consumer, position) in consumers.iter_mut().zip(positions.iter_mut()) {
             if *position >= up_to {
                 continue;
@@ -115,6 +117,7 @@ pub(crate) async fn run(
                         );
                     }
                     *position = up_to;
+                    progressed = true;
                 }
                 Err(error) => {
                     eprintln!(
@@ -125,6 +128,9 @@ pub(crate) async fn run(
                     failed = true;
                 }
             }
+        }
+        if progressed {
+            completed.send_replace(());
         }
         if failed {
             tokio::select! {

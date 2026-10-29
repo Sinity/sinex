@@ -19,7 +19,6 @@ async fn ingest(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        "example-host",
         vec![reader],
     )
     .await

@@ -16,7 +16,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
         )),
         Reference::At { at, event_type } => resolve_at(conn, *at, event_type).await,
         Reference::Event(id) => {
-            let found = sqlx::query_scalar!(r#"SELECT id AS "id!" FROM core.events WHERE id = $1 UNION SELECT event_id FROM core.event_tombstones WHERE event_id = $1"#, id)
+            let found = sqlx::query_scalar!(r#"SELECT id AS "id!" FROM core.visible_events WHERE id = $1 UNION SELECT event_id FROM core.event_tombstones WHERE event_id = $1"#, id)
                 .fetch_optional(&mut *conn)
                 .await?;
             found.ok_or_else(|| Error::Invalid(format!("no event {id}")))
@@ -32,7 +32,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                 .transpose()
                 .map_err(|_| Error::Invalid("output index beyond i64".into()))?;
             let live = sqlx::query!(
-                r#"SELECT e.id AS "event_id!", e.event_type AS "event_type!" FROM core.events e
+                r#"SELECT e.id AS "event_id!", e.event_type AS "event_type!" FROM core.visible_events e
                    WHERE e.material_id = $1 AND e.anchor = $2
                    AND ($3::text IS NULL OR e.event_type = $3)
                    AND ($4::bigint IS NULL OR e.output_index = $4)
@@ -49,7 +49,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                 [one] => Ok(one.event_id),
                 [] => {
                     let archived = sqlx::query_scalar!(
-                        r#"SELECT e.id FROM core.events e JOIN audit.archived a ON a.event_id = e.id
+                        r#"SELECT e.id AS "id!" FROM core.visible_events e JOIN audit.archived a ON a.event_id = e.id
                            WHERE e.material_id = $1 AND e.anchor = $2
                            AND ($3::text IS NULL OR e.event_type = $3)
                            AND ($4::bigint IS NULL OR e.output_index = $4)
@@ -86,16 +86,20 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
             key,
         } => {
             let found = sqlx::query_scalar!(
-                "SELECT event_id FROM core.live_equivalence WHERE source = $1 AND event_type = $2 AND equivalence_key = core.encode_equivalence_key($3)",
+                r#"SELECT e.id AS "id!" FROM core.visible_events e
+                   WHERE e.source=$1 AND e.event_type=$2 AND e.equivalence_key=$3
+                     AND EXISTS (SELECT 1 FROM core.live_equivalence live WHERE live.event_id=e.id) LIMIT 2"#,
                 source,
                 event_type,
                 key
             )
-            .fetch_optional(&mut *conn)
+            .fetch_all(&mut *conn)
             .await?;
-            found.ok_or_else(|| {
-                Error::Invalid(format!("no live {event_type} of {source} with key {key}"))
-            })
+            match found.as_slice() {
+                [id]=>Ok(*id),
+                []=>Err(Error::Invalid(format!("no live {event_type} of {source} with key {key}"))),
+                _=>Err(Error::Invalid("several live readings share the visible key; use an exact event citation".into())),
+            }
         }
     }
 }
@@ -285,7 +289,7 @@ pub(crate) async fn recall_summary(
         fill: None,
     }));
     let (sql, values) = {
-        let compiled = super::Compiler::new(ctx, seq).compile(&summary)?;
+        let compiled = super::compile_query(conn,ctx,seq,&summary).await?;
         let mut rows = super::SqlFragment::text(
             "SELECT jsonb_build_object('source',q.source,'events',q.count,'first',q.min_when,'last',q.max_when) FROM (",
         );
@@ -297,7 +301,7 @@ pub(crate) async fn recall_summary(
         .await?;
     let latest_by_source = {
         let (sql, values) = {
-            let compiled = super::Compiler::new(ctx, seq).compile(&selector)?;
+            let compiled = super::compile_query(conn,ctx,seq,&selector).await?;
             let mut rows = super::SqlFragment::text(format!(
                 "SELECT DISTINCT ON (q.source) {} FROM (",
                 super::json_object(&compiled.columns)
@@ -316,7 +320,7 @@ pub(crate) async fn recall_summary(
         .collect();
     let known = sqlx::query_scalar!(
         r#"SELECT c.source AS "name!" FROM core.source_counts c
-           WHERE EXISTS (SELECT 1 FROM core.events e WHERE e.source=c.source
+           WHERE EXISTS (SELECT 1 FROM core.visible_events e WHERE e.source=c.source
              AND NOT e.event_type = ANY($1))
            UNION SELECT name FROM registry.sources
            WHERE NOT event_types <@ $1::text[]

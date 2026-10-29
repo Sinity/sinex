@@ -18,32 +18,12 @@ pub(super) async fn prepare(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let mut declarations = sinex_schema::kinds::load(conn, &refs).await?;
+    let declarations = sinex_schema::kinds::load(conn, &refs).await?;
     for reference in &refs {
         if declarations.contains_key(reference) {
             continue;
         }
-        let BatchKind::Ingress(frame) = &batch.kind else {
-            return Err(Error::Invalid(format!(
-                "unknown kind reference {reference:?}"
-            )));
-        };
-        let family=frame.family.as_ref().ok_or_else(||Error::Invalid("producer declaration has no configured family".into()))?;
-        sinex_schema::kinds::check_namespace(conn, &reference.name, family).await?;
-        let exists: bool = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM registry.event_types WHERE name=$1) AS "exists!""#,
-            &reference.name
-        )
-        .fetch_one(&mut *conn)
-        .await?;
-        if exists {
-            return Err(Error::Invalid(format!(
-                "unknown kind version {reference:?}"
-            )));
-        }
-        let d = KindDeclaration::schemaless(reference.clone(), family.clone());
-        sinex_schema::kinds::register(conn, family, std::slice::from_ref(&d)).await?;
-        declarations.insert(reference.clone(), d);
+        return Err(Error::Invalid(format!("unknown kind reference {reference:?}; an exact owner-installed declaration must be registered first")));
     }
     let mut rust_validators = BTreeMap::new();
     let mut json_validators = BTreeMap::new();

@@ -402,5 +402,5 @@ the local crates, so those lock changes are not committed.
 linking again. Merge the common pull request
 first; its workflow then opens a pull request here that moves Cargo.lock to
 the new commit. Convert the callers on that branch, or run `cargo update -p
-devkit -p hashed-blobs -p credential-masking` on the branch that converts
+devkit -p hashed-blobs` on the branch that converts
 them, so the lock change and the callers land together.
