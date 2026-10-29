@@ -146,3 +146,318 @@ fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
         .is_err()
     );
 }
+
+// The exchange deadline detects waiting for a broadcast that cannot be
+// regenerated. It is shorter than the unchanged production hint idle.
+const EXCHANGE: Duration = Duration::from_secs(10);
+const HINT_IDLE: Duration = Duration::from_secs(30);
+const PRODUCER: &str = "capture";
+
+struct Duplicate {
+    owner: Client,
+    client: Client,
+    subjects: Subjects,
+    acks: Subscriber,
+    stream: jetstream::stream::Stream,
+    consumer: jetstream::consumer::PullConsumer,
+    message: jetstream::Message,
+    frame: Ingress,
+    _server: devkit::nats::TestNats,
+}
+impl Duplicate {
+    async fn new(committed: bool) -> Self {
+        let server = devkit::nats::test_nats().unwrap();
+        let subjects = Subjects::new(server.prefix());
+        let owner = async_nats::connect(server.url()).await.unwrap();
+        let js = jetstream::new(owner.clone());
+        let stream = js
+            .create_stream(jetstream::stream::Config {
+                name: subjects.ingress_stream(),
+                subjects: vec![subjects.ingress_all()],
+                storage: jetstream::stream::StorageType::Memory,
+                retention: jetstream::stream::RetentionPolicy::WorkQueue,
+                duplicate_window: Duration::from_secs(120),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let consumer = stream
+            .create_consumer(jetstream::consumer::pull::Config {
+                durable_name: Some("owner".into()),
+                ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let frame = Ingress::RegisterKinds {
+            frame: "frozen-before-restart".into(),
+            declarations: vec![],
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("Nats-Msg-Id", frame.frame());
+        let body = serde_json::to_vec(&frame).unwrap();
+        let first = js
+            .publish_with_headers(
+                subjects.ingress(PRODUCER),
+                headers.clone(),
+                body.clone().into(),
+            )
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(!first.duplicate);
+        let message = consumer
+            .fetch()
+            .max_messages(1)
+            .messages()
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.payload.as_ref(), body.as_slice());
+        if committed {
+            message.double_ack().await.unwrap();
+            // This completed owner receipt's original hint has no subscriber.
+            // A restarted producer cannot receive it as a queued notification.
+            owner
+                .publish(
+                    subjects.ack(PRODUCER),
+                    serde_json::to_vec(&ReceiptHint {
+                        number: 1,
+                        frame_hash: blake3::hash(frame.frame().as_bytes()).to_hex().to_string(),
+                    })
+                    .unwrap()
+                    .into(),
+                )
+                .await
+                .unwrap();
+            owner.flush().await.unwrap();
+        }
+        let duplicate = js
+            .publish_with_headers(subjects.ingress(PRODUCER), headers, body.into())
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(duplicate.duplicate, "the real broker suppresses this retry");
+        assert_eq!(duplicate.sequence, first.sequence);
+        let client = async_nats::connect(server.url()).await.unwrap();
+        let acks = client.subscribe(subjects.ack(PRODUCER)).await.unwrap();
+        client.flush().await.unwrap();
+        Self {
+            owner,
+            client,
+            subjects,
+            acks,
+            stream,
+            consumer,
+            message,
+            frame,
+            _server: server,
+        }
+    }
+    async fn submit(&mut self, frame: &Ingress) -> Result<Acknowledgment, SubmitError> {
+        tokio::time::timeout(
+            EXCHANGE,
+            submit_frame(
+                &self.client,
+                &self.subjects,
+                PRODUCER,
+                &mut self.acks,
+                frame,
+                HINT_IDLE,
+            ),
+        )
+        .await
+        .expect("owned receipt exchange waited for an unrepeated broadcast hint")
+    }
+    async fn once(&mut self) {
+        assert_eq!(self.stream.info().await.unwrap().state.last_sequence, 1);
+        let info = self.consumer.info().await.unwrap();
+        assert_eq!(
+            info.delivered.consumer_sequence, 1,
+            "no new ingress delivery"
+        );
+        assert_eq!(info.num_pending, 0);
+        assert_eq!(info.num_ack_pending, 0);
+    }
+}
+async fn answer_recorded(
+    owner: &Client,
+    requests: &mut Subscriber,
+    acknowledgments: Vec<Acknowledgment>,
+) -> RecordedQuery {
+    let request = requests.next().await.unwrap();
+    let query: RecordedQuery = serde_json::from_slice(&request.payload).unwrap();
+    assert_eq!(query.after, 0);
+    crate::replies::publish_json(
+        owner,
+        request.reply.unwrap().to_string(),
+        RecordedPage {
+            acknowledgments,
+            next: None,
+        },
+        HINT_IDLE,
+    )
+    .await
+    .unwrap();
+    query
+}
+
+#[devkit::test]
+async fn duplicate_after_restart_resolves_owned_receipt_without_a_regenerated_hint() {
+    use futures::FutureExt;
+    let mut fixture = Duplicate::new(true).await;
+    let saved = receipt(&fixture.frame);
+    let expected = saved.clone();
+    let mut requests = fixture
+        .owner
+        .subscribe(fixture.subjects.recorded(PRODUCER))
+        .await
+        .unwrap();
+    fixture.owner.flush().await.unwrap();
+    let owner = fixture.owner.clone();
+    let name = fixture.frame.frame().to_owned();
+    let responder = tokio::spawn(async move {
+        let query = answer_recorded(&owner, &mut requests, vec![saved]).await;
+        assert!(query.frames.contains(&name));
+        assert!(query.numbers.is_empty());
+    });
+    let offered = fixture.frame.clone();
+    assert_eq!(fixture.submit(&offered).await.unwrap(), expected);
+    responder.await.unwrap();
+    assert!(
+        fixture.acks.next().now_or_never().is_none(),
+        "no fresh hint was emitted"
+    );
+    fixture.once().await;
+}
+
+#[devkit::test]
+async fn duplicate_without_owner_admission_still_waits_for_the_durable_receipt() {
+    let mut fixture = Duplicate::new(false).await;
+    let saved = receipt(&fixture.frame);
+    let expected = saved.clone();
+    let mut requests = fixture
+        .owner
+        .subscribe(fixture.subjects.recorded(PRODUCER))
+        .await
+        .unwrap();
+    fixture.owner.flush().await.unwrap();
+    let owner = fixture.owner.clone();
+    let name = fixture.frame.frame().to_owned();
+    let ack_subject = fixture.subjects.ack(PRODUCER);
+    let original = fixture.message.clone();
+    let responder = tokio::spawn(async move {
+        let query = answer_recorded(&owner, &mut requests, vec![]).await;
+        assert!(query.frames.contains(&name));
+        // Only after the empty lookup does this owner commit the original.
+        original.double_ack().await.unwrap();
+        owner
+            .publish(
+                ack_subject,
+                serde_json::to_vec(&ReceiptHint {
+                    number: 1,
+                    frame_hash: blake3::hash(name.as_bytes()).to_hex().to_string(),
+                })
+                .unwrap()
+                .into(),
+            )
+            .await
+            .unwrap();
+        owner.flush().await.unwrap();
+        let query = answer_recorded(&owner, &mut requests, vec![saved]).await;
+        assert_eq!(query.numbers, vec![1]);
+        assert!(query.frames.is_empty());
+    });
+    let offered = fixture.frame.clone();
+    assert_eq!(fixture.submit(&offered).await.unwrap(), expected);
+    responder.await.unwrap();
+    fixture.once().await;
+}
+
+#[devkit::test]
+async fn duplicate_receipt_with_different_bytes_remains_typed_conflict_evidence() {
+    let mut fixture = Duplicate::new(true).await;
+    let prior = receipt(&fixture.frame);
+    let expected = prior.clone();
+    let mut requests = fixture
+        .owner
+        .subscribe(fixture.subjects.recorded(PRODUCER))
+        .await
+        .unwrap();
+    fixture.owner.flush().await.unwrap();
+    let owner = fixture.owner.clone();
+    let responder =
+        tokio::spawn(async move { answer_recorded(&owner, &mut requests, vec![prior]).await });
+    let offered = Ingress::Events {
+        frame: fixture.frame.frame().into(),
+        source: None,
+        coverage: None,
+        events: vec![],
+        failures: vec![],
+    };
+    let SubmitError::ReceiptConflict {
+        frame,
+        offered_hash,
+        receipt,
+    } = fixture.submit(&offered).await.unwrap_err()
+    else {
+        panic!("duplicate is not admission of the changed offer")
+    };
+    assert_eq!(frame, offered.frame());
+    assert_eq!(offered_hash, content_hash(&offered).unwrap());
+    assert_eq!(*receipt, expected);
+    responder.await.unwrap();
+    fixture.once().await;
+}
+
+#[devkit::test]
+async fn duplicate_broker_ack_with_unavailable_owner_never_becomes_an_admission_receipt() {
+    let mut fixture = Duplicate::new(true).await;
+    let offered = fixture.frame.clone();
+    assert!(matches!(fixture.submit(&offered).await,
+        Err(SubmitError::Reply(crate::replies::ReplyError::Transport(reason))) if reason.contains("no responders")));
+    fixture.once().await;
+}
+
+#[devkit::test]
+async fn duplicate_refusal_preserves_the_owned_terminal_disposition() {
+    for kind in [
+        sinex_model::FrameRefusal::Content,
+        sinex_model::FrameRefusal::Excised,
+        sinex_model::FrameRefusal::PartiallyExcised,
+    ] {
+        let mut fixture = Duplicate::new(true).await;
+        let mut saved = receipt(&fixture.frame);
+        saved.refusal = Some("synthetic owner refusal".into());
+        saved.outcome["refusal_kind"] = serde_json::to_value(kind).unwrap();
+        if matches!(
+            kind,
+            sinex_model::FrameRefusal::Excised | sinex_model::FrameRefusal::PartiallyExcised
+        ) {
+            saved
+                .outcome
+                .as_object_mut()
+                .unwrap()
+                .remove("frame_content_hash");
+        }
+        let expected = saved.clone();
+        let mut requests = fixture
+            .owner
+            .subscribe(fixture.subjects.recorded(PRODUCER))
+            .await
+            .unwrap();
+        fixture.owner.flush().await.unwrap();
+        let owner = fixture.owner.clone();
+        let responder =
+            tokio::spawn(async move { answer_recorded(&owner, &mut requests, vec![saved]).await });
+        let offered = fixture.frame.clone();
+        assert_eq!(fixture.submit(&offered).await.unwrap(), expected);
+        responder.await.unwrap();
+        fixture.once().await;
+    }
+}
