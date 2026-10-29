@@ -61,7 +61,8 @@ fn masks_only_the_matched_span_and_raises_class() {
         applied,
         Applied {
             matched: 1,
-            changed: true
+            changed: true,
+            trace:vec![AffectedPath{path:"/command".into(),action:Action::Mask,rule:Uuid::nil()}]
         }
     );
     assert_eq!(e.payload["command"], json!("export [masked] && ls"));

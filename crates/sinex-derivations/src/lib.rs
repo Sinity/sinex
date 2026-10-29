@@ -259,6 +259,12 @@ pub trait Keyed: Send + Sync {
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
 
+    /// Exact input kind/version and computational payload footprint. None
+    /// conservatively refuses inputs touched by transforming policy actions.
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { None }
+    fn unavailable_inputs(&self, _: &Value, _: &[Event], _: &[sinex_model::UnavailableInput], _: &Env) -> Computed {
+        Computed { waiting: true, ..Default::default() }
+    }
     fn version(&self) -> u32 {
         Self::VERSION
     }
@@ -312,6 +318,12 @@ pub trait PerEvent: Send + Sync {
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
+    /// Exact input kind/version and computational payload footprint. None
+    /// conservatively refuses inputs touched by transforming policy actions.
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { None }
+    fn unavailable_inputs(&self, _: Input<'_>, _: &[sinex_model::UnavailableInput], _: &Env) -> Result<Vec<Event>, String> {
+        Err("required_input_unavailable".into())
+    }
     /// A tool's availability and version may change what this run can read.
     fn version(&self) -> u32 {
         Self::VERSION
@@ -332,6 +344,12 @@ pub trait PerEvent: Send + Sync {
 /// A keyed derivation with its type erased, for the registry, admission's
 /// dirty-key marking and the driver.
 pub trait AnyKeyed: Send + Sync {
+    /// Exact input kind/version and computational payload footprint. None
+    /// conservatively refuses inputs touched by transforming policy actions.
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { None }
+    fn unavailable_inputs(&self, _: &Value, _: &[Event], _: &[sinex_model::UnavailableInput], _: &Env) -> Computed {
+        Computed { waiting: true, ..Default::default() }
+    }
     fn name(&self) -> &'static str;
     fn version(&self) -> u32;
     fn version_for(&self, _: &TimeSettings) -> u32 {
@@ -355,6 +373,9 @@ pub trait AnyKeyed: Send + Sync {
 }
 
 impl<K: Keyed> AnyKeyed for K {
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { Keyed::input_requirements(self) }
+    fn unavailable_inputs(&self,key:&Value,inputs:&[Event],issues:&[sinex_model::UnavailableInput],env:&Env)->Computed {Keyed::unavailable_inputs(self,key,inputs,issues,env)}
+
     fn name(&self) -> &'static str {
         K::NAME
     }
@@ -401,6 +422,9 @@ impl<K: Keyed> AnyKeyed for K {
 
 /// A per-event derivation with its type erased.
 pub trait AnyPerEvent: Send + Sync {
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { None }
+    fn unavailable_inputs(&self, _: Input<'_>, _: &[sinex_model::UnavailableInput], _: &Env) -> Result<Vec<Event>, String> {Err("required_input_unavailable".into())}
+
     fn name(&self) -> &'static str;
     fn version(&self) -> u32;
     fn inputs_types(&self) -> &'static [&'static str];
@@ -410,6 +434,9 @@ pub trait AnyPerEvent: Send + Sync {
 }
 
 impl<P: PerEvent> AnyPerEvent for P {
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> { PerEvent::input_requirements(self) }
+    fn unavailable_inputs(&self,input:Input<'_>,issues:&[sinex_model::UnavailableInput],env:&Env)->Result<Vec<Event>,String> {PerEvent::unavailable_inputs(self,input,issues,env)}
+
     fn name(&self) -> &'static str {
         P::NAME
     }

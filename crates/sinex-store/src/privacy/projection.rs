@@ -32,14 +32,15 @@ const INPUT:&str=r#"SELECT e.id,e.commit_seq,e.source,e.event_type,e.kind_versio
 
 /// The clone contains only fields RuleSet reads. Original metadata is never
 /// replaced by this selector-only value or written back to core.events.
-fn transform(input:&Input,rules:&privacy::RuleSet)->Result<(Value,Class,Option<String>,bool,&'static str)>{
-    if !input.original&&input.legacy_changed{return Ok((json!({"unavailable":"original_payload_not_retained"}),privacy::parse_class(&input.class)?,None,true,"unavailable_original"))}
+struct Transformed {payload:Value,class:Class,key:Option<String>,changed:bool,state:&'static str,trace:Vec<privacy::AffectedPath>}
+fn transform(input:&Input,rules:&privacy::RuleSet)->Result<Transformed>{
+    if !input.original&&input.legacy_changed{return Ok(Transformed{payload:json!({"unavailable":"original_payload_not_retained"}),class:privacy::parse_class(&input.class)?,key:None,changed:true,state:"unavailable_original",trace:vec![]})}
     let mut event=Event::submitted(KindRef{name:input.event_type.clone(),version:input.kind_version as u64},input.payload.clone(),input.source.clone(),
         Origin::Derived{parents:input.parents.as_ref().map(|ids|ids.iter().copied().map(EventId).collect()).unwrap_or_default()},ReadingOrder(0),[0;32],privacy::parse_class(&input.class)?);
     event.equivalence_key=input.equivalence_key.clone().map(EquivalenceKey);
-    rules.apply(&mut event)?;
-    let changed=event.payload!=input.payload;
-    Ok((event.payload,event.class,event.equivalence_key.map(|key|key.0),changed,"complete"))
+    let applied=rules.apply(&mut event)?;
+    let changed=applied.changed;
+    Ok(Transformed{payload:event.payload,class:event.class,key:event.equivalence_key.map(|key|key.0),changed,state:"complete",trace:applied.trace})
 }
 async fn project(conn:&mut PgConnection,input:&Input,rules:&privacy::RuleSet,epoch:i64)->Result<()> {
     if input.custody.is_none() {
@@ -48,7 +49,7 @@ async fn project(conn:&mut PgConnection,input:&Input,rules:&privacy::RuleSet,epo
         sqlx::query("INSERT INTO privacy.original_events(event_id,baseline_class,equivalence_key,recoverable) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
           .bind(input.id).bind(&input.class).bind(&input.equivalence_key).bind(!input.legacy_changed).execute(&mut *conn).await?;
     }
-    let (mut payload,mut class,mut key,mut changed,mut state)=transform(input,rules)?;
+    let Transformed{mut payload,mut class,mut key,mut changed,mut state,trace}=transform(input,rules)?;
     if let Some(parents)=&input.parents {
         let outputs:Vec<(Uuid,String,bool,String)>=sqlx::query_as("SELECT event_id,class,changed,state FROM privacy.event_outputs WHERE event_id=ANY($1) AND epoch=$2").bind(parents).bind(epoch).fetch_all(&mut *conn).await?;
         let pending=outputs.len()!=parents.iter().copied().collect::<std::collections::HashSet<_>>().len()||outputs.iter().any(|row|row.3=="pending_dependency");
@@ -57,8 +58,8 @@ async fn project(conn:&mut PgConnection,input:&Input,rules:&privacy::RuleSet,epo
         if pending {payload=json!({"unavailable":"privacy_dependency_pending"});key=None;changed=true;state="pending_dependency";}
         else if unavailable && input.basis_epoch!=Some(epoch) {payload=json!({"unavailable":"privacy_dependency_changed"});key=None;changed=true;state="unavailable_dependency";}
     }
-    sqlx::query("INSERT INTO privacy.event_outputs(event_id,epoch,payload,class,equivalence_key,changed,state) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(event_id) DO UPDATE SET epoch=EXCLUDED.epoch,payload=EXCLUDED.payload,class=EXCLUDED.class,equivalence_key=EXCLUDED.equivalence_key,changed=EXCLUDED.changed,state=EXCLUDED.state")
-        .bind(input.id).bind(epoch).bind(&payload).bind(privacy::class_name(class)).bind(key).bind(changed).bind(state).execute(&mut *conn).await?;
+    sqlx::query("INSERT INTO privacy.event_outputs(event_id,epoch,payload,class,equivalence_key,changed,state,trace) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(event_id) DO UPDATE SET epoch=EXCLUDED.epoch,payload=EXCLUDED.payload,class=EXCLUDED.class,equivalence_key=EXCLUDED.equivalence_key,changed=EXCLUDED.changed,state=EXCLUDED.state,trace=EXCLUDED.trace")
+        .bind(input.id).bind(epoch).bind(&payload).bind(privacy::class_name(class)).bind(key).bind(changed).bind(state).bind(serde_json::to_value(trace).map_err(|error|Error::Invalid(error.to_string()))?).execute(&mut *conn).await?;
     sqlx::query("DELETE FROM core.search_text WHERE event_id=$1").bind(input.id).execute(&mut *conn).await?;
     if state=="complete"&&class!=Class::Sealed&&input.search!="none" {
         let text=sinex_model::query::text::payload_text(&payload);

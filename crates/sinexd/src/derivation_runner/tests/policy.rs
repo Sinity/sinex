@@ -9,9 +9,11 @@ async fn policy_refresh_resets_per_event_inputs_and_recovers_on_rule_end(db:devk
     let mut runner=w.driver_with(vec![],vec![Box::new(Echo)]).await;runner.catch_up().await.unwrap();
     assert_eq!(w.live::<CommandFused>().await[0].command,"LEAFSECRET");
     let mut conn=PgConnection::connect(&w.url).await.unwrap();privacy::add_rule(&mut conn,&rule()).await.unwrap();privacy::projection::ensure_current(&mut conn).await.unwrap();
-    runner.catch_up().await.unwrap();let current=w.live::<CommandFused>().await;assert_eq!(current.len(),1);assert_eq!(current[0].command,"[MASKED]");
-    let (state,basis,active):(String,Option<i64>,i64)=sqlx::query_as("SELECT o.state,p.basis_epoch,s.active_epoch FROM privacy.event_outputs o JOIN privacy.original_events p ON p.event_id=o.event_id JOIN privacy.policy_state s ON s.id JOIN core.events e ON e.id=o.event_id WHERE e.source='test.echo' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();assert_eq!(state,"complete");assert_eq!(basis,Some(active));
-    drop(runner);let mut restarted=w.driver_with(vec![],vec![Box::new(Echo)]).await;restarted.catch_up().await.unwrap();assert_eq!(w.live::<CommandFused>().await,current);
+    runner.catch_up().await.unwrap();
+    let visible:i64=sqlx::query_scalar("SELECT count(*) FROM core.derivation_events WHERE source='test.echo'").fetch_one(&mut conn).await.unwrap();assert_eq!(visible,0,"undeclared transformed computational input cannot be certified by epoch alone");
+    let state:String=sqlx::query_scalar("SELECT o.state FROM privacy.event_outputs o JOIN core.events e ON e.id=o.event_id WHERE e.source='test.echo' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();assert_eq!(state,"unavailable_dependency");
+    drop(runner);let mut restarted=w.driver_with(vec![],vec![Box::new(Echo)]).await;restarted.catch_up().await.unwrap();
+    let visible:i64=sqlx::query_scalar("SELECT count(*) FROM core.derivation_events WHERE source='test.echo'").fetch_one(&mut conn).await.unwrap();assert_eq!(visible,0);
     privacy::end_rule(&mut conn,"configured command","fixture").await.unwrap();privacy::projection::ensure_current(&mut conn).await.unwrap();restarted.catch_up().await.unwrap();assert_eq!(w.live::<CommandFused>().await[0].command,"LEAFSECRET");
     let raw:String=sqlx::query_scalar("SELECT payload->>'command' FROM core.events WHERE id=$1").bind(source_id.0).fetch_one(&mut conn).await.unwrap();assert_eq!(raw,"leafsecret");
 }
@@ -32,10 +34,13 @@ async fn policy_refresh_marks_transformed_and_old_keys_and_new_admission_keeps_t
     let w=World::with_keys(db,vec![Box::new(CommandKeys)]).await;w.admit(vec![zsh("leafsecret",0,1)]).await;
     let mut runner=w.driver_with(vec![Box::new(CommandKeys)],vec![]).await;runner.catch_up().await.unwrap();assert_eq!(w.live::<CommandFused>().await[0].command,"leafsecret");
     let mut conn=PgConnection::connect(&w.url).await.unwrap();privacy::add_rule(&mut conn,&rule()).await.unwrap();privacy::projection::ensure_current(&mut conn).await.unwrap();runner.catch_up().await.unwrap();
-    let current=w.live::<CommandFused>().await;assert_eq!(current.len(),1);assert_eq!(current[0].command,"[masked]");
+    let current=w.live::<CommandFused>().await;assert!(current.is_empty(),"required transformed key cannot become an estimated command");
+    let waiting:i64=sqlx::query_scalar("SELECT count(*) FROM derivation.waiting WHERE derivation='fixture.command_keys'").fetch_one(&mut conn).await.unwrap();assert_eq!(waiting,1);
     let old:i64=sqlx::query_scalar("SELECT count(*) FROM derivation.outputs o JOIN core.events e ON e.id=o.event_id WHERE o.derivation='fixture.command_keys' AND o.key='\"leafsecret\"'::jsonb AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();assert_eq!(old,0);
     w.admit(vec![zsh("second leafsecret",1,2)]).await;runner.catch_up().await.unwrap();
-    let mut commands:Vec<_>=w.live::<CommandFused>().await.into_iter().map(|row|row.command).collect();commands.sort();assert_eq!(commands,["[masked]","second [masked]"]);
+    assert!(w.live::<CommandFused>().await.is_empty());
+    privacy::end_rule(&mut conn,"configured command","fixture").await.unwrap();privacy::projection::ensure_current(&mut conn).await.unwrap();runner.catch_up().await.unwrap();
+    let mut commands:Vec<_>=w.live::<CommandFused>().await.into_iter().map(|row|row.command).collect();commands.sort();assert_eq!(commands,["leafsecret","second leafsecret"]);
 }
 
 #[devkit::test]

@@ -20,6 +20,7 @@ pub(crate) const OUTPUTS:&str="CREATE TABLE privacy.event_outputs (
   class text NOT NULL,
   equivalence_key text,
   changed boolean NOT NULL,
+  trace jsonb NOT NULL,
   state text NOT NULL CHECK (state IN ('complete','unavailable_original','unavailable_dependency','pending_dependency'))
 )";
 pub(crate) const GUARD:&str=r#"CREATE OR REPLACE FUNCTION privacy.require_active_epoch() RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,privacy AS $$
@@ -29,7 +30,7 @@ BEGIN
  IF desired<>active THEN RAISE EXCEPTION 'privacy_projection_stale' USING ERRCODE='55000'; END IF;
  RETURN active;
 END $$"#;
-pub(crate) fn tables()->Vec<String>{vec![STATE.into(),INIT.into(),BUILDS.into(),DERIVATION_EPOCHS.into(),ORIGINALS.into(),OUTPUTS.into()]}
+pub(crate) fn tables()->Vec<String>{vec![STATE.into(),INIT.into(),BUILDS.into(),DERIVATION_EPOCHS.into(),CONTRACTS.into(),ORIGINALS.into(),OUTPUTS.into()]}
 pub(crate) fn hooks()->Vec<String>{vec![
  "INSERT INTO core.counters(name,value) VALUES('privacy_outputs',0)".into(),
  r#"CREATE OR REPLACE FUNCTION privacy.invalidate_outputs() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM value FROM core.counters WHERE name='commit_seq' FOR UPDATE; UPDATE privacy.policy_state SET desired_epoch=desired_epoch+1 WHERE id; RETURN NULL; END $$"#.into(),
@@ -41,10 +42,10 @@ pub(crate) fn hooks()->Vec<String>{vec![
  "GRANT EXECUTE ON FUNCTION privacy.require_active_epoch() TO sinex_reader, sinex_writer".into(),
 ]}
 pub(crate) fn statements()->Vec<String>{let mut out=tables();out.extend(hooks());out.extend([
- "GRANT SELECT,INSERT,UPDATE,DELETE ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.original_events,privacy.event_outputs TO sinex_writer".into(),
- "REVOKE ALL ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.original_events,privacy.event_outputs FROM sinex_reader".into(),
+ "GRANT SELECT,INSERT,UPDATE,DELETE ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.derivation_contracts,privacy.original_events,privacy.event_outputs TO sinex_writer".into(),
+ "REVOKE ALL ON privacy.policy_state,privacy.output_builds,privacy.derivation_epochs,privacy.derivation_contracts,privacy.original_events,privacy.event_outputs FROM sinex_reader".into(),
 ]);out}
-pub(crate) fn before(statement:&str)->bool{!statement.contains("privacy_outputs")&&!statement.contains("privacy.derivation_epochs")&&!statement.contains("core.derivation_events")&&!statement.contains("privacy.output_builds")&&!statement.contains("privacy.policy_state")&&!statement.contains("privacy.original_events")&&!statement.contains("privacy.event_outputs")&&!statement.contains("privacy.invalidate_outputs")&&!statement.contains("privacy.require_active_epoch")}
+pub(crate) fn before(statement:&str)->bool{!statement.contains("privacy_outputs")&&!statement.contains("privacy.derivation_contracts")&&!statement.contains("privacy.derivation_epochs")&&!statement.contains("core.derivation_events")&&!statement.contains("privacy.output_builds")&&!statement.contains("privacy.policy_state")&&!statement.contains("privacy.original_events")&&!statement.contains("privacy.event_outputs")&&!statement.contains("privacy.invalidate_outputs")&&!statement.contains("privacy.require_active_epoch")}
 
 /// The boundary owner composes these views with its privilege declarations.
 pub(crate) const VISIBLE_EVENTS:&str=r#"CREATE VIEW core.visible_events AS SELECT
@@ -81,3 +82,11 @@ pub(crate) const DERIVATION_EVENTS:&str=r#"CREATE VIEW core.derivation_events AS
  FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id
  WHERE o.epoch=privacy.require_active_epoch() AND o.state='complete'"#;
 pub(crate) const DERIVATION_EPOCHS:&str="CREATE TABLE privacy.derivation_epochs (\n  derivation text PRIMARY KEY,\n  epoch bigint NOT NULL,\n  cursor jsonb NOT NULL\n)";
+
+pub(crate) const CONTRACTS:&str="CREATE TABLE privacy.derivation_contracts (
+  derivation text NOT NULL,
+  version bigint NOT NULL,
+  build text NOT NULL,
+  requirements jsonb NOT NULL,
+  PRIMARY KEY(derivation,version,build)
+)";

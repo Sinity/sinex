@@ -39,3 +39,6 @@ pub mod __private {
     pub use schemars;
     pub use serde_json;
 }
+
+mod input_requirements;
+pub use input_requirements::{InputRequirement,InputUnavailableReason,UnavailableInput};

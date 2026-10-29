@@ -1,5 +1,6 @@
 //! Configured output rules and their atomic, grant-independent projection.
 pub mod projection;
+pub mod estimability;
 pub mod comparisons;
 pub mod refresh;
 use crate::{Error, Result};
@@ -39,7 +40,8 @@ pub enum Matcher {
     Iban,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all="snake_case")]
 pub enum Action {
     /// Raise the class only.
     Classify,
@@ -67,11 +69,18 @@ pub struct RuleSet {
 }
 
 /// What applying the rules did to one event.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Applied {
     pub matched: usize,
     pub changed: bool,
+    pub trace:Vec<AffectedPath>,
 }
+
+/// Private policy provenance. No original value is retained in this trace.
+#[derive(Clone,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
+pub struct AffectedPath {pub path:String,pub action:Action,pub rule:Uuid}
+impl Action {pub fn transforms(self)->bool{self!=Self::Classify}}
+fn child_pointer(parent:&str,child:&str)->String{format!("{parent}/{}",child.replace('~',"~0").replace('/',"~1"))}
 
 pub fn class_name(c: Class) -> &'static str {
     match c {
@@ -299,7 +308,7 @@ impl RuleSet {
         for rule in self.rules.iter().filter(|r| {
             r.source == source && r.event_type.as_deref().is_none_or(|t| t == event_type)
         }) {
-            if self.apply_rule(rule, event) {
+            if self.apply_rule(rule, event,&mut applied.trace) {
                 applied.matched += 1;
                 event.class = event.class.max(rule.class);
                 applied.changed |= rule.action != Action::Classify;
@@ -323,8 +332,9 @@ impl RuleSet {
     }
 
     /// Whether `rule` matched; applies its action.
-    fn apply_rule(&self, rule: &Rule, event: &mut Event) -> bool {
+    fn apply_rule(&self, rule: &Rule, event: &mut Event,trace:&mut Vec<AffectedPath>) -> bool {
         if rule.field.is_none() && matches!(rule.matcher, Matcher::All) && rule.action==Action::Classify {
+            trace.push(AffectedPath{path:String::new(),action:rule.action,rule:rule.id});
             return true;
         }
         match &rule.field {
@@ -333,12 +343,13 @@ impl RuleSet {
                     return false;
                 };
                 if rule.action == Action::DropField && self.matches_value(rule, target) {
+                    trace.push(AffectedPath{path:pointer.clone(),action:rule.action,rule:rule.id});
                     remove_pointer(&mut event.payload, pointer);
                     return true;
                 }
-                self.rewrite(rule, target)
+                self.rewrite(rule, target,pointer,trace)
             }
-            None => self.rewrite(rule, &mut event.payload),
+            None => self.rewrite(rule, &mut event.payload,"",trace),
         }
     }
 
@@ -357,13 +368,14 @@ impl RuleSet {
 
     /// Rewrite every string under `value` the rule matches. Returns whether any
     /// matched.
-    fn rewrite(&self, rule: &Rule, value: &mut Value) -> bool {
+    fn rewrite(&self, rule: &Rule, value: &mut Value,path:&str,trace:&mut Vec<AffectedPath>) -> bool {
         match value {
             Value::String(s) => {
                 let spans = rule.matcher.spans(s);
                 if spans.is_empty() {
                     return false;
                 }
+                trace.push(AffectedPath{path:path.into(),action:rule.action,rule:rule.id});
                 match rule.action {
                     Action::Classify => {}
                     Action::Hash => *s = self.keyed(s),
@@ -373,15 +385,15 @@ impl RuleSet {
             }
             Value::Array(items) => {
                 let mut any = false;
-                for v in items {
-                    any |= self.rewrite(rule, v);
+                for (index,v) in items.iter_mut().enumerate() {
+                    any |= self.rewrite(rule, v,&child_pointer(path,&index.to_string()),trace);
                 }
                 any
             }
             Value::Object(map) => {
                 let mut any = false;
-                for v in map.values_mut() {
-                    any |= self.rewrite(rule, v);
+                for (key,v) in map.iter_mut() {
+                    any |= self.rewrite(rule, v,&child_pointer(path,key),trace);
                 }
                 any
             }
@@ -390,6 +402,7 @@ impl RuleSet {
                 if rule.matcher.spans(&text).is_empty() {
                     return false;
                 }
+                trace.push(AffectedPath{path:path.into(),action:rule.action,rule:rule.id});
                 match rule.action {
                     Action::Classify => {}
                     Action::Hash => *value = Value::String(self.keyed(&text)),

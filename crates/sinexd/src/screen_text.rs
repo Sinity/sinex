@@ -84,11 +84,18 @@ pub(crate) struct ScreenText {
 impl PerEvent for ScreenText {
     const NAME: &'static str = "screen-text";
     /// Bump when the reading of a segment changes (engine, languages, options).
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
     const INPUTS: &'static [&'static str] = &["media.segment"];
     const OUTPUTS: &'static [&'static str] = &["screen.text"];
     const READS: Reads = Reads::Material;
 
+    fn input_requirements(&self)->Option<Vec<sinex_model::InputRequirement>> {
+        let kind=sinex_model::KindRef{name:"media.segment".into(),version:2};
+        let baseline=sinex_model::InputRequirement::new(kind.clone(),["/kind"]);
+        let mut screen=sinex_model::InputRequirement::new(kind,["/started_at","/accessibility_text"]);
+        screen.when.push(("/kind".into(),serde_json::json!("screen")));
+        Some(vec![baseline,screen])
+    }
     fn version(&self) -> u32 {
         let definition = format!("{}:{}:{:?}", Self::NAME, Self::VERSION, self.engine);
         let hash = blake3::hash(definition.as_bytes());

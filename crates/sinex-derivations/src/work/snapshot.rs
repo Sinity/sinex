@@ -192,3 +192,24 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
     outputs.push(coverage(parent,session,Some(REDUCER_VERSION),state,Some(eligible),Some(timed),Some(untimed),reasons));
     Computed{outputs,..Default::default()}
 }
+
+/// Fields consumed by this decoder. Raw prompts, commands and tool arguments
+/// remain in the source snapshot but do not determine an act.
+pub(super) fn requirements()->Vec<sinex_model::InputRequirement>{
+    let mut paths:Vec<String>=["session","reducer_version","source_position","complete","native_unavailable","repo","branch","kind","mode","objectives","record/product"].into_iter().map(|p|format!("/{p}")).collect();
+    paths.extend(["reducer_version","position","session_id","session/id","retired","unavailable","sources/*/selected","sources/*/projection"].into_iter().map(|p|format!("/record/snapshot/{p}")));
+    for (kind,fields)in [
+        ("messages",&["message","role","written_by","prompt_kind","at","at_evidence"][..]),
+        ("calls",&["entry_id","session","action","at","at_evidence","result_at","result_at_evidence","outcome","unavailable","check_passed"][..]),
+        ("turns",&["turn","session","start","start_evidence","end","end_evidence","errors","unavailable"][..])
+    ]{paths.extend(fields.iter().map(|field|format!("/record/snapshot/{kind}/*/{field}")));}
+    vec![sinex_model::InputRequirement::new(sinex_model::KindRef{name:"polylogue.work_snapshot".into(),version:4},paths),
+        sinex_model::InputRequirement::new(sinex_model::KindRef{name:"polylogue.work_snapshot".into(),version:3},["/reducer_version"])]
+}
+pub(super) fn required_unavailable(key:&Value,inputs:&[Event],issues:&[sinex_model::UnavailableInput])->Computed {
+    let session=key["session"].as_str().unwrap_or("");
+    let outputs=inputs.iter().find(|event|issues.iter().any(|issue|issue.event==event.id)).map(|parent|
+        coverage(parent,session,parent.payload["reducer_version"].as_u64().and_then(|v|u32::try_from(v).ok()),WorkCoverageState::Unavailable,None,None,None,
+            [("required_input_transformed".into(),issues.len()as u64)].into())).into_iter().collect();
+    Computed{outputs,waiting:false,..Default::default()}
+}

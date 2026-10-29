@@ -696,3 +696,23 @@ fn highest_reducer_controls_retirement_while_older_raw_snapshot_remains_citable(
     for field in ["repo","branch","kind","mode","machine","git_identity","terminal","boot_id"]{retired.payload[field]=Value::Null;}retired.payload["objectives"]=json!([]);
     let cleared=Keyed::compute(&WorkActs,&json!({"session":"a"}),&[old,retired],&env);assert_eq!(cleared.outputs.len(),1);assert_eq!(cleared.outputs[0].payload["eligible_entries"],0);assert_eq!(cleared.outputs[0].payload["state"],"complete");
 }
+
+#[devkit::test]
+fn transformed_required_snapshot_emits_unavailable_without_estimated_acts(){
+    let snapshot=prompt("codex:required",10);
+    let key=json!({"session":"codex:required"});
+    let env=Env::at(at(20),sinex_model::time_settings::TimeSettings::new("UTC",0,0).unwrap());
+    assert!(Keyed::compute(&WorkActs,&key,std::slice::from_ref(&snapshot),&env).outputs.iter().any(|e|e.event_type=="work.act"));
+    let issue=sinex_model::UnavailableInput{event:snapshot.id,kind:sinex_model::KindRef{name:snapshot.event_type.clone(),version:snapshot.kind_version},reason:sinex_model::InputUnavailableReason::RequiredPathTransformed};
+    let output=Keyed::unavailable_inputs(&WorkActs,&key,std::slice::from_ref(&snapshot),&[issue],&env);
+    assert!(!output.waiting);assert_eq!(output.outputs.len(),1);
+    assert_eq!(output.outputs[0].event_type,"work.coverage");
+    assert_eq!(output.outputs[0].payload["state"],"unavailable");
+    assert!(output.outputs[0].payload["eligible_entries"].is_null());
+    assert_eq!(output.outputs[0].origin,sinex_model::Origin::Derived{parents:vec![snapshot.id]});
+    let requirements=Keyed::input_requirements(&WorkActs).unwrap();
+    let current=requirements.iter().find(|r|r.kind.version==4).unwrap();
+    assert!(current.paths.contains(&"/objectives".to_owned()));
+    assert!(current.paths.contains(&"/record/snapshot/calls/*/at".to_owned()));
+    assert!(!current.paths.iter().any(|path|path.ends_with("/command")||path.ends_with("/text")));
+}

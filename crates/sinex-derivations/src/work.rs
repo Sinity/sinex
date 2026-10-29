@@ -45,9 +45,13 @@ mod snapshot;
 pub struct WorkActs;
 impl Keyed for WorkActs {
     const NAME: &'static str = "work.acts";
-    const VERSION: u32 = 6;
+    const VERSION: u32 = 7;
     const INPUTS: &'static [&'static str] = &["polylogue.work_snapshot"];
     const OUTPUTS: &'static [&'static str] = &["work.act", "work.coverage"];
+    fn input_requirements(&self)->Option<Vec<sinex_model::InputRequirement>> {Some(snapshot::requirements())}
+    fn unavailable_inputs(&self,key:&Value,inputs:&[Event],issues:&[sinex_model::UnavailableInput],_:&Env)->Computed {
+        snapshot::required_unavailable(key,inputs,issues)
+    }
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
         input.payload.get("session").filter(|id|id.as_str().is_some_and(|id|!id.is_empty()))
             .map(|id|vec![json!({"session":id})]).unwrap_or_default()
