@@ -49,7 +49,11 @@ fn days(inputs: &[Event]) -> Vec<ConversationDay> {
         .compute(
             &json!({"day": "2024-06-15"}),
             inputs,
-            &Env::at(at(86_400 * 3), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+            &Env::at(
+                at(86_400 * 3),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
         )
         .outputs
         .iter()
@@ -87,9 +91,24 @@ fn messages_group_by_conversation_within_their_provider() {
         [
             ("chat", "#nix", 1, vec!["ann"]),
             ("chat", "#rust", 2, vec!["ann", "bob"]),
-            ("mail", r#"["synthetic-account","message:<1>"]"#, 1, vec!["a@x"]),
-            ("mail", r#"["synthetic-account","message:<2>"]"#, 1, vec!["b@x"]),
-            ("mail", r#"["synthetic-account","thread:t9"]"#, 2, vec!["a@x", "c@x"]),
+            (
+                "mail",
+                r#"["synthetic-account","message:<1>"]"#,
+                1,
+                vec!["a@x"]
+            ),
+            (
+                "mail",
+                r#"["synthetic-account","message:<2>"]"#,
+                1,
+                vec!["b@x"]
+            ),
+            (
+                "mail",
+                r#"["synthetic-account","thread:t9"]"#,
+                2,
+                vec!["a@x", "c@x"]
+            ),
         ]
     );
     let rust = got.iter().find(|d| d.conversation == "#rust").unwrap();
@@ -149,7 +168,11 @@ fn equal_time_messages_use_record_identity_instead_of_reading_ids() {
         .compute(
             &json!({"day":"2024-06-15"}),
             &messages,
-            &Env::at(at(86_400), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+            &Env::at(
+                at(86_400),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
         )
         .outputs;
     let sinex_model::Origin::Derived { parents } = &output[0].origin else {
@@ -160,11 +183,14 @@ fn equal_time_messages_use_record_identity_instead_of_reading_ids() {
 
 #[devkit::test]
 fn provider_account_and_missing_native_ids_never_merge_unrelated_mail() {
-    let first=mail("one",None,Some("thread"),"a@example.invalid",0);
-    let mut other=mail("two",None,Some("thread"),"b@example.invalid",1);
-    other.payload["account"]=json!("other-account");
-    assert_eq!(days(&[first.clone(),other.clone()]).len(),2);
-    let mut unknown=first;unknown.payload["account"]=Value::Null;unknown.payload["message_id"]=Value::Null;
-    other.payload["account"]=Value::Null;other.payload["message_id"]=Value::Null;
-    assert_eq!(days(&[unknown,other]).len(),2);
+    let first = mail("one", None, Some("thread"), "a@example.invalid", 0);
+    let mut other = mail("two", None, Some("thread"), "b@example.invalid", 1);
+    other.payload["account"] = json!("other-account");
+    assert_eq!(days(&[first.clone(), other.clone()]).len(), 2);
+    let mut unknown = first;
+    unknown.payload["account"] = Value::Null;
+    unknown.payload["message_id"] = Value::Null;
+    other.payload["account"] = Value::Null;
+    other.payload["message_id"] = Value::Null;
+    assert_eq!(days(&[unknown, other]).len(), 2);
 }

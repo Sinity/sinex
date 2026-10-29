@@ -49,14 +49,21 @@ pub async fn selected_query(
     conn: &mut PgConnection,
     selection: &QuerySelection,
 ) -> Result<SelectedAnswer> {
-    complete(conn,selection,false).await
+    complete(conn, selection, false).await
 }
 
-pub async fn selected_query_in_snapshot(conn: &mut PgConnection,selection: &QuerySelection) -> Result<SelectedAnswer> {
-    complete(conn,selection,true).await
+pub async fn selected_query_in_snapshot(
+    conn: &mut PgConnection,
+    selection: &QuerySelection,
+) -> Result<SelectedAnswer> {
+    complete(conn, selection, true).await
 }
 
-async fn complete(conn: &mut PgConnection,selection: &QuerySelection,in_snapshot:bool) -> Result<SelectedAnswer> {
+async fn complete(
+    conn: &mut PgConnection,
+    selection: &QuerySelection,
+    in_snapshot: bool,
+) -> Result<SelectedAnswer> {
     let previous: String =
         sqlx::query_scalar("SELECT coalesce(current_setting('sinex.grants', true), '')")
             .fetch_one(&mut *conn)
@@ -98,8 +105,14 @@ async fn complete(conn: &mut PgConnection,selection: &QuerySelection,in_snapshot
                 }
                 first.answer.rows.extend(next.answer.rows);
             } else {
-                let signature = next.selection.as_ref().and_then(|selection| selection.selected["_fingerprint"].as_str())
-                    .ok_or_else(|| Error::Invalid("selected query fingerprint is unavailable".into()))?.to_owned();
+                let signature = next
+                    .selection
+                    .as_ref()
+                    .and_then(|selection| selection.selected["_fingerprint"].as_str())
+                    .ok_or_else(|| {
+                        Error::Invalid("selected query fingerprint is unavailable".into())
+                    })?
+                    .to_owned();
                 first = Some(SelectedAnswer {
                     answer: next.answer,
                     parents: next.parents,
@@ -139,7 +152,7 @@ pub(super) async fn capture(
 ) -> Result<(QuerySelection, Vec<EventId>, Class)> {
     let selector = walk::recall_rows(rows);
     let (sql, values) = {
-        let compiled = super::compile_query(conn,ctx,seq,&selector).await?;
+        let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
         let mut sql =
             SqlFragment::text(format!("SELECT {} FROM (", json_object(&compiled.columns)));
         sql.append(compiled.answer).push(") q");
@@ -179,9 +192,12 @@ pub(super) async fn capture(
             "selected query provenance changed while being read".into(),
         ));
     }
-    let class = classes.into_iter().try_fold(Class::Open,|class,stored| {
-        serde_json::from_value::<Class>(json!(stored)).map(|next| class.max(next))
-    }).map_err(|error| Error::Invalid(error.to_string()))?;
+    let class = classes
+        .into_iter()
+        .try_fold(Class::Open, |class, stored| {
+            serde_json::from_value::<Class>(json!(stored)).map(|next| class.max(next))
+        })
+        .map_err(|error| Error::Invalid(error.to_string()))?;
     let explicit = query
         .stages
         .iter()
@@ -195,7 +211,15 @@ pub(super) async fn capture(
     grants.dedup();
     let mut retained = selection.retained(&query.source)?;
     retained["_query"] = json!(format!("{query:?}"));
-    retained["_fingerprint"] = json!(blake3::hash(serde_json::to_vec(&json!([rows,account])).map_err(|error| Error::Invalid(error.to_string()))?.as_slice()).to_hex().to_string());
+    retained["_fingerprint"] = json!(
+        blake3::hash(
+            serde_json::to_vec(&json!([rows, account]))
+                .map_err(|error| Error::Invalid(error.to_string()))?
+                .as_slice()
+        )
+        .to_hex()
+        .to_string()
+    );
     let selection = QuerySelection {
         query: text.trim().into(),
         now: Timestamp::from_unix_ns(ctx.now.as_nanosecond())
@@ -223,25 +247,50 @@ pub async fn check_selected_question(
     text: &str,
     selection: &QuerySelection,
 ) -> Result<()> {
-    let expected: Vec<(sinex_model::KindRef,String)> = serde_json::from_value(selection.declarations.clone())
-        .map_err(|error| Error::Invalid(error.to_string()))?;
-    let references:Vec<_> = expected.iter().map(|(reference,_)| reference.clone()).collect();
-    let declarations = sinex_schema::kinds::load(conn,&references).await?;
-    if expected.iter().any(|(reference,hash)| declarations.get(reference).is_none_or(|declaration| declaration.definition_hash()!=*hash)) {
-        return Err(Error::Invalid("query declaration snapshot is unavailable".into()));
+    let expected: Vec<(sinex_model::KindRef, String)> =
+        serde_json::from_value(selection.declarations.clone())
+            .map_err(|error| Error::Invalid(error.to_string()))?;
+    let references: Vec<_> = expected
+        .iter()
+        .map(|(reference, _)| reference.clone())
+        .collect();
+    let declarations = sinex_schema::kinds::load(conn, &references).await?;
+    if expected.iter().any(|(reference, hash)| {
+        declarations
+            .get(reference)
+            .is_none_or(|declaration| declaration.definition_hash() != *hash)
+    }) {
+        return Err(Error::Invalid(
+            "query declaration snapshot is unavailable".into(),
+        ));
     }
-    let now = jiff::Timestamp::from_nanosecond(selection.now.unix_ns()).map_err(|error| Error::Invalid(error.to_string()))?;
-    let zone = jiff::tz::TimeZone::get(&selection.zone).map_err(|error| Error::Invalid(error.to_string()))?;
-    let day_start = selection.day_start.parse().map_err(|error:jiff::Error| Error::Invalid(error.to_string()))?;
-    let mut ctx = Context::new(now,zone,day_start);
-    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(declarations.into_values()));
+    let now = jiff::Timestamp::from_nanosecond(selection.now.unix_ns())
+        .map_err(|error| Error::Invalid(error.to_string()))?;
+    let zone = jiff::tz::TimeZone::get(&selection.zone)
+        .map_err(|error| Error::Invalid(error.to_string()))?;
+    let day_start = selection
+        .day_start
+        .parse()
+        .map_err(|error: jiff::Error| Error::Invalid(error.to_string()))?;
+    let mut ctx = Context::new(now, zone, day_start);
+    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
+        declarations.into_values(),
+    ));
     let mut query = if sinex_model::query::saved::reference_name(text).is_some() {
-        let definitions = serde_json::from_value(selection.selected["_saved"].clone()).map_err(|error| Error::Invalid(error.to_string()))?;
-        sinex_model::query::saved::bind_saved(text,&ctx,&definitions)?
-    } else {sinex_model::query::bind(text,&ctx)?};
-    ctx.catalog.as_ref().expect("retained query catalog").bind(&mut query,&ctx)?;
-    if selection.selected["_query"].as_str()!=Some(format!("{query:?}").as_str()) {
-        return Err(Error::Invalid("recall cursor belongs to a different bound question".into()));
+        let definitions = serde_json::from_value(selection.selected["_saved"].clone())
+            .map_err(|error| Error::Invalid(error.to_string()))?;
+        sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?
+    } else {
+        sinex_model::query::bind(text, &ctx)?
+    };
+    ctx.catalog
+        .as_ref()
+        .expect("retained query catalog")
+        .bind(&mut query, &ctx)?;
+    if selection.selected["_query"].as_str() != Some(format!("{query:?}").as_str()) {
+        return Err(Error::Invalid(
+            "recall cursor belongs to a different bound question".into(),
+        ));
     }
     Ok(())
 }
@@ -255,8 +304,17 @@ pub async fn selected_page(
     page: &Page,
     selection: Option<&QuerySelection>,
 ) -> Result<SelectedAnswer> {
-    let selected = run_inner(conn,text,None,ctx,page,selection,true,false).await?;
-    let signature = selected.selection.as_ref().and_then(|selection| selection.selected["_fingerprint"].as_str())
-        .ok_or_else(|| Error::Invalid("selected query fingerprint is unavailable".into()))?.to_owned();
-    Ok(SelectedAnswer {answer:selected.answer,parents:selected.parents,class:selected.class,signature})
+    let selected = run_inner(conn, text, None, ctx, page, selection, true, false).await?;
+    let signature = selected
+        .selection
+        .as_ref()
+        .and_then(|selection| selection.selected["_fingerprint"].as_str())
+        .ok_or_else(|| Error::Invalid("selected query fingerprint is unavailable".into()))?
+        .to_owned();
+    Ok(SelectedAnswer {
+        answer: selected.answer,
+        parents: selected.parents,
+        class: selected.class,
+        signature,
+    })
 }

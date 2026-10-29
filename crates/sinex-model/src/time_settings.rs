@@ -99,8 +99,14 @@ impl TimeSettings {
                 Some(p) if p == after => after,
                 _ => before,
             },
-            AmbiguousOffset::Gap { .. } => return Self::back(self.day_setting()?.local(dt)
-                .map_err(|error|TimeSettingsError::OutOfRange(error.to_string()))?.instant),
+            AmbiguousOffset::Gap { .. } => {
+                return Self::back(
+                    self.day_setting()?
+                        .local(dt)
+                        .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))?
+                        .instant,
+                );
+            }
         };
         let t = offset
             .to_timestamp(dt)
@@ -131,21 +137,30 @@ impl TimeSettings {
     }
 
     /// The shared logical-day setting; unnamed zones are refused.
-    pub fn day_setting(&self)->Result<query_language::time::DaySetting,TimeSettingsError> {
-        query_language::time::DaySetting::new(self.zone.clone(),self.day_starts_at)
-            .map_err(|_|TimeSettingsError::UnknownZone(self.zone_name.clone()))
+    pub fn day_setting(&self) -> Result<query_language::time::DaySetting, TimeSettingsError> {
+        query_language::time::DaySetting::new(self.zone.clone(), self.day_starts_at)
+            .map_err(|_| TimeSettingsError::UnknownZone(self.zone_name.clone()))
     }
-    pub fn day(&self,t:Timestamp)->Result<Date,TimeSettingsError> {
-        self.day_setting()?.logical_day(Self::instant(t)?)
-            .map_err(|error|TimeSettingsError::OutOfRange(error.to_string()))
+    pub fn day(&self, t: Timestamp) -> Result<Date, TimeSettingsError> {
+        self.day_setting()?
+            .logical_day(Self::instant(t)?)
+            .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))
     }
-    pub fn day_start(&self,day:Date)->Result<Timestamp,TimeSettingsError> {
-        Self::back(self.day_setting()?.start_of(day).map_err(|error|TimeSettingsError::OutOfRange(error.to_string()))?)
+    pub fn day_start(&self, day: Date) -> Result<Timestamp, TimeSettingsError> {
+        Self::back(
+            self.day_setting()?
+                .start_of(day)
+                .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))?,
+        )
     }
-    pub fn day_end(&self,day:Date)->Result<Timestamp,TimeSettingsError> {
-        Self::back(self.day_setting()?.day(day).map_err(|error|TimeSettingsError::OutOfRange(error.to_string()))?.end)
+    pub fn day_end(&self, day: Date) -> Result<Timestamp, TimeSettingsError> {
+        Self::back(
+            self.day_setting()?
+                .day(day)
+                .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))?
+                .end,
+        )
     }
-
 }
 
 #[cfg(test)]

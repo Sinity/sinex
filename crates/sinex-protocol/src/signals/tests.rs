@@ -124,28 +124,53 @@ fn emergency_transfer_preserves_both_route_receipts_and_used_retry() {
     );
 }
 
-
-fn attested_rule(intent:&::signals::FiredIntent)->::signals::ActiveRule {
+fn attested_rule(intent: &::signals::FiredIntent) -> ::signals::ActiveRule {
     serde_json::from_value(serde_json::json!({"version":intent.delivery.trigger.rule,"rule":{"name":"synthetic compiled display","query":"events","fires":"on_new","for":0,"min_change":1,"deliver":"notice","target":null,"command":null,"interrupt":true,"quiet_hours":null,"rate_limit":null,"scope":null,"enabled":true},"author":intent.author,"via":"compiled","live":true})).unwrap()
 }
 #[devkit::test]
 fn elevated_forwarded_authors_require_exact_configured_attestation() {
-    let mut intent=completion().intent;intent.author=::signals::Author::Operator;
-    let active=attested_rule(&intent);
-    assert!(authorize_author(&intent,Some(&active),"polylogue",None).is_err());
-    assert!(authorize_author(&intent,Some(&active),"polylogue",Some(&AuthorAttestation::default())).is_err());
-    let operator=AuthorAttestation{operator:true,shipped:vec![]};
-    assert!(authorize_author(&intent,None,"polylogue",Some(&operator)).is_err());
-    authorize_author(&intent,Some(&active),"polylogue",Some(&operator)).unwrap();
-    assert!(authorize_author(&intent,Some(&active),"another-family",Some(&operator)).is_err());
-    let mut changed=active.clone();changed.author=::signals::Author::Agent("same-name".into());
-    assert!(authorize_author(&intent,Some(&changed),"polylogue",Some(&operator)).is_err());
-    intent.author=::signals::Author::Shipped;
-    let active=attested_rule(&intent);
-    let shipped=AuthorAttestation{operator:false,shipped:vec![ShippedRule{id:active.version.id.clone(),revision:active.version.revision,fingerprint:rule_fingerprint(&active)}]};
-    authorize_author(&intent,Some(&active),"polylogue",Some(&shipped)).unwrap();
-    let mut changed=active.clone();changed.rule.query="events where text = edited".into();
-    assert!(authorize_author(&intent,Some(&changed),"polylogue",Some(&shipped)).is_err(),"same display and ID do not attest a different compiled definition");
-    let mut authored=active;authored.version.id="authored:same-display".into();intent.delivery.trigger.rule=authored.version.clone();
-    assert!(authorize_author(&intent,Some(&authored),"polylogue",Some(&shipped)).is_err());
+    let mut intent = completion().intent;
+    intent.author = ::signals::Author::Operator;
+    let active = attested_rule(&intent);
+    assert!(authorize_author(&intent, Some(&active), "polylogue", None).is_err());
+    assert!(
+        authorize_author(
+            &intent,
+            Some(&active),
+            "polylogue",
+            Some(&AuthorAttestation::default())
+        )
+        .is_err()
+    );
+    let operator = AuthorAttestation {
+        operator: true,
+        shipped: vec![],
+    };
+    assert!(authorize_author(&intent, None, "polylogue", Some(&operator)).is_err());
+    authorize_author(&intent, Some(&active), "polylogue", Some(&operator)).unwrap();
+    assert!(authorize_author(&intent, Some(&active), "another-family", Some(&operator)).is_err());
+    let mut changed = active.clone();
+    changed.author = ::signals::Author::Agent("same-name".into());
+    assert!(authorize_author(&intent, Some(&changed), "polylogue", Some(&operator)).is_err());
+    intent.author = ::signals::Author::Shipped;
+    let active = attested_rule(&intent);
+    let shipped = AuthorAttestation {
+        operator: false,
+        shipped: vec![ShippedRule {
+            id: active.version.id.clone(),
+            revision: active.version.revision,
+            fingerprint: rule_fingerprint(&active),
+        }],
+    };
+    authorize_author(&intent, Some(&active), "polylogue", Some(&shipped)).unwrap();
+    let mut changed = active.clone();
+    changed.rule.query = "events where text = edited".into();
+    assert!(
+        authorize_author(&intent, Some(&changed), "polylogue", Some(&shipped)).is_err(),
+        "same display and ID do not attest a different compiled definition"
+    );
+    let mut authored = active;
+    authored.version.id = "authored:same-display".into();
+    intent.delivery.trigger.rule = authored.version.clone();
+    assert!(authorize_author(&intent, Some(&authored), "polylogue", Some(&shipped)).is_err());
 }

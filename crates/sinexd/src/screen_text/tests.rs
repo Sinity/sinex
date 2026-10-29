@@ -59,7 +59,11 @@ fn accessible_text_is_derived_from_the_exact_guarded_frame_without_material_read
                 event: &frame,
                 bytes: None,
             },
-            &Env::at(frame.ts_orig.at.unwrap(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+            &Env::at(
+                frame.ts_orig.at.unwrap(),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
+            ),
         )
         .unwrap();
     assert_eq!(

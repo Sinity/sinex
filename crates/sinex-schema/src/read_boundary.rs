@@ -19,7 +19,11 @@ pub(crate) async fn require_context(conn: &mut PgConnection) -> Result<(), Error
          THEN NOT has_function_privilege('sinex_reader','pg_catalog.set_config(text,text,boolean)','EXECUTE')
          ELSE false END",
     ).fetch_one(conn).await?;
-    if safe { Ok(()) } else { Err(Error::UnsafeReadBoundary) }
+    if safe {
+        Ok(())
+    } else {
+        Err(Error::UnsafeReadBoundary)
+    }
 }
 
 /// Effective grants include inherited roles and column-level privileges.
@@ -33,7 +37,11 @@ pub async fn require(conn: &mut PgConnection) -> Result<(), Error> {
           AND NOT (n.nspname='registry' AND c.relname IN ('sources','derivations','event_types','kind_prefixes','source_declarations'))
           AND has_any_column_privilege('sinex_reader',c.oid,'SELECT'))"
     ).fetch_one(conn).await?;
-    if private_readable {Err(Error::UnsafeReadBoundary)} else {Ok(())}
+    if private_readable {
+        Err(Error::UnsafeReadBoundary)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

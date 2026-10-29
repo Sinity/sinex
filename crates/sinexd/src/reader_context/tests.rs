@@ -18,7 +18,8 @@ async fn directory_resumes_from_admitted_cursor_with_original_bytes(db: devkit::
     let mut ctx = ReaderContext::open(
         &url,
         &dir.join("store"),
-        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();

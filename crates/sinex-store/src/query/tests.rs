@@ -83,12 +83,23 @@ pub(crate) async fn admit_commands(
     }
     // Derived inputs are committed readings, including in fixtures.
     for derived in [false, true] {
-        let selected: Vec<_> = events.iter().filter(|event| matches!(&event.origin, Origin::Derived { .. }) == derived).cloned().collect();
-        if selected.is_empty() { continue; }
+        let selected: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(&event.origin, Origin::Derived { .. }) == derived)
+            .cloned()
+            .collect();
+        if selected.is_empty() {
+            continue;
+        }
         let batch = Batch {
             run: RunId::new(),
-            kind: BatchKind::Api { actor: "test".into() },
-            records: vec![RecordOutcome::Events { location: None, events: selected }],
+            kind: BatchKind::Api {
+                actor: "test".into(),
+            },
+            records: vec![RecordOutcome::Events {
+                location: None,
+                events: selected,
+            }],
             archive: vec![],
         };
         let mut tx = conn.begin().await.unwrap();
@@ -640,11 +651,23 @@ mod calendar;
 mod follow;
 
 #[devkit::test]
-async fn read_only_sql_rejects_stale_projection_even_when_the_view_is_pruned(db: devkit::pg::TestDatabase) {
-    let mut conn=PgConnection::connect(&db.url(None)).await.unwrap();
-    let positive=super::read_sql::run(&mut conn,"SELECT 7 AS n").await.unwrap();
-    assert_eq!(positive,vec![serde_json::json!({"n":7})]);
+async fn read_only_sql_rejects_stale_projection_even_when_the_view_is_pruned(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let positive = super::read_sql::run(&mut conn, "SELECT 7 AS n")
+        .await
+        .unwrap();
+    assert_eq!(positive, vec![serde_json::json!({"n":7})]);
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES('synthetic-stale','guarded','test')").execute(&mut conn).await.unwrap();
-    let error=super::read_sql::run(&mut conn,"SELECT count(*) FROM core.visible_search_text WHERE false").await.unwrap_err();
-    assert!(error.to_string().contains("privacy_projection_stale"),"{error}");
+    let error = super::read_sql::run(
+        &mut conn,
+        "SELECT count(*) FROM core.visible_search_text WHERE false",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("privacy_projection_stale"),
+        "{error}"
+    );
 }

@@ -74,13 +74,25 @@ fn presentations_disclose_mixed_producer_versions_from_the_stored_context() {
         {"producer":"synthetic.source","version":"2","build":"b","events":1}
     ]));
     let presentation = compile(context, vec![], 100);
-    assert!(presentation.markdown.contains("Includes several producer versions: synthetic.source: 1 (a), 2 (b)."));
+    assert!(
+        presentation
+            .markdown
+            .contains("Includes several producer versions: synthetic.source: 1 (a), 2 (b).")
+    );
 }
 
 #[devkit::test]
 fn a_large_quality_section_does_not_consume_the_whole_presentation() {
-    let quality = Section { title: "Data quality".into(), findings: vec![finding(1.0, false); 20], absent: None };
-    let activity = Section { title: "The day".into(), findings: vec![finding(2.0, false)], absent: None };
+    let quality = Section {
+        title: "Data quality".into(),
+        findings: vec![finding(1.0, false); 20],
+        absent: None,
+    };
+    let activity = Section {
+        title: "The day".into(),
+        findings: vec![finding(2.0, false)],
+        absent: None,
+    };
     let mut context = ctx();
     context.citation = Some("sinex:ev/synthetic-pack".into());
     let presentation = compile(context, vec![quality, activity], 100);
@@ -91,10 +103,15 @@ fn a_large_quality_section_does_not_consume_the_whole_presentation() {
 
 #[devkit::test]
 fn mixed_material_parser_versions_are_disclosed_when_run_metadata_is_missing() {
-    let mut context=ctx();context.producer_versions=Some(serde_json::json!([
+    let mut context = ctx();
+    context.producer_versions = Some(serde_json::json!([
         {"producer":"synthetic","version":null,"build":null,"parser":"synthetic-parser","parser_version":1},
         {"producer":"synthetic","version":null,"build":null,"parser":"synthetic-parser","parser_version":2}
     ]));
-    let presentation=compile(context,vec![],100);
-    assert!(presentation.markdown.contains("Includes several parser versions: synthetic-parser: 1, 2."));
+    let presentation = compile(context, vec![], 100);
+    assert!(
+        presentation
+            .markdown
+            .contains("Includes several parser versions: synthetic-parser: 1, 2.")
+    );
 }

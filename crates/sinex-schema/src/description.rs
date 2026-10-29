@@ -34,26 +34,30 @@ impl Description {
 
     pub(crate) fn before_output_ordinals() -> Self {
         let mut description = Self::current();
-        description.tables.retain(|statement|
+        description.tables.retain(|statement| {
             crate::source_declarations::before(statement)
-            && crate::privacy_epoch::before(statement)
-            && crate::owner_protocol::before(statement)
-            && !statement.contains("core.signal_checkpoints")
-            && !statement.contains("core.embedding_spaces")
-            && !statement.contains("core.embedding_vectors")
-            && !statement.starts_with("CREATE INDEX embedding_target_space ")
-            && !statement.contains("core.query_cursor_key")
-            && !statement.contains("VALUES ('query_metadata',0)"));
-        description.after_tables.retain(|statement|
+                && crate::privacy_epoch::before(statement)
+                && crate::owner_protocol::before(statement)
+                && !statement.contains("core.signal_checkpoints")
+                && !statement.contains("core.embedding_spaces")
+                && !statement.contains("core.embedding_vectors")
+                && !statement.starts_with("CREATE INDEX embedding_target_space ")
+                && !statement.contains("core.query_cursor_key")
+                && !statement.contains("VALUES ('query_metadata',0)")
+        });
+        description.after_tables.retain(|statement| {
             crate::source_declarations::before(statement)
-            && crate::privacy_epoch::before(statement)
-            && crate::owner_protocol::before(statement)
-            && crate::query_cursors::before(statement));
-        description.visibility=crate::visibility_before_privacy_epoch();
+                && crate::privacy_epoch::before(statement)
+                && crate::owner_protocol::before(statement)
+                && crate::query_cursors::before(statement)
+        });
+        description.visibility = crate::visibility_before_privacy_epoch();
         for statement in &mut description.tables {
             crate::source_declarations::previous(statement);
             if statement.starts_with("CREATE TABLE core.ingress_frames (") {
-                *statement=statement.replace(",\n  family text","").replace(",\n  write_kind_prefixes text[]","");
+                *statement = statement
+                    .replace(",\n  family text", "")
+                    .replace(",\n  write_kind_prefixes text[]", "");
             }
         }
 
@@ -126,11 +130,21 @@ impl Description {
 
     pub(crate) fn before_foundations() -> Self {
         let mut description = Self::before_output_ordinals();
-        description.tables.retain(|statement|crate::source_declarations::before(statement));
-        description.after_tables.retain(|statement|crate::source_declarations::before(statement));
-        for statement in &mut description.tables{crate::source_declarations::previous(statement);}
-        description.after_tables.retain(|statement|crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement));
-        description.tables.retain(|statement|crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement));
+        description
+            .tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        description
+            .after_tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        for statement in &mut description.tables {
+            crate::source_declarations::previous(statement);
+        }
+        description.after_tables.retain(|statement| {
+            crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement)
+        });
+        description.tables.retain(|statement| {
+            crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement)
+        });
         description.tables.retain(|statement| {
             !statement.starts_with("CREATE TABLE core.signal_checkpoints (")
                 && !statement.starts_with("CREATE TABLE core.embedding_spaces (")
@@ -147,11 +161,15 @@ impl Description {
                 && !statement.starts_with("CREATE INDEX tombstones_feed ")
                 && !statement.starts_with("CREATE INDEX tombstones_original_position ")
         });
-        description.visibility=crate::visibility_before_privacy_epoch();
-        description.visibility.retain(|statement|!statement.starts_with("CREATE VIEW core.visible_embedding_vectors "));
+        description.visibility = crate::visibility_before_privacy_epoch();
+        description.visibility.retain(|statement| {
+            !statement.starts_with("CREATE VIEW core.visible_embedding_vectors ")
+        });
         for statement in &mut description.tables {
             if statement.starts_with("CREATE TABLE core.ingress_frames (") {
-                *statement=statement.replace(",\n  family text","").replace(",\n  write_kind_prefixes text[]","");
+                *statement = statement
+                    .replace(",\n  family text", "")
+                    .replace(",\n  write_kind_prefixes text[]", "");
             }
             if statement.starts_with("CREATE TABLE core.published (") {
                 *statement = statement
@@ -164,7 +182,8 @@ impl Description {
             if statement.starts_with("CREATE TABLE core.event_tombstones (") {
                 *statement = statement
                     .replace(",\n  commit_seq bigint", "")
-                    .replace(",\n  original_commit_seq bigint", "").replace(",\n  class text","");
+                    .replace(",\n  original_commit_seq bigint", "")
+                    .replace(",\n  class text", "");
             }
             *statement = statement.replace(
                 "VALUES ('commit_seq', 0), ('excised', 0)",
@@ -184,11 +203,21 @@ impl Description {
 
     pub(crate) fn before_segments() -> Self {
         let mut description = Self::before_output_ordinals();
-        description.tables.retain(|statement|crate::source_declarations::before(statement));
-        description.after_tables.retain(|statement|crate::source_declarations::before(statement));
-        for statement in &mut description.tables{crate::source_declarations::previous(statement);}
-        description.after_tables.retain(|statement|crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement));
-        description.tables.retain(|statement|crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement));
+        description
+            .tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        description
+            .after_tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        for statement in &mut description.tables {
+            crate::source_declarations::previous(statement);
+        }
+        description.after_tables.retain(|statement| {
+            crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement)
+        });
+        description.tables.retain(|statement| {
+            crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement)
+        });
         description.tables.retain(|statement| {
             !statement.starts_with("CREATE TABLE core.signal_checkpoints (")
                 && !statement.starts_with("CREATE TABLE core.embedding_spaces (")
@@ -205,11 +234,15 @@ impl Description {
                 && !statement.starts_with("CREATE INDEX tombstones_feed ")
                 && !statement.starts_with("CREATE INDEX tombstones_original_position ")
         });
-        description.visibility=crate::visibility_before_privacy_epoch();
-        description.visibility.retain(|statement|!statement.starts_with("CREATE VIEW core.visible_embedding_vectors "));
+        description.visibility = crate::visibility_before_privacy_epoch();
+        description.visibility.retain(|statement| {
+            !statement.starts_with("CREATE VIEW core.visible_embedding_vectors ")
+        });
         for statement in &mut description.tables {
             if statement.starts_with("CREATE TABLE core.ingress_frames (") {
-                *statement=statement.replace(",\n  family text","").replace(",\n  write_kind_prefixes text[]","");
+                *statement = statement
+                    .replace(",\n  family text", "")
+                    .replace(",\n  write_kind_prefixes text[]", "");
             }
             if statement.starts_with("CREATE TABLE core.published (") {
                 *statement = statement
@@ -222,7 +255,8 @@ impl Description {
             if statement.starts_with("CREATE TABLE core.event_tombstones (") {
                 *statement = statement
                     .replace(",\n  commit_seq bigint", "")
-                    .replace(",\n  original_commit_seq bigint", "").replace(",\n  class text","");
+                    .replace(",\n  original_commit_seq bigint", "")
+                    .replace(",\n  class text", "");
             }
         }
         description
@@ -303,8 +337,14 @@ impl Description {
     }
 
     pub(crate) fn declares_relation(&self, name: &str) -> bool {
-        self.tables.iter().filter_map(|statement| Table::read(statement)).any(|table| table.name==name)
-            || self.visibility.iter().any(|statement| statement.starts_with(&format!("CREATE VIEW {name} AS ")) || statement.starts_with(&format!("CREATE OR REPLACE VIEW {name} AS ")))
+        self.tables
+            .iter()
+            .filter_map(|statement| Table::read(statement))
+            .any(|table| table.name == name)
+            || self.visibility.iter().any(|statement| {
+                statement.starts_with(&format!("CREATE VIEW {name} AS "))
+                    || statement.starts_with(&format!("CREATE OR REPLACE VIEW {name} AS "))
+            })
     }
 
     pub(crate) fn statements(&self) -> Vec<String> {

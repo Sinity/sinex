@@ -217,7 +217,7 @@ impl Ingest {
                                 .map_err(|error| Check::Unavailable(error.to_string()))?;
                         if previous.intent != incoming.intent
                             || previous.notice != incoming.notice
-                            || previous.active_rule!=incoming.active_rule
+                            || previous.active_rule != incoming.active_rule
                             || !sinex_store::signals::same_input_lineage(
                                 &mut self.conn,
                                 &previous.inputs,

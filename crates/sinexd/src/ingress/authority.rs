@@ -18,7 +18,7 @@ pub(crate) struct WriteGrant {
     #[serde(default)]
     pub forward_signals: bool,
     #[serde(default)]
-    pub author_attestation:Option<sinex_protocol::signals::AuthorAttestation>,
+    pub author_attestation: Option<sinex_protocol::signals::AuthorAttestation>,
     #[serde(default)]
     pub emergency_sinex_blocked_host: Option<String>,
     pub kind_prefixes: Vec<String>,
@@ -93,34 +93,69 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
                 "signal forwarding requires the canonical family namespace for {identity}"
             ));
         }
-        if let Some(attestation)=&write.author_attestation {
-            if !write.forward_signals || write.canonical_prefixes.is_empty(){return Err(format!("author attestation requires canonical signal forwarding for {identity}"));}
-            let mut seen=std::collections::BTreeSet::new();
+        if let Some(attestation) = &write.author_attestation {
+            if !write.forward_signals || write.canonical_prefixes.is_empty() {
+                return Err(format!(
+                    "author attestation requires canonical signal forwarding for {identity}"
+                ));
+            }
+            let mut seen = std::collections::BTreeSet::new();
             for rule in &attestation.shipped {
-                if !rule.id.starts_with("shipped:") || rule.revision==0 || rule.fingerprint.len()!=64 || !rule.fingerprint.bytes().all(|byte|byte.is_ascii_digit()||(b'a'..=b'f').contains(&byte)) || !seen.insert((&rule.id,rule.revision)) {
-                    return Err(format!("invalid or conflicting shipped rule attestation for {identity}"));
+                if !rule.id.starts_with("shipped:")
+                    || rule.revision == 0
+                    || rule.fingerprint.len() != 64
+                    || !rule
+                        .fingerprint
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    || !seen.insert((&rule.id, rule.revision))
+                {
+                    return Err(format!(
+                        "invalid or conflicting shipped rule attestation for {identity}"
+                    ));
                 }
             }
         }
-        if write.host.as_ref().is_some_and(|host|host.is_empty()||host.contains('\0')) {
+        if write
+            .host
+            .as_ref()
+            .is_some_and(|host| host.is_empty() || host.contains('\0'))
+        {
             return Err(format!("invalid attested host for {identity}"));
         }
         for declaration in &write.source_declarations {
-            if declaration.family != write.family || !matches(&write.source_prefixes,&declaration.source.name) || declaration.kinds.is_empty() {
-                return Err(format!("source declaration is outside configured authority for {identity}"));
+            if declaration.family != write.family
+                || !matches(&write.source_prefixes, &declaration.source.name)
+                || declaration.kinds.is_empty()
+            {
+                return Err(format!(
+                    "source declaration is outside configured authority for {identity}"
+                ));
             }
             for kind in &declaration.kinds {
-                if !matches(&write.kind_prefixes,&kind.kind.name) || !matches!(kind.declaring_producer.as_str(),"sinex") && kind.declaring_producer!=write.family {
+                if !matches(&write.kind_prefixes, &kind.kind.name)
+                    || !matches!(kind.declaring_producer.as_str(), "sinex")
+                        && kind.declaring_producer != write.family
+                {
                     return Err(format!("source emits an unauthorized kind for {identity}"));
                 }
             }
         }
         for kind in &write.canonical_kinds {
-            if kind.declaring_producer!=write.family || !matches(&write.kind_prefixes,&kind.kind.name) {
-                return Err(format!("canonical declaration is outside configured authority for {identity}"));
+            if kind.declaring_producer != write.family
+                || !matches(&write.kind_prefixes, &kind.kind.name)
+            {
+                return Err(format!(
+                    "canonical declaration is outside configured authority for {identity}"
+                ));
             }
         }
-        for prefix in write.kind_prefixes.iter().chain(&write.canonical_prefixes).chain(&write.source_prefixes) {
+        for prefix in write
+            .kind_prefixes
+            .iter()
+            .chain(&write.canonical_prefixes)
+            .chain(&write.source_prefixes)
+        {
             let prefix = prefix.trim_end_matches('*').trim_end_matches('.');
             if prefix.is_empty()
                 || prefix.split('.').any(|part| {

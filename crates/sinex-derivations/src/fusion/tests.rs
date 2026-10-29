@@ -272,7 +272,11 @@ fn notification(summary: &str, secs: f64) -> Event {
 /// what its query admits. Outputs sorted by start, then record.
 fn fuse_events(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Event> {
     let fusion = Fusion(rule);
-    let env = Env::at(Timestamp::from_unix_secs(2_000_000_000).unwrap(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        Timestamp::from_unix_secs(2_000_000_000).unwrap(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let mut keys: Vec<Value> = Vec::new();
     for e in inputs {
         let view = KeyView {

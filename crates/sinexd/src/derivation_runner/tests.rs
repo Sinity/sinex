@@ -114,7 +114,10 @@ impl World {
             url.clone(),
             writer::claim(connection).await.unwrap(),
             queues,
-            Arc::new(Keys::new(keyed, TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))),
+            Arc::new(Keys::new(
+                keyed,
+                TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+            )),
             None,
         ));
         Self {
@@ -482,7 +485,7 @@ async fn compare_shows_a_derivation_update_before_switching(db: devkit::pg::Test
     let w = World::new(db).await;
     w.admit(vec![zsh("a", 0, 1), zsh("b", 10, 2)]).await;
     let mut v1 = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;
-    v1.recompute_all("test.count",None).await.unwrap();
+    v1.recompute_all("test.count", None).await.unwrap();
     v1.catch_up().await.unwrap();
     let same = v1.compare("test.count", None, 3).await.unwrap();
     assert_eq!((same.keys, same.same, same.changed), (1, 1, 0));
@@ -502,8 +505,10 @@ async fn compare_shows_a_derivation_update_before_switching(db: devkit::pg::Test
     assert_eq!((kept[0].version, kept[0].changed), (2, 1));
     assert_eq!(kept[0].examples[0]["kind"], "changed");
     // Comparing alone preserves outputs; selecting the comparison schedules history.
-    assert_eq!(v2.pass().await.unwrap(),0);
-    v2.switch("test.count",cmp.id.unwrap(),"test").await.unwrap();
+    assert_eq!(v2.pass().await.unwrap(), 0);
+    v2.switch("test.count", cmp.id.unwrap(), "test")
+        .await
+        .unwrap();
     v2.catch_up().await.unwrap();
     let out: Vec<CommandFused> = w.live().await;
     assert!(out.iter().any(|f| f.command == "v2:2"), "{out:?}");

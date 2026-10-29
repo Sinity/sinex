@@ -146,7 +146,10 @@ fn current_declarations_reserve_version_one_for_historical_readings() {
 
 #[devkit::test]
 fn payload_normalization_needs_no_record_identity_or_reading_order() {
-    let expected=serde_json::to_value(atuin(false)).unwrap();let kind=find(CommandExecuted::EVENT_TYPE).unwrap();
-    assert_eq!((kind.normalize)(&expected).unwrap(),expected);
-    let mut invalid=expected;invalid.as_object_mut().unwrap().remove("command");assert!((kind.normalize)(&invalid).is_err());
+    let expected = serde_json::to_value(atuin(false)).unwrap();
+    let kind = find(CommandExecuted::EVENT_TYPE).unwrap();
+    assert_eq!((kind.normalize)(&expected).unwrap(), expected);
+    let mut invalid = expected;
+    invalid.as_object_mut().unwrap().remove("command");
+    assert!((kind.normalize)(&invalid).is_err());
 }

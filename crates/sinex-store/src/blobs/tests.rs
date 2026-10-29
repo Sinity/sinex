@@ -250,65 +250,125 @@ fn seekable_preparation_streams_from_its_current_position_and_deduplicates_pendi
 }
 
 #[devkit::test]
-async fn recovery_refuses_an_extent_beyond_the_index_boundary_before_truncating(db:devkit::pg::TestDatabase) {
+async fn recovery_refuses_an_extent_beyond_the_index_boundary_before_truncating(
+    db: devkit::pg::TestDatabase,
+) {
     use sqlx::Connection;
-    let mut conn=sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
-    let root=tempfile::tempdir().unwrap();let blobs=Blobs::open(root.path()).unwrap();
-    let name=blobs.put(b"retained bytes").unwrap();
-    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,14,'present')").bind(&name).execute(&mut conn).await.unwrap();
-    commit_pending_extents(&mut conn,&blobs).await.unwrap();
-    let path=root.path().join(SEGMENT);let original=std::fs::read(&path).unwrap();
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let name = blobs.put(b"retained bytes").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,14,'present')")
+        .bind(&name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    let path = root.path().join(SEGMENT);
+    let original = std::fs::read(&path).unwrap();
     drop(blobs);
-    sqlx::query("UPDATE core.blob_segments SET committed_end=0").execute(&mut conn).await.unwrap();
-    let reopened=Blobs::open(root.path()).unwrap();
-    assert!(reopened.recover(&mut conn).await.unwrap_err().to_string().contains("committed segment boundary"));
-    assert_eq!(std::fs::read(path).unwrap(),original);
+    sqlx::query("UPDATE core.blob_segments SET committed_end=0")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let reopened = Blobs::open(root.path()).unwrap();
+    assert!(
+        reopened
+            .recover(&mut conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("committed segment boundary")
+    );
+    assert_eq!(std::fs::read(path).unwrap(), original);
 }
 
 #[devkit::test]
-async fn recovery_finishes_catalog_deletion_after_an_earlier_punch_removed_its_extent(db:devkit::pg::TestDatabase) {
+async fn recovery_finishes_catalog_deletion_after_an_earlier_punch_removed_its_extent(
+    db: devkit::pg::TestDatabase,
+) {
     use sqlx::Connection;
-    let mut conn=sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
-    let name=Hash::of(b"already punched").to_string();
-    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,15,'deleting')").bind(&name).execute(&mut conn).await.unwrap();
-    let root=tempfile::tempdir().unwrap();let blobs=Blobs::open(root.path()).unwrap();
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let name = Hash::of(b"already punched").to_string();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,15,'deleting')")
+        .bind(&name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
     blobs.recover(&mut conn).await.unwrap();
-    let (deleted,left)=crate::excision::finish_deletions(&mut conn,&blobs).await.unwrap();
-    assert_eq!(deleted,[name]);assert!(left.is_empty());
+    let (deleted, left) = crate::excision::finish_deletions(&mut conn, &blobs)
+        .await
+        .unwrap();
+    assert_eq!(deleted, [name]);
+    assert!(left.is_empty());
 }
 
 #[devkit::test]
 fn an_unloaded_existing_index_never_truncates_stored_segments() {
-    let root=tempfile::tempdir().unwrap();let blobs=Blobs::open(root.path()).unwrap();
-    blobs.put(b"original").unwrap();blobs.sync_pending().unwrap();drop(blobs);
-    let path=root.path().join(SEGMENT);let original=std::fs::read(&path).unwrap();
-    let reopened=Blobs::open(root.path()).unwrap();reopened.put(b"later").unwrap();
-    assert!(reopened.sync_pending().is_err());assert_eq!(std::fs::read(path).unwrap(),original);
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    blobs.put(b"original").unwrap();
+    blobs.sync_pending().unwrap();
+    drop(blobs);
+    let path = root.path().join(SEGMENT);
+    let original = std::fs::read(&path).unwrap();
+    let reopened = Blobs::open(root.path()).unwrap();
+    reopened.put(b"later").unwrap();
+    assert!(reopened.sync_pending().is_err());
+    assert_eq!(std::fs::read(path).unwrap(), original);
 }
 
 #[devkit::test]
-async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(db:devkit::pg::TestDatabase) {
+async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(
+    db: devkit::pg::TestDatabase,
+) {
     use sqlx::Connection;
-    let mut conn=sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
-    let root=tempfile::tempdir().unwrap();let blobs=Blobs::open(root.path()).unwrap();
-    let name=blobs.put(b"bytes kept after a failed punch").unwrap();
-    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,31,'present')").bind(&name).execute(&mut conn).await.unwrap();
-    commit_pending_extents(&mut conn,&blobs).await.unwrap();
-    sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1").bind(&name).execute(&mut conn).await.unwrap();
-    commit_pending_extents(&mut conn,&blobs).await.unwrap();
-    assert_eq!(blobs.put(b"bytes kept after a failed punch").unwrap(),name);
-    let mut tx=conn.begin().await.unwrap();
-    sqlx::query("UPDATE core.blobs SET status='present' WHERE hash=$1").bind(&name).execute(&mut *tx).await.unwrap();
-    let receipt=blobs.commit_extents(&mut tx).await.unwrap();tx.commit().await.unwrap();blobs.acknowledge(receipt).unwrap();
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let name = blobs.put(b"bytes kept after a failed punch").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,31,'present')")
+        .bind(&name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1")
+        .bind(&name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    assert_eq!(blobs.put(b"bytes kept after a failed punch").unwrap(), name);
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::query("UPDATE core.blobs SET status='present' WHERE hash=$1")
+        .bind(&name)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    blobs.acknowledge(receipt).unwrap();
     drop(blobs);
-    let reopened=Blobs::open(root.path()).unwrap();reopened.recover(&mut conn).await.unwrap();
-    assert_eq!(reopened.read(&name).unwrap(),b"bytes kept after a failed punch");
+    let reopened = Blobs::open(root.path()).unwrap();
+    reopened.recover(&mut conn).await.unwrap();
+    assert_eq!(
+        reopened.read(&name).unwrap(),
+        b"bytes kept after a failed punch"
+    );
 }
 
 #[devkit::test]
 fn an_empty_material_has_one_physical_extent_and_no_decoded_bytes() {
-    let dir=tempfile::tempdir().unwrap();let blobs=Blobs::open(dir.path()).unwrap();
-    let name=blobs.put(b"").unwrap();let descriptors=blobs.descriptors(&name).unwrap();assert_eq!(descriptors.len(),1);
-    let extent=hashed_blobs::Extent::decode(&descriptors[0]).unwrap();assert_eq!(extent.decoded_len,0);assert!(extent.len>0);
-    assert_eq!(blobs.read(&name).unwrap(),b"");
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let name = blobs.put(b"").unwrap();
+    let descriptors = blobs.descriptors(&name).unwrap();
+    assert_eq!(descriptors.len(), 1);
+    let extent = hashed_blobs::Extent::decode(&descriptors[0]).unwrap();
+    assert_eq!(extent.decoded_len, 0);
+    assert!(extent.len > 0);
+    assert_eq!(blobs.read(&name).unwrap(), b"");
 }

@@ -219,10 +219,24 @@ impl Parser for SignalParser {
                 .ok_or_else(|| RecordError::new("signal frame lacks receipt clock"))?;
             let at: Timestamp =
                 serde_json::from_value(at).map_err(|error| RecordError::new(error.to_string()))?;
-            let attestation=context.manifest.details.get("author_attestation").filter(|value|!value.is_null()).cloned().map(serde_json::from_value::<sinex_protocol::signals::AuthorAttestation>).transpose().map_err(|error|RecordError::new(error.to_string()))?;
-            return forwarded_records(&Value::Object(record.clone()), producer, family, at,attestation.as_ref())
-                .and_then(parsed_records)
-                .map(|records| (records, ()));
+            let attestation = context
+                .manifest
+                .details
+                .get("author_attestation")
+                .filter(|value| !value.is_null())
+                .cloned()
+                .map(serde_json::from_value::<sinex_protocol::signals::AuthorAttestation>)
+                .transpose()
+                .map_err(|error| RecordError::new(error.to_string()))?;
+            return forwarded_records(
+                &Value::Object(record.clone()),
+                producer,
+                family,
+                at,
+                attestation.as_ref(),
+            )
+            .and_then(parsed_records)
+            .map(|records| (records, ()));
         }
         let mut record: SignalRecord = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|error| RecordError::new(error.to_string()))?;
@@ -260,7 +274,7 @@ pub fn forwarded_records(
     producer: &str,
     family: &str,
     at: Timestamp,
-    attestation:Option<&sinex_protocol::signals::AuthorAttestation>,
+    attestation: Option<&sinex_protocol::signals::AuthorAttestation>,
 ) -> Result<Vec<SignalRecord>, RecordError> {
     let sinex_protocol::Ingress::Signals {
         signals,
@@ -276,7 +290,13 @@ pub fn forwarded_records(
     for signal in signals {
         let intent = signal.intent;
         let mut notice = signal.notice;
-        sinex_protocol::signals::authorize_author(&intent,signal.active_rule.as_ref(),family,attestation).map_err(RecordError::new)?;
+        sinex_protocol::signals::authorize_author(
+            &intent,
+            signal.active_rule.as_ref(),
+            family,
+            attestation,
+        )
+        .map_err(RecordError::new)?;
         if intent.delivery.trigger.rule.id == sinex_protocol::signals::EMERGENCY_RULE_ID {
             return Err(RecordError::new(
                 "compiled emergency handoffs require the authenticated completion path",
@@ -297,7 +317,7 @@ pub fn forwarded_records(
         notice.data_loss = false;
         notice.budget_passive_count = None;
         records.push(SignalRecord::Intent(Box::new(IntentRecorded {
-            active_rule:signal.active_rule,
+            active_rule: signal.active_rule,
             inputs: signal.inputs,
             delivery_id: intent.delivery.id.clone(),
             producer: producer.into(),

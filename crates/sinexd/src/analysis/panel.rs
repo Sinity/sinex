@@ -156,7 +156,11 @@ fn cell_text(c: &Cell<f64>) -> String {
         Cell::Partial {
             value,
             observed_fraction,
-        } => format!("{}~{}", number(*value), coverage::percent_label(*observed_fraction)),
+        } => format!(
+            "{}~{}",
+            number(*value),
+            coverage::percent_label(*observed_fraction)
+        ),
         Cell::Recorded { value } => format!(">={}", number(*value)),
         Cell::Missing { reason } => format!(
             "({})",
@@ -171,7 +175,9 @@ fn cell_text(c: &Cell<f64>) -> String {
 /// A panel as a table: one row per day, one column per metric, or one line
 /// per breakdown value.
 pub(crate) fn table(p: &Panel, metrics: &[&Metric], by: Option<&str>) -> String {
-    let mut out = p.citation.as_ref().map_or_else(String::new, |citation| format!("Panel {citation}, as of commit {}.\n", p.as_of));
+    let mut out = p.citation.as_ref().map_or_else(String::new, |citation| {
+        format!("Panel {citation}, as of commit {}.\n", p.as_of)
+    });
     match by {
         None => {
             out.push_str(&format!("{:<12}", "day"));

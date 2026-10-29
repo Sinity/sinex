@@ -135,12 +135,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             planned.push((format, b));
         }
     }
-    let mut ctx = ReaderContext::open(
-        &o.database,
-        &o.store,
-        o.time_settings.clone(),
-    )
-    .await?;
+    let mut ctx = ReaderContext::open(&o.database, &o.store, o.time_settings.clone()).await?;
     let sink = Sink(ctx.blobs.clone());
     // Totals per source, in the order sources were first read.
     let mut per_source: Vec<(String, Totals)> = Vec::new();
@@ -218,7 +213,7 @@ pub(crate) async fn drive(
     run: RunId,
     source: std::sync::Arc<dyn Source>,
     binding: &str,
-    host:&str,
+    host: &str,
     sink: &Sink,
     access: crate::material_access::Access<'_>,
     minimum_class: sinex_model::Class,
@@ -270,7 +265,7 @@ pub(crate) async fn drive(
             .reopen(read_conn, source.as_ref(), &mut acquired)
             .await?;
         crate::intake::Intake {
-            host:Some(host),
+            host: Some(host),
             writer: handle,
             source: source.clone(),
             binding,

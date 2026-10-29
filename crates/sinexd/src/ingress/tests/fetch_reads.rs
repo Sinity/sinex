@@ -57,7 +57,8 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         .send(
             "kitty",
             &Ingress::Events {
-                source:Some(test_source("kitty")),coverage:None,
+                source: Some(test_source("kitty")),
+                coverage: None,
                 frame: "fetch-event".into(),
                 events: vec![event],
                 failures: vec![],
@@ -147,7 +148,8 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     );
     let command = "y ".repeat(h.client.server_info().max_payload);
     let inner = Ingress::Events {
-        source:Some(test_source("kitty")),coverage:None,
+        source: Some(test_source("kitty")),
+        coverage: None,
         frame: "large-event".into(),
         events: vec![imported(material, 0, &command)],
         failures: vec![],
@@ -224,7 +226,7 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
         ]),
     )
     .await;
-    let command="retained command";
+    let command = "retained command";
     let (material, frame) = h.material_frame("erasure-race", b"retained command\n");
     assert_eq!(h.send("kitty", &frame).await.refusal, None);
     let mut event = imported(material, 0, &command);
@@ -235,7 +237,8 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
         .send(
             "kitty",
             &Ingress::Events {
-                source:Some(test_source("kitty")),coverage:None,
+                source: Some(test_source("kitty")),
+                coverage: None,
                 frame: "erasure-race-event".into(),
                 events: vec![event],
                 failures: vec![],
@@ -256,7 +259,7 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
     .await
     .unwrap();
     let received = before.event.expect("event received before erasure");
-    assert_eq!(received.payload,expected);
+    assert_eq!(received.payload, expected);
     assert!(received.projection.verifies(&received.payload));
     assert!(before.erased.is_none());
     assert_eq!(Some(received.commit_seq), receipt.commit_seq);
@@ -364,7 +367,8 @@ async fn raw_material_fetch_requires_complete_unchanged_current_policy_outputs(
         .send(
             "kitty",
             &Ingress::Events {
-                source:Some(test_source("kitty")),coverage:None,
+                source: Some(test_source("kitty")),
+                coverage: None,
                 frame: "policy-event".into(),
                 events: vec![imported(material, 0, "synthetic exact raw bytes")],
                 failures: vec![],

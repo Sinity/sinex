@@ -16,10 +16,14 @@ impl SourceDeclaration {
     pub fn fingerprint(&self) -> String {
         let mut normalized = self.clone();
         normalized.kinds.sort_by(|a, b| a.kind.cmp(&b.kind));
-        crate::json_identity::hash(&serde_json::to_value(normalized).expect("source declarations serialize"))
+        crate::json_identity::hash(
+            &serde_json::to_value(normalized).expect("source declarations serialize"),
+        )
     }
 
     pub fn allows(&self, kind: &crate::KindRef, hash: &str) -> bool {
-        self.kinds.iter().any(|decl| &decl.kind == kind && decl.definition_hash() == hash)
+        self.kinds
+            .iter()
+            .any(|decl| &decl.kind == kind && decl.definition_hash() == hash)
     }
 }

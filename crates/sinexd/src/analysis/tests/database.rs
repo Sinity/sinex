@@ -89,7 +89,8 @@ impl World {
             queues,
             Arc::new(Keys::new(
                 crate::analysis::keyed(),
-                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                    .expect("fixture day setting"),
             )),
             Some(blobs.clone()),
         ));
@@ -134,7 +135,8 @@ impl World {
             crate::analysis::keyed(),
             Vec::new(),
             "test",
-            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
         )
         .await
         .unwrap();
@@ -270,20 +272,21 @@ async fn the_brief_reports_coverage_first_and_never_shows_missing_as_zero(
     let mut conn = w.conn().await;
     let to = parse_day("2026-09-14").unwrap();
     let from = to.checked_sub(jiff::Span::new().days(56)).unwrap();
-    let request = w.prepare(
-        &mut conn,
-        "brief",
-        None,
-        &sinex_derivations::figures::METRICS
-            .iter()
-            .collect::<Vec<_>>(),
-        from,
-        to,
-    )
-    .await;
+    let request = w
+        .prepare(
+            &mut conn,
+            "brief",
+            None,
+            &sinex_derivations::figures::METRICS
+                .iter()
+                .collect::<Vec<_>>(),
+            from,
+            to,
+        )
+        .await;
     let (p, _) = render_pack(&mut conn, &format!("query:{request}"), 6000)
-    .await
-    .unwrap();
+        .await
+        .unwrap();
     let titles: Vec<_> = p.sections.iter().map(|s| s.title.as_str()).collect();
     assert_eq!(titles[0], "Data quality");
     assert!(
@@ -352,8 +355,8 @@ fn observed(from: i64, to: i64) -> Event {
     use sinex_model::event_types::coverage::*;
     Event::build(
         &SourceCoverage {
-        observed_run: None,
-        observed_class: None,
+            observed_run: None,
+            observed_class: None,
             observation: format!("synthetic:{from}:{to}"),
             observed_source: "code.git".into(),
             binding: "test".into(),

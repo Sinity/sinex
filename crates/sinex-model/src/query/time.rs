@@ -25,11 +25,18 @@ impl Context {
 
     /// An explicit UTC clock with logical days from 04:00.
     pub fn utc(now: Timestamp) -> Self {
-        Self::new(now, TimeZone::get("UTC").expect("UTC zone"), Time::constant(4, 0, 0, 0))
+        Self::new(
+            now,
+            TimeZone::get("UTC").expect("UTC zone"),
+            Time::constant(4, 0, 0, 0),
+        )
     }
 
     pub fn zone_name(&self) -> String {
-        self.zone.iana_name().expect("validated named query zone").to_string()
+        self.zone
+            .iana_name()
+            .expect("validated named query zone")
+            .to_string()
     }
 
     /// Explicit clock passed to the shared resolver; no zone database lookup.
@@ -40,7 +47,10 @@ impl Context {
     }
 
     pub fn logical_date(&self, at: Timestamp) -> Date {
-        self.clock().expect("validated query clock").day.logical_day(at)
+        self.clock()
+            .expect("validated query clock")
+            .day
+            .logical_day(at)
             .expect("logical date is in the supported calendar")
     }
     pub fn local(&self, at: DateTime) -> Option<Timestamp> {
@@ -54,20 +64,32 @@ impl Context {
         let r = self.clock().ok()?.day.days(from, to).ok()?;
         Some((r.start, r.end))
     }
-    pub fn today(&self) -> Date { self.logical_date(self.now) }
+    pub fn today(&self) -> Date {
+        self.logical_date(self.now)
+    }
     pub fn week_of(&self, date: Date) -> Option<(Timestamp, Timestamp)> {
         let at = self.day(date)?.0;
         let mut clock = self.clock().ok()?;
         clock.now = at;
-        let r = query_language::time::resolve("this week", &clock).ok()?.value.range()?;
+        let r = query_language::time::resolve("this week", &clock)
+            .ok()?
+            .value
+            .range()?;
         Some((r.start, r.end))
     }
     pub fn month_of(&self, year: i16, month: i8) -> Option<(Timestamp, Timestamp)> {
-        let r = query_language::time::resolve(&format!("{year:04}-{month:02}"), &self.clock().ok()?).ok()?.value.range()?;
+        let r =
+            query_language::time::resolve(&format!("{year:04}-{month:02}"), &self.clock().ok()?)
+                .ok()?
+                .value
+                .range()?;
         Some((r.start, r.end))
     }
     pub fn year_of(&self, year: i16) -> Option<(Timestamp, Timestamp)> {
-        let r = query_language::time::resolve(&format!("{year:04}"), &self.clock().ok()?).ok()?.value.range()?;
+        let r = query_language::time::resolve(&format!("{year:04}"), &self.clock().ok()?)
+            .ok()?
+            .value
+            .range()?;
         Some((r.start, r.end))
     }
 
@@ -120,7 +142,9 @@ pub fn clock(word: &str) -> Option<Time> {
 
 /// An instant: RFC 3339 with an offset, or a local `2026-03-02T14:05[:30]`.
 pub fn instant(ctx: &Context, word: &str) -> Option<Timestamp> {
-    query_language::time::resolve(word, &ctx.clock().ok()?).ok().map(|r| r.value.start())
+    query_language::time::resolve(word, &ctx.clock().ok()?)
+        .ok()
+        .map(|r| r.value.start())
 }
 
 #[cfg(test)]

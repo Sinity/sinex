@@ -272,12 +272,15 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         vec!["command.executed"],
         vec!["command.imported", "command.executed"],
     ] {
-        let filters = types.iter().map(|t| subjects.confirmed_event("open",t)).collect();
+        let filters = types
+            .iter()
+            .map(|t| subjects.confirmed_event("open", t))
+            .collect();
         let published: Vec<(i64, uuid::Uuid)> = read_filtered(&direct, &stream, filters)
             .await
             .into_iter()
             .map(|m| match m {
-                Confirmed::EventReference{commit_seq,event} => (commit_seq,event.0),
+                Confirmed::EventReference { commit_seq, event } => (commit_seq, event.0),
                 other => panic!("an event subject carried {other:?}"),
             })
             .collect();
@@ -292,15 +295,18 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         assert_eq!(published, committed, "{types:?}");
     }
     // Archive changes, once each, in the order they were made.
-    let changes: Vec<(uuid::Uuid, sinex_model::ArchiveReason)> =
-        read_filtered(&direct, &stream, vec![subjects.confirmed_lifecycle("*",">")])
-            .await
-            .into_iter()
-            .filter_map(|m| match m {
-                Confirmed::Archived(a) => Some((a.event.0, a.reason)),
-                _ => None,
-            })
-            .collect();
+    let changes: Vec<(uuid::Uuid, sinex_model::ArchiveReason)> = read_filtered(
+        &direct,
+        &stream,
+        vec![subjects.confirmed_lifecycle("*", ">")],
+    )
+    .await
+    .into_iter()
+    .filter_map(|m| match m {
+        Confirmed::Archived(a) => Some((a.event.0, a.reason)),
+        _ => None,
+    })
+    .collect();
     assert_eq!(changes.len(), 2, "{changes:?}");
     assert_eq!(
         changes[0],
@@ -313,12 +319,16 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     let all = read_filtered(&direct, &stream, vec![subjects.confirmed_all()]).await;
     let mut ids = BTreeSet::new();
     for message in &all {
-        let Confirmed::EventReference{commit_seq,event} = message else {
+        let Confirmed::EventReference { commit_seq, event } = message else {
             continue;
         };
         assert!(ids.insert(*event), "{event} published twice");
-        let stored:i64=sqlx::query_scalar("SELECT commit_seq FROM core.events WHERE id=$1").bind(event.0).fetch_one(&mut conn).await.unwrap();
-        assert_eq!(*commit_seq,stored);
+        let stored: i64 = sqlx::query_scalar("SELECT commit_seq FROM core.events WHERE id=$1")
+            .bind(event.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(*commit_seq, stored);
     }
     let events: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL")

@@ -66,7 +66,7 @@ pub(super) async fn read_shared(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
-    runs:&[Result<RunId,String>],
+    runs: &[Result<RunId, String>],
     readers: &mut [BindingReader],
     pass: &SharedFileRead,
     mut stop: watch::Receiver<bool>,
@@ -120,7 +120,9 @@ pub(super) async fn read_shared(
                 conn,
                 blobs,
                 writer,
-                *runs[pass.indices[slots[0]]].as_ref().map_err(Clone::clone)?,
+                *runs[pass.indices[slots[0]]]
+                    .as_ref()
+                    .map_err(Clone::clone)?,
                 &readers[pass.indices[slots[0]]],
                 pass.class,
                 access,
@@ -234,9 +236,9 @@ pub(super) async fn read_shared(
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
             let checked_stop = stop.clone();
             crate::intake::Intake {
-        host:Some(&b.binding.settings.host),
+                host: Some(&b.binding.settings.host),
                 writer,
-                run:*runs[pass.indices[slot]].as_ref().map_err(Clone::clone)?,
+                run: *runs[pass.indices[slot]].as_ref().map_err(Clone::clone)?,
                 source: b.source.clone(),
                 binding: &b.binding.name,
                 material: material.clone(),

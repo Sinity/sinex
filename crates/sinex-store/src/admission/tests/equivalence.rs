@@ -123,7 +123,9 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         })
         .collect();
     let mut initial = batch(events.clone());
-    initial.kind = BatchKind::Source(Box::new(SourceProgress { source:None,host:None,
+    initial.kind = BatchKind::Source(Box::new(SourceProgress {
+        source: None,
+        host: None,
         data_keys: vec![],
         binding: "upgrade input".into(),
         input: InputRef {

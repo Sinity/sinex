@@ -8,7 +8,7 @@
 //! The key is the logical day: one read of the day's messages gives every
 //! conversation's day, so a thread of any length costs one key per day it was
 //! active.
-use crate::derived_event::{derived};
+use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::ConversationDay;
@@ -40,10 +40,21 @@ fn message(e: &Event) -> Option<(&'static str, String, String, Timestamp)> {
         }
         t if t == MailFused::EVENT_TYPE => {
             let m: MailFused = e.payload_as()?;
-            let thread = match (m.account.as_deref(),m.thread_id.as_deref().filter(|thread|!thread.trim().is_empty())) {
-                (Some(account),Some(thread)) => json!([account,format!("thread:{thread}")]).to_string(),
-                (Some(account),None) => json!([account,format!("message:{}",m.message_id.as_deref().unwrap_or(&m.record))]).to_string(),
-                (None,_) => json!([null,format!("record:{}",m.record)]).to_string(),
+            let thread = match (
+                m.account.as_deref(),
+                m.thread_id
+                    .as_deref()
+                    .filter(|thread| !thread.trim().is_empty()),
+            ) {
+                (Some(account), Some(thread)) => {
+                    json!([account, format!("thread:{thread}")]).to_string()
+                }
+                (Some(account), None) => json!([
+                    account,
+                    format!("message:{}", m.message_id.as_deref().unwrap_or(&m.record))
+                ])
+                .to_string(),
+                (None, _) => json!([null, format!("record:{}", m.record)]).to_string(),
             };
             Some((
                 "mail",

@@ -6,9 +6,13 @@ fn capability(publisher: bool) -> fetch::Grants {
         classes: vec![Class::Open],
         write: Some(WriteGrant {
             forward_signals: false,
-            author_attestation:None,
+            author_attestation: None,
             emergency_sinex_blocked_host: None,
-            family: "example".into(),host:None,source_prefixes:vec![],source_declarations:vec![],canonical_kinds:vec![],
+            family: "example".into(),
+            host: None,
+            source_prefixes: vec![],
+            source_declarations: vec![],
+            canonical_kinds: vec![],
             kind_prefixes: vec!["example".into()],
             classes: vec![Class::Open],
             canonical_prefixes: if publisher {

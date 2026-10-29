@@ -17,7 +17,11 @@ async fn replay(w: &World, event: &Event) -> Event {
             Priority::Live,
             Batch {
                 run: RunId::new(),
-                kind: BatchKind::Replay { operation, source: None, host: None },
+                kind: BatchKind::Replay {
+                    operation,
+                    source: None,
+                    host: None,
+                },
                 records: vec![RecordOutcome::Events {
                     location: Some(*location),
                     events: vec![again.clone()],
@@ -60,7 +64,11 @@ async fn a_key_computed_from_an_input_archived_meanwhile_is_computed_again(
         &Count::<1>,
         &json!("all"),
         std::slice::from_ref(&first),
-        &Env::at(at(0), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+        &Env::at(
+            at(0),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        ),
     );
     let newer = replay(&w, &first).await;
     let out = w
@@ -120,7 +128,11 @@ async fn a_per_event_output_of_an_input_archived_meanwhile_is_dropped(
     let first = zsh("make", 0, 1);
     let other = zsh("ls", 10, 2);
     w.admit(vec![first.clone(), other.clone()]).await;
-    let env = Env::at(at(0), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        at(0),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let derive = |e: &Event| {
         PerEvent::derive(
             &Echo,

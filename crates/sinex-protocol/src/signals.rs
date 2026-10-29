@@ -2,40 +2,73 @@
 pub use sinex_model::event_types::signal::EmergencyCompleted as EmergencyCompletion;
 /// Deployment authority is scoped by the authenticated producer's configured
 /// family. Merely publishing canonical facts grants no privileged author role.
-#[derive(Clone,Debug,Default,PartialEq,Eq,serde::Serialize,serde::Deserialize,schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorAttestation {
-    pub operator:bool,
-    pub shipped:Vec<ShippedRule>,
+    pub operator: bool,
+    pub shipped: Vec<ShippedRule>,
 }
-#[derive(Clone,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize,schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct ShippedRule {
-    pub id:String,
-    pub revision:u64,
-    pub fingerprint:String,
+    pub id: String,
+    pub revision: u64,
+    pub fingerprint: String,
 }
-pub fn rule_fingerprint(active:&::signals::ActiveRule)->String {
-    sinex_model::json_identity::hash(&serde_json::json!({"version":active.version,"rule":active.rule,"live":active.live}))
+pub fn rule_fingerprint(active: &::signals::ActiveRule) -> String {
+    sinex_model::json_identity::hash(
+        &serde_json::json!({"version":active.version,"rule":active.rule,"live":active.live}),
+    )
 }
-pub fn authorize_author(intent:&::signals::FiredIntent,active:Option<&::signals::ActiveRule>,family:&str,capability:Option<&AuthorAttestation>)->Result<(),String> {
-    if intent.delivery.trigger.rule.product!=family {return Err("signal author belongs to another authenticated family".into());}
-    let channel=|active:&::signals::ActiveRule|match active.rule.deliver {
-        ::signals::Deliver::Notice if active.rule.interrupt=>::signals::Channel::Interrupt,
-        ::signals::Deliver::Notice=>::signals::Channel::Notice,
-        ::signals::Deliver::Value=>::signals::Channel::Value,
-        ::signals::Deliver::Action=>::signals::Channel::Action,
+pub fn authorize_author(
+    intent: &::signals::FiredIntent,
+    active: Option<&::signals::ActiveRule>,
+    family: &str,
+    capability: Option<&AuthorAttestation>,
+) -> Result<(), String> {
+    if intent.delivery.trigger.rule.product != family {
+        return Err("signal author belongs to another authenticated family".into());
+    }
+    let channel = |active: &::signals::ActiveRule| match active.rule.deliver {
+        ::signals::Deliver::Notice if active.rule.interrupt => ::signals::Channel::Interrupt,
+        ::signals::Deliver::Notice => ::signals::Channel::Notice,
+        ::signals::Deliver::Value => ::signals::Channel::Value,
+        ::signals::Deliver::Action => ::signals::Channel::Action,
     };
-    if let Some(active)=active && (active.version!=intent.delivery.trigger.rule || active.author!=intent.author || active.current()!=intent.current || active.rule.quiet_hours!=intent.quiet_hours || active.rule.rate_limit!=intent.rate_limit || channel(active)!=intent.delivery.channel || active.rule.scope!=intent.delivery.scope || intent.delivery.downgrade.is_some() || !active.rule.enabled) {
+    if let Some(active) = active
+        && (active.version != intent.delivery.trigger.rule
+            || active.author != intent.author
+            || active.current() != intent.current
+            || active.rule.quiet_hours != intent.quiet_hours
+            || active.rule.rate_limit != intent.rate_limit
+            || channel(active) != intent.delivery.channel
+            || active.rule.scope != intent.delivery.scope
+            || intent.delivery.downgrade.is_some()
+            || !active.rule.enabled)
+    {
         return Err("signal active rule differs from its frozen intent".into());
     }
-    if matches!(intent.author,::signals::Author::Agent(_)){return Ok(());}
-    let capability=capability.ok_or("forwarded elevated author lacks configured attestation")?;
-    let active=active.ok_or("forwarded elevated author lacks its frozen active rule")?;
+    if matches!(intent.author, ::signals::Author::Agent(_)) {
+        return Ok(());
+    }
+    let capability = capability.ok_or("forwarded elevated author lacks configured attestation")?;
+    let active = active.ok_or("forwarded elevated author lacks its frozen active rule")?;
     match intent.author {
-        ::signals::Author::Operator if capability.operator=>Ok(()),
-        ::signals::Author::Shipped if capability.shipped.iter().any(|rule|rule.id==active.version.id && rule.revision==active.version.revision && rule.fingerprint==rule_fingerprint(active))=>Ok(()),
-        _=>Err("forwarded elevated author is outside its configured attestation".into()),
+        ::signals::Author::Operator if capability.operator => Ok(()),
+        ::signals::Author::Shipped
+            if capability.shipped.iter().any(|rule| {
+                rule.id == active.version.id
+                    && rule.revision == active.version.revision
+                    && rule.fingerprint == rule_fingerprint(active)
+            }) =>
+        {
+            Ok(())
+        }
+        _ => Err("forwarded elevated author is outside its configured attestation".into()),
     }
 }
 

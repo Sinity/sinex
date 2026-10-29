@@ -155,9 +155,10 @@ async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::Test
     admit(&w, &["one", "two"], 0).await;
     let page = first(&w, READ, "events sort when").await;
     let raw = page["result"]["page"]["cursor"].as_str().unwrap();
-    let mut tokens=vec!["1.1".to_owned(),"broken".to_owned()];
-    for index in [0,raw.len()/2,raw.len()-1] {
-        let mut bytes=raw.as_bytes().to_vec();bytes[index]=if bytes[index]==b'0'{b'1'}else{b'0'};
+    let mut tokens = vec!["1.1".to_owned(), "broken".to_owned()];
+    for index in [0, raw.len() / 2, raw.len() - 1] {
+        let mut bytes = raw.as_bytes().to_vec();
+        bytes[index] = if bytes[index] == b'0' { b'1' } else { b'0' };
         tokens.push(String::from_utf8(bytes).unwrap());
     }
     for token in tokens {

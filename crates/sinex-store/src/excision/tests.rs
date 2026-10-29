@@ -42,7 +42,7 @@ async fn material(
     bytes: &[u8],
 ) -> (MaterialId, String) {
     let blob = store.blobs.put(bytes).unwrap();
-    let mut tx=conn.begin().await.unwrap();
+    let mut tx = conn.begin().await.unwrap();
     let id = MaterialId::new();
     let binding = format!("{source}:synthetic@h");
     sqlx::query!(
@@ -81,7 +81,7 @@ async fn material(
     .execute(&mut *tx)
     .await
     .unwrap();
-    let receipt=store.blobs.commit_extents(&mut tx).await.unwrap();
+    let receipt = store.blobs.commit_extents(&mut tx).await.unwrap();
     tx.commit().await.unwrap();
     store.blobs.acknowledge(receipt).unwrap();
     (id, blob)

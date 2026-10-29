@@ -52,9 +52,15 @@ pub(super) async fn notifications(
     let (requests, receive) = mpsc::unbounded_channel();
     let (updates, changed) = mpsc::unbounded_channel();
     let worker = tokio::spawn(async move {
-        signal_delivery::run(deliverer, receive, updates, condition, Arc::new(||millis(Timestamp::now()).expect("host delivery clock fits milliseconds")))
-            .await
-            .map_err(error)
+        signal_delivery::run(
+            deliverer,
+            receive,
+            updates,
+            condition,
+            Arc::new(|| millis(Timestamp::now()).expect("host delivery clock fits milliseconds")),
+        )
+        .await
+        .map_err(error)
     });
     Ok((requests, changed, worker))
 }

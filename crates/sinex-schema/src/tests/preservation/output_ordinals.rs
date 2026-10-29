@@ -96,8 +96,14 @@ async fn wide_ordinals_upgrade_preserves_compressed_records_views_and_grants(
         .await
         .unwrap();
     assert_eq!(current_citations, old_citations);
-    let stale=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM public.ordinal_citations").fetch_one(&mut conn).await.unwrap_err();
-    assert_eq!(stale.as_database_error().unwrap().code().as_deref(),Some("55000"));
+    let stale = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM public.ordinal_citations")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        stale.as_database_error().unwrap().code().as_deref(),
+        Some("55000")
+    );
     let after:Vec<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(v) FROM (SELECT schemaname,viewname,viewowner,definition FROM pg_views WHERE schemaname='public' ORDER BY 1,2) v").fetch_all(&mut conn).await.unwrap();
     assert_eq!(after, views);
     let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed").fetch_one(&mut conn).await.unwrap();

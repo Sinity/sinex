@@ -23,7 +23,9 @@ pub(super) async fn prepare(
         if declarations.contains_key(reference) {
             continue;
         }
-        return Err(Error::Invalid(format!("unknown kind reference {reference:?}; an exact owner-installed declaration must be registered first")));
+        return Err(Error::Invalid(format!(
+            "unknown kind reference {reference:?}; an exact owner-installed declaration must be registered first"
+        )));
     }
     let mut rust_validators = BTreeMap::new();
     let mut json_validators = BTreeMap::new();
