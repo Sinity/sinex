@@ -212,12 +212,38 @@ pub async fn submit_frame(
         Ingress::LargeFrame { blob, .. } => blob.clone(),
         _ => format!("blake3:{}", blake3::hash(&bytes).to_hex()),
     };
-    jetstream::new(client.clone())
+    let published = jetstream::new(client.clone())
         .publish_with_headers(subjects.ingress(producer), headers, bytes.into())
         .await
         .map_err(|error| SubmitError::Transport(error.to_string()))?
         .await
         .map_err(|error| SubmitError::Transport(error.to_string()))?;
+    let correlated = |receipt: &Acknowledgment| {
+        receipt.frame == id
+            || (receipt.frame == malformed
+                && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
+    };
+    if published.duplicate {
+        // JetStream can acknowledge an already consumed frame without
+        // delivering it again, so no new broadcast hint is required. Only
+        // the authenticated owner's exact receipt establishes admission.
+        if let Some(receipt) = recorded(
+            client,
+            subjects,
+            producer,
+            &[id.into(), malformed.clone()],
+            &[],
+            idle,
+        )
+        .await?
+        .into_iter()
+        .find(correlated)
+        {
+            return check_receipt_for(frame, receipt, logical_hash, Some(&malformed));
+        }
+        // A duplicate may still be queued or awaiting admission. With no
+        // owned receipt, retain the ordinary hint and final lookup path.
+    }
     let expected = blake3::hash(id.as_bytes()).to_hex().to_string();
     let bad = blake3::hash(malformed.as_bytes()).to_hex().to_string();
     let hint = tokio::time::timeout(idle, async {
@@ -248,11 +274,7 @@ pub async fn submit_frame(
     };
     let receipt = receipts
         .into_iter()
-        .find(|receipt| {
-            receipt.frame == id
-                || (receipt.frame == malformed
-                    && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
-        })
+        .find(correlated)
         .ok_or_else(|| SubmitError::NoReceipt(id.into()))?;
     check_receipt_for(frame, receipt, logical_hash, Some(&malformed))
 }
