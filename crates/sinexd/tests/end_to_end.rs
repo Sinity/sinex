@@ -608,8 +608,6 @@ async fn rows_that_change_are_read_to_their_final_values() {
                                 'dirty',a.query ILIKE '%derivation.dirty%',
                                 'event_outputs',a.query ILIKE '%event_outputs%',
                                 'kind_registry',a.query ILIKE '%registry.event_types%',
-                                'derivation_events',a.query ILIKE '%core.derivation_events%',
-                                'original_events',a.query ILIKE '%privacy.original_events%',
                                 'source_registry',a.query ILIKE '%source_declarations%'
                             )
                         ) ORDER BY a.pid),'[]'::jsonb)
