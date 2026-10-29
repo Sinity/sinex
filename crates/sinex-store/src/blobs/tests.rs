@@ -285,3 +285,22 @@ fn an_unloaded_existing_index_never_truncates_stored_segments() {
     let reopened=Blobs::open(root.path()).unwrap();reopened.put(b"later").unwrap();
     assert!(reopened.sync_pending().is_err());assert_eq!(std::fs::read(path).unwrap(),original);
 }
+
+#[devkit::test]
+async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(db:devkit::pg::TestDatabase) {
+    use sqlx::Connection;
+    let mut conn=sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let root=tempfile::tempdir().unwrap();let blobs=Blobs::open(root.path()).unwrap();
+    let name=blobs.put(b"bytes kept after a failed punch").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,31,'present')").bind(&name).execute(&mut conn).await.unwrap();
+    commit_pending_extents(&mut conn,&blobs).await.unwrap();
+    sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1").bind(&name).execute(&mut conn).await.unwrap();
+    commit_pending_extents(&mut conn,&blobs).await.unwrap();
+    assert_eq!(blobs.put(b"bytes kept after a failed punch").unwrap(),name);
+    let mut tx=conn.begin().await.unwrap();
+    sqlx::query("UPDATE core.blobs SET status='present' WHERE hash=$1").bind(&name).execute(&mut *tx).await.unwrap();
+    let receipt=blobs.commit_extents(&mut tx).await.unwrap();tx.commit().await.unwrap();blobs.acknowledge(receipt).unwrap();
+    drop(blobs);
+    let reopened=Blobs::open(root.path()).unwrap();reopened.recover(&mut conn).await.unwrap();
+    assert_eq!(reopened.read(&name).unwrap(),b"bytes kept after a failed punch");
+}

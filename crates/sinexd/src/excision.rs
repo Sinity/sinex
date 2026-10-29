@@ -77,12 +77,9 @@ fn holds_only_the_record(
     spec: &sinex_source_core::SourceSpec,
     m: &Material,
 ) -> Result<(), String> {
-    let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let length = blobs
-        .copy_to(&m.blob, &mut file)
-        .map_err(|e| e.to_string())?;
-    let records =
-        crate::stored::StoredReader::new(file, length).records(&m.manifest, spec.framer)?;
+    let mut reader=blobs.read_plain_seek(&m.blob,m.length,||Ok(())).map_err(|error|error.to_string())?;
+    std::io::copy(&mut reader,&mut std::io::sink()).map_err(|error|error.to_string())?;
+    let records=crate::stored::StoredReader::new(reader,m.length).records(&m.manifest,spec.framer)?;
     if records
         .iter()
         .any(|(start, _)| i64::try_from(*start).map_or(true, |s| !m.anchors.contains(&s)))
