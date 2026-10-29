@@ -68,9 +68,15 @@ pub enum PublicContext {
         observed_at: Timestamp,
         coverage: CoverageStatus,
     },
-    Pending { reason: String },
-    Unavailable { reason: String },
-    Refused { reason: String },
+    Pending {
+        reason: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+    Refused {
+        reason: String,
+    },
 }
 
 #[cfg(test)]

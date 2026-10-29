@@ -6,7 +6,7 @@ async fn provision(h: &Harness, producer: &str, after: i64) -> ConfirmedConsumer
         &h.client,
         h.subjects.confirmed_consumer(producer),
         serde_json::to_vec(&ConfirmedConsumer {
-            basis:None,
+            basis: None,
             after,
             cache: "synthetic-index".into(),
             status_only: false,
@@ -24,7 +24,8 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     db: devkit::pg::TestDatabase,
 ) {
     let grant = crate::ingress::fetch::Grants {
-        indexed_catalog:None, public_context:false,
+        indexed_catalog: None,
+        public_context: false,
         write: None,
         kind_prefixes: vec!["command".into()],
         classes: vec![sinex_model::Class::Open],
@@ -40,7 +41,8 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         .send(
             "kitty",
             &Ingress::Events {
-                source:Some(test_source("kitty")),coverage:None,
+                source: Some(test_source("kitty")),
+                coverage: None,
                 frame: "open-event".into(),
                 events: vec![imported(open, 0, "open")],
                 failures: vec![],
@@ -49,7 +51,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         .await;
     assert_eq!(ack.refusal, None);
     let open_id = ack.admitted[0];
-    let (guarded, frame) = h.material_for("phone","guarded", b"guarded source\n");
+    let (guarded, frame) = h.material_for("phone", "guarded", b"guarded source\n");
     assert_eq!(h.send("phone", &frame).await.refusal, None);
     let mut event = imported(guarded, 0, "guarded");
     event.class = sinex_model::Class::Guarded;
@@ -57,7 +59,8 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         h.send(
             "phone",
             &Ingress::Events {
-                source:Some(test_source("phone")),coverage:None,
+                source: Some(test_source("phone")),
+                coverage: None,
                 frame: "guarded-event".into(),
                 events: vec![event],
                 failures: vec![]
@@ -125,7 +128,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         &h.client,
         h.subjects.confirmed_consumer("replica"),
         serde_json::to_vec(&ConfirmedConsumer {
-            basis:None,
+            basis: None,
             after: 0,
             cache: "synthetic-index".into(),
             status_only: true,

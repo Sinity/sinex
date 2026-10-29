@@ -2,7 +2,7 @@
 use crate::backfill::Totals;
 use crate::writer::{AdmissionCheck, Priority, WriterHandle};
 use serde_json::Value;
-use sinex_model::{Class, MaterialId, RecordOutcome, RunId,EventPayload};
+use sinex_model::{Class, EventPayload, MaterialId, RecordOutcome, RunId};
 use sinex_source_core::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
@@ -66,9 +66,18 @@ impl Intake<'_> {
                     let mut checkpoint =
                         checkpoint.ok_or("signal transition spans multiple admission batches")?;
                     for decision in &mut checkpoint.decisions {
-                        let id=decision.payload["delivery_id"].as_str();
-                        let handoff=batch.events().find(|event|event.event_type==sinex_model::event_types::signal::HandoffRecorded::EVENT_TYPE && event.payload["delivery_id"].as_str()==id).ok_or("signal decision lacks its physical handoff record")?;
-                        if let sinex_model::Origin::Derived{parents}=&mut decision.origin {parents.push(handoff.id);}
+                        let id = decision.payload["delivery_id"].as_str();
+                        let handoff = batch
+                            .events()
+                            .find(|event| {
+                                event.event_type
+                                    == sinex_model::event_types::signal::HandoffRecorded::EVENT_TYPE
+                                    && event.payload["delivery_id"].as_str() == id
+                            })
+                            .ok_or("signal decision lacks its physical handoff record")?;
+                        if let sinex_model::Origin::Derived { parents } = &mut decision.origin {
+                            parents.push(handoff.id);
+                        }
                     }
                     self.writer
                         .submit_signals(batch, checkpoint)
@@ -97,7 +106,7 @@ impl Intake<'_> {
         let work = Preparation {
             source: self.source.clone(),
             binding: self.binding.to_owned(),
-            host:self.host.map(str::to_owned),
+            host: self.host.map(str::to_owned),
             run: self.run,
             material: self.material.clone(),
             atomic: self.atomic,
@@ -168,7 +177,7 @@ pub(crate) async fn request(
     blobs: &Blobs,
     source: Arc<dyn Source>,
     binding: &str,
-    host:&str,
+    host: &str,
     acquired: drivers::Acquired,
 ) -> Result<Submission, String> {
     request_inner(conn, writer, blobs, source, binding, host, acquired, None).await
@@ -180,7 +189,7 @@ pub(crate) async fn request_checkpoint(
     blobs: &Blobs,
     source: Arc<dyn Source>,
     binding: &str,
-    host:&str,
+    host: &str,
     acquired: drivers::Acquired,
     checkpoint: sinex_store::signals::Commit,
 ) -> Result<Submission, String> {
@@ -203,7 +212,7 @@ async fn request_inner(
     blobs: &Blobs,
     source: Arc<dyn Source>,
     binding: &str,
-    host:&str,
+    host: &str,
     acquired: drivers::Acquired,
     checkpoint: Option<sinex_store::signals::Commit>,
 ) -> Result<Submission, String> {
@@ -251,7 +260,7 @@ async fn request_inner(
             writer,
             source,
             binding,
-            host:Some(host),
+            host: Some(host),
             run,
             material,
             check: Arc::new(|| Ok(())),
@@ -303,7 +312,7 @@ pub(crate) async fn request_class(
 struct Preparation {
     source: Arc<dyn Source>,
     binding: String,
-    host:Option<String>,
+    host: Option<String>,
     run: RunId,
     material: crate::material_access::MaterialAccess,
     atomic: bool,
@@ -336,7 +345,8 @@ impl Preparation {
                 Limits::default()
             },
         )
-        .map_err(|e| e.to_string())?.with_host(self.host.clone());
+        .map_err(|e| e.to_string())?
+        .with_host(self.host.clone());
         let mut material_length = Some(prepared.material_len());
         let mut batches = prepared.batches().map_err(|e| e.to_string())?;
         let mut setup = started.elapsed();

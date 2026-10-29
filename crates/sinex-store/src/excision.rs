@@ -248,7 +248,9 @@ pub async fn apply(
 ) -> Result<Applied> {
     // The global counter precedes policy and metadata row locks everywhere.
     let seq = crate::commit_log::allocate_position(conn).await?;
-    sqlx::query("SELECT desired_epoch FROM privacy.policy_state WHERE id FOR UPDATE").execute(&mut *conn).await?;
+    sqlx::query("SELECT desired_epoch FROM privacy.policy_state WHERE id FOR UPDATE")
+        .execute(&mut *conn)
+        .await?;
     if self::plan(conn, target).await? != *plan {
         return Err(Error::Invalid(
             "the readings to excise changed after planning; plan the excision again".into(),
@@ -256,7 +258,11 @@ pub async fn apply(
     }
     removable(conn, plan).await?;
     let ids: Vec<Uuid> = plan.events.iter().copied().collect();
-    let material_ids=plan.materials.iter().map(|material|material.id.0).collect::<Vec<_>>();
+    let material_ids = plan
+        .materials
+        .iter()
+        .map(|material| material.id.0)
+        .collect::<Vec<_>>();
     let affected_frames:Vec<i64>=sqlx::query_scalar("SELECT DISTINCT f.number FROM core.ingress_frames f WHERE f.material_id=ANY($1) OR f.admitted && $2 OR EXISTS(SELECT 1 FROM core.events e WHERE e.id=ANY($2) AND e.producer_frame=f.number)")
         .bind(&material_ids).bind(&ids).fetch_all(&mut *conn).await?;
     let mut applied = Applied::default();
@@ -306,9 +312,15 @@ pub async fn apply(
     )
     .execute(&mut *conn)
     .await?;
-    sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE").execute(&mut *conn).await?;
-    sqlx::query!("DELETE FROM core.embedding_vectors WHERE embedding_id=ANY($1) OR target_id=ANY($1)",&ids)
-        .execute(&mut *conn).await?;
+    sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM core.embedding_vectors WHERE embedding_id=ANY($1) OR target_id=ANY($1)",
+        &ids
+    )
+    .execute(&mut *conn)
+    .await?;
     // Every one leaves its run's count; the live ones leave their source's
     // count too, archived ones already did.
     sqlx::query!(
@@ -338,8 +350,14 @@ pub async fn apply(
     )
     .fetch_one(&mut *conn)
     .await?;
-    sqlx::query("DELETE FROM privacy.original_events WHERE event_id=ANY($1)").bind(&ids).execute(&mut *conn).await?;
-    sqlx::query("DELETE FROM privacy.event_outputs WHERE event_id=ANY($1)").bind(&ids).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM privacy.original_events WHERE event_id=ANY($1)")
+        .bind(&ids)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM privacy.event_outputs WHERE event_id=ANY($1)")
+        .bind(&ids)
+        .execute(&mut *conn)
+        .await?;
     let deleted = sqlx::query!("DELETE FROM core.events WHERE id = ANY($1)", &ids)
         .execute(&mut *conn)
         .await?;

@@ -153,8 +153,8 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
         message::START_DONE => {
             let (unit, manager, invocation_id) = unit_change()?;
             Some(JournalReading::UnitStarted(UnitStarted {
-            host: entry.hostname.clone(),
-            boot_id: entry.boot_id.clone(),
+                host: entry.hostname.clone(),
+                boot_id: entry.boot_id.clone(),
 
                 cursor,
                 logged_at,
@@ -200,7 +200,7 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
                 _ => None,
             };
             Some(JournalReading::BootStarted(BootStarted {
-            host: entry.hostname.clone(),
+                host: entry.hostname.clone(),
 
                 boot_id: entry.boot_id.clone()?,
                 started_at,
@@ -213,8 +213,8 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
         }
         message::SLEEP_START if program == Some("systemd-sleep") => {
             Some(JournalReading::SleepStarted(SleepStarted {
-            host: entry.hostname.clone(),
-            boot_id: entry.boot_id.clone(),
+                host: entry.hostname.clone(),
+                boot_id: entry.boot_id.clone(),
 
                 cursor,
                 logged_at,
@@ -223,8 +223,8 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
         }
         message::SLEEP_STOP if program == Some("systemd-sleep") => {
             Some(JournalReading::SleepEnded(SleepEnded {
-            host: entry.hostname.clone(),
-            boot_id: entry.boot_id.clone(),
+                host: entry.hostname.clone(),
+                boot_id: entry.boot_id.clone(),
 
                 cursor,
                 logged_at,
@@ -233,8 +233,8 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
         }
         message::SHUTDOWN if program == Some("systemd-logind") => {
             Some(JournalReading::ShutdownStarted(ShutdownStarted {
-            host: entry.hostname.clone(),
-            boot_id: entry.boot_id.clone(),
+                host: entry.hostname.clone(),
+                boot_id: entry.boot_id.clone(),
 
                 cursor,
                 logged_at,

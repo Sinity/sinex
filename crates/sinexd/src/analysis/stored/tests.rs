@@ -90,7 +90,11 @@ fn stored_analysis_is_order_independent_and_refusals_remain_parented() {
         observation(&request, "a", CoverageState::Observed),
         observation(&request, "b", CoverageState::RecordedUnknownCoverage),
     ];
-    let env = Env::at(request.ended_at, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        request.ended_at,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let first = Keyed::compute(&StoredProducts, &json!(request), &input, &env);
     assert!(first.error.is_none());
     let reversed: Vec<_> = input.iter().rev().cloned().collect();
@@ -124,7 +128,11 @@ fn an_empty_answer_cites_the_request_and_unknown_coverage_never_measures_zero() 
         &StoredProducts,
         &json!(request),
         &inputs,
-        &Env::at(request.ended_at, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+        &Env::at(
+            request.ended_at,
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        ),
     );
     assert!(output.error.is_none());
     let panel = output
@@ -146,7 +154,11 @@ fn an_empty_answer_cites_the_request_and_unknown_coverage_never_measures_zero() 
         &StoredProducts,
         &json!(request),
         &input,
-        &Env::at(request.ended_at, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")),
+        &Env::at(
+            request.ended_at,
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        ),
     );
     let panel = output
         .outputs
@@ -164,46 +176,124 @@ fn figures_cut_under_another_logical_day_are_incomparable_instead_of_zero() {
     let shifted = Timestamp::from_unix_ns(request.started_at.unix_ns() + 1).unwrap();
     other_period.ts_orig.at = Some(shifted);
     other_period.payload["period_start"] = json!(shifted);
-    let inputs = vec![captured(&request), other_period, observation(&request, "observed", CoverageState::Observed)];
-    let output = Keyed::compute(&StoredProducts, &json!(request), &inputs, &Env::at(request.ended_at, sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting")));
+    let inputs = vec![
+        captured(&request),
+        other_period,
+        observation(&request, "observed", CoverageState::Observed),
+    ];
+    let output = Keyed::compute(
+        &StoredProducts,
+        &json!(request),
+        &inputs,
+        &Env::at(
+            request.ended_at,
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        ),
+    );
     assert!(output.error.is_none());
-    let panel = output.outputs.iter().find(|event| event.event_type == "analysis.panel").unwrap();
-    assert_eq!(panel.payload["cells"][0]["cell"], json!({"state":"missing","reason":"incomparable_period"}));
+    let panel = output
+        .outputs
+        .iter()
+        .find(|event| event.event_type == "analysis.panel")
+        .unwrap();
+    assert_eq!(
+        panel.payload["cells"][0]["cell"],
+        json!({"state":"missing","reason":"incomparable_period"})
+    );
 }
 
 #[devkit::test]
 fn a_closed_day_replaces_the_provisional_claim_at_its_actual_evaluation_clock() {
     let mut request = question();
-    request.operation="brief".into();request.recipe=None;
-    let inputs=vec![captured(&request),figure(&request),observation(&request,"observed",CoverageState::Observed)];
-    let opened=Timestamp::from_unix_ns(request.ended_at.unix_ns()-1_000_000_000).unwrap();
-    let closed=Timestamp::from_unix_ns(request.ended_at.unix_ns()+1_000_000_000).unwrap();
-    let settings=TimeSettings::new("Europe/Warsaw",4,0).unwrap();
-    let before=Keyed::compute(&StoredProducts,&json!(request),&inputs,&Env::at(opened,settings.clone()));
-    let after=Keyed::compute(&StoredProducts,&json!(request),&inputs,&Env::at(closed,settings));
-    let before=before.outputs.iter().find(|event|event.event_type=="context.pack").unwrap();
-    let after=after.outputs.iter().find(|event|event.event_type=="context.pack").unwrap();
-    assert_eq!(before.payload["evaluated_at"],json!(opened));
-    assert_eq!(after.payload["evaluated_at"],json!(closed));
-    assert!(before.payload["analysis"]["sections"].to_string().contains("provisional"));
-    assert!(!after.payload["analysis"]["sections"].to_string().contains("provisional"));
+    request.operation = "brief".into();
+    request.recipe = None;
+    let inputs = vec![
+        captured(&request),
+        figure(&request),
+        observation(&request, "observed", CoverageState::Observed),
+    ];
+    let opened = Timestamp::from_unix_ns(request.ended_at.unix_ns() - 1_000_000_000).unwrap();
+    let closed = Timestamp::from_unix_ns(request.ended_at.unix_ns() + 1_000_000_000).unwrap();
+    let settings = TimeSettings::new("Europe/Warsaw", 4, 0).unwrap();
+    let before = Keyed::compute(
+        &StoredProducts,
+        &json!(request),
+        &inputs,
+        &Env::at(opened, settings.clone()),
+    );
+    let after = Keyed::compute(
+        &StoredProducts,
+        &json!(request),
+        &inputs,
+        &Env::at(closed, settings),
+    );
+    let before = before
+        .outputs
+        .iter()
+        .find(|event| event.event_type == "context.pack")
+        .unwrap();
+    let after = after
+        .outputs
+        .iter()
+        .find(|event| event.event_type == "context.pack")
+        .unwrap();
+    assert_eq!(before.payload["evaluated_at"], json!(opened));
+    assert_eq!(after.payload["evaluated_at"], json!(closed));
+    assert!(
+        before.payload["analysis"]["sections"]
+            .to_string()
+            .contains("provisional")
+    );
+    assert!(
+        !after.payload["analysis"]["sections"]
+            .to_string()
+            .contains("provisional")
+    );
 }
 
 #[devkit::test]
 fn a_daily_brief_keeps_the_failed_read_reason_and_its_exact_source_citation() {
-    let mut request=question();request.operation="brief".into();request.recipe=None;
-    let mut failed=observation(&request,"failed-read",CoverageState::Missing);
-    failed.payload["reason"]=json!("synthetic input unavailable");
-    failed.payload["failures"]=json!(1);failed.payload["events"]=json!(0);
-    let citation=format!("sinex:ev/{}",failed.id);
-    let inputs=vec![captured(&request),figure(&request),failed];
-    let output=Keyed::compute(&StoredProducts,&json!(request),&inputs,
-        &Env::at(request.ended_at,TimeSettings::new("Europe/Warsaw",4,0).unwrap()));
+    let mut request = question();
+    request.operation = "brief".into();
+    request.recipe = None;
+    let mut failed = observation(&request, "failed-read", CoverageState::Missing);
+    failed.payload["reason"] = json!("synthetic input unavailable");
+    failed.payload["failures"] = json!(1);
+    failed.payload["events"] = json!(0);
+    let citation = format!("sinex:ev/{}", failed.id);
+    let inputs = vec![captured(&request), figure(&request), failed];
+    let output = Keyed::compute(
+        &StoredProducts,
+        &json!(request),
+        &inputs,
+        &Env::at(
+            request.ended_at,
+            TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+        ),
+    );
     assert!(output.error.is_none());
-    let pack=output.outputs.iter().find(|event|event.event_type=="context.pack").unwrap();
-    let quality=&pack.payload["analysis"]["sections"][0]["findings"];
-    let failure=quality.as_array().unwrap().iter().find(|finding|finding["template"]["description"].as_str().is_some_and(|text|text.contains("synthetic input unavailable"))).unwrap();
-    assert_eq!(failure["evidence"],json!([citation]));
-    let panel=output.outputs.iter().find(|event|event.event_type=="analysis.panel").unwrap();
-    assert_eq!(panel.payload["cells"][0]["cell"]["state"],"recorded");
+    let pack = output
+        .outputs
+        .iter()
+        .find(|event| event.event_type == "context.pack")
+        .unwrap();
+    let quality = &pack.payload["analysis"]["sections"][0]["findings"];
+    let failure = quality
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| {
+            finding["template"]["description"]
+                .as_str()
+                .is_some_and(|text| text.contains("synthetic input unavailable"))
+        })
+        .unwrap();
+    assert_eq!(failure["evidence"], json!([citation]));
+    let panel = output
+        .outputs
+        .iter()
+        .find(|event| event.event_type == "analysis.panel")
+        .unwrap();
+    assert_eq!(panel.payload["cells"][0]["cell"]["state"], "recorded");
 }

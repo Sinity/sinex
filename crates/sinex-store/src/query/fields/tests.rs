@@ -41,19 +41,40 @@ fn every_field_in_the_model_has_sql() {
 
 #[test]
 fn unknown_interval_ends_do_not_gain_durations_and_boot_fences_are_not_open() {
-    let duration=super::alias_field("intervals","duration").unwrap();
+    let duration = super::alias_field("intervals", "duration").unwrap();
     assert!(!duration.contains("now()"));
-    let open=super::alias_field("now","open").unwrap();assert!(open.contains("fenced_at"));
+    let open = super::alias_field("now", "open").unwrap();
+    assert!(open.contains("fenced_at"));
 }
 
 #[devkit::test]
-async fn transformed_interval_end_placeholders_remain_unknown_without_cast_failures(db:devkit::pg::TestDatabase) {
+async fn transformed_interval_end_placeholders_remain_unknown_without_cast_failures(
+    db: devkit::pg::TestDatabase,
+) {
     use sqlx::Connection;
-    let mut conn=sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
-    let (_,end,_)=span(Table::Events,Some("intervals")).unwrap();
-    let sql=format!("WITH e AS (SELECT $1::jsonb AS payload) SELECT {} FROM e",end.replace("{t}","e"));
-    let hidden:Option<time::OffsetDateTime>=sqlx::query_scalar(&sql).bind(serde_json::json!({"ended_at":"[masked]","fenced_at":"hash:opaque"})).fetch_one(&mut conn).await.unwrap();
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let (_, end, _) = span(Table::Events, Some("intervals")).unwrap();
+    let sql = format!(
+        "WITH e AS (SELECT $1::jsonb AS payload) SELECT {} FROM e",
+        end.replace("{t}", "e")
+    );
+    let hidden: Option<time::OffsetDateTime> = sqlx::query_scalar(&sql)
+        .bind(serde_json::json!({"ended_at":"[masked]","fenced_at":"hash:opaque"}))
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
     assert!(hidden.is_none());
-    let known:Option<time::OffsetDateTime>=sqlx::query_scalar(&sql).bind(serde_json::json!({"ended_at":"[masked]","fenced_at":"2026-01-02T03:04:05Z"})).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(known,Some(sinex_model::Timestamp::from_unix_secs(1767323045).unwrap().0));
+    let known: Option<time::OffsetDateTime> = sqlx::query_scalar(&sql)
+        .bind(serde_json::json!({"ended_at":"[masked]","fenced_at":"2026-01-02T03:04:05Z"}))
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        known,
+        Some(
+            sinex_model::Timestamp::from_unix_secs(1767323045)
+                .unwrap()
+                .0
+        )
+    );
 }

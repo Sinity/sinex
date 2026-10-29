@@ -91,10 +91,26 @@ fn replanning_adds_late_files_once_and_keeps_other_inputs_running() {
 
 #[devkit::test]
 fn every_included_source_declares_its_native_version_before_input_arrives() {
-    let declarations=crate::catalog::source_declarations();
+    let declarations = crate::catalog::source_declarations();
     for spec in sources::specs() {
-        let declaration=declarations.iter().find(|declaration|declaration.source.name==spec.name&&declaration.source.version==spec.parser_version).expect("every native specification has its exact declaration version");
-        for event_type in spec.event_types {assert!(declaration.kinds.iter().any(|kind|kind.kind.name==*event_type),"{} v{} omits {event_type}",spec.name,spec.parser_version);}
+        let declaration = declarations
+            .iter()
+            .find(|declaration| {
+                declaration.source.name == spec.name
+                    && declaration.source.version == spec.parser_version
+            })
+            .expect("every native specification has its exact declaration version");
+        for event_type in spec.event_types {
+            assert!(
+                declaration
+                    .kinds
+                    .iter()
+                    .any(|kind| kind.kind.name == *event_type),
+                "{} v{} omits {event_type}",
+                spec.name,
+                spec.parser_version
+            );
+        }
     }
     let configured = config(json!({"derivations":{"metric.hourly":false}}));
     assert!(!configured.runs("metric.hourly"));

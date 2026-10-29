@@ -87,12 +87,20 @@ const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous p
 /// they cannot drift apart.
 pub const COMMANDS: &[Command] = &[
     Command {
-        name: "signal", summary: "Author or inspect standing signal rules",
-        access: Access::Agent, mcp: true,
+        name: "signal",
+        summary: "Author or inspect standing signal rules",
+        access: Access::Agent,
+        mcp: true,
         args: &[
-            pos("action",ArgKind::Text,"add, list, enable, disable or remove"),
-            opt("name",ArgKind::Text,"rule name"),
-            opt("rule",ArgKind::Text,"complete shared signal rule as JSON"), PAGE, CURSOR,
+            pos(
+                "action",
+                ArgKind::Text,
+                "add, list, enable, disable or remove",
+            ),
+            opt("name", ArgKind::Text, "rule name"),
+            opt("rule", ArgKind::Text, "complete shared signal rule as JSON"),
+            PAGE,
+            CURSOR,
         ],
     },
     Command {
@@ -678,7 +686,11 @@ pub const COMMANDS: &[Command] = &[
         name: "brief",
         summary: "The brief for one logical day: data quality first, the day's metrics, departures from the recent level, associations over the days before, the machine.",
         args: &[
-            opt("day", ArgKind::Text, "YYYY-MM-DD or a stored context-pack citation; default today"),
+            opt(
+                "day",
+                ArgKind::Text,
+                "YYYY-MM-DD or a stored context-pack citation; default today",
+            ),
             opt(
                 "budget",
                 ArgKind::Integer,

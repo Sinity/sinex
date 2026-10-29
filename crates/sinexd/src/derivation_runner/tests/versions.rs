@@ -43,7 +43,11 @@ impl<const V: u32> Days<V> {
 impl<const V: u32> Keyed for Days<V> {
     const NAME: &'static str = "test.days";
     const VERSION: u32 = V;
-    const HISTORY: sinex_model::DerivationHistory = if V == 3 { sinex_model::DerivationHistory::KeepHistory } else { sinex_model::DerivationHistory::Recompute };
+    const HISTORY: sinex_model::DerivationHistory = if V == 3 {
+        sinex_model::DerivationHistory::KeepHistory
+    } else {
+        sinex_model::DerivationHistory::Recompute
+    };
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
@@ -263,47 +267,90 @@ async fn switching_a_stale_comparison_preserves_selected_outputs(db: devkit::pg:
 }
 
 #[devkit::test]
-async fn a_keep_history_switch_preserves_outputs_and_records_its_actor(db: devkit::pg::TestDatabase) {
-    let w=World::with_keys(db,vec![Box::new(Days::<1>)]).await;
-    w.admit(vec![zsh("kept",0,1)]).await;
-    let mut first=w.driver_with(vec![Box::new(Days::<1>)],vec![]).await;
+async fn a_keep_history_switch_preserves_outputs_and_records_its_actor(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::with_keys(db, vec![Box::new(Days::<1>)]).await;
+    w.admit(vec![zsh("kept", 0, 1)]).await;
+    let mut first = w.driver_with(vec![Box::new(Days::<1>)], vec![]).await;
     first.catch_up().await.unwrap();
-    let before=derived_dump(&w).await;
-    let mut next=w.driver_with(vec![Box::new(Days::<3>)],vec![]).await;
-    let comparison=next.compare("test.days",None,3).await.unwrap();
-    assert_eq!(next.switch("test.days",comparison.id.unwrap(),"agent:fixture").await.unwrap(),0);
-    assert_eq!(derived_dump(&w).await,before);
-    let mut conn=PgConnection::connect(&w.url).await.unwrap();
-    let operation:(String,String,String)=sqlx::query_as("SELECT kind,actor,scope->>'history' FROM core.operations WHERE scope->>'comparison'=$1")
-        .bind(comparison.id.unwrap().to_string()).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(operation,("producer_switch".into(),"agent:fixture".into(),"keep_history".into()));
-    assert!(next.switch("test.days",comparison.id.unwrap(),"agent:fixture").await.unwrap_err().contains("already selected"));
+    let before = derived_dump(&w).await;
+    let mut next = w.driver_with(vec![Box::new(Days::<3>)], vec![]).await;
+    let comparison = next.compare("test.days", None, 3).await.unwrap();
+    assert_eq!(
+        next.switch("test.days", comparison.id.unwrap(), "agent:fixture")
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(derived_dump(&w).await, before);
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let operation: (String, String, String) = sqlx::query_as(
+        "SELECT kind,actor,scope->>'history' FROM core.operations WHERE scope->>'comparison'=$1",
+    )
+    .bind(comparison.id.unwrap().to_string())
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        operation,
+        (
+            "producer_switch".into(),
+            "agent:fixture".into(),
+            "keep_history".into()
+        )
+    );
+    assert!(
+        next.switch("test.days", comparison.id.unwrap(), "agent:fixture")
+            .await
+            .unwrap_err()
+            .contains("already selected")
+    );
 }
 
 #[devkit::test]
-async fn a_pending_version_computes_new_dirty_keys_without_recomputing_history(db:devkit::pg::TestDatabase) {
-    let w=World::with_keys(db,vec![Box::new(Count::<1>)]).await;
-    w.admit(vec![zsh("first",0,1)]).await;
-    let mut first=w.driver_with(vec![Box::new(Count::<1>)],vec![]).await;
+async fn a_pending_version_computes_new_dirty_keys_without_recomputing_history(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::with_keys(db, vec![Box::new(Count::<1>)]).await;
+    w.admit(vec![zsh("first", 0, 1)]).await;
+    let mut first = w.driver_with(vec![Box::new(Count::<1>)], vec![]).await;
     first.catch_up().await.unwrap();
-    let mut next=w.driver_with(vec![Box::new(Count::<2>)],vec![]).await;
-    assert_eq!(next.pass().await.unwrap(),0);
-    w.admit(vec![zsh("new",60,2)]).await;
+    let mut next = w.driver_with(vec![Box::new(Count::<2>)], vec![]).await;
+    assert_eq!(next.pass().await.unwrap(), 0);
+    w.admit(vec![zsh("new", 60, 2)]).await;
     next.catch_up().await.unwrap();
-    let facts:Vec<CommandFused>=w.live().await;
-    assert_eq!(facts.iter().filter(|fact| fact.command=="v2:2").count(),1);
-    let mut conn=PgConnection::connect(&w.url).await.unwrap();
-    assert_eq!(registry::selected(&mut conn,"test.count").await.unwrap().unwrap().0,1);
+    let facts: Vec<CommandFused> = w.live().await;
+    assert_eq!(
+        facts.iter().filter(|fact| fact.command == "v2:2").count(),
+        1
+    );
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    assert_eq!(
+        registry::selected(&mut conn, "test.count")
+            .await
+            .unwrap()
+            .unwrap()
+            .0,
+        1
+    );
 }
 
 #[devkit::test]
-async fn comparison_selection_requires_the_exact_logical_day_setting(db:devkit::pg::TestDatabase) {
-    let w=World::with_keys(db,vec![Box::new(Days::<1>)]).await;
-    w.admit(vec![zsh("first",0,1)]).await;
-    let mut next=w.driver_with(vec![Box::new(Days::<2>)],vec![]).await;
-    let comparison=next.compare("test.days",None,3).await.unwrap();
-    next.time_settings=TimeSettings::new("UTC",0,0).unwrap();
-    let error=next.switch("test.days",comparison.id.unwrap(),"fixture").await.unwrap_err();
-    assert!(error.contains("logical-day settings changed"),"{error}");
-    assert_eq!(w.count("SELECT count(*) FROM core.operations WHERE kind='producer_switch'").await,0);
+async fn comparison_selection_requires_the_exact_logical_day_setting(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, vec![Box::new(Days::<1>)]).await;
+    w.admit(vec![zsh("first", 0, 1)]).await;
+    let mut next = w.driver_with(vec![Box::new(Days::<2>)], vec![]).await;
+    let comparison = next.compare("test.days", None, 3).await.unwrap();
+    next.time_settings = TimeSettings::new("UTC", 0, 0).unwrap();
+    let error = next
+        .switch("test.days", comparison.id.unwrap(), "fixture")
+        .await
+        .unwrap_err();
+    assert!(error.contains("logical-day settings changed"), "{error}");
+    assert_eq!(
+        w.count("SELECT count(*) FROM core.operations WHERE kind='producer_switch'")
+            .await,
+        0
+    );
 }

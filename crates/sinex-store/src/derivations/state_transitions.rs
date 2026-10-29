@@ -1,11 +1,16 @@
 //! Structural state-run bounds: retain refreshes until the first changed state.
 use super::*;
 pub(super) async fn bounds(
-    conn:&mut PgConnection,kinds:&[Kind],start:OffsetDateTime,end:OffsetDateTime,
-    scope_field:&str,subject_fields:&[&str],now:OffsetDateTime,
-)->Result<(OffsetDateTime,OffsetDateTime)>{
-    let (types,contains)=kind_arrays(kinds);
-    let subjects:Vec<String>=subject_fields.iter().map(|field|(*field).into()).collect();
+    conn: &mut PgConnection,
+    kinds: &[Kind],
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+    scope_field: &str,
+    subject_fields: &[&str],
+    now: OffsetDateTime,
+) -> Result<(OffsetDateTime, OffsetDateTime)> {
+    let (types, contains) = kind_arrays(kinds);
+    let subjects: Vec<String> = subject_fields.iter().map(|field| (*field).into()).collect();
     let row=sqlx::query!(
         r#"WITH eligible AS NOT MATERIALIZED (
              SELECT e.id,e.ts_orig,e.commit_seq,(e.payload->>$5 IS NOT NULL) AS known_scope,
@@ -41,9 +46,11 @@ pub(super) async fn bounds(
                greatest($4,(SELECT max(finish) FROM closers)) AS finish"#,
         &types,&contains,start,end,scope_field,&subjects,now,
     ).fetch_one(&mut *conn).await?;
-    let from=row.start.unwrap_or(start);
-    let until=row.finish.unwrap_or(end);
+    let from = row.start.unwrap_or(start);
+    let until = row.finish.unwrap_or(end);
     // Include the authoritative closing transition in an exclusive-end read.
-    let until=Timestamp::from_unix_ns(Timestamp(until).unix_ns()+1_000).map_err(|error|crate::Error::Invalid(error.to_string()))?.0;
-    Ok((from,until))
+    let until = Timestamp::from_unix_ns(Timestamp(until).unix_ns() + 1_000)
+        .map_err(|error| crate::Error::Invalid(error.to_string()))?
+        .0;
+    Ok((from, until))
 }

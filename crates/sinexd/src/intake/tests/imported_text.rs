@@ -15,14 +15,9 @@ async fn ingest(
     settings.options = options;
     let binding = (format.plan.unwrap())(path, &settings).unwrap().remove(0);
     let reader = BindingReader::new(format, binding.clone()).unwrap();
-    once(
-        &mut ctx.read_conn,
-        &ctx.blobs,
-        &ctx.writer,
-        vec![reader],
-    )
-    .await
-    .unwrap();
+    once(&mut ctx.read_conn, &ctx.blobs, &ctx.writer, vec![reader])
+        .await
+        .unwrap();
     binding
 }
 async fn live(ctx: &mut ReaderContext, event_type: &str) -> Vec<Value> {

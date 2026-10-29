@@ -99,11 +99,26 @@ pub(super) fn bind(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
 
 /// Bounds that hold for every row at this phase. OR and later groups never
 /// supply a narrowing bound; callers can use the result as a safe candidate range.
-pub fn finite_time_bounds(q:&Query,field:&FieldRef)->Option<(jiff::Timestamp,jiff::Timestamp)> {
-    let (mut from,mut to)=(None,None);
-    if let Some(e)=&q.filter{bounds(e,field,&mut from,&mut to);}
-    for stage in &q.stages {
-        match stage {Stage::Where(e)=>bounds(e,field,&mut from,&mut to),Stage::Group(_)=>{from=None;to=None;},_=>{}}
+pub fn finite_time_bounds(
+    q: &Query,
+    field: &FieldRef,
+) -> Option<(jiff::Timestamp, jiff::Timestamp)> {
+    let (mut from, mut to) = (None, None);
+    if let Some(e) = &q.filter {
+        bounds(e, field, &mut from, &mut to);
     }
-    match (from,to){(Some(from),Some(to)) if from<to=>Some((from,to)),_=>None}
+    for stage in &q.stages {
+        match stage {
+            Stage::Where(e) => bounds(e, field, &mut from, &mut to),
+            Stage::Group(_) => {
+                from = None;
+                to = None;
+            }
+            _ => {}
+        }
+    }
+    match (from, to) {
+        (Some(from), Some(to)) if from < to => Some((from, to)),
+        _ => None,
+    }
 }

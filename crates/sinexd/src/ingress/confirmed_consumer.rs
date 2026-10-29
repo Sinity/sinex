@@ -1,9 +1,13 @@
 //! The daemon provisions one native, grant-filtered durable per authenticated identity.
 use super::*;
-use sinex_protocol::{Confirmed,ConfirmedConsumer,ConfirmedConsumerReply};
+use sinex_protocol::{Confirmed, ConfirmedConsumer, ConfirmedConsumerReply};
 
 impl Requests {
-    pub(super) async fn confirmed_consumer(&self,producer:&str,request:&ConfirmedConsumer)->ConfirmedConsumerReply {
+    pub(super) async fn confirmed_consumer(
+        &self,
+        producer: &str,
+        request: &ConfirmedConsumer,
+    ) -> ConfirmedConsumerReply {
         let result:Result<_,String>=async {
             if request.after<0 || request.cache.is_empty() {return Err("consumer needs a nonnegative position and an index cache identity".into());}
             if let Some(basis)=&request.basis {self.verify_replay_basis(producer,&request.cache,request.after,basis).await?;}
@@ -39,6 +43,9 @@ impl Requests {
             }
             Ok(ConfirmedConsumerReply{position:Some(head),stream_instance:Some(crate::publisher::stream_instance(&stream)),stream:stream_name,consumer:name,scope,refusal:None,gap:None})
         }.await;
-        result.unwrap_or_else(|error|ConfirmedConsumerReply{refusal:Some(error),..Default::default()})
+        result.unwrap_or_else(|error| ConfirmedConsumerReply {
+            refusal: Some(error),
+            ..Default::default()
+        })
     }
 }

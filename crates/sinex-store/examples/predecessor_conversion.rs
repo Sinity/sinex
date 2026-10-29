@@ -1,10 +1,10 @@
 //! Explicit synthetic qualification. Run through `cargo xtask db exec` with a pinned exporter path.
-use sinex_store::{Blobs, blobs::migration::prepare};
-use hashed_blobs::{Hash, Extent};
-use std::path::{Path, PathBuf};
+use hashed_blobs::{Extent, Hash};
 use serde::Deserialize;
+use sinex_store::{Blobs, blobs::migration::prepare};
 use sqlx::Connection;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 
 #[derive(Deserialize)]
@@ -151,15 +151,23 @@ fn inventory(root: &Path) -> Vec<(PathBuf, blake3::Hash)> {
 }
 
 #[tokio::main]
-async fn main()->Result<(),Box<dyn std::error::Error>> {
-    let helper=PathBuf::from(std::env::args_os().nth(1).ok_or("usage: predecessor_conversion QUALIFIED_EXPORTER")?);
-    if !helper.is_file() {return Err("qualified predecessor exporter is missing".into());}
-    let db=devkit::pg::test_database()?;
-    qualify(&helper,db).await;
-    println!("predecessor conversion fixture: names, keys, catalog rows, custody and crash resume passed");
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = PathBuf::from(
+        std::env::args_os()
+            .nth(1)
+            .ok_or("usage: predecessor_conversion QUALIFIED_EXPORTER")?,
+    );
+    if !helper.is_file() {
+        return Err("qualified predecessor exporter is missing".into());
+    }
+    let db = devkit::pg::test_database()?;
+    qualify(&helper, db).await;
+    println!(
+        "predecessor conversion fixture: names, keys, catalog rows, custody and crash resume passed"
+    );
     Ok(())
 }
-async fn qualify(helper:&Path,db:devkit::pg::TestDatabase) {
+async fn qualify(helper: &Path, db: devkit::pg::TestDatabase) {
     let source = tempfile::tempdir().unwrap();
     let mut fixture = exporter(&helper, source.path(), "fixture", None);
     drop(fixture.stdout.take());
@@ -169,7 +177,11 @@ async fn qualify(helper:&Path,db:devkit::pg::TestDatabase) {
             .unwrap();
     let custody = inventory(source.path());
     let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
-    assert!(sinex_store::writer_lock::try_claim(&mut conn).await.unwrap());
+    assert!(
+        sinex_store::writer_lock::try_claim(&mut conn)
+            .await
+            .unwrap()
+    );
     let mut key_refs = std::collections::BTreeSet::new();
     for blob in &catalog.blobs {
         let hash = Hash(blob.hash).to_string();
@@ -212,12 +224,21 @@ async fn qualify(helper:&Path,db:devkit::pg::TestDatabase) {
             key_ref: key_ref.clone(),
             key: [7; 32],
         });
-    let export=Exported::new(helper,source.path(),&Hash(first.hash));
-    let name=match &key {Some(key)=>blobs.put_sealed_reader(export,key),None=>blobs.put_seekable(export)}.unwrap();
-    assert_eq!(name,Hash(first.hash).to_string());
-    let descriptor=blobs.descriptors(&name).unwrap();
-    let extent=Extent::decode(&descriptor[0]).unwrap();
-    assert!(std::fs::metadata(target.path().join(&extent.segment)).unwrap().len()>0);
+    let export = Exported::new(helper, source.path(), &Hash(first.hash));
+    let name = match &key {
+        Some(key) => blobs.put_sealed_reader(export, key),
+        None => blobs.put_seekable(export),
+    }
+    .unwrap();
+    assert_eq!(name, Hash(first.hash).to_string());
+    let descriptor = blobs.descriptors(&name).unwrap();
+    let extent = Extent::decode(&descriptor[0]).unwrap();
+    assert!(
+        std::fs::metadata(target.path().join(&extent.segment))
+            .unwrap()
+            .len()
+            > 0
+    );
     drop(blobs); // Stop after segment sync and before the extent transaction.
     let blobs = Blobs::open(target.path()).unwrap();
     blobs.load(&mut conn).await.unwrap();
@@ -239,10 +260,20 @@ async fn qualify(helper:&Path,db:devkit::pg::TestDatabase) {
         )
         .unwrap();
         blobs.convert_prepared(&mut conn, prepared).await.unwrap();
-        let mut reader=match &key {
-            Some(key)=>blobs.read_sealed(&name,Some(blob.len),key,sinex_store::blobs::SealedReadLimits {frame_bytes:sinex_store::blobs::BLOB_FRAME_BYTES,index_bytes:65536},||Ok(())),
-            None=>blobs.read_plain(&name,Some(blob.len),||Ok(())),
-        }.unwrap();
+        let mut reader = match &key {
+            Some(key) => blobs.read_sealed(
+                &name,
+                Some(blob.len),
+                key,
+                sinex_store::blobs::SealedReadLimits {
+                    frame_bytes: sinex_store::blobs::BLOB_FRAME_BYTES,
+                    index_bytes: 65536,
+                },
+                || Ok(()),
+            ),
+            None => blobs.read_plain(&name, Some(blob.len), || Ok(())),
+        }
+        .unwrap();
         assert_eq!(
             std::io::copy(&mut reader, &mut std::io::sink()).unwrap(),
             blob.len
@@ -266,4 +297,3 @@ async fn qualify(helper:&Path,db:devkit::pg::TestDatabase) {
     assert_eq!(preserved(&mut conn).await, before);
     assert_eq!(inventory(source.path()), custody);
 }
-

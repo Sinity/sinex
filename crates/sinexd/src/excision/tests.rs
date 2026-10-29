@@ -28,7 +28,7 @@ pub(crate) async fn register(
 ) {
     use sqlx::Connection;
     let blob = blobs.put(bytes).unwrap();
-    let mut tx=conn.begin().await.unwrap();
+    let mut tx = conn.begin().await.unwrap();
     let binding = format!("{}:synthetic@h", spec.name);
     sqlx::query(
         "INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present') ON CONFLICT(hash) DO UPDATE SET status='present'",
@@ -68,8 +68,9 @@ pub(crate) async fn register(
     .execute(&mut *tx)
     .await
     .unwrap();
-    let receipt=blobs.commit_extents(&mut tx).await.unwrap();
-    tx.commit().await.unwrap();blobs.acknowledge(receipt).unwrap();
+    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    blobs.acknowledge(receipt).unwrap();
 }
 
 /// Excise `target` in one transaction on `conn`, as the writer does, for
@@ -113,7 +114,8 @@ impl Clipboard {
         let mut ctx = ReaderContext::open(
             &db.url(None),
             &dir.path().join("store"),
-            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
         )
         .await
         .unwrap();
@@ -312,7 +314,8 @@ async fn records_of_sources_that_read_again_are_refused_without_changes(
     let mut ctx = ReaderContext::open(
         &db.url(None),
         &dir.path().join("store"),
-        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();

@@ -196,10 +196,14 @@ async fn latest(
         ],
         ranked: false,
     };
-    let (text,values)={
-        let compiled=super::compile_query(conn,ctx,seq,&selector).await?;
-        let mut rows=SqlFragment::text(format!("SELECT {} FROM (",super::json_object(&compiled.columns)));
-        rows.append(compiled.answer).push(") q");rows.render()
+    let (text, values) = {
+        let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
+        let mut rows = SqlFragment::text(format!(
+            "SELECT {} FROM (",
+            super::json_object(&compiled.columns)
+        ));
+        rows.append(compiled.answer).push(") q");
+        rows.render()
     };
     Ok(sql::bind_scalar(sqlx::query_scalar(&text), values)
         .fetch_optional(conn)
@@ -275,7 +279,7 @@ async fn mark_links(
         let text = format!("{text} fields id,event_type,source,key,material,offset,output");
         let query = sinex_model::query::bind(&text, &ctx).map_err(|e| Error::Invalid(e.message))?;
         let (text, values) = {
-            let compiled = super::compile_query(conn,&ctx,seq,&query).await?;
+            let compiled = super::compile_query(conn, &ctx, seq, &query).await?;
             let mut sql = SqlFragment::text(format!(
                 "SELECT {} FROM (",
                 super::json_object(&compiled.columns)

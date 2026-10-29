@@ -273,8 +273,9 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
     let source = || Batch {
         run: RunId::new(),
         kind: BatchKind::Source(Box::new(sinex_model::SourceProgress {
-            source:None,host:None,
-binding: "synthetic".into(),
+            source: None,
+            host: None,
+            binding: "synthetic".into(),
             data_keys: Vec::new(),
             input: sinex_model::InputRef {
                 kind: "file".into(),
@@ -323,8 +324,9 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     let blob = blobs.put(bytes).unwrap();
     let material = MaterialId::new();
     let progress = SourceProgress {
-        source:None,host:None,
-binding: "synthetic-refusal".into(),
+        source: None,
+        host: None,
+        binding: "synthetic-refusal".into(),
         data_keys: vec![],
         input: InputRef {
             kind: "file".into(),

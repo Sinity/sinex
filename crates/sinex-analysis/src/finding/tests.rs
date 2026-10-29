@@ -66,11 +66,17 @@ fn caveats_render_with_their_claim() {
 
 #[devkit::test]
 fn multiline_observations_are_one_citable_presentation_line() {
-    let finding = Finding {template:Template::Observation {
-        event_type:"synthetic.record".into(),source:"synthetic".into(),when:None,
-        description:"first\r\nsecond\nthird\u{2028}fourth".into(),
-    },caveats:vec![],evidence:vec![]};
-    let text=finding.markdown();
+    let finding = Finding {
+        template: Template::Observation {
+            event_type: "synthetic.record".into(),
+            source: "synthetic".into(),
+            when: None,
+            description: "first\r\nsecond\nthird\u{2028}fourth".into(),
+        },
+        caveats: vec![],
+        evidence: vec![],
+    };
+    let text = finding.markdown();
     assert!(!text.contains('\n') && !text.contains('\r') && !text.contains('\u{2028}'));
     assert!(text.contains("first\\r\\nsecond\\nthird\\u{2028}fourth"));
 }

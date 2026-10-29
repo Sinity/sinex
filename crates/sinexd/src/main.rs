@@ -21,14 +21,14 @@ mod ingress;
 mod intake;
 mod library;
 mod material_access;
-mod publisher;
 mod public_context;
+mod publisher;
 mod reader_context;
 mod replay;
 mod screen_text;
+mod signals;
 mod stored;
 mod telemetry;
-mod signals;
 mod writer;
 
 use clap::{Parser, Subcommand};
@@ -59,7 +59,7 @@ enum Command {
         nats_password_file: Option<PathBuf>,
         /// Operator-configured producer read grants, keyed by authenticated NATS producer name.
         #[arg(long)]
-        producer_grants:Option<PathBuf>,
+        producer_grants: Option<PathBuf>,
         /// Subject root on the NATS server.
         #[arg(long, default_value = "sinex")]
         subject_root: String,
@@ -243,8 +243,14 @@ async fn run_derive(
         Some(path) => binding_runner::Config::load(path)?.derivation_configuration(),
         None => sinex_derivations::Configuration::default(),
     };
-    let (mut runner, writer_task) =
-        local_runner(&database, &host, store.as_deref(), &configuration, effective_time_settings(zone.as_deref(), &day_start)?).await?;
+    let (mut runner, writer_task) = local_runner(
+        &database,
+        &host,
+        store.as_deref(),
+        &configuration,
+        effective_time_settings(zone.as_deref(), &day_start)?,
+    )
+    .await?;
     let started = std::time::Instant::now();
     runner.catch_up().await?;
     let wall = started.elapsed();
@@ -313,16 +319,24 @@ fn default_socket() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/run/sinex/sinexd.sock"))
 }
 
-fn effective_time_settings(zone: Option<&str>, day_start: &str) -> Result<sinex_model::time_settings::TimeSettings, String> {
+fn effective_time_settings(
+    zone: Option<&str>,
+    day_start: &str,
+) -> Result<sinex_model::time_settings::TimeSettings, String> {
     let zone = match zone {
-        Some(name) => jiff::tz::TimeZone::get(name).map_err(|error| format!("zone {name}: {error}"))?,
+        Some(name) => {
+            jiff::tz::TimeZone::get(name).map_err(|error| format!("zone {name}: {error}"))?
+        }
         None => jiff::tz::TimeZone::system(),
     };
     if zone.iana_name().is_none() {
         return Err("system time zone has no IANA name; pass --zone".into());
     }
-    let start = sinex_model::query::time::clock(day_start).ok_or_else(|| format!("day start `{day_start}` is not a clock time"))?;
-    Ok(sinex_model::time_settings::TimeSettings::from_parts(zone, start))
+    let start = sinex_model::query::time::clock(day_start)
+        .ok_or_else(|| format!("day start `{day_start}` is not a clock time"))?;
+    Ok(sinex_model::time_settings::TimeSettings::from_parts(
+        zone, start,
+    ))
 }
 
 fn api_options(
@@ -367,23 +381,27 @@ async fn main() -> std::process::ExitCode {
             sources,
             telemetry_spool,
         } => match api_options(socket, listen, tokens, zone, &day_start) {
-            Ok(api) => async {
-                let telemetry_spool = telemetry_spool.unwrap_or_else(|| telemetry::spool(&store));
-                let producer_grants=ingress::fetch::load(producer_grants.as_deref())?;
-                daemon::run(daemon::Options {
-                    producer_grants,
-                    database,
-                    store,
-                    nats,
-                    nats_password_file,
-                    subject_root,
-                    host,
-                    api,
-                    sources,
-                    telemetry_spool,
-                })
+            Ok(api) => {
+                async {
+                    let telemetry_spool =
+                        telemetry_spool.unwrap_or_else(|| telemetry::spool(&store));
+                    let producer_grants = ingress::fetch::load(producer_grants.as_deref())?;
+                    daemon::run(daemon::Options {
+                        producer_grants,
+                        database,
+                        store,
+                        nats,
+                        nats_password_file,
+                        subject_root,
+                        host,
+                        api,
+                        sources,
+                        telemetry_spool,
+                    })
+                    .await
+                }
                 .await
-            }.await,
+            }
             Err(e) => Err(e),
         },
         Command::Publish {
@@ -413,7 +431,13 @@ async fn main() -> std::process::ExitCode {
             identity_file,
         } => {
             backfill::run(backfill::Options {
-                time_settings: match effective_time_settings(zone.as_deref(), &day_start) { Ok(settings) => settings, Err(error) => { eprintln!("sinexd: {error}"); return std::process::ExitCode::FAILURE; } },
+                time_settings: match effective_time_settings(zone.as_deref(), &day_start) {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        eprintln!("sinexd: {error}");
+                        return std::process::ExitCode::FAILURE;
+                    }
+                },
                 database,
                 store,
                 reads,

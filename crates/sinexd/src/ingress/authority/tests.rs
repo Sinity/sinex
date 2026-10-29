@@ -1,14 +1,19 @@
 use super::*;
 fn capability(publisher: bool) -> fetch::Grants {
     fetch::Grants {
-        indexed_catalog:None, public_context:false,
+        indexed_catalog: None,
+        public_context: false,
         kind_prefixes: vec!["example".into()],
         classes: vec![Class::Open],
         write: Some(WriteGrant {
             forward_signals: false,
-            author_attestation:None,
+            author_attestation: None,
             emergency_sinex_blocked_host: None,
-            family: "example".into(),host:None,source_prefixes:vec![],source_declarations:vec![],canonical_kinds:vec![],
+            family: "example".into(),
+            host: None,
+            source_prefixes: vec![],
+            source_declarations: vec![],
+            canonical_kinds: vec![],
             kind_prefixes: vec!["example".into()],
             classes: vec![Class::Open],
             canonical_prefixes: if publisher {
@@ -47,7 +52,8 @@ fn read_grants_do_not_create_a_write_capability() {
     let grants = fetch::ProducerGrants::from([(
         "reader".into(),
         fetch::Grants {
-            indexed_catalog:None, public_context:false,
+            indexed_catalog: None,
+            public_context: false,
             kind_prefixes: vec!["example".into()],
             classes: vec![Class::Open],
             write: None,

@@ -104,10 +104,17 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
         "GRANT SELECT, INSERT, UPDATE, DELETE ON core.producer_orders TO sinex_writer".into(),
     ]);
     steps.push(output_ordinals::statements());
-    steps.push(vec!["ALTER TABLE core.ingress_frames ADD COLUMN family text".into(),"ALTER TABLE core.ingress_frames ADD COLUMN write_kind_prefixes text[]".into()]);
-    let mut cursor_step=vec![crate::tables::QUERY_CURSOR_KEY.into(), crate::tables::QUERY_CURSOR_KEY_INIT.into(),crate::query_cursors::INIT.into(),
+    steps.push(vec![
+        "ALTER TABLE core.ingress_frames ADD COLUMN family text".into(),
+        "ALTER TABLE core.ingress_frames ADD COLUMN write_kind_prefixes text[]".into(),
+    ]);
+    let mut cursor_step = vec![
+        crate::tables::QUERY_CURSOR_KEY.into(),
+        crate::tables::QUERY_CURSOR_KEY_INIT.into(),
+        crate::query_cursors::INIT.into(),
         "GRANT SELECT ON core.query_cursor_key TO sinex_writer".into(),
-        "REVOKE ALL ON core.query_cursor_key FROM sinex_reader".into()];
+        "REVOKE ALL ON core.query_cursor_key FROM sinex_reader".into(),
+    ];
     cursor_step.extend(crate::query_cursors::triggers());
     steps.push(cursor_step);
     steps.push(crate::vectors::statements());

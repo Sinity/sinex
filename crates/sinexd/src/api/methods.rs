@@ -133,9 +133,10 @@ impl Api {
         Ok(conn)
     }
 
-    pub(crate) fn context_at(&self, at:sinex_model::Timestamp) -> Result<Context,String> {
-        let now=jiff::Timestamp::from_nanosecond(at.unix_ns()).map_err(|error|error.to_string())?;
-        Ok(Context::new(now,self.zone.clone(),self.day_start))
+    pub(crate) fn context_at(&self, at: sinex_model::Timestamp) -> Result<Context, String> {
+        let now =
+            jiff::Timestamp::from_nanosecond(at.unix_ns()).map_err(|error| error.to_string())?;
+        Ok(Context::new(now, self.zone.clone(), self.day_start))
     }
 
     pub(crate) fn context(&self) -> Context {
@@ -193,8 +194,18 @@ impl Api {
     async fn dispatch(&self, request: Request, caller: &Caller) -> Reply {
         let actor = caller.actor;
         match request {
-            Request::Signal{action,name,rule,page,cursor} => match self.signal(caller,&action,name,rule,Page{size:page,cursor}).await {
-                Ok(result)=>data(result),Err(reason)=>refused(reason),
+            Request::Signal {
+                action,
+                name,
+                rule,
+                page,
+                cursor,
+            } => match self
+                .signal(caller, &action, name, rule, Page { size: page, cursor })
+                .await
+            {
+                Ok(result) => data(result),
+                Err(reason) => refused(reason),
             },
             Request::Kinds { kind, page, cursor } => {
                 self.kind_fields(caller, kind, page, cursor, false).await
@@ -283,7 +294,8 @@ impl Api {
                     text.push_str(" where cwds ^ ");
                     text.push_str(&serde_json::to_string(&cwd).expect("strings serialize"));
                 }
-                self.recall(caller, &text, Page { size: page, cursor }).await
+                self.recall(caller, &text, Page { size: page, cursor })
+                    .await
             }
             Request::Trace {
                 reference,
@@ -537,7 +549,7 @@ impl Api {
             &self.blobs,
             &self.host,
             &self.library_roots,
-            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(),self.day_start),
+            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
             request,
             caller.actor,
         )
@@ -545,26 +557,63 @@ impl Api {
     }
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
-        if text.trim().split_whitespace().next().is_some_and(|word| word.eq_ignore_ascii_case("recall")) {
+        if text
+            .trim()
+            .split_whitespace()
+            .next()
+            .is_some_and(|word| word.eq_ignore_ascii_case("recall"))
+        {
             return self.recall(caller, text, page).await;
         }
 
-        let mut ctx=self.context();
-        let mut conn=match self.acquire(caller).await {Ok(conn)=>conn,Err(e)=>return refused(e.to_string())};
-        if let Some(name)=query::saved::reference_name(text) {
-            if let Some(raw)=page.cursor.as_deref() {
-                let seal=match sinex_store::query::continuation::seal_key(&mut conn).await {Ok(seal)=>seal,Err(e)=>return refused(e.to_string())};
-                let question=match sinex_store::query::continuation::query_identity(text,&ctx).and_then(|question|sinex_store::query::continuation::identity("recall",&question,&caller.grants)) {Ok(question)=>question,Err(e)=>return refused(e.to_string())};
-                if sinex_store::query::continuation::open(&seal,raw,question,&ctx).is_ok_and(|cursor|cursor.context.versions.contains_key("sinex.recall")) {
-                    drop(conn);return self.recall(caller,text,page).await;
+        let mut ctx = self.context();
+        let mut conn = match self.acquire(caller).await {
+            Ok(conn) => conn,
+            Err(e) => return refused(e.to_string()),
+        };
+        if let Some(name) = query::saved::reference_name(text) {
+            if let Some(raw) = page.cursor.as_deref() {
+                let seal = match sinex_store::query::continuation::seal_key(&mut conn).await {
+                    Ok(seal) => seal,
+                    Err(e) => return refused(e.to_string()),
+                };
+                let question = match sinex_store::query::continuation::query_identity(text, &ctx)
+                    .and_then(|question| {
+                        sinex_store::query::continuation::identity(
+                            "recall",
+                            &question,
+                            &caller.grants,
+                        )
+                    }) {
+                    Ok(question) => question,
+                    Err(e) => return refused(e.to_string()),
+                };
+                if sinex_store::query::continuation::open(&seal, raw, question, &ctx)
+                    .is_ok_and(|cursor| cursor.context.versions.contains_key("sinex.recall"))
+                {
+                    drop(conn);
+                    return self.recall(caller, text, page).await;
                 }
             }
-            let definitions=match queries::definitions(&mut conn,&name).await {Ok(d)=>d,Err(e)=>return refused(e)};
-            let declarations=match sinex_schema::kinds::all(&mut conn).await {Ok(d)=>d,Err(e)=>return refused(e.to_string())};
-            ctx.catalog=Some(query::QueryCatalog::new(declarations.into_values()));
-            let bound=match query::saved::bind_saved(text,&ctx,&definitions) {Ok(q)=>q,Err(e)=>return query_refusal(text,e)};
-            if matches!(bound.source,Source::Recall{..}|Source::RecallLast{..}|Source::RecallMark{..}) {
-                drop(conn);return self.recall(caller,text,page).await;
+            let definitions = match queries::definitions(&mut conn, &name).await {
+                Ok(d) => d,
+                Err(e) => return refused(e),
+            };
+            let declarations = match sinex_schema::kinds::all(&mut conn).await {
+                Ok(d) => d,
+                Err(e) => return refused(e.to_string()),
+            };
+            ctx.catalog = Some(query::QueryCatalog::new(declarations.into_values()));
+            let bound = match query::saved::bind_saved(text, &ctx, &definitions) {
+                Ok(q) => q,
+                Err(e) => return query_refusal(text, e),
+            };
+            if matches!(
+                bound.source,
+                Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. }
+            ) {
+                drop(conn);
+                return self.recall(caller, text, page).await;
             }
         }
         match sinex_store::query::run(&mut conn, text, None, &ctx, &page).await {
@@ -630,22 +679,37 @@ impl Api {
         let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
-        let selected = sinex_store::registry::selected_derivations(&mut conn).await.map_err(|error| error.to_string())?;
+        let selected = sinex_store::registry::selected_derivations(&mut conn)
+            .await
+            .map_err(|error| error.to_string())?;
         let time_settings =
             sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start);
-        let mut available: Vec<(String, u32, sinex_model::DerivationHistory)> = crate::analysis::keyed_with(&self.derivations)
-            .iter()
-            .map(|d| (d.name().to_owned(), d.version_for(&time_settings), d.history_policy()))
-            .collect();
+        let mut available: Vec<(String, u32, sinex_model::DerivationHistory)> =
+            crate::analysis::keyed_with(&self.derivations)
+                .iter()
+                .map(|d| {
+                    (
+                        d.name().to_owned(),
+                        d.version_for(&time_settings),
+                        d.history_policy(),
+                    )
+                })
+                .collect();
         available.extend(
             crate::derivation_runner::per_event_with(&self.derivations)?
                 .iter()
                 .map(|d| (d.name().to_owned(), d.version(), d.history_policy())),
         );
         let build = crate::build_identity::current()?;
-        let names: Vec<_> = available.iter().map(|(name,_,_)| name.clone()).collect();
-        let versions: Vec<_> = available.iter().map(|(_,version,_)| i64::from(*version)).collect();
-        let comparisons = sinex_store::registry::latest_comparisons(&mut conn,&names,&versions,build).await.map_err(|error| error.to_string())?;
+        let names: Vec<_> = available.iter().map(|(name, _, _)| name.clone()).collect();
+        let versions: Vec<_> = available
+            .iter()
+            .map(|(_, version, _)| i64::from(*version))
+            .collect();
+        let comparisons =
+            sinex_store::registry::latest_comparisons(&mut conn, &names, &versions, build)
+                .await
+                .map_err(|error| error.to_string())?;
         let producer_versions: Vec<_> = available.into_iter().map(|(name, version, history)| {
             let current = selected.iter().find(|(selected_name, _, _)| selected_name == &name);
             let compared = comparisons.iter().find(|(producer,..)| producer == &name);
@@ -653,9 +717,21 @@ impl Api {
                 "state": if current.is_some_and(|(_,selected_version,selected_build)| *selected_version == i64::from(version) && selected_build == build) { "selected" } else { "pending_history_switch" },
                 "history": history, "build": build, "last_comparison": compared.map(|(_,id,made_at,keys,changed,complete)| json!({"id":id,"made_at":made_at,"keys":keys,"changed":changed,"complete":complete}))})
         }).collect();
-        let rule_rows=sinex_store::signals::rule_rows(&mut conn,sinex_model::event_types::signal::RuleWritten::EVENT_TYPE,row.commit_seq).await.map_err(|error|error.to_string())?;
-        let evaluation_rows=sinex_store::signals::rule_rows(&mut conn,sinex_model::event_types::signal::EvaluationRecorded::EVENT_TYPE,row.commit_seq).await.map_err(|error|error.to_string())?;
-        let signals=json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
+        let rule_rows = sinex_store::signals::rule_rows(
+            &mut conn,
+            sinex_model::event_types::signal::RuleWritten::EVENT_TYPE,
+            row.commit_seq,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let evaluation_rows = sinex_store::signals::rule_rows(
+            &mut conn,
+            sinex_model::event_types::signal::EvaluationRecorded::EVENT_TYPE,
+            row.commit_seq,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
         drop(conn);
         let sources = match self
             .query(

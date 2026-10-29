@@ -39,7 +39,9 @@ impl Recipe {
             .ok_or_else(|| format!("no recipe {name}; recipes: correlations, trends, deviations"))
     }
 
-    pub(crate) fn version(self) -> u32 { 1 }
+    pub(crate) fn version(self) -> u32 {
+        1
+    }
     pub(super) fn methods(self) -> &'static [&'static str] {
         match self {
             Recipe::Correlations => &["lagged_correlation"],
@@ -146,8 +148,10 @@ type Outputs = (Value, Vec<Finding>);
 
 fn method_row(r: &Result<methods::MethodResult, methods::NotEstimable>) -> Value {
     match r {
-        Ok(m) => json!({"status": "estimated", "method": m.method, "version": m.version, "output": m.output, "n": m.n,
-                        "n_excluded": m.n_excluded, "diagnostics": m.diagnostics, "estimand": m.estimand}),
+        Ok(m) => {
+            json!({"status": "estimated", "method": m.method, "version": m.version, "output": m.output, "n": m.n,
+                        "n_excluded": m.n_excluded, "diagnostics": m.diagnostics, "estimand": m.estimand})
+        }
         Err(e) => {
             json!({"status": "not_estimable", "reason": e.reason, "n": e.n, "n_excluded": e.n_excluded})
         }

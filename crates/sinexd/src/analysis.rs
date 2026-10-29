@@ -9,8 +9,8 @@ mod access;
 use sinex_sources::sources::analysis as request;
 mod brief;
 mod panel;
-mod recipes;
 pub(crate) mod recall;
+mod recipes;
 pub(crate) mod stored;
 
 pub(crate) use access::question;
@@ -52,8 +52,6 @@ impl Settings {
             .map_err(|e| e.to_string())?;
         Ok(Span::new(micros(start), micros(end)))
     }
-
-
 }
 
 pub(crate) fn parse_day(s: &str) -> Result<jiff::civil::Date, String> {

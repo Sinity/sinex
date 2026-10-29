@@ -339,8 +339,10 @@ pub(crate) async fn admit(
             privacy::projection::admitted(conn, &ids, &rules).await?;
         }
         let rules = cache.load(conn).await?.clone();
-        if validated_epoch.is_some() && let BatchKind::Ingress(frame)=&batch.kind {
-            crate::read_coverage::validate_parents(conn,frame,&events).await?;
+        if validated_epoch.is_some()
+            && let BatchKind::Ingress(frame) = &batch.kind
+        {
+            crate::read_coverage::validate_parents(conn, frame, &events).await?;
         }
         let mut projected = privacy::projection::certify_basis(
             conn,

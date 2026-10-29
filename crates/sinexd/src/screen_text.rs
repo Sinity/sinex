@@ -89,12 +89,18 @@ impl PerEvent for ScreenText {
     const OUTPUTS: &'static [&'static str] = &["screen.text"];
     const READS: Reads = Reads::Material;
 
-    fn input_requirements(&self)->Option<Vec<sinex_model::InputRequirement>> {
-        let kind=sinex_model::KindRef{name:"media.segment".into(),version:2};
-        let baseline=sinex_model::InputRequirement::new(kind.clone(),["/kind"]);
-        let mut screen=sinex_model::InputRequirement::new(kind,["/started_at","/accessibility_text"]);
-        screen.when.push(("/kind".into(),serde_json::json!("screen")));
-        Some(vec![baseline,screen])
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
+        let kind = sinex_model::KindRef {
+            name: "media.segment".into(),
+            version: 2,
+        };
+        let baseline = sinex_model::InputRequirement::new(kind.clone(), ["/kind"]);
+        let mut screen =
+            sinex_model::InputRequirement::new(kind, ["/started_at", "/accessibility_text"]);
+        screen
+            .when
+            .push(("/kind".into(), serde_json::json!("screen")));
+        Some(vec![baseline, screen])
     }
     fn version(&self) -> u32 {
         let definition = format!("{}:{}:{:?}", Self::NAME, Self::VERSION, self.engine);

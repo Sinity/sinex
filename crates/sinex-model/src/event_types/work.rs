@@ -38,7 +38,11 @@ pub struct TerminalIdentity {
 /// Whether an atomic work snapshot can establish its candidate acts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkCoverageState { Complete, Partial, Unavailable }
+pub enum WorkCoverageState {
+    Complete,
+    Partial,
+    Unavailable,
+}
 
 /// Exact snapshot coverage; unknown source times never become zero activity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
@@ -62,11 +66,21 @@ pub struct WorkTimeEvidence {
     pub until: Option<Timestamp>,
 }
 impl Default for WorkTimeEvidence {
-    fn default()->Self {Self{quality:crate::TimeQuality::Unknown,precision:None,until:None}}
+    fn default() -> Self {
+        Self {
+            quality: crate::TimeQuality::Unknown,
+            precision: None,
+            until: None,
+        }
+    }
 }
 impl WorkTimeEvidence {
-    pub fn instant(&self,at:Option<Timestamp>)->Option<Timestamp>{
-        (self.quality!=crate::TimeQuality::Unknown&&self.precision.as_deref()==Some("instant")&&self.until.is_none()).then_some(at).flatten()
+    pub fn instant(&self, at: Option<Timestamp>) -> Option<Timestamp> {
+        (self.quality != crate::TimeQuality::Unknown
+            && self.precision.as_deref() == Some("instant")
+            && self.until.is_none())
+        .then_some(at)
+        .flatten()
     }
 }
 
@@ -107,20 +121,38 @@ pub struct WorkAct {
 }
 
 impl crate::EventPayload for WorkAct {
-    const VERSION:u64=2;
-    const EVENT_TYPE:&'static str="work.act";
-    const KEY:crate::KeyKind=crate::KeyKind::Fields(&["act"]);
-    const REPLACE:crate::ReplaceRule=crate::ReplaceRule::ReplaceWhenNewer;
-    fn ts_orig(&self)->crate::TsOrig {crate::TsOrig::maybe(self.at_evidence.instant(Some(self.at)),self.at_evidence.quality)}
-    fn payload_schema()->Value {serde_json::to_value(schemars::schema_for!(Self)).expect("work act schema serializes")}
-    fn declaration()->crate::KindDeclaration {
-        let mut declaration=crate::KindDeclaration::schemaless(crate::KindRef{name:Self::EVENT_TYPE.into(),version:Self::VERSION},"sinex".into());
-        declaration.normalization=crate::kinds::Normalization::Rust;
-        declaration.payload_schema=Some(Self::payload_schema());
-        declaration.key_rule=Some(crate::kinds::KeyRule::Fields{fields:vec!["act".into()]});
-        declaration.replace_rule=Some(Self::REPLACE);
-        declaration.time_rule=Some(crate::kinds::TimeRule::InstantEvidence{field:"at".into(),evidence_field:"at_evidence".into()});
-        declaration.search=Self::SEARCH;
+    const VERSION: u64 = 2;
+    const EVENT_TYPE: &'static str = "work.act";
+    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["act"]);
+    const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
+    fn ts_orig(&self) -> crate::TsOrig {
+        crate::TsOrig::maybe(
+            self.at_evidence.instant(Some(self.at)),
+            self.at_evidence.quality,
+        )
+    }
+    fn payload_schema() -> Value {
+        serde_json::to_value(schemars::schema_for!(Self)).expect("work act schema serializes")
+    }
+    fn declaration() -> crate::KindDeclaration {
+        let mut declaration = crate::KindDeclaration::schemaless(
+            crate::KindRef {
+                name: Self::EVENT_TYPE.into(),
+                version: Self::VERSION,
+            },
+            "sinex".into(),
+        );
+        declaration.normalization = crate::kinds::Normalization::Rust;
+        declaration.payload_schema = Some(Self::payload_schema());
+        declaration.key_rule = Some(crate::kinds::KeyRule::Fields {
+            fields: vec!["act".into()],
+        });
+        declaration.replace_rule = Some(Self::REPLACE);
+        declaration.time_rule = Some(crate::kinds::TimeRule::InstantEvidence {
+            field: "at".into(),
+            evidence_field: "at_evidence".into(),
+        });
+        declaration.search = Self::SEARCH;
         declaration
     }
 }

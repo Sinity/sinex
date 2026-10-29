@@ -104,17 +104,18 @@ fn build<'a>(
     let inputs: Vec<&Event> = inputs.into_iter().collect();
     let parents = crate::parents_of(inputs.iter().copied());
     let class = inputs.iter().map(|e| e.class).max().unwrap_or(Class::Open);
-    let hash = payload_hash(payload,&parents);
-    make(Origin::Derived { parents },hash,class)
+    let hash = payload_hash(payload, &parents);
+    make(Origin::Derived { parents }, hash, class)
 }
 
-
 /// The complete stored payload and exact parents determine a derived reading.
-pub fn payload_hash(payload: &Value,parents: &[EventId]) -> [u8;32] {
+pub fn payload_hash(payload: &Value, parents: &[EventId]) -> [u8; 32] {
     let mut sorted = parents.to_vec();
     sorted.sort_unstable();
     let mut hasher = blake3::Hasher::new();
     hasher.update(payload.to_string().as_bytes());
-    for parent in sorted {hasher.update(parent.0.as_bytes());}
+    for parent in sorted {
+        hasher.update(parent.0.as_bytes());
+    }
     *hasher.finalize().as_bytes()
 }

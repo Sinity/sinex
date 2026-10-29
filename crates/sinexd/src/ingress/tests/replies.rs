@@ -30,7 +30,8 @@ async fn sixty_five_thousand_outputs_have_one_complete_verified_producer_receipt
         })
         .collect();
     let inner = Ingress::Events {
-        source:Some(test_source("kitty")),coverage:None,
+        source: Some(test_source("kitty")),
+        coverage: None,
         frame: "bulk-outputs".into(),
         events,
         failures: vec![],
@@ -139,7 +140,9 @@ async fn sixty_five_thousand_outputs_have_one_complete_verified_producer_receipt
 async fn request_replies_cannot_be_forwarded_to_a_foreign_principal_inbox(
     db: devkit::pg::TestDatabase,
 ) {
-    let grant = crate::ingress::fetch::Grants { indexed_catalog:None, public_context:false,
+    let grant = crate::ingress::fetch::Grants {
+        indexed_catalog: None,
+        public_context: false,
         kind_prefixes: vec!["command".into()],
         classes: vec![sinex_model::Class::Open],
         write: None,
@@ -155,7 +158,8 @@ async fn request_replies_cannot_be_forwarded_to_a_foreign_principal_inbox(
         .send(
             "kitty",
             &Ingress::Events {
-                source:Some(test_source("kitty")),coverage:None,
+                source: Some(test_source("kitty")),
+                coverage: None,
                 frame: "private-event".into(),
                 events: vec![imported(material, 0, "private event")],
                 failures: vec![],

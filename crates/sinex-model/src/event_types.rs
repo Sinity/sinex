@@ -14,8 +14,8 @@ pub mod coverage;
 pub mod derived;
 pub mod desktop;
 pub mod documents;
-pub mod environment;
 pub mod embedding;
+pub mod environment;
 pub mod finance;
 pub mod forecast;
 pub mod fused;
@@ -67,7 +67,7 @@ pub struct RegisteredEventType {
     /// type's time and removal rules apply exactly as for in-process sources.
     pub build: Build,
     /// Validate and normalize the payload without minting event metadata or an order.
-    pub normalize:fn(&Value)->Result<Value,crate::BuildError>,
+    pub normalize: fn(&Value) -> Result<Value, crate::BuildError>,
 }
 
 /// See [`RegisteredEventType::build`].
@@ -90,7 +90,7 @@ const fn info<P: EventPayload>() -> RegisteredEventType {
         declaration: P::declaration,
         json_schema: P::payload_schema,
         build: build_from_json::<P>,
-        normalize:normalize_from_json::<P>,
+        normalize: normalize_from_json::<P>,
     }
 }
 
@@ -102,15 +102,18 @@ fn build_from_json<P: EventPayload>(
     record_hash: [u8; 32],
     class: crate::Class,
 ) -> Result<crate::Event, crate::BuildError> {
-    let typed=decode_payload::<P>(payload)?;
+    let typed = decode_payload::<P>(payload)?;
     crate::Event::build(&typed, source, origin, reading_order, record_hash, class)
 }
-fn normalize_from_json<P:EventPayload>(payload:&Value)->Result<Value,crate::BuildError> {
-    let value=serde_json::to_value(decode_payload::<P>(payload)?).map_err(|_|crate::BuildError::NotAnObject(P::EVENT_TYPE.into()))?;
-    if !value.is_object() {return Err(crate::BuildError::NotAnObject(P::EVENT_TYPE.into()));}
+fn normalize_from_json<P: EventPayload>(payload: &Value) -> Result<Value, crate::BuildError> {
+    let value = serde_json::to_value(decode_payload::<P>(payload)?)
+        .map_err(|_| crate::BuildError::NotAnObject(P::EVENT_TYPE.into()))?;
+    if !value.is_object() {
+        return Err(crate::BuildError::NotAnObject(P::EVENT_TYPE.into()));
+    }
     Ok(value)
 }
-fn decode_payload<P:EventPayload>(payload:&Value)->Result<P,crate::BuildError> {
+fn decode_payload<P: EventPayload>(payload: &Value) -> Result<P, crate::BuildError> {
     use serde::de::IntoDeserializer;
     let typed: P =
         serde_path_to_error::deserialize(payload.clone().into_deserializer()).map_err(|error| {

@@ -10,19 +10,19 @@ pub mod clock;
 pub mod event;
 pub mod event_types;
 pub mod id;
-pub mod kinds;
 pub mod json_identity;
+pub mod kinds;
 pub mod manifest;
 pub mod payload;
 pub mod privacy;
-pub mod source;
 pub mod query;
+pub mod source;
 pub mod time_settings;
 
 pub use batch::{
     ArchiveReason, ArchiveRequest, Batch, BatchKind, DerivationHistory, FrameRefusal, IngressFrame,
-    InputRef, MaterialRef, ObservationFacts, OwnerCoverage, ReaderMemory, RecordOutcome, ReplayScope,
-    RevisionChange, SourceProgress, SourceRef, WrappedDataKey,
+    InputRef, MaterialRef, ObservationFacts, OwnerCoverage, ReaderMemory, RecordOutcome,
+    ReplayScope, RevisionChange, SourceProgress, SourceRef, WrappedDataKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
@@ -33,8 +33,8 @@ pub use payload::{
     DbCheck, EquivalenceKey, EventPayload, KeyKind, OwnedBlob, Payloads, ReplaceRule,
 };
 pub use privacy::Class;
-pub use source::{ProjectionCatalog, SourceDeclaration};
 pub use sinex_macros::{DbCheck, EventPayload};
+pub use source::{ProjectionCatalog, SourceDeclaration};
 
 /// Re-exports the derives' generated code relies on.
 #[doc(hidden)]
@@ -44,4 +44,4 @@ pub mod __private {
 }
 
 mod input_requirements;
-pub use input_requirements::{InputRequirement,InputUnavailableReason,UnavailableInput};
+pub use input_requirements::{InputRequirement, InputUnavailableReason, UnavailableInput};

@@ -159,9 +159,8 @@ impl Ingest {
                     Check::Refused("emergency completion clock exceeds milliseconds".into())
                 })?;
             if quiet_hours.is_some_and(|hours| {
-                    ::signals::Calendar::quiet_until(&calendar, at, hours).is_some()
-                })
-            {
+                ::signals::Calendar::quiet_until(&calendar, at, hours).is_some()
+            }) {
                 return Err(Check::Refused(
                     "emergency completion contradicts its cached owner quiet policy".into(),
                 ));
@@ -216,7 +215,7 @@ impl Ingest {
                                 .map_err(|error| Check::Unavailable(error.to_string()))?;
                         if previous.intent != incoming.intent
                             || previous.notice != incoming.notice
-                            || previous.active_rule!=incoming.active_rule
+                            || previous.active_rule != incoming.active_rule
                             || !sinex_store::signals::same_input_lineage(
                                 &mut self.conn,
                                 &previous.inputs,

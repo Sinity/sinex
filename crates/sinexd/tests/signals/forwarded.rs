@@ -41,7 +41,7 @@ fn intent(family: &str) -> ForwardedSignal {
         scope: None,
     };
     ForwardedSignal {
-        active_rule:None,
+        active_rule: None,
         inputs: vec![],
         intent: ::signals::FiredIntent {
             delivery,
@@ -272,7 +272,11 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
             sinex_protocol::InputReplayReply::Page {
                 position,
                 inputs,
-                continuation: sinex_protocol::ReplayContinuation::Complete { raw_inputs: sinex_protocol::CoverageStatus::Complete { proof: basis }, .. },
+                continuation:
+                    sinex_protocol::ReplayContinuation::Complete {
+                        raw_inputs: sinex_protocol::CoverageStatus::Complete { proof: basis },
+                        ..
+                    },
                 ..
             },
     } = replay
@@ -406,10 +410,28 @@ async fn authenticated_forwarded_and_local_rules_consume_one_shared_budget_and_r
     .unwrap();
     let mut denied_acks = capture.subscribe(subjects.ack("capture")).await.unwrap();
     capture.flush().await.unwrap();
-    let mut elevated=frame.clone();
-    if let Ingress::Signals{frame,signals,..}=&mut elevated {frame.push_str("-unauthorized-operator");signals[0].intent.author=::signals::Author::Operator;}
-    let denied=sinex_transport::producer::submit_frame(&client,&subjects,"polylogue",&mut acks,&elevated,Duration::from_secs(10)).await.unwrap();
-    assert!(denied.refusal.as_deref().is_some_and(|reason|reason.contains("attestation")),"canonical publishing alone does not attest an operator: {denied:?}");
+    let mut elevated = frame.clone();
+    if let Ingress::Signals { frame, signals, .. } = &mut elevated {
+        frame.push_str("-unauthorized-operator");
+        signals[0].intent.author = ::signals::Author::Operator;
+    }
+    let denied = sinex_transport::producer::submit_frame(
+        &client,
+        &subjects,
+        "polylogue",
+        &mut acks,
+        &elevated,
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert!(
+        denied
+            .refusal
+            .as_deref()
+            .is_some_and(|reason| reason.contains("attestation")),
+        "canonical publishing alone does not attest an operator: {denied:?}"
+    );
     let mut spoof = frame.clone();
     if let Ingress::Signals { frame, signals, .. } = &mut spoof {
         *frame = "synthetic-spoof".into();

@@ -27,7 +27,8 @@ fn options(url: &str, password_file: Option<&Path>) -> Result<async_nats::Connec
             Ok(async_nats::ConnectOptions::with_user_and_password(
                 user.clone(),
                 password.trim_end_matches('\n').to_owned(),
-            ).custom_inbox_prefix(format!("_INBOX.{user}")))
+            )
+            .custom_inbox_prefix(format!("_INBOX.{user}")))
         }
         (None, None) => Ok(async_nats::ConnectOptions::new()),
         (Some(user), None) => Err(format!(

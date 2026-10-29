@@ -534,7 +534,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   {kind_columns}
 )", kind_columns = kind_columns),
     ];
-    for statement in &mut tables {crate::source_declarations::fresh(statement);}
+    for statement in &mut tables {
+        crate::source_declarations::fresh(statement);
+    }
     tables.push(crate::source_declarations::TABLE.into());
     tables.extend(crate::vectors::tables());
     tables.extend(crate::privacy_epoch::tables());

@@ -9,7 +9,7 @@ pub struct InputState {
     pub changes: i64,
     pub excised: i64,
     #[serde(default)]
-    pub policy_epoch:Option<i64>,
+    pub policy_epoch: Option<i64>,
 }
 
 pub async fn input_state(conn: &mut PgConnection, inputs: &[String]) -> Result<InputState> {
@@ -22,7 +22,7 @@ pub async fn input_state(conn: &mut PgConnection, inputs: &[String]) -> Result<I
         commit,
         changes,
         excised,
-        policy_epoch:Some(policy_epoch),
+        policy_epoch: Some(policy_epoch),
     })
 }
 
@@ -47,7 +47,11 @@ pub(crate) async fn validate(
 ) -> Result<()> {
     let consumed: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM core.operations WHERE kind='producer_switch' AND scope->>'comparison'=$1)")
         .bind(selected.comparison.to_string()).fetch_one(&mut *conn).await?;
-    if consumed { return Err(Error::Invalid("producer comparison was already selected".into())); }
+    if consumed {
+        return Err(Error::Invalid(
+            "producer comparison was already selected".into(),
+        ));
+    }
     let row: Option<(String, i64, bool, serde_json::Value)> = sqlx::query_as(
         "SELECT derivation,version,range_from IS NULL AND range_until IS NULL,context FROM derivation.comparisons WHERE id=$1")
         .bind(selected.comparison).fetch_optional(&mut *conn).await?;
@@ -74,9 +78,11 @@ pub(crate) async fn validate(
         ));
     }
     if context.get("settings") != Some(&serde_json::json!(selected.settings)) {
-        return Err(Error::Invalid("logical-day settings changed after comparison; compare again".into()));
+        return Err(Error::Invalid(
+            "logical-day settings changed after comparison; compare again".into(),
+        ));
     }
-    crate::privacy::comparisons::require_scope(conn,&context).await?;
+    crate::privacy::comparisons::require_scope(conn, &context).await?;
     let compared: InputState = serde_json::from_value(
         context.get("inputs").cloned().unwrap_or_default(),
     )

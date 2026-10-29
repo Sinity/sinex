@@ -61,7 +61,11 @@ fn span(id: &str, scope: &str, acts: &[Event], start: i64, end: i64) -> Event {
     )
 }
 fn compute(events: &[Event], projects: Value) -> Vec<ProjectSpan> {
-    let env = Env::at(at(3600), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
+    let env = Env::at(
+        at(3600),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     ProjectSpans(AttributionProfile {
         projects: projects.as_array().unwrap().clone(),
     })

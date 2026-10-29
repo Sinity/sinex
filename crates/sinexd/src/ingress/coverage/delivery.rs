@@ -10,15 +10,20 @@ pub(super) async fn verify(
     position: i64,
 ) -> Result<(), String> {
     let js = crate::publisher::context(client.clone());
-    let stream = js.get_stream(subjects.confirmed_stream()).await.map_err(|error| error.to_string())?;
+    let stream = js
+        .get_stream(subjects.confirmed_stream())
+        .await
+        .map_err(|error| error.to_string())?;
     if completion.stream_instance != claims.instance
         || crate::publisher::stream_instance(&stream) != claims.instance
         || completion.stream_sequence == 0
     {
         return Err("coverage_native_incarnation_changed".into());
     }
-    let consumer = stream.get_consumer::<consumer::pull::Config>(&subjects.consumer_name(&claims.scope))
-        .await.map_err(|error| error.to_string())?;
+    let consumer = stream
+        .get_consumer::<consumer::pull::Config>(&subjects.consumer_name(&claims.scope))
+        .await
+        .map_err(|error| error.to_string())?;
     let info = consumer.cached_info();
     let (filters, scope) = grant.consumer_scope(&claims.producer, subjects);
     let cache = blake3::hash(claims.cache.as_bytes()).to_hex().to_string();
@@ -32,7 +37,10 @@ pub(super) async fn verify(
     {
         return Err("coverage_native_delivery_window_unproven".into());
     }
-    let message = stream.get_raw_message(completion.stream_sequence).await.map_err(|error| error.to_string())?;
+    let message = stream
+        .get_raw_message(completion.stream_sequence)
+        .await
+        .map_err(|error| error.to_string())?;
     if message.subject.as_str() != subjects.confirmed_control()
         || !matches!(serde_json::from_slice::<sinex_protocol::Confirmed>(&message.payload),
             Ok(sinex_protocol::Confirmed::PositionComplete { commit_seq }) if commit_seq == position)

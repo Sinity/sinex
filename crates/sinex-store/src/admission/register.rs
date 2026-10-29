@@ -235,10 +235,18 @@ pub(crate) async fn recorded(
     let Some(row) = row else {
         return Ok(None);
     };
-    if let (Some(offered),Some(saved))=(&frame.content_hash,row.outcome.get("frame_content_hash").and_then(Value::as_str)) && offered!=saved {
+    if let (Some(offered), Some(saved)) = (
+        &frame.content_hash,
+        row.outcome
+            .get("frame_content_hash")
+            .and_then(Value::as_str),
+    ) && offered != saved
+    {
         return Err(Error::Invalid("frame_body_conflict".into()));
     }
-    if let Some(refusal)=row.refusal{return Err(Error::Invalid(format!("recorded_frame_refused: {refusal}")));}
+    if let Some(refusal) = row.refusal {
+        return Err(Error::Invalid(format!("recorded_frame_refused: {refusal}")));
+    }
     let count = |name: &str| -> Result<usize> {
         match row.outcome.get(name) {
             None => Ok(0),

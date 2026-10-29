@@ -12,7 +12,7 @@ pub fn prepare(
     reader: impl Read + Seek,
     key: Option<&sinex_sealing::DataKey>,
 ) -> Result<Prepared> {
-    let hash=parse(name)?;
+    let hash = parse(name)?;
     let preparation = Preparation::new(scratch)?;
     let prepared = match key {
         Some(key) => preparation.sealed(reader, 3, key)?,
@@ -42,14 +42,15 @@ impl Blobs {
         }
         let hash = prepared.hash();
         let mut tx = conn.begin().await?;
-        let name=hash.to_string();
-        let row = sqlx::query!("SELECT size,status FROM core.blobs WHERE hash=$1 FOR UPDATE",name)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| {
-                crate::Error::Invalid(format!("no predecessor catalog row for {hash}"))
-            })?;
-        let size=row.size;
+        let name = hash.to_string();
+        let row = sqlx::query!(
+            "SELECT size,status FROM core.blobs WHERE hash=$1 FOR UPDATE",
+            name
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| crate::Error::Invalid(format!("no predecessor catalog row for {hash}")))?;
+        let size = row.size;
         if u64::try_from(size).ok() != Some(prepared.decoded_len()) {
             return Err(crate::Error::Invalid(format!(
                 "export length differs from catalog for {hash}"

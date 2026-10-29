@@ -33,9 +33,19 @@ impl Keyed for StoredProducts {
     fn version(&self) -> u32 {
         let mut hash = blake3::Hasher::new();
         hash.update(&Self::VERSION.to_le_bytes());
-        for (name, version, _) in sinex_analysis::methods::catalog() { hash.update(name.as_bytes()); hash.update(&version.to_le_bytes()); }
-        for recipe in Recipe::ALL { hash.update(recipe.id().as_bytes()); hash.update(&recipe.version().to_le_bytes()); }
-        1 + (u32::from_le_bytes(hash.finalize().as_bytes()[..4].try_into().expect("four bytes")) >> 2)
+        for (name, version, _) in sinex_analysis::methods::catalog() {
+            hash.update(name.as_bytes());
+            hash.update(&version.to_le_bytes());
+        }
+        for recipe in Recipe::ALL {
+            hash.update(recipe.id().as_bytes());
+            hash.update(&recipe.version().to_le_bytes());
+        }
+        1 + (u32::from_le_bytes(
+            hash.finalize().as_bytes()[..4]
+                .try_into()
+                .expect("four bytes"),
+        ) >> 2)
     }
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
         if input.event_type == "analysis.request" && input.payload["operation"] != "recall" {
@@ -174,8 +184,22 @@ fn coverage(inputs: &[&Event]) -> Vec<Coverage> {
             sinex_analysis::coverage::from_observation(&event.payload_as::<SourceCoverage>()?)
         })
         .collect();
-    rows.sort_by(|a, b| (&a.source, a.span.start, a.span.end, a.completeness, &a.bounded_by)
-        .cmp(&(&b.source, b.span.start, b.span.end, b.completeness, &b.bounded_by)));
+    rows.sort_by(|a, b| {
+        (
+            &a.source,
+            a.span.start,
+            a.span.end,
+            a.completeness,
+            &a.bounded_by,
+        )
+            .cmp(&(
+                &b.source,
+                b.span.start,
+                b.span.end,
+                b.completeness,
+                &b.bounded_by,
+            ))
+    });
     rows.dedup();
     rows
 }
@@ -188,20 +212,39 @@ fn panel(
     to: jiff::civil::Date,
 ) -> Result<Panel, String> {
     let units = panel::days(&settings.time_settings, from, to).map_err(|e| e.to_string())?;
-    let bounds: std::collections::BTreeMap<_, _> = units.iter().map(|unit| {
-        let day = super::parse_day(&unit.label)?;
-        Ok((unit.label.clone(), (
-            settings.time_settings.day_start(day).map_err(|error| error.to_string())?,
-            settings.time_settings.day_end(day).map_err(|error| error.to_string())?,
-        )))
-    }).collect::<Result<_, String>>()?;
+    let bounds: std::collections::BTreeMap<_, _> = units
+        .iter()
+        .map(|unit| {
+            let day = super::parse_day(&unit.label)?;
+            Ok((
+                unit.label.clone(),
+                (
+                    settings
+                        .time_settings
+                        .day_start(day)
+                        .map_err(|error| error.to_string())?,
+                    settings
+                        .time_settings
+                        .day_end(day)
+                        .map_err(|error| error.to_string())?,
+                ),
+            ))
+        })
+        .collect::<Result<_, String>>()?;
     let figures: Vec<_> = inputs
         .iter()
         .filter(|e| e.event_type == "metric.figure" && e.payload["grain"] == "day")
-        .filter(|event| event.payload["day"].as_str().and_then(|day| bounds.get(day)).is_some_and(|(start, end)| {
-            event.ts_orig.at == Some(*start)
-                && event.payload.get("period_end").and_then(|value| serde_json::from_value::<sinex_model::Timestamp>(value.clone()).ok()) == Some(*end)
-        }))
+        .filter(|event| {
+            event.payload["day"]
+                .as_str()
+                .and_then(|day| bounds.get(day))
+                .is_some_and(|(start, end)| {
+                    event.ts_orig.at == Some(*start)
+                        && event.payload.get("period_end").and_then(|value| {
+                            serde_json::from_value::<sinex_model::Timestamp>(value.clone()).ok()
+                        }) == Some(*end)
+                })
+        })
         .filter_map(|event| {
             Some(DayFigure {
                 metric: event.payload["metric"].as_str()?.into(),
@@ -221,19 +264,41 @@ fn panel(
         .into_iter()
         .flat_map(|m| panel::cells(m, &units, &figures, &coverage))
         .collect();
-    let compatible: std::collections::HashSet<_> = figures.iter().map(|figure| figure.reference.as_str()).collect();
-    let incompatible: std::collections::BTreeSet<_> = inputs.iter()
-        .filter(|event| event.event_type == "metric.figure" && event.payload["grain"] == "day"
-            && !compatible.contains(format!("sinex:ev/{}", event.id).as_str()))
-        .filter_map(|event| Some((event.payload["metric"].as_str()?, event.payload["day"].as_str()?))).collect();
+    let compatible: std::collections::HashSet<_> = figures
+        .iter()
+        .map(|figure| figure.reference.as_str())
+        .collect();
+    let incompatible: std::collections::BTreeSet<_> = inputs
+        .iter()
+        .filter(|event| {
+            event.event_type == "metric.figure"
+                && event.payload["grain"] == "day"
+                && !compatible.contains(format!("sinex:ev/{}", event.id).as_str())
+        })
+        .filter_map(|event| {
+            Some((
+                event.payload["metric"].as_str()?,
+                event.payload["day"].as_str()?,
+            ))
+        })
+        .collect();
     for cell in &mut cells {
-        if cell.reference.is_none() && incompatible.contains(&(cell.metric, cell.unit.label.as_str())) {
-            cell.cell = sinex_analysis::Cell::Missing { reason: sinex_analysis::cell::Missing::IncomparablePeriod };
+        if cell.reference.is_none()
+            && incompatible.contains(&(cell.metric, cell.unit.label.as_str()))
+        {
+            cell.cell = sinex_analysis::Cell::Missing {
+                reason: sinex_analysis::cell::Missing::IncomparablePeriod,
+            };
         }
     }
-    let mut evidence: Vec<_> = inputs.iter().filter(|event| event.event_type == "source.coverage")
-        .map(|event| json!({"citation":format!("sinex:ev/{}",event.id),"observation":event.payload})).collect();
-    evidence.sort_by(|a,b| a["citation"].as_str().cmp(&b["citation"].as_str()));
+    let mut evidence: Vec<_> = inputs
+        .iter()
+        .filter(|event| event.event_type == "source.coverage")
+        .map(
+            |event| json!({"citation":format!("sinex:ev/{}",event.id),"observation":event.payload}),
+        )
+        .collect();
+    evidence.sort_by(|a, b| a["citation"].as_str().cmp(&b["citation"].as_str()));
     Ok(Panel {
         citation: None,
         producer_versions: None,
@@ -256,8 +321,12 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, Strin
     let settings = settings(&request)?;
     let from = super::parse_day(&request.from)?;
     let to = super::parse_day(&request.to)?;
-    let requested_days: std::collections::BTreeSet<_> = panel::days(&settings.time_settings, from, to)
-        .map_err(|error| error.to_string())?.into_iter().map(|day| day.label).collect();
+    let requested_days: std::collections::BTreeSet<_> =
+        panel::days(&settings.time_settings, from, to)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|day| day.label)
+            .collect();
     let visible: Vec<_> = inputs
         .iter()
         .filter(|event| visible(event, &request))
@@ -282,10 +351,16 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, Strin
     let selected: Vec<_> = visible
         .into_iter()
         .filter(|event| match event.event_type.as_str() {
-            "metric.figure" => event.payload["day"].as_str().is_some_and(|day| requested_days.contains(day)),
+            "metric.figure" => event.payload["day"]
+                .as_str()
+                .is_some_and(|day| requested_days.contains(day)),
             "source.coverage" => event.payload_as::<SourceCoverage>().is_some_and(|row| {
                 latest
-                    .get(&(row.observed_source.clone(), row.binding.clone(), row.host.clone()))
+                    .get(&(
+                        row.observed_source.clone(),
+                        row.binding.clone(),
+                        row.host.clone(),
+                    ))
                     .is_some_and(|(_, id)| *id == event.id)
                     || (matches!(row.state, CoverageState::Observed | CoverageState::Partial)
                         && row.started_at < request.ended_at
@@ -333,7 +408,9 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, Strin
             },
         )?;
         for finding in &mut result.findings {
-            if finding.evidence.is_empty() { finding.evidence = evidence.clone(); }
+            if finding.evidence.is_empty() {
+                finding.evidence = evidence.clone();
+            }
         }
         outputs.push(derived(
             &RecipeAnswer {
@@ -382,7 +459,9 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, Strin
             .iter_mut()
             .flat_map(|section| &mut section.findings)
         {
-            if finding.evidence.is_empty() { finding.evidence = evidence.clone(); }
+            if finding.evidence.is_empty() {
+                finding.evidence = evidence.clone();
+            }
         }
         for (index, finding) in sections
             .iter()

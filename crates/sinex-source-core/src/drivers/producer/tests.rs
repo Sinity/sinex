@@ -74,8 +74,11 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
         Ingress::Material {
             frame: "b/material".into(),
             material: Box::new(MaterialFrame {
-                source:sinex_model::SourceRef{name:"synthetic.source".into(),version:1},
-id: material,
+                source: sinex_model::SourceRef {
+                    name: "synthetic.source".into(),
+                    version: 1,
+                },
+                id: material,
                 input: sinex_model::InputRef {
                     kind: "file".into(),
                     locator: "/var/log/x".into(),
@@ -91,8 +94,9 @@ id: material,
             }),
         },
         Ingress::Events {
-            source:None,coverage:None,
-frame: "b/events".into(),
+            source: None,
+            coverage: None,
+            frame: "b/events".into(),
             events: vec![event(10)],
             failures: vec![],
         },
@@ -161,8 +165,9 @@ frame: "b/events".into(),
     // A frame too big for one message is stored, uploaded and named.
     received.lock().unwrap().clear();
     let big = Ingress::Events {
-        source:None,coverage:None,
-frame: "b/big".into(),
+        source: None,
+        coverage: None,
+        frame: "b/big".into(),
         events: vec![event(2 * producer.max_message)],
         failures: vec![],
     };
@@ -199,8 +204,9 @@ impl Producer {
         root: &Path,
     ) -> Result<(), sinex_transport::producer::SubmitError> {
         let envelope = Ingress::Events {
-            source:None,coverage:None,
-frame: frame.into(),
+            source: None,
+            coverage: None,
+            frame: frame.into(),
             events: vec![],
             failures: vec![],
         };
@@ -387,23 +393,26 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
     .await
     .unwrap();
     let invalid = Ingress::Events {
-        source:None,coverage:None,
-frame: "invalid".into(),
+        source: None,
+        coverage: None,
+        frame: "invalid".into(),
         events: vec![event(2 * producer.max_message)],
         failures: vec![],
     };
     UnacknowledgedFrames {
         frames: vec![
             Ingress::Events {
-                source:None,coverage:None,
-frame: "first".into(),
+                source: None,
+                coverage: None,
+                frame: "first".into(),
                 events: vec![event(1)],
                 failures: vec![],
             },
             invalid,
             Ingress::Events {
-                source:None,coverage:None,
-frame: "valid".into(),
+                source: None,
+                coverage: None,
+                frame: "valid".into(),
                 events: vec![event(1)],
                 failures: vec![],
             },
@@ -480,8 +489,11 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
     let logical = Ingress::Material {
         frame: "material".into(),
         material: Box::new(MaterialFrame {
-            source:sinex_model::SourceRef{name:"synthetic.source".into(),version:1},
-id: material,
+            source: sinex_model::SourceRef {
+                name: "synthetic.source".into(),
+                version: 1,
+            },
+            id: material,
             input: sinex_model::InputRef {
                 kind: "socket".into(),
                 locator: "synthetic".into(),
@@ -562,8 +574,9 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
     producer.max_message = 1;
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
-            source:None,coverage:None,
-frame: "events".into(),
+            source: None,
+            coverage: None,
+            frame: "events".into(),
             events: vec![event(1)],
             failures: vec![],
         }],
@@ -618,8 +631,11 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
             Ingress::Material {
                 frame: "broken".into(),
                 material: Box::new(MaterialFrame {
-                    source:sinex_model::SourceRef{name:"synthetic.source".into(),version:1},
-id: sinex_model::MaterialId::new(),
+                    source: sinex_model::SourceRef {
+                        name: "synthetic.source".into(),
+                        version: 1,
+                    },
+                    id: sinex_model::MaterialId::new(),
                     input: sinex_model::InputRef {
                         kind: "file".into(),
                         locator: "synthetic".into(),
@@ -636,8 +652,9 @@ id: sinex_model::MaterialId::new(),
             }
         } else {
             Ingress::Events {
-                source:None,coverage:None,
-frame: "broken".into(),
+                source: None,
+                coverage: None,
+                frame: "broken".into(),
                 events: vec![event(1)],
                 failures: vec![],
             }
@@ -767,8 +784,9 @@ async fn a_stale_malformed_acknowledgment_does_not_refuse_another_frame() {
     client.flush().await.unwrap();
     let ack = producer
         .send(Ingress::Events {
-            source:None,coverage:None,
-frame: "valid".into(),
+            source: None,
+            coverage: None,
+            frame: "valid".into(),
             events: vec![event(1)],
             failures: vec![],
         })
@@ -863,8 +881,9 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
     }
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
-            source:None,coverage:None,
-frame: "events".into(),
+            source: None,
+            coverage: None,
+            frame: "events".into(),
             events,
             failures: vec![],
         }],
@@ -950,8 +969,9 @@ async fn a_saved_invalid_name_restarts_under_a_valid_attempt_name() {
     let prefix = format!("synthetic:/spool/\0@host/events/{material}/0/0");
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
-            source:None,coverage:None,
-frame: prefix,
+            source: None,
+            coverage: None,
+            frame: prefix,
             events: vec![event(1)],
             failures: vec![],
         }],
@@ -1013,8 +1033,11 @@ async fn a_missing_spool_requires_verified_retained_material_bytes() {
     let frame = Ingress::Material {
         frame: "retained/material".into(),
         material: Box::new(MaterialFrame {
-            source:sinex_model::SourceRef{name:"synthetic.source".into(),version:1},
-id: sinex_model::MaterialId::new(),
+            source: sinex_model::SourceRef {
+                name: "synthetic.source".into(),
+                version: 1,
+            },
+            id: sinex_model::MaterialId::new(),
             input: sinex_model::InputRef {
                 kind: "file".into(),
                 locator: "/synthetic".into(),
@@ -1083,8 +1106,9 @@ fn producer_positions_and_fact_journals_persist_only_the_shared_encoding() {
     );
     let frames = UnacknowledgedFrames {
         frames: vec![Ingress::Events {
-            source:None,coverage:None,
-frame: "synthetic".into(),
+            source: None,
+            coverage: None,
+            frame: "synthetic".into(),
             events: vec![event(1_000_000)],
             failures: vec![],
         }],
@@ -1112,17 +1136,50 @@ frame: "synthetic".into(),
 
 #[devkit::test]
 fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
-    let source = sinex_model::SourceRef { name: "native.synthetic".into(), version: 7 };
+    let source = sinex_model::SourceRef {
+        name: "native.synthetic".into(),
+        version: 7,
+    };
     let make = |source| {
         let mut reading = event(1);
-        reading.location = Some(sinex_model::RecordLocation { material: sinex_model::MaterialId::new(), anchor: 0 });
-        Ingress::Events { source: Some(source), coverage: None, frame: "native/reading".into(), events: vec![reading], failures: vec![] }
+        reading.location = Some(sinex_model::RecordLocation {
+            material: sinex_model::MaterialId::new(),
+            anchor: 0,
+        });
+        Ingress::Events {
+            source: Some(source),
+            coverage: None,
+            frame: "native/reading".into(),
+            events: vec![reading],
+            failures: vec![],
+        }
     };
     let frame = make(source.clone());
-    let Ingress::Events { source: failed_source, coverage, events, failures, .. } = failed_events(&[frame.clone()], "synthetic byte refusal").unwrap() else { panic!("failure must be an event frame") };
+    let Ingress::Events {
+        source: failed_source,
+        coverage,
+        events,
+        failures,
+        ..
+    } = failed_events(&[frame.clone()], "synthetic byte refusal").unwrap()
+    else {
+        panic!("failure must be an event frame")
+    };
     assert_eq!(failed_source, Some(source));
     assert!(coverage.is_none());
     assert!(events.is_empty());
     assert_eq!(failures.len(), 1);
-    assert!(failed_events(&[frame, make(sinex_model::SourceRef {name:"native.other".into(),version:7})], "synthetic refusal").is_err());
+    assert!(
+        failed_events(
+            &[
+                frame,
+                make(sinex_model::SourceRef {
+                    name: "native.other".into(),
+                    version: 7
+                })
+            ],
+            "synthetic refusal"
+        )
+        .is_err()
+    );
 }

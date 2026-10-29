@@ -12,17 +12,17 @@
 use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
-mod query_cursors;
-mod privacy_epoch;
 mod owner_protocol;
-mod source_declarations;
+mod privacy_epoch;
+mod query_cursors;
 mod read_boundary;
+mod source_declarations;
 pub use read_boundary::require as require_read_boundary;
 mod description;
 pub mod kinds;
+mod signals;
 mod tables;
 mod upgrades;
-mod signals;
 mod vectors;
 
 /// The session advisory lock held by the database's one writer.
@@ -42,7 +42,9 @@ pub enum Error {
     Unversioned,
     #[error("a writer holds the database; stop sinexd before upgrading its schema")]
     WriterRunning,
-    #[error("unsafe SQL reader privileges; run sinexd admin prepare-database as the database superuser before applying or starting Sinex")]
+    #[error(
+        "unsafe SQL reader privileges; run sinexd admin prepare-database as the database superuser before applying or starting Sinex"
+    )]
     UnsafeReadBoundary,
     #[error("{0}")]
     Declaration(String),
@@ -95,7 +97,15 @@ pub async fn prepare(connection: &mut PgConnection, owner: &str) -> Result<(), E
     connection
         .execute(format!("GRANT sinex_writer, sinex_reader TO {}", quote_ident(owner)).as_str())
         .await?;
-    connection.execute(format!("GRANT EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) TO {}",quote_ident(owner)).as_str()).await?;
+    connection
+        .execute(
+            format!(
+                "GRANT EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) TO {}",
+                quote_ident(owner)
+            )
+            .as_str(),
+        )
+        .await?;
     read_boundary::require_context(connection).await?;
     Ok(())
 }
@@ -258,14 +268,26 @@ fn kind_view(kind: &event_types::RegisteredEventType) -> description::View {
 fn grants(description: &description::Description) -> Vec<String> {
     let mut out = Vec::new();
     for schema in tables::SCHEMAS {
-        out.push(format!("GRANT USAGE ON SCHEMA {schema} TO sinex_writer, sinex_reader"));
-        out.push(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO sinex_writer"));
-        out.push(format!("GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO sinex_writer"));
+        out.push(format!(
+            "GRANT USAGE ON SCHEMA {schema} TO sinex_writer, sinex_reader"
+        ));
+        out.push(format!(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO sinex_writer"
+        ));
+        out.push(format!(
+            "GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO sinex_writer"
+        ));
         // New internal tables stay private until their output projection is declared.
-        out.push(format!("REVOKE ALL ON ALL TABLES IN SCHEMA {schema} FROM sinex_reader, PUBLIC"));
+        out.push(format!(
+            "REVOKE ALL ON ALL TABLES IN SCHEMA {schema} FROM sinex_reader, PUBLIC"
+        ));
     }
     // A table-level REVOKE does not remove an older column-level SELECT grant.
-    let schemas = tables::SCHEMAS.iter().map(|name| format!("'{name}'")).collect::<Vec<_>>().join(",");
+    let schemas = tables::SCHEMAS
+        .iter()
+        .map(|name| format!("'{name}'"))
+        .collect::<Vec<_>>()
+        .join(",");
     out.push(format!(r#"DO $reader_columns$ DECLARE relation record; BEGIN
       FOR relation IN SELECT n.nspname,c.relname,string_agg(quote_ident(a.attname),', ' ORDER BY a.attnum) AS columns
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -276,11 +298,32 @@ fn grants(description: &description::Description) -> Vec<String> {
     END $reader_columns$"#));
     out.push("GRANT SELECT ON ALL TABLES IN SCHEMA event_types TO sinex_reader".into());
     for relations in [
-        &["registry.sources","registry.derivations","registry.event_types","registry.kind_prefixes","registry.source_declarations"][..],
-        &["core.visible_events","core.visible_search_text","core.visible_embedding_vectors","core.counters","core.source_counts"][..],
+        &[
+            "registry.sources",
+            "registry.derivations",
+            "registry.event_types",
+            "registry.kind_prefixes",
+            "registry.source_declarations",
+        ][..],
+        &[
+            "core.visible_events",
+            "core.visible_search_text",
+            "core.visible_embedding_vectors",
+            "core.counters",
+            "core.source_counts",
+        ][..],
     ] {
-        let readable=relations.iter().copied().filter(|name|description.declares_relation(name)).collect::<Vec<_>>();
-        if !readable.is_empty(){out.push(format!("GRANT SELECT ON {} TO sinex_reader",readable.join(", ")));}
+        let readable = relations
+            .iter()
+            .copied()
+            .filter(|name| description.declares_relation(name))
+            .collect::<Vec<_>>();
+        if !readable.is_empty() {
+            out.push(format!(
+                "GRANT SELECT ON {} TO sinex_reader",
+                readable.join(", ")
+            ));
+        }
     }
     out
 }

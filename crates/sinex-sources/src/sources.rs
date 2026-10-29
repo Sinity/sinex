@@ -4,8 +4,6 @@ pub mod activitywatch;
 #[cfg(feature = "full")]
 pub mod analysis;
 #[cfg(feature = "full")]
-pub mod signals;
-#[cfg(feature = "full")]
 pub mod arbtt;
 #[cfg(feature = "full")]
 pub mod asciinema;
@@ -93,6 +91,8 @@ pub mod session_socket;
 /// Numbering shell history records, shared by zsh, bash and fish.
 #[cfg(feature = "full")]
 pub(crate) mod shell_history;
+#[cfg(feature = "full")]
+pub mod signals;
 /// The Sinnix capture lake's lanes.
 #[cfg(feature = "full")]
 pub mod sinnix_lake;

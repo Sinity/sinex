@@ -144,7 +144,11 @@ async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDat
     .unwrap();
     let batch = Batch {
         run: RunId::new(),
-        kind: BatchKind::Replay {operation: OperationId::new(),source:None,host:None},
+        kind: BatchKind::Replay {
+            operation: OperationId::new(),
+            source: None,
+            host: None,
+        },
         records: vec![RecordOutcome::Events {
             location: None,
             events: vec![event],

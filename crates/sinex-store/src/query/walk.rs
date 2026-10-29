@@ -96,9 +96,14 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
             .fetch_all(&mut *conn)
             .await?;
             match found.as_slice() {
-                [id]=>Ok(*id),
-                []=>Err(Error::Invalid(format!("no live {event_type} of {source} with key {key}"))),
-                _=>Err(Error::Invalid("several live readings share the visible key; use an exact event citation".into())),
+                [id] => Ok(*id),
+                [] => Err(Error::Invalid(format!(
+                    "no live {event_type} of {source} with key {key}"
+                ))),
+                _ => Err(Error::Invalid(
+                    "several live readings share the visible key; use an exact event citation"
+                        .into(),
+                )),
             }
         }
     }
@@ -289,7 +294,7 @@ pub(crate) async fn recall_summary(
         fill: None,
     }));
     let (sql, values) = {
-        let compiled = super::compile_query(conn,ctx,seq,&summary).await?;
+        let compiled = super::compile_query(conn, ctx, seq, &summary).await?;
         let mut rows = super::SqlFragment::text(
             "SELECT jsonb_build_object('source',q.source,'events',q.count,'first',q.min_when,'last',q.max_when) FROM (",
         );
@@ -301,7 +306,7 @@ pub(crate) async fn recall_summary(
         .await?;
     let latest_by_source = {
         let (sql, values) = {
-            let compiled = super::compile_query(conn,ctx,seq,&selector).await?;
+            let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
             let mut rows = super::SqlFragment::text(format!(
                 "SELECT DISTINCT ON (q.source) {} FROM (",
                 super::json_object(&compiled.columns)

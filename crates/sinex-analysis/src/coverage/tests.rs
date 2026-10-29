@@ -38,8 +38,8 @@ fn access_failure_and_unknown_temporal_bounds_never_supply_observed_coverage() {
 
 #[devkit::test]
 fn rounded_display_preserves_partial_coverage_at_both_ends() {
-    assert_eq!(percent_label(0.000001),">0%");
-    assert_eq!(percent_label(0.999999),"<100%");
-    assert_eq!(percent_label(0.0),"0%");
-    assert_eq!(percent_label(1.0),"100%");
+    assert_eq!(percent_label(0.000001), ">0%");
+    assert_eq!(percent_label(0.999999), "<100%");
+    assert_eq!(percent_label(0.0), "0%");
+    assert_eq!(percent_label(1.0), "100%");
 }
