@@ -76,3 +76,10 @@ async fn oversized_material_metadata_has_verified_range_transfers(db:devkit::pg:
     assert_eq!(format!("blake3:{}",blake3::hash(&bytes).to_hex()),reference.hash);
     let reply:FetchMaterialReply=serde_json::from_slice(&bytes).unwrap();let frame:MaterialFrame=reply.material.unwrap();assert_eq!(frame.manifest,manifest);assert!(!reply.extents.is_empty());
 }
+
+#[devkit::test]
+async fn accessible_empty_material_acknowledges_a_real_extent(db:devkit::pg::TestDatabase) {
+    let h=Harness::start(db).await;let (_material,frame)=h.material_frame("empty-material",b"");
+    let ack=h.send("kitty",&frame).await;assert_eq!(ack.refusal,None);assert_eq!(ack.material_extents.len(),1);
+    let extent=hashed_blobs::Extent::decode(&ack.material_extents[0]).unwrap();assert_eq!(extent.decoded_len,0);assert!(extent.len>0);
+}

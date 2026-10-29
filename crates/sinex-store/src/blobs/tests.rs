@@ -304,3 +304,11 @@ async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(db
     let reopened=Blobs::open(root.path()).unwrap();reopened.recover(&mut conn).await.unwrap();
     assert_eq!(reopened.read(&name).unwrap(),b"bytes kept after a failed punch");
 }
+
+#[devkit::test]
+fn an_empty_material_has_one_physical_extent_and_no_decoded_bytes() {
+    let dir=tempfile::tempdir().unwrap();let blobs=Blobs::open(dir.path()).unwrap();
+    let name=blobs.put(b"").unwrap();let descriptors=blobs.descriptors(&name).unwrap();assert_eq!(descriptors.len(),1);
+    let extent=hashed_blobs::Extent::decode(&descriptors[0]).unwrap();assert_eq!(extent.decoded_len,0);assert!(extent.len>0);
+    assert_eq!(blobs.read(&name).unwrap(),b"");
+}
