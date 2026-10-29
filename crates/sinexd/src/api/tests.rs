@@ -12,6 +12,7 @@ use sinex_model::{
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
+const READ_CONNECTIONS: u32 = 4;
 const READ: &str = "read-token";
 const AGENT: &str = "agent-token";
 const OPERATOR: &str = "operator-token";
@@ -128,7 +129,7 @@ async fn world_with_config(
         Some(blobs.clone()),
     ));
     let reads = PgPoolOptions::new()
-        .max_connections(4)
+        .max_connections(READ_CONNECTIONS)
         .connect(&url)
         .await
         .unwrap();
@@ -572,6 +573,82 @@ async fn follow_streams_new_matching_events_once(db: devkit::pg::TestDatabase) {
     read_until(&mut body, &mut seen, "cargo build").await;
     assert!(!seen.contains("\"before\""));
     assert_eq!(seen.matches("cargo build").count(), 1);
+}
+
+#[devkit::test]
+async fn follow_notice_waits_for_the_initial_cursor(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["before"], 0).await;
+
+    // Leave exactly one known backend for the subscription's cursor query.
+    let mut connections = Vec::new();
+    for _ in 0..READ_CONNECTIONS {
+        connections.push(w.reads.acquire().await.unwrap());
+    }
+    let mut snapshot = connections.pop().unwrap();
+    let snapshot_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *snapshot)
+        .await
+        .unwrap();
+    let mut locker = connections.pop().unwrap();
+    let locker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *locker)
+        .await
+        .unwrap();
+    let mut monitor = connections.pop().unwrap();
+    let mut locked = sqlx::Connection::begin(&mut *locker).await.unwrap();
+    sqlx::query("LOCK TABLE core.counters IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *locked)
+        .await
+        .unwrap();
+    drop(snapshot);
+
+    let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
+        .header("authorization", format!("Bearer {READ}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = w.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT $1 = ANY(pg_blocking_pids($2))")
+                .bind(locker_pid)
+                .bind(snapshot_pid)
+                .fetch_one(&mut *monitor)
+                .await
+                .unwrap();
+            if blocked {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("subscription cursor did not reach the held counter lock");
+
+    let premature_notice = {
+        let frame = body.frame();
+        tokio::pin!(frame);
+        std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(std::future::Future::poll(frame.as_mut(), cx))
+        })
+        .await
+        .is_ready()
+    };
+    // Release owned database resources before reporting an ordering failure.
+    locked.rollback().await.unwrap();
+    drop((locker, monitor, connections));
+    assert!(!premature_notice, "follow notice preceded its initial cursor");
+
+    let mut seen = String::new();
+    read_until(&mut body, &mut seen, "event: notice").await;
+    admit(&w, &["cargo build", "ls"], 1).await;
+    read_until(&mut body, &mut seen, "cargo build").await;
+    assert!(!seen.contains("\"before\""));
+    assert_eq!(seen.matches("cargo build").count(), 1);
+    drop(body);
+    drop(w);
 }
 
 #[devkit::test]
