@@ -36,7 +36,7 @@ const fn spec(
         // without a code change.
         class: Class::Open,
         parser,
-        parser_version: 3,
+        parser_version: 4,
         event_types,
         framer: sinex_source_core::Framer::incremental(lines),
     }
@@ -51,7 +51,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.clipboard",
             "sinnix-lake:desktop.clipboard",
             "recall, prompt provenance",
-            &["lake.observed"],
+            &["lake.observed", "capture.gap"],
         ),
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lane_values: &["clipboard", "primary"],
@@ -61,7 +61,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.notifications",
             "sinnix-lake:desktop.notifications",
             "recall, interruption analysis",
-            &["lake.observed"],
+            &["lake.observed", "capture.gap"],
         ),
         dirs: &["activity/desktop/notification"],
         lane_values: &["notifications"],
@@ -71,7 +71,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.media",
             "sinnix-lake:desktop.media",
             "listening and attention timeline",
-            &["lake.observed"],
+            &["lake.observed", "capture.gap"],
         ),
         dirs: &["activity/desktop/media"],
         lane_values: &["mpris"],
@@ -81,7 +81,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.a11y",
             "sinnix-lake:desktop.a11y",
             "what was on screen, recall",
-            &["lake.observed"],
+            &["lake.observed", "capture.gap"],
         ),
         dirs: &["activity/desktop/accessibility"],
         lane_values: &["a11y"],
@@ -91,7 +91,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.idle-inhibitor",
             "sinnix-lake:desktop.idle-inhibitor",
             "presence and AFK evidence",
-            &["lake.observed"],
+            &["lake.observed", "capture.gap"],
         ),
         dirs: &["activity/desktop/idle-inhibitor"],
         lane_values: &["idle-inhibitors"],
@@ -101,7 +101,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "media.screen",
             "sinnix-lake:media.screen",
             "screen recall and OCR",
-            &["lake.observed"],
+            &["lake.observed", "capture.gap"],
         ),
         dirs: &["activity/desktop/frame"],
         lane_values: &["screen-frames"],
@@ -111,7 +111,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "media.audio",
             "sinnix-lake:media.audio",
             "audio recall, speech index, device state",
-            &["lake.observed"],
+            &["lake.observed", "capture.gap"],
         ),
         dirs: &[
             "activity/audio/device",
@@ -125,7 +125,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "browser.navigation",
             "sinnix-lake:browser.navigation",
             "browsing trails, recall",
-            &["link.followed"],
+            &["link.followed", "capture.gap"],
         ),
         dirs: &["activity/browser/navigation"],
         lane_values: &["browser-nav-edges"],
@@ -135,7 +135,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "reading.stack",
             "sinnix-lake:reading.stack",
             "reading queue",
-            &["reading_stack.changed"],
+            &["reading_stack.changed", "capture.gap"],
         ),
         dirs: &["activity/browser/reading"],
         lane_values: &["reading-stack"],
@@ -145,7 +145,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "desktop.display",
             "sinnix-lake:desktop.display",
             "machine state timeline",
-            &["display.sampled"],
+            &["display.sampled", "capture.gap"],
         ),
         dirs: &["device/sinnix-prime/monitor"],
         lane_values: &["monitor"],
@@ -157,7 +157,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
                 "network.netflow",
                 "sinnix-lake:network.netflow",
                 "network flows by connection",
-                &["lake.observed"],
+                &["lake.observed", "capture.gap"],
             )
         },
         dirs: &["device/sinnix-prime/netflow"],
@@ -168,7 +168,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "machine.peripheral",
             "sinnix-lake:machine.peripheral",
             "battery and audio device state",
-            &["battery.sampled", "bluetooth_audio.sampled"],
+            &["battery.sampled", "bluetooth_audio.sampled", "capture.gap"],
         ),
         dirs: &[
             "device/sinnix-prime/peripheral/bt-audio",
@@ -182,7 +182,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "environment.awair",
             "sinnix-lake:environment.awair",
             "room air, sleep and focus analysis",
-            &["air.sampled"],
+            &["air.sampled", "capture.gap"],
         ),
         dirs: &["health/environment"],
         lane_values: &["awair", "environment"],
@@ -198,6 +198,8 @@ struct Envelope {
     lane: String,
     host: String,
     seq: u64,
+    boot: Option<String>,
+    session: Option<String>,
     observed_at: Timestamp,
     payload: Value,
     /// The path of a file the record describes (a frame, an audio segment).
@@ -251,6 +253,8 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
         lane: lane.to_owned(),
         host: record["host"].as_str().expect("validated host").to_owned(),
         seq: record["seq"].as_u64().expect("validated sequence"),
+        boot: generation(record, "boot_id")?,
+        session: generation(record, "session_id")?.or(generation(record, "session")?),
         observed_at: lanes::seconds(ts)?,
         payload: record
             .get("payload")
@@ -263,18 +267,40 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
     })
 }
 
+fn generation(record: &Map<String, Value>, field: &str) -> Result<Option<String>, RecordError> {
+    match record.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+        _ => Err(RecordError::new(format!(
+            "envelope {field} is not a nonempty string"
+        ))),
+    }
+}
+
+mod sequence;
+
 impl Parser for EnvelopeParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
+    type Carry = sequence::Carry;
     type Payload = lanes::LakeEvent;
+
+    fn failed_record(&self, carry: &Self::Carry) -> Self::Carry {
+        sequence::failed(carry)
+    }
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
+        carry: &sequence::Carry,
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<lanes::LakeEvent>, ()), RecordError> {
-        Ok((lanes::events(&envelope(record, self.lake_source)?)?, ()))
+    ) -> Result<(Vec<lanes::LakeEvent>, sequence::Carry), RecordError> {
+        let envelope = envelope(record, self.lake_source)?;
+        let mut events = lanes::events(&envelope)?;
+        let (gap, carry) = sequence::observe(carry, &envelope);
+        if let Some(gap) = gap {
+            events.push(lanes::LakeEvent::Gap(gap));
+        }
+        Ok((events, carry))
     }
 }
 

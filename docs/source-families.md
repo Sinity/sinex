@@ -80,6 +80,8 @@ Family F05.
 
 **Mail** covers every folder and label of the operator's accounts, including sent, archive, Spam and Trash: complete RFC 5322 and MIME bytes, attachments, duplicate headers, threading, flags, provider IDs, dates and received or internal dates. MIME bytes survive an invalid body encoding. Mbox delimiter quoting and Maildir renames keep message ranges and identity. PST and Outlook CSV are explicit native inputs; a converter is a recorded acquisition tool, not an intermediate format. Message-ID alone is not record identity; a message without one is identified by its real provider or file identity, never a shared empty key. Mail fusion matches Message-ID only within one account and keeps every provider observation.
 
+Outlook conversion retains the native PST as an original material with the acquisition tool, its version and folder identity. Converted mbox materials and their record parts cite that acquisition material. Bindings identify the original PST and folder; private directories under managed scratch belong to the reader and are removed when it closes, including after conversion failure. Conversion and storage check the native input's revision, and the next read converts a changed revision again. The PST itself is never rewritten.
+
 **IMAP** uses IDLE where supported, UIDVALIDITY and UID, flags and explicit EXPUNGE and VANISHED observations. A sparse or incomplete UID response never implies deletion.
 
 **Gmail** is read with the account's full permission, and every capture call is read-only.

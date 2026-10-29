@@ -9,6 +9,7 @@ fn gap_uses_the_normal_material_and_parser_with_the_stream_floor() {
         start: None,
         end: Some(Timestamp::from_unix_secs(100).unwrap()),
         reason: "broker disconnected".into(),
+        sequence: None,
     };
     let acquired = material(&gap, "example", Timestamp::from_unix_secs(101).unwrap());
     let raw = acquired.material.unwrap();

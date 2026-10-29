@@ -1622,3 +1622,178 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
     );
     consistent(&mut connection).await;
 }
+
+#[devkit::test]
+async fn outlook_conversion_uses_owned_scratch_and_stores_each_exports_exact_bytes() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let first_mbox = b"From sender@example.test Tue Sep 15 10:00:00 2026\nMessage-ID: <first@example.test>\nFrom: sender@example.test\nDate: Tue, 15 Sep 2026 10:00:00 +0000\nSubject: first synthetic export\n\nfirst original bytes\n\n";
+    let second_mbox = b"From sender@example.test Tue Sep 15 10:00:00 2026\nMessage-ID: <second@example.test>\nFrom: sender@example.test\nDate: Tue, 15 Sep 2026 10:00:00 +0000\nSubject: second synthetic export\n\nsecond original bytes\n\n";
+    let first = [
+        b"synthetic native PST first\n".as_slice(),
+        first_mbox.as_slice(),
+    ]
+    .concat();
+    let second = [
+        b"synthetic native PST second\n".as_slice(),
+        second_mbox.as_slice(),
+    ]
+    .concat();
+    let a = dir.file("inputs/a/archive.pst", &first);
+    let b = dir.file("inputs/b/archive.pst", &second);
+    let converter = dir.file(
+        "bin/readpst",
+        br##"#!/bin/sh
+if [ "$1" = "-V" ]; then printf 'synthetic-readpst 1\n'; exit 0; fi
+while [ "$1" != "-o" ]; do shift; done
+mkdir -p "$2/Inbox"
+sed '1d' "$3" > "$2/Inbox/mbox"
+"##,
+    );
+    std::fs::set_permissions(&converter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let scratch = dir.0.join("managed-scratch");
+    std::fs::create_dir(&scratch).unwrap();
+    let mut path = vec![converter.parent().unwrap().to_owned()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    finish(
+        target
+            .sinexd(&["backfill", "--host", HOST])
+            .arg("--read")
+            .arg(format!("outlook={}", dir.0.join("inputs").display()))
+            .env("PATH", std::env::join_paths(path).unwrap())
+            .env("TMPDIR", &scratch),
+    );
+    assert_eq!(std::fs::read(&a).unwrap(), first);
+    assert_eq!(std::fs::read(&b).unwrap(), second);
+    assert_eq!(
+        std::fs::read_dir(scratch).unwrap().count(),
+        0,
+        "all conversion lifetimes have ended"
+    );
+    let answer = target.query("events where event_type = mail.message");
+    assert_eq!(answer["total"], 2, "{answer}");
+    let facts_query =
+        "events where event_type = mail.message fields payload.subject sort payload.subject";
+    let facts = target.query(facts_query);
+    let mut conn = target.connect().await;
+    let blobs = sinex_store::Blobs::open(&target.store).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT blob FROM raw.materials WHERE parser='rfc5322-mail'")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    let acquisitions: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT manifest FROM raw.materials WHERE manifest ? 'acquisition'")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(acquisitions.len(), 2);
+    for acquisition in acquisitions {
+        assert_eq!(acquisition["role"], "original-archive");
+        assert_eq!(acquisition["acquisition"]["tool"], "readpst");
+        assert_eq!(acquisition["acquisition"]["version"], "synthetic-readpst 1");
+    }
+    let linked: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials m JOIN raw.materials native ON native.id=(m.manifest->>'acquisition_material')::uuid WHERE native.manifest ? 'acquisition'").fetch_one(&mut conn).await.unwrap();
+    assert!(
+        linked >= 4,
+        "converted originals and record parts cite their retained native acquisition"
+    );
+    for expected in [
+        first.as_slice(),
+        second.as_slice(),
+        first_mbox.as_slice(),
+        second_mbox.as_slice(),
+    ] {
+        let name = format!("blake3:{}", blake3::hash(expected).to_hex());
+        assert!(
+            names.contains(&name),
+            "each imported folder's exact bytes have stored custody"
+        );
+        assert_eq!(blobs.read(&name).unwrap(), expected);
+    }
+    let bindings: Vec<String> = sqlx::query_scalar(
+        "SELECT binding FROM raw.bindings WHERE source='communication.outlook' ORDER BY binding",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(bindings.len(), 2);
+    std::fs::remove_file(a).unwrap();
+    std::fs::remove_file(b).unwrap();
+    for binding in bindings {
+        target.admin(&["replay", "--binding", &binding]);
+    }
+    assert_eq!(
+        target.query(facts_query)["rows"],
+        facts["rows"],
+        "replay reads stored native/converted evidence after originals and staging are gone"
+    );
+}
+
+#[devkit::test]
+async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let day = "lake/activity/desktop/clipboard/clipboard-20251009.jsonl";
+    let mut text = lake_line(1, &copied("one")) + &lake_line(3, &copied("three"));
+    let path = dir.file(day, text.as_bytes());
+    let input = format!("sinnix-lake={}", dir.0.join("lake").display());
+    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &input]));
+    backfill();
+    let query =
+        "events where event_type = capture.gap and payload.reason = sequence fields payload";
+    let first = target.query(query);
+    assert_eq!(first["total"], 1, "{first}");
+    assert_eq!(
+        first["rows"][0]["payload"]["sequence"]["first_missing"], 2,
+        "{first}"
+    );
+    assert_eq!(
+        first["rows"][0]["payload"]["sequence"]["last_missing"], 2,
+        "{first}"
+    );
+    text += &lake_line(6, &copied("six"));
+    std::fs::write(&path, &text).unwrap();
+    backfill();
+    let after = target.query(query);
+    assert_eq!(after["total"], 2, "{after}");
+    let mut ranges: Vec<_> = after["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["payload"]["sequence"]["first_missing"]
+                    .as_u64()
+                    .unwrap(),
+                row["payload"]["sequence"]["last_missing"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    ranges.sort();
+    assert_eq!(ranges, [(2, 2), (4, 5)]);
+    backfill();
+    assert_eq!(
+        target.query(query)["total"],
+        2,
+        "unchanged re-read adds no duplicate gap"
+    );
+    let mut conn = target.connect().await;
+    let rows: Vec<(String,i64)> = sqlx::query_as("SELECT m.blob,e.anchor FROM core.events e JOIN raw.materials m ON m.id=e.material_id WHERE e.event_type='capture.gap' ORDER BY e.commit_seq").fetch_all(&mut conn).await.unwrap();
+    let blobs = sinex_store::Blobs::open(&target.store).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    for ((blob, anchor), expected) in rows.iter().zip([3, 6]) {
+        let bytes = blobs.read(blob).unwrap();
+        let line = bytes[*anchor as usize..]
+            .split(|byte| *byte == b'\n')
+            .next()
+            .unwrap();
+        let record: serde_json::Value = serde_json::from_slice(line).unwrap();
+        assert_eq!(
+            record["seq"], expected,
+            "gap citation names the actual later source record"
+        );
+    }
+}

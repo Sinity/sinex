@@ -20,6 +20,7 @@ impl Parser for GapParser {
             serde_json::from_slice(record).map_err(|_| RecordError::new("invalid capture gap"))?;
         if gap.stream.is_empty()
             || gap.reason.trim().is_empty()
+            || gap.sequence.as_ref().is_some_and(|sequence| sequence.last_missing < sequence.first_missing)
             || matches!((gap.start, gap.end), (Some(start), Some(end)) if end < start)
         {
             return Err(RecordError::new("invalid capture gap interval"));

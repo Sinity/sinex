@@ -5,16 +5,34 @@
 use crate::DriverError;
 use serde_json::Value;
 use sinex_model::{Class, MaterialId, ObservationFacts};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub use crate::drivers::export_archive::group::{
     ArchivePassStats, Input, ReadSeek, Route, read_input as read,
 };
 
+/// Native input retained before a converter's output is admitted.
+#[derive(Clone)]
+pub struct Acquisition {
+    pub path: PathBuf,
+    pub facts: ObservationFacts,
+    pub manifest: sinex_model::Manifest,
+}
+
 /// A binding read in a shared pass over one file.
 pub trait SharedPass: Send + Sync {
     /// The file the pass reads.
     fn path(&self) -> &Path;
+
+    /// Refresh converted inputs before their filesystem facts are observed.
+    fn refresh(&mut self) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    /// The native input behind converted bytes; ordinary archives have none.
+    fn acquisition(&self) -> Option<&Acquisition> {
+        None
+    }
 
     /// Where the committed `cursor` leaves this binding for the file as it is
     /// now (`facts`), read in `class`.
