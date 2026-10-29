@@ -175,6 +175,9 @@ fn every_bundled_declaration_matches_its_rust_methods() {
             if kind.event_type == "steering.row" && optional {
                 payload["values"]["created_at"] = payload["at"].clone();
             }
+            if kind.event_type == "signal.evaluation" {
+                payload["day_setting"] = json!({"zone": "UTC", "start": "04:00:00"});
+            }
             let event = (kind.build)(
                 &payload,
                 "test",

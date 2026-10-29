@@ -23,7 +23,7 @@ fn ts(s: &str) -> Timestamp {
 
 #[devkit::test]
 fn bare_words_search_events() {
-    let query = q("tide offset");
+    let query = q("harbor tide");
     assert_eq!(
         query.source,
         Source::Table {
@@ -35,8 +35,8 @@ fn bare_words_search_events() {
     let Some(Expr::And(a, b)) = query.filter else {
         panic!("two words are joined with and")
     };
-    assert!(matches!(*a, Expr::Words(ref w) if w.words == ["tide"] && !w.phrase));
-    assert!(matches!(*b, Expr::Words(ref w) if w.words == ["offset"]));
+    assert!(matches!(*a, Expr::Words(ref w) if w.words == ["harbor"] && !w.phrase));
+    assert!(matches!(*b, Expr::Words(ref w) if w.words == ["tide"]));
 }
 
 #[devkit::test]
@@ -65,7 +65,7 @@ fn a_misspelled_table_is_refused_with_a_suggestion() {
 
 #[devkit::test]
 fn table_with_filter_and_clauses() {
-    let query = q("commands where exit_code != 0 and cwd ^ /src/tide sort when desc limit 20");
+    let query = q("commands where exit_code != 0 AND cwd ^ /src/tide sort when desc limit 20");
     assert_eq!(query.source.alias().unwrap().name, "commands");
     let Some(Expr::And(a, b)) = &query.filter else {
         panic!()
@@ -97,13 +97,13 @@ fn field_colon_value_means_equals() {
 
 #[devkit::test]
 fn and_binds_tighter_than_or_and_both_bounds_are_kept() {
-    let query = q("events where source = a or source = b and event_type = c");
+    let query = q("events where source = a OR source = b AND event_type = c");
     let Some(Expr::Or(_, right)) = query.filter else {
         panic!("or at the top")
     };
     assert!(matches!(*right, Expr::And(..)));
     // Two time bounds are both required.
-    let query = q("events where when > 2026-09-01 and when < 2026-09-10");
+    let query = q("events where when > 2026-09-01 AND when < 2026-09-10");
     assert!(matches!(query.filter, Some(Expr::And(..))));
 }
 
@@ -179,12 +179,13 @@ fn ranges_are_half_open_logical_days() {
 #[devkit::test]
 fn a_bare_duration_with_an_ordering_is_refused() {
     let e = err("events where when > 7d");
-    assert!(e.message.contains("since 7d"), "{e}");
+    assert!(e.message.contains("a bare duration is not a time instant"), "{e}");
+    assert!(e.message.contains("when in last 7d"), "{e}");
 }
 
 #[devkit::test]
 fn payload_paths_use_their_schema_types() {
-    let query = q("events where payload.exit_code > 0 and payload.url ~ github");
+    let query = q("events where payload.exit_code > 0 AND payload.url ~ github");
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
@@ -209,7 +210,7 @@ fn payload_paths_use_their_schema_types() {
 #[devkit::test]
 fn lists_and_exists() {
     let query =
-        q("events where event_type = [command.executed, command.imported] and not material exists");
+        q("events where event_type = [command.executed, command.imported] AND NOT material exists");
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
@@ -219,7 +220,7 @@ fn lists_and_exists() {
 
 #[devkit::test]
 fn time_functions_and_differences() {
-    let query = q("events where hour(when) >= 1 and weekday(when) = Saturday and seen - when > 1d");
+    let query = q("events where hour(when) >= 1 AND weekday(when) = Saturday AND seen - when > 1d");
     let Some(Expr::And(left, diff)) = query.filter else {
         panic!()
     };
@@ -249,7 +250,7 @@ fn joins_take_an_inner_query() {
     assert_eq!(j.kind, JoinKind::Near);
     assert_eq!(j.within_secs, Some(300.0));
     assert_eq!(j.inner.source.alias().unwrap().name, "commands");
-    let query = q("commands during (intervals where state = focused)");
+    let query = q("commands during (intervals where state = present)");
     assert!(matches!(query.stages.first(), Some(Stage::Join(j)) if j.kind == JoinKind::During));
     assert!(err("events near (commands) ").message.contains("within"));
     // The columns a join adds can be shown and sorted on.
@@ -365,8 +366,8 @@ fn recall_windows() {
 
 #[devkit::test]
 fn reserved_words_must_be_quoted_to_search() {
-    assert!(err("sort algorithm").message.contains("quote"));
-    assert!(q(r#""sort" algorithm"#).ranked);
+    assert!(err("offset algorithm").message.contains("quote"));
+    assert!(q(r#""offset" algorithm"#).ranked);
 }
 
 #[devkit::test]
@@ -478,7 +479,7 @@ fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
 fn shared_similarity_directives_cannot_change_filter_membership() {
     let id = "00000000-0000-0000-0000-000000000001";
     let query = q(&format!(
-        "events where source = synthetic and similar:sinex:ev/{id}"
+        "events where source = synthetic AND similar:sinex:ev/{id}"
     ));
     assert!(query.ranked);
     assert_eq!(
@@ -490,8 +491,8 @@ fn shared_similarity_directives_cannot_change_filter_membership() {
         Some(Expr::Compare { .. })
     ));
     for text in [
-        format!("events where source = synthetic or similar:sinex:ev/{id}"),
-        format!("events where not similar:sinex:ev/{id}"),
+        format!("events where source = synthetic OR similar:sinex:ev/{id}"),
+        format!("events where NOT similar:sinex:ev/{id}"),
         "events where similar:unprovided-text".into(),
     ] {
         assert!(bind(&text, &ctx()).is_err(), "{text}");

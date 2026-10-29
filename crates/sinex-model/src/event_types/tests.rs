@@ -132,7 +132,27 @@ fn search_policy_keeps_full_text_for_high_volume_kinds() {
         .filter(|kind| !kind.trigram_indexed)
         .map(|kind| kind.event_type)
         .collect();
-    assert_eq!(excluded, ["journal.entry", "lake.observed"]);
+    assert_eq!(
+        excluded,
+        [
+            "journal.entry",
+            "lake.observed",
+            "embedding.supplied",
+            "text.embedding"
+        ]
+    );
+    for name in ["journal.entry", "lake.observed"] {
+        assert_eq!(
+            (find(name).unwrap().declaration)().search,
+            crate::kinds::Search::Words
+        );
+    }
+    for name in ["embedding.supplied", "text.embedding"] {
+        assert_eq!(
+            (find(name).unwrap().declaration)().search,
+            crate::kinds::Search::None
+        );
+    }
     assert!(find("command.imported").unwrap().trigram_indexed);
 }
 
