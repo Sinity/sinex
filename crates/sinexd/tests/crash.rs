@@ -294,7 +294,7 @@ async fn state(conn: &mut PgConnection) -> State {
     }
 }
 
-/// Acquisition instants and generated material IDs differ across independent runs.
+/// Acquisition instants, their reading-order base and generated material IDs differ across runs.
 /// The offsets, sequence, row IDs, framing carry and other admitted progress must agree.
 fn stable_progress(value: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
@@ -302,7 +302,12 @@ fn stable_progress(value: serde_json::Value) -> serde_json::Value {
         Value::Object(fields) => Value::Object(
             fields
                 .into_iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "looked_ns" | "last_full_pass_ns"))
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "looked_ns" | "last_full_pass_ns" | "last_order"
+                    )
+                })
                 .map(|(key, value)| (key, stable_progress(value)))
                 .collect(),
         ),
@@ -383,6 +388,11 @@ async fn consistent(target: &Target) {
     assert!(max <= seq, "no event beyond the counter");
     let invalid_progress = scalar(&mut c, "SELECT count(*) FROM raw.positions p WHERE p.committed_seq < 0 OR p.committed_seq > (SELECT value FROM core.counters WHERE name='commit_seq')").await;
     assert_eq!(invalid_progress, 0, "no cursor is beyond committed work");
+    let regressed_order = scalar(&mut c, "SELECT count(*) FROM raw.positions p WHERE p.cursor ? 'last_order' AND (p.cursor->>'last_order')::bigint < (SELECT coalesce(max(e.reading_order),0) FROM raw.inputs i JOIN raw.materials m ON m.input_id=i.id JOIN core.events e ON e.material_id=m.id WHERE i.binding=p.binding)").await;
+    assert_eq!(
+        regressed_order, 0,
+        "acquisition-based reading order never precedes the rows its cursor covers"
+    );
     let names: Vec<String> = sqlx::query_scalar("SELECT blob FROM raw.materials")
         .fetch_all(&mut c)
         .await

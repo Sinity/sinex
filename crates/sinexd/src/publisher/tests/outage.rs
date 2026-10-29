@@ -4,61 +4,114 @@
 //! commit log.
 use super::*;
 use std::collections::BTreeSet;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use std::io::{BufRead, BufReader};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::process::{Child, Command, Stdio};
 
-/// A TCP relay in front of NATS that can be cut: while down it closes every
-/// connection and refuses new ones, as a stopped server does.
-struct Relay {
+/// The test owns the broker, its port and its JetStream directory. Restarting
+/// retains the same store, so acknowledged messages must survive the process.
+struct Broker {
+    root: tempfile::TempDir,
+    address: SocketAddr,
     url: String,
-    up: Arc<AtomicBool>,
-    links: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    _accept: JoinHandle<()>,
+    child: Option<Child>,
 }
 
-impl Relay {
-    async fn start(target: &str) -> Self {
-        let target = target.trim_start_matches("nats://").to_owned();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("nats://{}", listener.local_addr().unwrap());
-        let up = Arc::new(AtomicBool::new(true));
-        let links: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::default();
-        let accept = tokio::spawn({
-            let (up, links) = (up.clone(), links.clone());
-            async move {
-                while let Ok((mut client, _)) = listener.accept().await {
-                    if !up.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    let target = target.clone();
-                    links.lock().await.push(tokio::spawn(async move {
-                        if let Ok(mut server) = TcpStream::connect(&target).await {
-                            let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
-                        }
-                    }));
+impl Broker {
+    fn start() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::fs::write(
+            root.path().join("nats.conf"),
+            format!(
+                "listen: \"{address}\"\nhttp: 0\njetstream {{ store_dir: \"{}\" }}\n",
+                root.path().join("jetstream").display(),
+            ),
+        )
+        .unwrap();
+        let mut broker = Self {
+            root,
+            address,
+            url: format!("nats://{address}"),
+            child: None,
+        };
+        drop(listener);
+        broker.restore();
+        broker
+    }
+
+    fn log(&self) -> String {
+        std::fs::read_to_string(self.root.path().join("server.log")).unwrap()
+    }
+
+    fn restore(&mut self) {
+        if self.child.is_some() {
+            return;
+        }
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.root.path().join("server.log"))
+            .unwrap();
+        self.child = Some(
+            Command::new("nats-server")
+                .arg("-c")
+                .arg(self.root.path().join("nats.conf"))
+                .stdin(Stdio::null())
+                .stdout(log.try_clone().unwrap())
+                .stderr(log)
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            assert!(
+                self.child.as_mut().unwrap().try_wait().unwrap().is_none(),
+                "broker stopped: {}",
+                self.log()
+            );
+            if let Ok(stream) = TcpStream::connect_timeout(&self.address, Duration::from_millis(20))
+            {
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .unwrap();
+                let mut line = String::new();
+                if BufReader::new(stream).read_line(&mut line).is_ok() && line.starts_with("INFO ")
+                {
+                    return;
                 }
             }
-        });
-        Self {
-            url,
-            up,
-            links,
-            _accept: accept,
+            assert!(
+                std::time::Instant::now() < deadline,
+                "broker never became ready: {}",
+                self.log()
+            );
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
-    async fn cut(&self) {
-        self.up.store(false, Ordering::SeqCst);
-        for link in self.links.lock().await.drain(..) {
-            link.abort();
-        }
+    fn cut(&mut self) {
+        let mut child = self.child.take().expect("the broker was running");
+        child.kill().unwrap();
+        let status = child.wait().unwrap();
+        assert!(!status.success(), "the broker was killed during an outage");
+        assert!(
+            TcpStream::connect_timeout(&self.address, Duration::from_millis(100)).is_err(),
+            "the broker port remains open after reaping its process"
+        );
     }
-
-    fn restore(&self) {
-        self.up.store(true, Ordering::SeqCst);
+}
+impl Drop for Broker {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.child {
+            if let Err(error) = child.kill() {
+                eprintln!("killing owned NATS: {error}");
+            }
+            if let Err(error) = child.wait() {
+                eprintln!("reaping owned NATS: {error}");
+            }
+        }
     }
 }
 
@@ -123,17 +176,36 @@ async fn read_filtered(
     }
 }
 
+async fn wait_published(conn: &mut PgConnection) {
+    let head: i64 = sqlx::query_scalar("SELECT max(commit_seq) FROM core.commit_log")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let (position, _) = sinex_store::commit_log::consumer_position(conn, "publisher")
+                .await
+                .unwrap();
+            if position >= head {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("publisher did not cover committed work");
+}
+
 #[devkit::test(multi_thread)]
 async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestDatabase) {
-    let nats = devkit::nats::test_nats().unwrap();
-    let subjects = Subjects::new(nats.prefix());
-    let direct = context(async_nats::connect(nats.url()).await.unwrap());
+    let mut broker = Broker::start();
+    let subjects = Subjects::new(format!("outage{}", uuid::Uuid::now_v7().simple()));
+    let direct = context(async_nats::connect(broker.url.as_str()).await.unwrap());
     ensure_stream(&direct, &subjects).await.unwrap();
-    let relay = Relay::start(nats.url()).await;
-    let through_relay = context(
+    let publishing = context(
         async_nats::ConnectOptions::new()
             .retry_on_initial_connect()
-            .connect(relay.url.clone())
+            .connect(broker.url.clone())
             .await
             .unwrap(),
     );
@@ -143,7 +215,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     let (stop, stopped) = watch::channel(false);
     let publisher = tokio::spawn(run(
         PgConnection::connect(&url).await.unwrap(),
-        through_relay,
+        publishing,
         subjects.clone(),
         commits_seen,
         stopped,
@@ -155,7 +227,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     let first_id = first.id;
     for (round, outage_ms) in [(0, 0u64), (1, 300), (2, 1_500), (3, 0)] {
         if outage_ms > 0 {
-            relay.cut().await;
+            broker.cut();
         }
         let mut events = vec![
             imported(&format!("z{round}a"), round * 10),
@@ -182,27 +254,15 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         }
         admit(&mut conn, batch(events, archive)).await;
         commits.send_modify(|n| *n += 1);
+        if round == 0 {
+            // The first broker is killed only after it acknowledged real events.
+            wait_published(&mut conn).await;
+        }
         tokio::time::sleep(Duration::from_millis(outage_ms)).await;
-        relay.restore();
+        broker.restore();
     }
 
-    // Wait until the publisher has covered the commit log.
-    let head: i64 = sqlx::query_scalar("SELECT max(commit_seq) FROM core.commit_log")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    let mut caught_up = false;
-    for _ in 0..600 {
-        let (seq, _) = sinex_store::commit_log::consumer_position(&mut conn, "publisher")
-            .await
-            .unwrap();
-        if seq >= head {
-            caught_up = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(caught_up, "the publisher did not catch up after the outage");
+    wait_published(&mut conn).await;
     stop.send_replace(true);
     publisher.await.unwrap().unwrap();
 

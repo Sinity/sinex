@@ -126,9 +126,48 @@ async fn capture_only_binary_spools_before_daemon_and_resumes_over_nats_once() {
         .await
         .unwrap();
     assert_eq!(before, 0, "the satellite has no database write path");
+    sqlx::query("BEGIN").execute(&mut conn).await.unwrap();
+    sqlx::query("LOCK TABLE core.events IN SHARE MODE")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    let mut observer = PgConnection::connect(&database).await.unwrap();
     let store = root.join("daemon-store");
     let mut server = daemon(&daemon_binary, &database, &store, root, &nats);
     let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        satellite.running();
+        server.running();
+        let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))").bind(blocker).fetch_one(&mut observer).await.unwrap();
+        if blocked {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the writer never reached the fixture lock"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let stalled = watched.join("blocked-synthetic-file");
+    std::fs::write(&stalled, b"captured while admission is blocked").unwrap();
+    while !spooled(root, "blocked-synthetic-file") {
+        satellite.running();
+        assert!(
+            Instant::now() < deadline,
+            "blocked admission stopped capture: {}",
+            satellite.log()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        path_events(&mut observer, &stalled).await.is_empty(),
+        "the writer is positively blocked"
+    );
+    sqlx::query("ROLLBACK").execute(&mut conn).await.unwrap();
     let initial = loop {
         satellite.running();
         server.running();
@@ -136,6 +175,10 @@ async fn capture_only_binary_spools_before_daemon_and_resumes_over_nats_once() {
         if events
             .iter()
             .any(|(_, payload)| payload.contains("written"))
+            && path_events(&mut conn, &stalled)
+                .await
+                .iter()
+                .any(|(_, payload)| payload.contains("written"))
         {
             break events;
         }
@@ -190,7 +233,7 @@ async fn capture_only_binary_spools_before_daemon_and_resumes_over_nats_once() {
         &store,
         "events where event_type = file.changed",
     );
-    assert!(answer["total"].as_u64().unwrap() >= 2, "{answer}");
+    assert!(answer["total"].as_u64().unwrap() >= 3, "{answer}");
     let acknowledged: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.ingress_frames WHERE producer='satellite'")
             .fetch_one(&mut conn)

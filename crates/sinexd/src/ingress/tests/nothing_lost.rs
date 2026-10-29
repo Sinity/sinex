@@ -37,10 +37,9 @@ async fn frames_never_expire_and_a_full_stream_refuses(bus: devkit::nats::TestNa
     assert_eq!(config.max_age, Duration::ZERO, "frames never expire");
     assert_eq!(config.discard, stream::DiscardPolicy::New);
     let info = consumer.info().await.unwrap();
-    assert!(
-        info.config.max_deliver <= 0,
-        "redelivered without a cap: {}",
-        info.config.max_deliver
+    assert_eq!(
+        info.config.max_deliver, -1,
+        "redelivered without a delivery cap"
     );
 
     // With a limit set, a full stream refuses and keeps what it holds.
