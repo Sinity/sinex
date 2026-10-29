@@ -75,7 +75,7 @@ pub enum Reference {
         material: Uuid,
         offset: i64,
         event_type: Option<String>,
-        output: Option<i16>,
+        output: Option<u64>,
     },
     /// `sinex:key/<source>/<event type>/<equivalence key>`.
     Key {

@@ -326,7 +326,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
             member: self.input.manifest.member_at(start),
         };
         let mut reader = std::io::BufReader::with_capacity(
-            (end-start).clamp(1,65536),
+            (end - start).clamp(1, 65536),
             DigestRead {
                 reader: self.input.bytes.reader(start, end)?,
                 hash: blake3::Hasher::new(),
@@ -382,10 +382,10 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 let mut events = Vec::with_capacity(payloads.len());
                 let mut failure = None;
                 for (i, payload) in payloads.iter().enumerate() {
-                    let output_index = match u16::try_from(i) {
+                    let output_index = match u64::try_from(i) {
                         Ok(o) => o,
                         Err(_) => {
-                            failure = Some("record produced more than 65535 events".to_string());
+                            failure = Some("record output ordinal exceeds u64".to_string());
                             break;
                         }
                     };
@@ -416,7 +416,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
                     Some(reason) => {
                         self.carry = self.parser.failed_record(&self.carry);
                         RecordOutcome::Failure { location, reason }
-                    },
+                    }
                     None => RecordOutcome::Events {
                         location: Some(location),
                         events,
@@ -425,8 +425,11 @@ impl<'a, P: Parser> Drainer<'a, P> {
             }
             Err(e) => {
                 self.carry = self.parser.failed_record(&self.carry);
-                RecordOutcome::Failure { location, reason: e.0 }
-            },
+                RecordOutcome::Failure {
+                    location,
+                    reason: e.0,
+                }
+            }
         }
     }
 }
@@ -481,7 +484,7 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
         while let Some(&(start, end)) = self.input.records.get(self.next) {
             self.next += 1;
             let (outcome, size) = if <P::Record<'_> as RecordShape>::STREAMING
-                && !matches!(&self.input.bytes,RecordBytes::Slice(_))
+                && !matches!(&self.input.bytes, RecordBytes::Slice(_))
                 && !crate::drivers::dir_snapshot::is_directory(self.input.manifest)
             {
                 match self.streamed_outcome(start, end) {

@@ -69,7 +69,8 @@ fn frames_round_trip_with_defaults() {
 #[devkit::test]
 fn confirmed_readings_require_their_record_hash_and_order() {
     let event = ConfirmedEvent {
-        kind_version:1,validation:sinex_model::Validation::Validated,
+        kind_version: 1,
+        validation: sinex_model::Validation::Validated,
         commit_seq: 1,
         id: EventId::new(),
         event_type: "command.executed".into(),
@@ -95,12 +96,21 @@ fn confirmed_readings_require_their_record_hash_and_order() {
         serde_json::from_value::<ConfirmedEvent>(value.clone()).unwrap(),
         event
     );
-    for ordinal in [0, 32_768, 65_536, i64::MAX as u64, u64::MAX] {
+    for ordinal in [
+        0,
+        32_768,
+        65_536,
+        u64::try_from(i64::MAX).unwrap(),
+        u64::MAX,
+    ] {
         let mut wide = value.clone();
         wide["output_index"] = ordinal.into();
         let decoded: ConfirmedEvent = serde_json::from_value(wide).unwrap();
         assert_eq!(decoded.output_index, ordinal);
-        assert_eq!(serde_json::to_value(decoded).unwrap()["output_index"], ordinal);
+        assert_eq!(
+            serde_json::to_value(decoded).unwrap()["output_index"],
+            ordinal
+        );
     }
     let mut negative = value.clone();
     negative["output_index"] = (-1).into();
@@ -114,22 +124,44 @@ fn confirmed_readings_require_their_record_hash_and_order() {
 
 #[devkit::test]
 fn confirmed_position_boundaries_and_history_gaps_are_distinct() {
-    for message in [Confirmed::PositionComplete{commit_seq:17},Confirmed::Gap{reason:"historical position unavailable".into()}] {
-        let wire=serde_json::to_value(&message).unwrap();
-        assert_eq!(serde_json::from_value::<Confirmed>(wire.clone()).unwrap(),message);
-        if matches!(message,Confirmed::Gap{..}) {assert!(wire.get("commit_seq").is_none());}
+    for message in [
+        Confirmed::PositionComplete { commit_seq: 17 },
+        Confirmed::Gap {
+            reason: "historical position unavailable".into(),
+        },
+    ] {
+        let wire = serde_json::to_value(&message).unwrap();
+        assert_eq!(
+            serde_json::from_value::<Confirmed>(wire.clone()).unwrap(),
+            message
+        );
+        if matches!(message, Confirmed::Gap { .. }) {
+            assert!(wire.get("commit_seq").is_none());
+        }
     }
 }
 
 #[devkit::test]
 fn producer_output_ordinals_round_trip_without_narrowing() {
-    for ordinal in [0, 32_768, 65_536, i64::MAX as u64, u64::MAX] {
+    for ordinal in [
+        0,
+        32_768,
+        65_536,
+        u64::try_from(i64::MAX).unwrap(),
+        u64::MAX,
+    ] {
         let wire = serde_json::json!({"kind":{"name":"command.imported","version":2},
             "payload":{},"output_index":ordinal});
         let event: ProducerEvent = serde_json::from_value(wire).unwrap();
-        assert_eq!(event.output_index,ordinal);
-        assert_eq!(serde_json::to_value(event).unwrap()["output_index"],ordinal);
+        assert_eq!(event.output_index, ordinal);
+        assert_eq!(
+            serde_json::to_value(event).unwrap()["output_index"],
+            ordinal
+        );
     }
-    assert!(serde_json::from_value::<ProducerEvent>(serde_json::json!({
-        "kind":{"name":"command.imported","version":2},"payload":{},"output_index":-1})).is_err());
+    assert!(
+        serde_json::from_value::<ProducerEvent>(serde_json::json!({
+        "kind":{"name":"command.imported","version":2},"payload":{},"output_index":-1}))
+        .is_err()
+    );
 }

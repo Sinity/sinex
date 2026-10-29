@@ -422,3 +422,27 @@ fn every_alias_reads_registered_event_types() {
 }
 
 mod gaps;
+
+#[devkit::test]
+fn record_citations_preserve_wide_unsigned_output_ordinals() {
+    let material = uuid::Uuid::nil();
+    for output in [
+        0,
+        32_768,
+        65_536,
+        u64::try_from(i64::MAX).unwrap(),
+        u64::MAX,
+    ] {
+        let citation = format!("sinex:record/{material}/120/command.imported/{output}");
+        assert!(matches!(parse_reference(&citation).unwrap(),
+            Reference::Record {offset:120, output:Some(actual),..} if actual==output));
+    }
+    for output in ["-1", "18446744073709551616"] {
+        assert!(
+            parse_reference(&format!(
+                "sinex:record/{material}/120/command.imported/{output}"
+            ))
+            .is_err()
+        );
+    }
+}

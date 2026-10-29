@@ -23,7 +23,8 @@ pub(super) async fn insert_admitted(
 ) -> Result<()> {
     let admit_ords = &classified.admit;
     let replaced = &classified.replaced;
-    let n = i64::try_from(admit_ords.len()).expect("count fits i64");
+    let n = i64::try_from(admit_ords.len())
+        .map_err(|_| Error::Invalid("admitted count beyond i64".into()))?;
     let started = std::time::Instant::now();
     let last = sqlx::query_scalar!(
         "UPDATE core.counters SET value = value + $1 WHERE name = 'commit_seq' RETURNING value",
@@ -132,7 +133,7 @@ pub(super) async fn insert_admitted(
 
     let started = std::time::Instant::now();
     if !replaced.is_empty() {
-        let (ords, live): (Vec<i32>, Vec<Uuid>) = replaced.iter().copied().unzip();
+        let (ords, live): (Vec<i64>, Vec<Uuid>) = replaced.iter().copied().unzip();
         let mut replacements = Vec::with_capacity(ords.len());
         for ord in &ords {
             replacements.push(
@@ -246,7 +247,7 @@ pub(super) async fn save_position(
 
 /// Register the stored bytes admitted events own beyond their materials, so
 /// excision can find and delete them (`core.event_blobs`).
-async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i32]) -> Result<()> {
+async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i64]) -> Result<()> {
     let (mut ids, mut blobs, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
     for ord in ords {
         let event = &events[usize::try_from(*ord).expect("ord is non-negative")];

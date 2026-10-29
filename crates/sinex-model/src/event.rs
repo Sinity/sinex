@@ -39,7 +39,7 @@ pub enum Origin {
     Record {
         location: RecordLocation,
         /// Output number when one record yields several events.
-        output_index: u16,
+        output_index: u64,
     },
     Derived {
         parents: Vec<EventId>,
@@ -168,7 +168,7 @@ impl Event {
         }
     }
 
-    pub fn location(&self) -> Option<(RecordLocation, u16)> {
+    pub fn location(&self) -> Option<(RecordLocation, u64)> {
         match self.origin {
             Origin::Record {
                 location,

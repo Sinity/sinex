@@ -18,9 +18,9 @@ enum Classification {
 /// What classification decided for a batch's events, by their index (`ord`).
 pub(super) struct Classified {
     /// Events to admit.
-    pub admit: Vec<i32>,
+    pub admit: Vec<i64>,
     /// Admitted events that replace a live reading, with that reading.
-    pub replaced: Vec<(i32, Uuid)>,
+    pub replaced: Vec<(i64, Uuid)>,
     /// The live reading each event ends as.
     pub resolved: Vec<Option<Uuid>>,
 }
@@ -36,11 +36,15 @@ pub(super) async fn stage_and_classify(
         .execute(&mut *conn)
         .await?;
     outcome.timings.insert("reset", started.elapsed());
-    let numbered: Vec<(i32, &Event)> = events
+    let numbered: Vec<(i64, &Event)> = events
         .iter()
         .enumerate()
-        .map(|(i, e)| (i32::try_from(i).expect("batch fits i32"), e))
-        .collect();
+        .map(|(i, e)| {
+            i64::try_from(i)
+                .map(|ord| (ord, e))
+                .map_err(|_| Error::Invalid("batch ordinal beyond i64".into()))
+        })
+        .collect::<Result<_>>()?;
     let started = std::time::Instant::now();
     stage::copy(conn, &numbered).await?;
     outcome.timings.insert("copy", started.elapsed());
@@ -96,8 +100,8 @@ pub(super) async fn stage_and_classify(
 
     outcome.timings.insert("classification", started.elapsed());
     let mut resolved = vec![None; events.len()];
-    let mut admit_ords: Vec<i32> = Vec::new();
-    let mut replaced: Vec<(i32, Uuid)> = Vec::new();
+    let mut admit_ords: Vec<i64> = Vec::new();
+    let mut replaced: Vec<(i64, Uuid)> = Vec::new();
     for row in rows {
         let state = match row.state.as_str() {
             "new" => Classification::New,
@@ -144,7 +148,7 @@ pub(super) async fn stage_and_classify(
 pub(super) async fn keep_known(
     conn: &mut PgConnection,
     events: &mut [Event],
-    replaced: &[(i32, Uuid)],
+    replaced: &[(i64, Uuid)],
     declarations: &std::collections::BTreeMap<sinex_model::KindRef, sinex_model::KindDeclaration>,
 ) -> Result<()> {
     let inputs: Vec<_> = replaced
@@ -168,7 +172,7 @@ pub(super) async fn keep_known(
              FROM jsonb_array_elements_text(r.fields) f
              WHERE coalesce(st.payload->f, 'null'::jsonb) = 'null'::jsonb
                AND coalesce(e.payload->f, 'null'::jsonb) <> 'null'::jsonb) AS payload
-           FROM jsonb_to_recordset($1::jsonb) AS r(ord integer, live_id uuid, fields jsonb)
+           FROM jsonb_to_recordset($1::jsonb) AS r(ord bigint, live_id uuid, fields jsonb)
            JOIN core.admission_stage st ON st.ord = r.ord
            JOIN core.events e ON e.id = r.live_id)
            UPDATE core.admission_stage st

@@ -365,7 +365,7 @@ fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
         source: e.source.clone(),
         run: RunId(e.run_id),
         location,
-        output_index: u16::try_from(e.output_index)
+        output_index: u64::try_from(e.output_index)
             .map_err(|_| format!("event {} has an invalid output index", e.id))?,
         parents: e.parents.iter().flatten().map(|p| EventId(*p)).collect(),
         ts_orig: e.ts_orig.map(Timestamp),

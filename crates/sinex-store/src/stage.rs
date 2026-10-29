@@ -11,7 +11,7 @@ pub(crate) const COLUMNS: &str = "ord, id, event_type, source, material_id, anch
 
 /// Copy `events` (with their batch-order numbers) into the stage table, which
 /// the caller has truncated in the same transaction.
-pub(crate) async fn copy(connection: &mut PgConnection, events: &[(i32, &Event)]) -> Result<()> {
+pub(crate) async fn copy(connection: &mut PgConnection, events: &[(i64, &Event)]) -> Result<()> {
     let mut buf = String::with_capacity(events.len() * 512);
     for (ord, event) in events {
         row(&mut buf, *ord, event)?;
@@ -24,7 +24,7 @@ pub(crate) async fn copy(connection: &mut PgConnection, events: &[(i32, &Event)]
     Ok(())
 }
 
-fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
+fn row(buf: &mut String, ord: i64, e: &Event) -> Result<()> {
     let (material, anchor, output_index, parents) = match &e.origin {
         Origin::Record {
             location,
@@ -36,7 +36,8 @@ fn row(buf: &mut String, ord: i32, e: &Event) -> Result<()> {
                     .map_err(|_| Error::Invalid("anchor beyond i64".into()))?
                     .to_string(),
             ),
-            *output_index,
+            i64::try_from(*output_index)
+                .map_err(|_| Error::Invalid("output index beyond i64".into()))?,
             None,
         ),
         Origin::Derived { parents } => (

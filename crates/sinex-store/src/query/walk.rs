@@ -30,17 +30,21 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
             event_type,
             output,
         } => {
+            let output = output
+                .map(i64::try_from)
+                .transpose()
+                .map_err(|_| Error::Invalid("output index beyond i64".into()))?;
             let live = sqlx::query!(
                 r#"SELECT e.id AS "event_id!", e.event_type AS "event_type!" FROM core.events e
                    WHERE e.material_id = $1 AND e.anchor = $2
                    AND ($3::text IS NULL OR e.event_type = $3)
-                   AND ($4::smallint IS NULL OR e.output_index = $4)
+                   AND ($4::bigint IS NULL OR e.output_index = $4)
                    AND (EXISTS (SELECT 1 FROM core.live_locations c WHERE c.event_id = e.id)
                         OR EXISTS (SELECT 1 FROM core.live_equivalence q WHERE q.event_id = e.id))"#,
                 material,
                 offset,
                 event_type.as_deref(),
-                *output
+                output
             )
             .fetch_all(&mut *conn)
             .await?;
@@ -51,10 +55,12 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                         r#"SELECT e.id FROM core.events e JOIN audit.archived a ON a.event_id = e.id
                            WHERE e.material_id = $1 AND e.anchor = $2
                            AND ($3::text IS NULL OR e.event_type = $3)
+                           AND ($4::bigint IS NULL OR e.output_index = $4)
                            ORDER BY a.archived_seq DESC"#,
                         material,
                         offset,
-                        event_type.as_deref()
+                        event_type.as_deref(),
+                        output
                     )
                     .fetch_all(&mut *conn)
                     .await?;
@@ -287,7 +293,10 @@ pub(crate) async fn recall_summary(
             .fetch_all(&mut *conn)
             .await?
     };
-    let presentation_types:Vec<String> = super::recall::presentation_types().iter().map(|kind| (*kind).into()).collect();
+    let presentation_types: Vec<String> = super::recall::presentation_types()
+        .iter()
+        .map(|kind| (*kind).into())
+        .collect();
     let known = sqlx::query_scalar!(
         r#"SELECT c.source AS "name!" FROM core.source_counts c
            WHERE EXISTS (SELECT 1 FROM core.events e WHERE e.source=c.source
