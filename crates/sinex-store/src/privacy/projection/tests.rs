@@ -12,6 +12,23 @@ async fn admit(conn:&mut AdmissionContext,events:Vec<Event>){
     let mut tx=conn.begin().await.unwrap();tx.admit(&batch,&NoDerivations).await.unwrap();tx.commit().await.unwrap();
 }
 fn rule()->NewRule{NewRule{name:"configured field".into(),source:"fixture.policy".into(),event_type:Some("operator_log.entry".into()),field:Some("/text".into()),matcher:"pattern".into(),matcher_arg:Some("leafsecret".into()),class:Class::Open,action:Action::Mask,author:"fixture".into()}}
+
+/// Insert synthetic retained history with its original position and kind.
+/// This bypasses admission, not the immutable-event trigger.
+async fn retained(conn:&mut PgConnection,events:&[Event],position:i64){
+    let rows:Vec<_>=events.iter().map(|event|{
+        let Origin::Record{location,output_index}=&event.origin else{panic!("record fixture")};
+        json!({"id":event.id,"event_type":event.event_type,"source":event.source,"material_id":location.material,"anchor":location.anchor,"output_index":output_index,
+            "payload":event.payload,"record_hash":blake3::Hash::from_bytes(event.record_hash).to_hex().to_string(),"kind_version":event.kind_version})
+    }).collect();
+    let mut tx=conn.begin().await.unwrap();
+    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,ts_quality,commit_seq,payload,reading_order,record_hash,kind_version) SELECT x.id,x.event_type,x.source,uuidv7(),x.material_id,x.anchor,x.output_index,'unknown',$2,x.payload,1,decode(x.record_hash,'hex'),x.kind_version FROM jsonb_to_recordset($1) AS x(id uuid,event_type text,source text,material_id uuid,anchor bigint,output_index bigint,payload jsonb,record_hash text,kind_version bigint)")
+        .bind(json!(rows)).bind(position).execute(&mut *tx).await.unwrap();
+    sqlx::query("UPDATE core.counters SET value=greatest(value,$1) WHERE name='commit_seq'").bind(position).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES($1,NULL,NULL) ON CONFLICT DO NOTHING").bind(position).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+}
+
 async fn visible(conn:&mut PgConnection,id:Uuid)->Value{sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE id=$1").bind(id).fetch_one(conn).await.unwrap()}
 
 #[devkit::test]
@@ -137,11 +154,10 @@ async fn transformed_source_key_is_not_resolved_from_the_private_original(db:dev
 async fn populated_upgrade_build_resumes_retained_position_siblings_before_activation(db:devkit::pg::TestDatabase){
     const N:i64=1_005;
     let url=db.url(None);let mut conn=AdmissionContext::connect(&url).await.unwrap();
-    let records=(0..N).map(|n|document("fixture.upgrade",&format!("preserved row {n}"))).collect();
-    admit(&mut conn,records).await;
+    let records:Vec<_>=(0..N).map(|n|document("fixture.upgrade",&format!("preserved row {n}"))).collect();
     // Normal admission gives events distinct positions. Retained storage and
-    // the canonical feed also permit ties; exercise that synthetic shape.
-    sqlx::query("UPDATE core.events SET commit_seq=$1 WHERE source='fixture.upgrade'").bind(N).execute(&mut *conn).await.unwrap();
+    // the canonical feed also permit ties; insert that synthetic shape.
+    retained(&mut conn,&records,N).await;
     sqlx::query("DELETE FROM privacy.event_outputs").execute(&mut *conn).await.unwrap();
     sqlx::query("DELETE FROM privacy.original_events").execute(&mut *conn).await.unwrap();
     sqlx::query("DELETE FROM privacy.output_builds").execute(&mut *conn).await.unwrap();
@@ -176,7 +192,8 @@ async fn missing_retained_kind_keeps_epoch_stale_but_explicit_no_search_kind_pro
     let indexed:i64=sqlx::query_scalar("SELECT count(*) FROM core.search_text WHERE event_id=$1").bind(id).fetch_one(&mut *conn).await.unwrap();assert_eq!(indexed,0,"explicit no-search is a valid declaration");
     // A retained event with an absent declaration must not vanish in an
     // inner join and leave an apparently complete empty projection.
-    sqlx::query("UPDATE core.events SET kind_version=2 WHERE id=$1").bind(id).execute(&mut *conn).await.unwrap();
+    let mut missing=event.clone();missing.id=EventId::new();missing.kind_version=2;let id=missing.id.0;
+    retained(&mut conn,&[missing],2).await;
     sqlx::query("UPDATE privacy.policy_state SET desired_epoch=2 WHERE id").execute(&mut *conn).await.unwrap();
     let error=ensure_current(&mut conn).await.unwrap_err();assert!(error.to_string().contains("privacy_projection_kind_unavailable"));
     assert_eq!(epoch(&mut conn).await.unwrap(),Epoch{desired:2,active:1});

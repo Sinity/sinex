@@ -21,11 +21,17 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(db:devk
 async fn exact_targets_never_expand_to_unrequested_retained_position_siblings(db:devkit::pg::TestDatabase){
     let mut conn=AdmissionContext::connect(&db.url(None)).await.unwrap();let events=[document("first requested"),document("unrequested sibling"),document("second requested")];
     let expected:std::collections::BTreeSet<_>=[events[0].id,events[2].id].into();
-    let batch=Batch{run:RunId::new(),kind:BatchKind::Api{actor:"fixture".into()},records:vec![RecordOutcome::Events{location:None,events:events.to_vec()}],archive:vec![]};
-    let mut tx=conn.begin().await.unwrap();tx.admit(&batch,&NoDerivations).await.unwrap();tx.commit().await.unwrap();
-    // Normal admission assigns distinct positions. Exercise an explicitly
-    // synthetic retained tie accepted by the storage/feed contract.
-    sqlx::query("UPDATE core.events SET commit_seq=3 WHERE source='fixture.exact'").execute(&mut *conn).await.unwrap();
+    // Normal admission assigns distinct positions. Insert an explicitly
+    // synthetic retained tie without changing any immutable event.
+    let mut tx=conn.begin().await.unwrap();
+    for event in &events {
+        let Origin::Record{location,output_index}=&event.origin else{panic!("record fixture")};
+        sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,ts_quality,commit_seq,payload,reading_order,record_hash,kind_version) VALUES($1,$2,$3,$4,$5,$6,$7,'unknown',3,$8,1,$9,$10)")
+            .bind(event.id.0).bind(&event.event_type).bind(&event.source).bind(RunId::new().0).bind(location.material.0).bind(location.anchor as i64).bind(*output_index as i64).bind(&event.payload).bind(event.record_hash.as_slice()).bind(event.kind_version as i64).execute(&mut *tx).await.unwrap();
+    }
+    sqlx::query("UPDATE core.counters SET value=3 WHERE name='commit_seq'").execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES(3,NULL,NULL)").execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();crate::privacy::projection::ensure_current(&mut conn).await.unwrap();
     let mut reader=ExactInputs::new(expected.iter().copied().collect(),1,1).unwrap();let mut seen=std::collections::BTreeSet::new();let mut pages=0;
     while let Some(page)=reader.next(&mut conn).await.unwrap(){assert_eq!(page.len(),1);assert!(expected.contains(&page[0].event.id));assert!(seen.insert(page[0].event.id));pages+=1;}
     assert_eq!(pages,2);assert_eq!(seen,expected);
