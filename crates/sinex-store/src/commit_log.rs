@@ -16,7 +16,8 @@ use uuid::Uuid;
 
 mod changes;
 pub use changes::{
-    Change, ChangeCursor, ChangePage, CommittedChange, HistoryGap, Tombstone, LifecycleChange, changes_page,
+    Change, ChangeCursor, ChangePage, CommittedChange, HistoryGap, LifecycleChange, Tombstone,
+    changes_page,
 };
 
 /// Take a lifecycle position while holding the same counter lock as admission.
@@ -272,9 +273,14 @@ pub async fn latest(conn: &mut PgConnection) -> Result<i64> {
     )
 }
 
-pub async fn consumer_exists(conn:&mut PgConnection,consumer:&str)->Result<bool>{
-    Ok(sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM core.consumer_positions WHERE consumer=$1)",consumer)
-        .fetch_one(conn).await?.unwrap_or(false))
+pub async fn consumer_exists(conn: &mut PgConnection, consumer: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM core.consumer_positions WHERE consumer=$1)",
+        consumer
+    )
+    .fetch_one(conn)
+    .await?
+    .unwrap_or(false))
 }
 
 /// A non-derivation consumer's saved position: (commit_seq, change_seq).
@@ -313,6 +319,7 @@ pub async fn set_consumer_position(
 /// What Sinex recorded for one ingress frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredFrame {
+    pub number: i64,
     pub material_extent: Option<Vec<u8>>,
     pub producer: String,
     pub frame: String,
@@ -331,7 +338,7 @@ pub async fn frames(
 ) -> Result<Vec<StoredFrame>> {
     Ok(sqlx::query_as!(
         StoredFrame,
-        r#"SELECT f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS material_extent
+        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS material_extent
            FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
            LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
            WHERE f.producer = $1 AND f.frame = ANY($2)
@@ -341,6 +348,23 @@ pub async fn frames(
     )
     .fetch_all(&mut *conn)
     .await?)
+}
+
+/// A transfer page of immutable receipts owned by this authenticated producer.
+pub async fn frames_page(
+    conn: &mut PgConnection,
+    producer: &str,
+    frames: &[String],
+    numbers: &[i64],
+    after: i64,
+) -> Result<(Vec<StoredFrame>, Option<i64>)> {
+    const PAGE: i64 = 64;
+    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,x.descriptor AS material_extent
+      FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
+      LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
+      WHERE f.producer=$1 AND (f.frame=ANY($2) OR f.number=ANY($3)) AND f.number>$4 ORDER BY f.number LIMIT $5"#,producer,frames,numbers,after,PAGE).fetch_all(conn).await?;
+    let next = (rows.len() == PAGE as usize).then(|| rows.last().expect("full page").number);
+    Ok((rows, next))
 }
 
 /// Whether this producer registered the material named by its events frame.
@@ -412,10 +436,14 @@ pub async fn producer_materials(
 /// Record where published events sit in the confirmed stream.
 #[cfg(test)]
 pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]) -> Result<()> {
-    record_published_in(conn,"",published).await
+    record_published_in(conn, "", published).await
 }
 
-pub async fn record_published_in(conn:&mut PgConnection,stream_instance:&str,published:&[(Uuid,i64)])->Result<()> {
+pub async fn record_published_in(
+    conn: &mut PgConnection,
+    stream_instance: &str,
+    published: &[(Uuid, i64)],
+) -> Result<()> {
     if published.is_empty() {
         return Ok(());
     }
@@ -451,10 +479,14 @@ pub async fn excised_on_stream(
     conn: &mut PgConnection,
     limit: i64,
 ) -> Result<Vec<ExcisedOnStream>> {
-    excised_on_stream_in(conn,"",limit).await
+    excised_on_stream_in(conn, "", limit).await
 }
 
-pub async fn excised_on_stream_in(conn:&mut PgConnection,stream_instance:&str,limit:i64)->Result<Vec<ExcisedOnStream>> {
+pub async fn excised_on_stream_in(
+    conn: &mut PgConnection,
+    stream_instance: &str,
+    limit: i64,
+) -> Result<Vec<ExcisedOnStream>> {
     Ok(sqlx::query_as!(
         ExcisedOnStream,
         r#"SELECT p.event_id, p.stream_seq, t.operation_id,t.commit_seq
@@ -472,10 +504,14 @@ pub async fn excised_on_stream_in(conn:&mut PgConnection,stream_instance:&str,li
 /// Forget only acknowledged erasures, keeping every other acknowledged copy.
 #[cfg(test)]
 pub async fn forget_published(conn: &mut PgConnection, erased: &[(Uuid, i64)]) -> Result<()> {
-    forget_published_in(conn,"",erased).await
+    forget_published_in(conn, "", erased).await
 }
 
-pub async fn forget_published_in(conn:&mut PgConnection,stream_instance:&str,erased:&[(Uuid,i64)])->Result<()> {
+pub async fn forget_published_in(
+    conn: &mut PgConnection,
+    stream_instance: &str,
+    erased: &[(Uuid, i64)],
+) -> Result<()> {
     if erased.is_empty() {
         return Ok(());
     }
@@ -501,8 +537,8 @@ pub async fn record_replay_frame(
     conn: &mut PgConnection,
     producer: &str,
     frame: &str,
-    family:&str,
-    write_kind_prefixes:&[String],
+    family: &str,
+    write_kind_prefixes: &[String],
     operation: sinex_model::OperationId,
     ids: &[Uuid],
     last: Option<i64>,

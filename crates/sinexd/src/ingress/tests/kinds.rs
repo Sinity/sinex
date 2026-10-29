@@ -46,19 +46,18 @@ async fn scope_for(
     event_types: Option<Vec<String>>,
 ) -> ReplaySelection {
     let body = serde_json::to_vec(&ReplayScopeQuery {
+        after: None,
         materials: vec![material],
         event_types,
         from: None,
         until: None,
     })
     .unwrap();
-    let answer = h
-        .client
-        .request(h.subjects.replay_scope("example"), body.into())
+    let answer = rpc(&h.client, h.subjects.replay_scope("example"), body.into())
         .await
         .unwrap();
-    let selections: Vec<ReplaySelection> = serde_json::from_slice(&answer.payload).unwrap();
-    selections.into_iter().next().unwrap()
+    let page: sinex_protocol::ReplayScopePage = serde_json::from_slice(&answer.payload).unwrap();
+    page.sequences.into_iter().next().unwrap()
 }
 
 #[devkit::test]
@@ -440,19 +439,19 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
     for (round, order) in [0, 0, 20].into_iter().enumerate() {
         let replacement = format!("replacement-{round}");
         let body = serde_json::to_vec(&ReplayScopeQuery {
+            after: None,
             materials: vec![material],
             event_types: None,
             from: None,
             until: None,
         })
         .unwrap();
-        let answer = h
-            .client
-            .request(h.subjects.replay_scope("polylogue"), body.into())
+        let answer = rpc(&h.client, h.subjects.replay_scope("polylogue"), body.into())
             .await
             .unwrap();
-        let selected: Vec<ReplaySelection> = serde_json::from_slice(&answer.payload).unwrap();
-        let selected = &selected[0];
+        let page: sinex_protocol::ReplayScopePage =
+            serde_json::from_slice(&answer.payload).unwrap();
+        let selected = &page.sequences[0];
         let sequence = ProducerReplay {
             operation: sinex_model::OperationId::new(),
             root: selected.root,
@@ -640,20 +639,50 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
 }
 
 #[devkit::test]
-async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(db:devkit::pg::TestDatabase) {
-    let h=Harness::start(db).await;
-    let d=declaration("example.assigned");
-    assert_eq!(h.send("example",&Ingress::RegisterKinds{frame:"assigned-kind".into(),declarations:vec![d.clone()]}).await.refusal,None);
-    let (material,frame)=h.material_frame("assigned-material",b"synthetic source\n");
-    assert_eq!(h.send("example",&frame).await.refusal,None);
-    for (ordinal,text) in ["A","B","A"].into_iter().enumerate() {
-        let mut offered=event(&d,material,text,0);offered.reading_order=None;
-        let frame=Ingress::Events{frame:format!("assigned-{ordinal}"),events:vec![offered],failures:vec![]};
-        let first=h.send("example",&frame).await;assert_eq!(first.refusal,None,"{first:?}");assert_eq!(first.admitted.len(),1);
-        let again=h.send("example",&frame).await;assert_eq!(again.admitted,first.admitted);assert_eq!(again.commit_seq,first.commit_seq);
+async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(
+    db: devkit::pg::TestDatabase,
+) {
+    let h = Harness::start(db).await;
+    let d = declaration("example.assigned");
+    assert_eq!(
+        h.send(
+            "example",
+            &Ingress::RegisterKinds {
+                frame: "assigned-kind".into(),
+                declarations: vec![d.clone()]
+            }
+        )
+        .await
+        .refusal,
+        None
+    );
+    let (material, frame) = h.material_frame("assigned-material", b"synthetic source\n");
+    assert_eq!(h.send("example", &frame).await.refusal, None);
+    for (ordinal, text) in ["A", "B", "A"].into_iter().enumerate() {
+        let mut offered = event(&d, material, text, 0);
+        offered.reading_order = None;
+        let frame = Ingress::Events {
+            frame: format!("assigned-{ordinal}"),
+            events: vec![offered],
+            failures: vec![],
+        };
+        let first = h.send("example", &frame).await;
+        assert_eq!(first.refusal, None, "{first:?}");
+        assert_eq!(first.admitted.len(), 1);
+        let again = h.send("example", &frame).await;
+        assert_eq!(again.admitted, first.admitted);
+        assert_eq!(again.commit_seq, first.commit_seq);
     }
-    let mut conn=PgConnection::connect(&h.url).await.unwrap();
-    let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE event_type='example.assigned' ORDER BY commit_seq").fetch_all(&mut conn).await.unwrap();assert_eq!(orders,vec![0,1,2]);
-    let live=sqlx::query_scalar!("SELECT payload->>'text' FROM core.events e WHERE event_type='example.assigned' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();assert_eq!(live.as_deref(),Some("A"));
-    let counter=sqlx::query_scalar!("SELECT reading_order FROM core.producer_orders WHERE event_type='example.assigned'").fetch_one(&mut conn).await.unwrap();assert_eq!(counter,2);
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE event_type='example.assigned' ORDER BY commit_seq").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(orders, vec![0, 1, 2]);
+    let live=sqlx::query_scalar!("SELECT payload->>'text' FROM core.events e WHERE event_type='example.assigned' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(live.as_deref(), Some("A"));
+    let counter = sqlx::query_scalar!(
+        "SELECT reading_order FROM core.producer_orders WHERE event_type='example.assigned'"
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(counter, 2);
 }

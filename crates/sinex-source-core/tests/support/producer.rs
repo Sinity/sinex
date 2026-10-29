@@ -53,15 +53,17 @@ pub(crate) async fn refusing(
     let declarer = client.clone();
     tokio::spawn(async move {
         while let Some(message) = declarations.next().await {
-            declarer
-                .publish(
-                    message.reply.unwrap(),
-                    serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None,..Default::default() })
-                        .unwrap()
-                        .into(),
-                )
-                .await
-                .unwrap();
+            sinex_transport::replies::publish_json(
+                &declarer,
+                message.reply.unwrap().to_string(),
+                sinex_protocol::ProducerWelcome {
+                    refusal: None,
+                    ..Default::default()
+                },
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
         }
     });
     let js = jetstream::new(client.clone());
@@ -89,21 +91,30 @@ pub(crate) async fn refusing(
     tokio::spawn(async move {
         while let Some(message) = queries.next().await {
             let query: RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
-            let frames: Vec<_> = {
-                let answers = answers.lock().unwrap();
-                query
-                    .frames
-                    .iter()
-                    .filter_map(|frame| answers.get(frame).cloned())
+            let acknowledgments: Vec<_> = {
+                let rows = answers.lock().unwrap();
+                rows.values()
+                    .filter(|receipt| {
+                        (query.frames.contains(&receipt.frame)
+                            || receipt
+                                .number
+                                .is_some_and(|number| query.numbers.contains(&number)))
+                            && receipt.number.is_some_and(|number| number > query.after)
+                    })
+                    .cloned()
                     .collect()
             };
-            responder
-                .publish(
-                    message.reply.unwrap(),
-                    serde_json::to_vec(&frames).unwrap().into(),
-                )
-                .await
-                .unwrap();
+            sinex_transport::replies::publish_json(
+                &responder,
+                message.reply.unwrap().to_string(),
+                sinex_protocol::RecordedPage {
+                    acknowledgments,
+                    next: None,
+                },
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
         }
     });
     let (seen, acker, ack_subject) = (received.clone(), client, subjects.ack(producer));
@@ -124,7 +135,12 @@ pub(crate) async fn refusing(
                 acker
                     .publish(
                         ack_subject.clone(),
-                        serde_json::to_vec(&ack).unwrap().into(),
+                        serde_json::to_vec(&sinex_protocol::ReceiptHint {
+                            number: ack.number.unwrap(),
+                            frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
+                        })
+                        .unwrap()
+                        .into(),
                     )
                     .await
                     .unwrap();
@@ -167,7 +183,14 @@ pub(crate) async fn refusing(
             } else {
                 Some(1)
             };
+            let number = {
+                let rows = recorded.lock().unwrap();
+                rows.get(frame.frame())
+                    .and_then(|receipt| receipt.number)
+                    .unwrap_or(rows.len() as i64 + 1)
+            };
             let ack = Acknowledgment {
+                number: Some(number),
                 material_extents: vec![],
                 frame: if refusal.is_some() && refusal_kind == FrameRefusal::Malformed {
                     format!("malformed/{}", blake3::hash(&message.payload).to_hex())
@@ -192,7 +215,12 @@ pub(crate) async fn refusing(
             acker
                 .publish(
                     ack_subject.clone(),
-                    serde_json::to_vec(&ack).unwrap().into(),
+                    serde_json::to_vec(&sinex_protocol::ReceiptHint {
+                        number: ack.number.unwrap(),
+                        frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
+                    })
+                    .unwrap()
+                    .into(),
                 )
                 .await
                 .unwrap();

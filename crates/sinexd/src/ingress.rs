@@ -23,10 +23,10 @@
 //! frames Sinex recorded, `<root>.materials.<producer>` pages through the
 //! materials the producer registered, and `<root>.excise.<producer>` excises
 //! whole materials the producer registered.
-mod bytes;
 pub(crate) mod authority;
-pub(crate) mod fetch;
+mod bytes;
 mod confirmed_consumer;
+pub(crate) mod fetch;
 pub(crate) mod replay;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
@@ -94,7 +94,7 @@ pub(crate) async fn ensure_stream(
 
 /// What the ingress needs from the daemon.
 pub(crate) struct Ingest {
-    pub grants:std::sync::Arc<fetch::ProducerGrants>,
+    pub grants: std::sync::Arc<fetch::ProducerGrants>,
     pub subjects: Subjects,
     pub writer: WriterHandle,
     /// The connection frames are checked and answered from.
@@ -112,7 +112,7 @@ impl Ingest {
         conn: PgConnection,
         blobs: Blobs,
         host: String,
-        grants:std::sync::Arc<fetch::ProducerGrants>,
+        grants: std::sync::Arc<fetch::ProducerGrants>,
     ) -> Result<Self, String> {
         Ok(Self {
             grants,
@@ -169,12 +169,13 @@ impl Ingest {
                 Ok(Ingress::RegisterKinds {
                     declarations: offered,
                     ..
-                }) => {
-                    match self.check_declarations(producer,offered) {
-                        Ok(())=>{declarations=offered.clone();Ok((None,vec![]))},
-                        Err(error)=>Err(error),
+                }) => match self.check_declarations(producer, offered) {
+                    Ok(()) => {
+                        declarations = offered.clone();
+                        Ok((None, vec![]))
                     }
-                }
+                    Err(error) => Err(error),
+                },
                 Ok(Ingress::ReplaySequence { sequence, .. }) => {
                     return self
                         .replay_sequence(producer, &name, run, *sequence.clone())
@@ -203,9 +204,18 @@ impl Ingest {
             Ok((progress, records)) => Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
-                    family:self.grants.get(producer).and_then(|grant|grant.write.as_ref()).map(|write|write.family.clone()),
-                    write_kind_prefixes:self.grants.get(producer).and_then(|grant|grant.write.as_ref()).map(|write|write.kind_prefixes.clone()).unwrap_or_default(),
-                    assign_orders:assigned_orders(details,&records),
+                    family: self
+                        .grants
+                        .get(producer)
+                        .and_then(|grant| grant.write.as_ref())
+                        .map(|write| write.family.clone()),
+                    write_kind_prefixes: self
+                        .grants
+                        .get(producer)
+                        .and_then(|grant| grant.write.as_ref())
+                        .map(|write| write.kind_prefixes.clone())
+                        .unwrap_or_default(),
+                    assign_orders: assigned_orders(details, &records),
                     producer: producer.to_owned(),
                     frame: name.clone(),
                     material: progress,
@@ -346,10 +356,14 @@ impl Ingest {
     }
 
     async fn configuration(&mut self, producer: &str) -> Result<Option<String>, String> {
-        let family=match authority::write(&self.grants,producer) {Ok(write)=>write.family.clone(),Err(reason)=>return Ok(Some(reason))};
-        let privacy = sinex_store::privacy::load(&mut self.conn, [producer,family.as_str()])
-            .await
-            .map_err(|e| e.to_string())?;
+        let family = match authority::write(&self.grants, producer) {
+            Ok(write) => write.family.clone(),
+            Err(reason) => return Ok(Some(reason)),
+        };
+        let privacy =
+            sinex_store::privacy::load(&mut self.conn, [producer, family.as_str()].into_iter())
+                .await
+                .map_err(|e| e.to_string())?;
         let version = (privacy.seq, privacy.floors.get(producer).copied());
         let changed = self
             .privacy_versions
@@ -445,10 +459,20 @@ impl Ingest {
         ))
     }
 
-    fn check_declarations(&self,producer:&str,declarations:&[sinex_model::KindDeclaration])->Result<(),Check> {
-        let write=authority::write(&self.grants,producer).map_err(Check::Configuration)?;
+    fn check_declarations(
+        &self,
+        producer: &str,
+        declarations: &[sinex_model::KindDeclaration],
+    ) -> Result<(), Check> {
+        let write = authority::write(&self.grants, producer).map_err(Check::Configuration)?;
         for declaration in declarations {
-            if declaration.declaring_producer!=write.family||!authority::matches(&write.kind_prefixes,&declaration.kind.name) {return Err(Check::Configuration("declaration is outside the configured logical family".into()));}
+            if declaration.declaring_producer != write.family
+                || !authority::matches(&write.kind_prefixes, &declaration.kind.name)
+            {
+                return Err(Check::Configuration(
+                    "declaration is outside the configured logical family".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -459,10 +483,30 @@ impl Ingest {
         events: &[ProducerEvent],
         failures: &[ProducerFailure],
     ) -> Result<Vec<RecordOutcome>, Check> {
-        let family=authority::write(&self.grants,producer).map_err(Check::Configuration)?.family.clone();
-        for event in events {authority::event(&self.grants,producer,&event.kind.name,event.class).map_err(Check::Configuration)?;}
-        let declarations=sinex_schema::kinds::load(&mut self.conn,&events.iter().map(|event|event.kind.clone()).collect::<Vec<_>>()).await.map_err(|error|Check::Unavailable(error.to_string()))?;
-        if declarations.values().any(|declaration|declaration.declaring_producer!="sinex"&&declaration.declaring_producer!=family) {return Err(Check::Refused("kind belongs to another logical family".into()));}
+        let family = authority::write(&self.grants, producer)
+            .map_err(Check::Configuration)?
+            .family
+            .clone();
+        for event in events {
+            authority::event(&self.grants, producer, &event.kind.name, event.class)
+                .map_err(Check::Configuration)?;
+        }
+        let references = events
+            .iter()
+            .map(|event| event.kind.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let declarations = sinex_schema::kinds::load(&mut self.conn, &references)
+            .await
+            .map_err(|error| Check::Unavailable(error.to_string()))?;
+        if declarations.values().any(|declaration| {
+            declaration.declaring_producer != "sinex" && declaration.declaring_producer != family
+        }) {
+            return Err(Check::Refused(
+                "kind belongs to another logical family".into(),
+            ));
+        }
         // Every cited material must be registered first.
         let mut cited: Vec<Uuid> = events
             .iter()
@@ -483,7 +527,12 @@ impl Ingest {
         }
         if !cited.is_empty() {
             let ownership=sqlx::query!("SELECT material_id,family FROM core.ingress_frames WHERE material_id=ANY($1) AND refusal IS NULL",&cited).fetch_all(&mut self.conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
-            if cited.iter().any(|id|!ownership.iter().any(|owner|owner.material_id==Some(*id)&&owner.family.as_deref()==Some(family.as_str()))) {
+            if cited.iter().any(|id| {
+                !ownership.iter().any(|owner| {
+                    owner.material_id == Some(*id)
+                        && owner.family.as_deref() == Some(family.as_str())
+                })
+            }) {
                 return Err(Check::Refused("material family ownership is unavailable or belongs to another family; explicit mapping is required for historical material".into()));
             }
         }
@@ -543,10 +592,19 @@ impl Ingest {
     }
 }
 
-fn assigned_orders(frame:Option<&Ingress>,records:&[RecordOutcome])->Vec<EventId> {
-    let Some(Ingress::Events{events,..})=frame else {return Vec::new();};
-    let stored=records.iter().flat_map(|record|match record {RecordOutcome::Events{events,..}=>events.as_slice(),RecordOutcome::Failure{..}=>&[]});
-    events.iter().zip(stored).filter_map(|(offered,stored)|offered.reading_order.is_none().then_some(stored.id)).collect()
+fn assigned_orders(frame: Option<&Ingress>, records: &[RecordOutcome]) -> Vec<EventId> {
+    let Some(Ingress::Events { events, .. }) = frame else {
+        return Vec::new();
+    };
+    let stored = records.iter().flat_map(|record| match record {
+        RecordOutcome::Events { events, .. } => events.as_slice(),
+        RecordOutcome::Failure { .. } => &[],
+    });
+    events
+        .iter()
+        .zip(stored)
+        .filter_map(|(offered, stored)| offered.reading_order.is_none().then_some(stored.id))
+        .collect()
 }
 
 fn sealed(privacy: &sinex_store::privacy::RuleSet) -> bool {
@@ -643,8 +701,9 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
     Batch {
         run,
         kind: BatchKind::Ingress(Box::new(IngressFrame {
-            family:None,write_kind_prefixes:vec![],
-            assign_orders:vec![],
+            family: None,
+            write_kind_prefixes: vec![],
+            assign_orders: vec![],
             producer: producer.to_owned(),
             frame: frame.to_owned(),
             material: None,
@@ -662,6 +721,7 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
 #[cfg(test)]
 fn refused_unrecorded(reason: &str) -> Acknowledgment {
     Acknowledgment {
+        number: None,
         frame: String::new(),
         material: None,
         material_extents: vec![],
@@ -674,6 +734,7 @@ fn refused_unrecorded(reason: &str) -> Acknowledgment {
 
 fn acknowledgment(s: StoredFrame) -> Acknowledgment {
     Acknowledgment {
+        number: Some(s.number),
         frame: s.frame,
         material: s.material_id.map(sinex_model::MaterialId),
         material_extents: s.material_extent.into_iter().collect(),
@@ -692,14 +753,27 @@ const REQUESTS_AT_ONCE: usize = 4;
 /// consumer from reading its stream.
 #[derive(Clone)]
 pub(crate) struct Requests {
-    pub client:async_nats::Client,
-    pub consumer_admin:std::sync::Arc<tokio::sync::Mutex<()>>,
-    pub read_grants:std::sync::Arc<fetch::ProducerGrants>,
-    pub max_payload:u64,
+    pub client: async_nats::Client,
+    pub consumer_admin: std::sync::Arc<tokio::sync::Mutex<()>>,
+    pub read_grants: std::sync::Arc<fetch::ProducerGrants>,
     pub subjects: Subjects,
     pub writer: WriterHandle,
     pub reads: sqlx::PgPool,
     pub blobs: Blobs,
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum ResponseBody {
+    Welcome(ProducerWelcome),
+    Consumer(sinex_protocol::ConfirmedConsumerReply),
+    Event(sinex_protocol::FetchEventReply),
+    Material(sinex_protocol::FetchMaterialReply),
+    Recorded(sinex_protocol::RecordedPage),
+    Materials(sinex_protocol::MaterialsPage),
+    Replay(sinex_protocol::ReplayScopePage),
+    Excise(ExciseReply),
+    Error { refusal: String },
 }
 
 impl Requests {
@@ -708,10 +782,10 @@ impl Requests {
         producer: &str,
         hello: &ProducerHello,
     ) -> Result<ProducerWelcome, String> {
-        let write=authority::write(&self.read_grants,producer).ok();
+        let write = authority::write(&self.read_grants, producer).ok();
         let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
-        let family=write.map(|write|write.family.as_str()).unwrap_or(producer);
-        let privacy = sinex_store::privacy::load(&mut conn, [producer,family])
+        let family = write.map(|write| write.family.as_str()).unwrap_or(producer);
+        let privacy = sinex_store::privacy::load(&mut conn, [producer, family].into_iter())
             .await
             .map_err(|e| e.to_string())?;
         let refusal = if hello.version != sinex_protocol::PRODUCER_VERSION {
@@ -722,7 +796,13 @@ impl Requests {
             ))
         } else if !hello.event_types.is_empty() && write.is_none() {
             Some("producer has no configured write family".into())
-        } else if write.is_some_and(|write|!write.classes.contains(&hello.class)||hello.event_types.iter().any(|kind|!authority::matches(&write.kind_prefixes,kind))) {
+        } else if write.is_some_and(|write| {
+            !write.classes.contains(&hello.class)
+                || hello
+                    .event_types
+                    .iter()
+                    .any(|kind| !authority::matches(&write.kind_prefixes, kind))
+        }) {
             Some("producer hello is outside its write kind or class capability".into())
         } else if hello.class == sinex_model::Class::Sealed || sealed(&privacy) {
             Some("producer bytes cannot be stored sealed".into())
@@ -737,13 +817,22 @@ impl Requests {
                     !declarations.values().any(|declaration| {
                         declaration.kind.name == **name
                             && (declaration.declaring_producer == "sinex"
-                                || write.is_some_and(|write|declaration.declaring_producer == write.family))
+                                || write.is_some_and(|write| {
+                                    declaration.declaring_producer == write.family
+                                }))
                     })
                 })
                 .map(|name| format!("producer event type {name} is not registered for {producer}"))
         };
-        let authorized=refusal.is_none();
-        Ok(ProducerWelcome {family:authorized.then(||write.map(|write|write.family.clone())).flatten(),canonical_publisher:authorized&&write.is_some_and(|write|!write.canonical_prefixes.is_empty()),refusal})
+        let authorized = refusal.is_none();
+        Ok(ProducerWelcome {
+            family: authorized
+                .then(|| write.map(|write| write.family.clone()))
+                .flatten(),
+            canonical_publisher: authorized
+                && write.is_some_and(|write| !write.canonical_prefixes.is_empty()),
+            refusal,
+        })
     }
 
     /// Answer a recorded query: the recorded acknowledgments of these frames.
@@ -751,14 +840,25 @@ impl Requests {
         &self,
         producer: &str,
         request: &RecordedQuery,
-    ) -> Result<Vec<Acknowledgment>, String> {
-        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
-        Ok(commit_log::frames(&mut conn, producer, &request.frames)
+    ) -> Result<sinex_protocol::RecordedPage, String> {
+        let mut conn = self
+            .reads
+            .acquire()
             .await
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(acknowledgment)
-            .collect())
+            .map_err(|error| error.to_string())?;
+        let (rows, next) = commit_log::frames_page(
+            &mut conn,
+            producer,
+            &request.frames,
+            &request.numbers,
+            request.after,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(sinex_protocol::RecordedPage {
+            acknowledgments: rows.into_iter().map(acknowledgment).collect(),
+            next,
+        })
     }
 
     /// Answer a materials request: one page of the materials `producer`
@@ -825,98 +925,121 @@ impl Requests {
 
     /// The reply to one request on `subject`, or `None` when it names no
     /// producer.
-    async fn answer(&self, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
+    async fn answer(&self, subject: &str, payload: &[u8]) -> Option<ResponseBody> {
         let producer = self.subjects.producer_of(subject)?.to_owned();
-        let body = if subject == self.subjects.connect(&producer) {
-            let welcome = match serde_json::from_slice::<ProducerHello>(payload) {
-                Ok(hello) => match self.connect(&producer, &hello).await {
-                    Ok(welcome) => welcome,
-                    Err(_) => return None,
-                },
-                Err(error) => ProducerWelcome {
-                    refusal: Some(format!("not a producer declaration: {error}")),
+        let response = if subject == self.subjects.connect(&producer) {
+            match serde_json::from_slice::<ProducerHello>(payload) {
+                Ok(hello) => {
+                    ResponseBody::Welcome(self.connect(&producer, &hello).await.unwrap_or_else(
+                        |error| ProducerWelcome {
+                            refusal: Some(error),
+                            ..Default::default()
+                        },
+                    ))
+                }
+                Err(error) => ResponseBody::Welcome(ProducerWelcome {
+                    refusal: Some(error.to_string()),
                     ..Default::default()
-                },
-            };
-            serde_json::json!(welcome)
+                }),
+            }
         } else if subject == self.subjects.confirmed_consumer(&producer) {
             match serde_json::from_slice::<sinex_protocol::ConfirmedConsumer>(payload) {
-                Ok(request)=>serde_json::json!(self.confirmed_consumer(&producer,&request).await),
-                Err(error)=>serde_json::json!(sinex_protocol::ConfirmedConsumerReply{refusal:Some(error.to_string()),..Default::default()}),
+                Ok(request) => {
+                    ResponseBody::Consumer(self.confirmed_consumer(&producer, &request).await)
+                }
+                Err(error) => ResponseBody::Consumer(sinex_protocol::ConfirmedConsumerReply {
+                    refusal: Some(error.to_string()),
+                    ..Default::default()
+                }),
             }
         } else if subject == self.subjects.fetch_event(&producer) {
             match serde_json::from_slice::<sinex_protocol::FetchEvent>(payload) {
-                Ok(request)=>serde_json::json!(self.fetch_event(&producer,&request).await),
-                Err(error)=>serde_json::json!(sinex_protocol::FetchEventReply{refusal:Some(error.to_string()),refusal_kind:Some(sinex_protocol::FetchRefusalKind::Invalid),..Default::default()}),
-            }
-        } else if subject == self.subjects.fetch_payload(&producer) {
-            match serde_json::from_slice::<sinex_protocol::FetchPayload>(payload) {
-                Ok(request)=>serde_json::json!(self.fetch_payload(&producer,&request).await),
-                Err(error)=>serde_json::json!(sinex_protocol::FetchPayloadReply{refusal:Some(error.to_string()),refusal_kind:Some(sinex_protocol::FetchRefusalKind::Invalid),..Default::default()}),
+                Ok(request) => ResponseBody::Event(self.fetch_event(&producer, &request).await),
+                Err(error) => ResponseBody::Event(sinex_protocol::FetchEventReply {
+                    refusal: Some(error.to_string()),
+                    refusal_kind: Some(sinex_protocol::FetchRefusalKind::Invalid),
+                    ..Default::default()
+                }),
             }
         } else if subject == self.subjects.fetch_material(&producer) {
             match serde_json::from_slice::<sinex_protocol::FetchMaterial>(payload) {
-                Ok(request)=>serde_json::json!(self.fetch_material(&producer,&request).await),
-                Err(error)=>serde_json::json!(sinex_protocol::FetchMaterialReply{refusal:Some(error.to_string()),refusal_kind:Some(sinex_protocol::FetchRefusalKind::Invalid),..Default::default()}),
+                Ok(request) => {
+                    ResponseBody::Material(self.fetch_material(&producer, &request).await)
+                }
+                Err(error) => ResponseBody::Material(sinex_protocol::FetchMaterialReply {
+                    refusal: Some(error.to_string()),
+                    refusal_kind: Some(sinex_protocol::FetchRefusalKind::Invalid),
+                    ..Default::default()
+                }),
             }
         } else if subject == self.subjects.recorded(&producer) {
             match serde_json::from_slice::<RecordedQuery>(payload) {
                 Ok(query) => match self.recorded(&producer, &query).await {
-                    Ok(acks) => serde_json::json!(acks),
-                    Err(error) => serde_json::json!({ "refusal": error.to_string() }),
+                    Ok(page) => ResponseBody::Recorded(page),
+                    Err(error) => ResponseBody::Error { refusal: error },
                 },
-                Err(error) => {
-                    serde_json::json!({ "refusal": format!("not a recorded query: {error}") })
-                }
+                Err(error) => ResponseBody::Error {
+                    refusal: error.to_string(),
+                },
             }
         } else if subject == self.subjects.materials(&producer) {
             match serde_json::from_slice::<Materials>(payload) {
-                Ok(page) => match self.materials(&producer, &page).await {
-                    Ok(materials) => serde_json::json!(materials),
-                    Err(error) => serde_json::json!({ "refusal": error.to_string() }),
+                Ok(query) => match self.materials(&producer, &query).await {
+                    Ok(materials) => {
+                        let next = (materials.len() == query.limit as usize
+                            && !materials.is_empty())
+                        .then(|| materials.last().expect("nonempty page").number);
+                        ResponseBody::Materials(sinex_protocol::MaterialsPage { materials, next })
+                    }
+                    Err(error) => ResponseBody::Error { refusal: error },
                 },
-                Err(error) => {
-                    serde_json::json!({ "refusal": format!("not a materials request: {error}") })
-                }
+                Err(error) => ResponseBody::Error {
+                    refusal: error.to_string(),
+                },
             }
         } else if subject == self.subjects.replay_scope(&producer) {
             match serde_json::from_slice::<sinex_protocol::ReplayScopeQuery>(payload) {
                 Ok(query) => {
-                    let family=match authority::write(&self.read_grants,&producer) {Ok(write)=>write.family.clone(),Err(error)=>return Some(serde_json::to_vec(&serde_json::json!({"refusal":error})).expect("JSON serializes"))};
+                    let family = match authority::write(&self.read_grants, &producer) {
+                        Ok(write) => write.family.clone(),
+                        Err(error) => return Some(ResponseBody::Error { refusal: error }),
+                    };
                     let mut conn = match self.reads.acquire().await {
                         Ok(conn) => conn,
                         Err(error) => {
-                            return Some(
-                                serde_json::json!({"refusal": error.to_string()})
-                                    .to_string()
-                                    .into_bytes(),
-                            );
+                            return Some(ResponseBody::Error {
+                                refusal: error.to_string(),
+                            });
                         }
                     };
-                    match replay::select(&mut conn, &producer, &family, &query).await {
-                        Ok(sequences) => serde_json::json!(sequences),
-                        Err(error) => serde_json::json!({"refusal": error.to_string()}),
+                    match replay::select_page(&mut conn, &producer, &family, &query).await {
+                        Ok(page) => ResponseBody::Replay(page),
+                        Err(error) => ResponseBody::Error {
+                            refusal: error.to_string(),
+                        },
                     }
                 }
-                Err(_) => serde_json::json!({"refusal": "invalid replay scope"}),
+                Err(error) => ResponseBody::Error {
+                    refusal: error.to_string(),
+                },
             }
         } else {
-            let reply = match serde_json::from_slice::<Excise>(payload) {
-                Ok(excise) => self
-                    .excise(&producer, &excise)
-                    .await
-                    .unwrap_or_else(|error| ExciseReply {
-                        refusal: Some(error),
-                        ..ExciseReply::default()
-                    }),
-                Err(error) => ExciseReply {
-                    refusal: Some(format!("not an excise request: {error}")),
-                    ..ExciseReply::default()
-                },
-            };
-            serde_json::json!(reply)
+            match serde_json::from_slice::<Excise>(payload) {
+                Ok(request) => {
+                    ResponseBody::Excise(self.excise(&producer, &request).await.unwrap_or_else(
+                        |error| ExciseReply {
+                            refusal: Some(error),
+                            ..Default::default()
+                        },
+                    ))
+                }
+                Err(error) => ResponseBody::Excise(ExciseReply {
+                    refusal: Some(error.to_string()),
+                    ..Default::default()
+                }),
+            }
         };
-        Some(body.to_string().into_bytes())
+        Some(response)
     }
 }
 
@@ -977,10 +1100,20 @@ async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<(), S
         };
         match ingest.handle(&producer, &message.payload).await {
             Ok(ack) => {
-                let body = serde_json::to_vec(&ack).map_err(|e| e.to_string())?;
-                let _ = client
-                    .publish(ingest.subjects.ack(&producer), body.into())
-                    .await;
+                if let Some(number) = ack.number {
+                    let hint = sinex_protocol::ReceiptHint {
+                        number,
+                        frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
+                    };
+                    let _ = client
+                        .publish(
+                            ingest.subjects.ack(&producer),
+                            serde_json::to_vec(&hint)
+                                .expect("receipt hint serializes")
+                                .into(),
+                        )
+                        .await;
+                }
                 message.ack().await.map_err(|e| format!("ack: {e}"))?;
             }
             Err(error) => {
@@ -1012,7 +1145,6 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
         subscribe(requests.subjects.excise_all()).await?,
         subscribe(requests.subjects.replay_scope_all()).await?,
         subscribe(requests.subjects.fetch_event_all()).await?,
-        subscribe(requests.subjects.fetch_payload_all()).await?,
         subscribe(requests.subjects.fetch_material_all()).await?,
     ]);
     client.flush().await.map_err(|e| e.to_string())?;
@@ -1029,6 +1161,14 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
         let Some(reply) = request.reply.clone() else {
             continue;
         };
+        let Some(producer) = requests.subjects.producer_of(&request.subject) else {
+            continue;
+        };
+        let prefix = format!("{}.", requests.subjects.inbox_prefix(producer));
+        if !reply.starts_with(&prefix) || reply.contains('*') || reply.contains('>') {
+            continue;
+        }
+
         let slot = slots
             .clone()
             .acquire_owned()
@@ -1036,9 +1176,13 @@ async fn serve(client: async_nats::Client, requests: Requests) -> Result<(), Str
             .map_err(|e| e.to_string())?;
         let (client, requests) = (client.clone(), requests.clone());
         running.spawn(async move {
-            if let Some(body) = requests.answer(&request.subject, &request.payload).await {
-                let _ = client.publish(reply, body.into()).await;
-            }
+            let _ = sinex_transport::replies::respond_json(
+                &client,
+                reply.to_string(),
+                requests.answer(&request.subject, &request.payload),
+                Duration::from_secs(30),
+            )
+            .await;
             drop(slot);
         });
     }

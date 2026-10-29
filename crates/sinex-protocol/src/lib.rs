@@ -7,15 +7,18 @@
 pub mod cli;
 mod commands;
 pub mod nats;
+pub mod replies;
 mod request;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
-    ConfirmedConsumer,ConfirmedConsumerReply,FetchRange,MaterialReference,FetchEvent,FetchEventReply,FetchPayload,FetchPayloadReply,FetchMaterial,FetchMaterialReply,FetchRefusalKind,PayloadReference,
-    Acknowledgment, Archived, Confirmed, ConfirmedEvent, DeclarationHash, Excise, ExciseReply,
-    Ingress, MaterialFrame, Materials, PRODUCER_VERSION, ProducerEvent, ProducerFailure,
-    ProducerHello, ProducerMaterial, ProducerReplay, ProducerWelcome, RecordedQuery, ReplayBatch,
-    ReplayMaterial, ReplayScopeQuery, ReplaySelection, Subjects, Unhidden, Withheld,
+    Acknowledgment, Archived, Confirmed, ConfirmedConsumer, ConfirmedConsumerReply, ConfirmedEvent,
+    DeclarationHash, Excise, ExciseReply, FetchEvent, FetchEventReply, FetchMaterial,
+    FetchMaterialReply, FetchRefusalKind, Ingress, MaterialFrame, Materials, MaterialsPage,
+    PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello, ProducerMaterial,
+    ProducerReplay, ProducerWelcome, ReceiptHint, RecordedPage, RecordedQuery, ReplayBatch,
+    ReplayMaterial, ReplayScopePage, ReplayScopeQuery, ReplaySelection, Subjects, Unhidden,
+    Withheld,
 };
 pub use request::{Reply, Request};
 

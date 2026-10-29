@@ -9,6 +9,28 @@ use std::sync::Arc;
 
 /// A daemon slice for tests: NATS, a database, the writer, the ingress task
 /// and a content store.
+struct TestReply {
+    payload: Vec<u8>,
+}
+async fn rpc(
+    client: &async_nats::Client,
+    subject: String,
+    payload: Vec<u8>,
+) -> Result<TestReply, sinex_transport::replies::ReplyError> {
+    let producer = subject.rsplit_once('.').expect("producer subject").1;
+    let value: Value = sinex_transport::replies::request_bytes(
+        client,
+        subject.clone(),
+        producer,
+        payload,
+        Duration::from_secs(20),
+    )
+    .await?;
+    Ok(TestReply {
+        payload: serde_json::to_vec(&value).expect("reply JSON"),
+    })
+}
+
 struct Harness {
     writer: WriterHandle,
     reads: sqlx::PgPool,
@@ -24,14 +46,48 @@ struct Harness {
 
 impl Harness {
     async fn start(db: devkit::pg::TestDatabase) -> Self {
-        Self::start_with_grants(db,Default::default()).await
+        Self::start_with_grants(db, Default::default()).await
     }
-    async fn start_with_grants(db:devkit::pg::TestDatabase,mut grants:crate::ingress::fetch::ProducerGrants)->Self {
-        for producer in ["kitty","phone","polylogue","example","session","node","other-node","unknown-node"] {
-            let mut prefixes=sinex_model::event_types::declarations().iter().filter_map(|declaration|declaration.kind.name.split_once('.').map(|(prefix,_)|prefix.to_owned())).collect::<Vec<_>>();prefixes.push(producer.to_owned());prefixes.push("not".into());prefixes.sort();prefixes.dedup();
-            grants.entry(producer.into()).or_default().write.get_or_insert_with(||crate::ingress::authority::WriteGrant{family:producer.into(),kind_prefixes:prefixes,classes:vec![sinex_model::Class::Open,sinex_model::Class::Guarded],canonical_prefixes:vec![]});
+    async fn start_with_grants(
+        db: devkit::pg::TestDatabase,
+        mut grants: crate::ingress::fetch::ProducerGrants,
+    ) -> Self {
+        for producer in [
+            "kitty",
+            "phone",
+            "polylogue",
+            "example",
+            "session",
+            "node",
+            "other-node",
+            "unknown-node",
+        ] {
+            let mut prefixes = sinex_model::event_types::declarations()
+                .iter()
+                .filter_map(|declaration| {
+                    declaration
+                        .kind
+                        .name
+                        .split_once('.')
+                        .map(|(prefix, _)| prefix.to_owned())
+                })
+                .collect::<Vec<_>>();
+            prefixes.push(producer.to_owned());
+            prefixes.push("not".into());
+            prefixes.sort();
+            prefixes.dedup();
+            grants
+                .entry(producer.into())
+                .or_default()
+                .write
+                .get_or_insert_with(|| crate::ingress::authority::WriteGrant {
+                    family: producer.into(),
+                    kind_prefixes: prefixes,
+                    classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
+                    canonical_prefixes: vec![],
+                });
         }
-        let grants=Arc::new(grants);
+        let grants = Arc::new(grants);
         let nats = devkit::nats::test_nats().unwrap();
         let subjects = Subjects::new(nats.prefix());
         let client = async_nats::connect(nats.url()).await.unwrap();
@@ -57,9 +113,9 @@ impl Harness {
             .await
             .unwrap();
         let requests = Requests {
-            client:client.clone(),consumer_admin:std::sync::Arc::new(tokio::sync::Mutex::new(())),
-            read_grants:grants.clone(),
-            max_payload:client.server_info().max_payload as u64,
+            client: client.clone(),
+            consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            read_grants: grants.clone(),
             subjects: subjects.clone(),
             writer: handle.clone(),
             reads: reads.clone(),
@@ -159,52 +215,88 @@ impl Harness {
     }
 
     async fn send_raw(&self, producer: &str, body: Vec<u8>) -> Acknowledgment {
+        let expected = serde_json::from_slice::<Ingress>(&body)
+            .ok()
+            .map(|frame| frame.frame().to_owned())
+            .unwrap_or_else(|| format!("malformed/{}", blake3::hash(&body).to_hex()));
+        let expected_hash = blake3::hash(expected.as_bytes()).to_hex().to_string();
         let mut acks = self
             .client
             .subscribe(self.subjects.ack(producer))
             .await
             .unwrap();
         self.client.flush().await.unwrap();
-        let js = jetstream::new(self.client.clone());
-        js.publish(self.subjects.ingress(producer), body.into())
+        jetstream::new(self.client.clone())
+            .publish(self.subjects.ingress(producer), body.into())
             .await
             .unwrap()
             .await
             .unwrap();
-        let message = tokio::time::timeout(Duration::from_secs(20), acks.next())
-            .await
-            .expect("an acknowledgment")
-            .unwrap();
-        serde_json::from_slice(&message.payload).unwrap()
+        let hint = loop {
+            let message = tokio::time::timeout(Duration::from_secs(20), acks.next())
+                .await
+                .expect("receipt hint")
+                .unwrap();
+            let hint: sinex_protocol::ReceiptHint =
+                serde_json::from_slice(&message.payload).unwrap();
+            if hint.frame_hash == expected_hash {
+                break hint;
+            }
+        };
+        let page: sinex_protocol::RecordedPage = sinex_transport::replies::request_json(
+            &self.client,
+            self.subjects.recorded(producer),
+            producer,
+            &RecordedQuery {
+                numbers: vec![hint.number],
+                ..Default::default()
+            },
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        page.acknowledgments
+            .into_iter()
+            .find(|ack| ack.number == Some(hint.number))
+            .expect("complete owned receipt")
     }
 
     async fn recorded(&self, producer: &str, frames: &[&str]) -> Vec<Acknowledgment> {
-        let request = RecordedQuery {
-            frames: frames.iter().map(|s| s.to_string()).collect(),
-        };
-        let reply = self
-            .client
-            .request(
+        let mut after = 0;
+        let mut all = Vec::new();
+        loop {
+            let page: sinex_protocol::RecordedPage = sinex_transport::replies::request_json(
+                &self.client,
                 self.subjects.recorded(producer),
-                serde_json::to_vec(&request).unwrap().into(),
+                producer,
+                &RecordedQuery {
+                    frames: frames.iter().map(|frame| (*frame).into()).collect(),
+                    after,
+                    ..Default::default()
+                },
+                Duration::from_secs(20),
             )
             .await
             .unwrap();
-        serde_json::from_slice(&reply.payload).unwrap()
+            all.extend(page.acknowledgments);
+            match page.next {
+                Some(next) => after = next,
+                None => return all,
+            }
+        }
     }
 
     async fn materials(&self, producer: &str, after: i64, limit: u32) -> Vec<ProducerMaterial> {
-        let reply = self
-            .client
-            .request(
-                self.subjects.materials(producer),
-                serde_json::to_vec(&Materials { after, limit })
-                    .unwrap()
-                    .into(),
-            )
-            .await
-            .unwrap();
-        serde_json::from_slice(&reply.payload).unwrap()
+        let page: sinex_protocol::MaterialsPage = sinex_transport::replies::request_json(
+            &self.client,
+            self.subjects.materials(producer),
+            producer,
+            &Materials { after, limit },
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        page.materials
     }
 
     fn material_frame(&self, frame: &str, bytes: &[u8]) -> (MaterialId, Ingress) {
@@ -575,7 +667,7 @@ async fn producers_are_limited_to_their_own_subjects() {
     let config = subjects.authorization(
         ("daemon", &hash("dpw")),
         &[("kitty", &hash("kpw")), ("phone", &hash("ppw"))],
-        &[("kitty","kitty-scope".into())],
+        &[("kitty", "kitty-scope".into())],
     );
     assert!(!config.contains("dpw") && !config.contains("kpw"));
     let server = devkit::nats::Server::start_with(&devkit::nats::Options { config }).unwrap();
@@ -613,17 +705,86 @@ async fn producers_are_limited_to_their_own_subjects() {
             .is_err(),
         "the forged message on another producer's subject was not delivered"
     );
-    let mut api=daemon.subscribe("$JS.API.>").await.unwrap();daemon.flush().await.unwrap();
-    for subject in ["$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign","$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-old-scope","$JS.API.STREAM.MSG.GET.SX_CONFIRMED","$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope"] {kitty.publish(subject,"{}".into()).await.unwrap();}
+    let mut api = daemon.subscribe("$JS.API.>").await.unwrap();
+    daemon.flush().await.unwrap();
+    for subject in [
+        "$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign",
+        "$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-old-scope",
+        "$JS.API.STREAM.MSG.GET.SX_CONFIRMED",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope",
+    ] {
+        kitty.publish(subject, "{}".into()).await.unwrap();
+    }
     kitty.flush().await.unwrap();
-    let allowed=tokio::time::timeout(Duration::from_secs(5),api.next()).await.unwrap().unwrap();assert_eq!(allowed.subject.as_str(),"$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope");
-    assert!(tokio::time::timeout(Duration::from_millis(300),api.next()).await.is_err(),"foreign/admin/raw-message API requests must not reach the daemon");
-    let mut foreign_inbox=kitty.subscribe("_INBOX.phone.>").await.unwrap();kitty.flush().await.unwrap();
-    daemon.publish("_INBOX.phone.synthetic","private response".into()).await.unwrap();daemon.flush().await.unwrap();
-    assert!(tokio::time::timeout(Duration::from_millis(300),foreign_inbox.next()).await.map_or(true,|message|message.is_none()),"producer must not eavesdrop another identity's RPC reply inbox");
-    let mut foreign_inline=kitty.subscribe("sx.confirmed.>").await.unwrap();kitty.flush().await.unwrap();
-    daemon.publish("sx.confirmed.event.open.foreign.kind","private inline payload".into()).await.unwrap();daemon.flush().await.unwrap();
-    assert!(tokio::time::timeout(Duration::from_millis(300),foreign_inline.next()).await.map_or(true,|message|message.is_none()),"producer cannot bypass its scoped consumer with a raw stream subscription");
+    let allowed = tokio::time::timeout(Duration::from_secs(5), api.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        allowed.subject.as_str(),
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), api.next())
+            .await
+            .is_err(),
+        "foreign/admin/raw-message API requests must not reach the daemon"
+    );
+    let mut foreign_flow = daemon
+        .subscribe("_INBOX.phone.synthetic.flow")
+        .await
+        .unwrap();
+    daemon.flush().await.unwrap();
+    kitty
+        .publish(
+            "_INBOX.phone.synthetic.flow",
+            serde_json::to_vec(&sinex_protocol::replies::FlowAck::Accepted {
+                stream: "forged".into(),
+                sequence: 0,
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .unwrap();
+    kitty.flush().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), foreign_flow.next())
+            .await
+            .is_err(),
+        "a foreign credential cannot acknowledge another principal's flow"
+    );
+    let mut foreign_inbox = kitty.subscribe("_INBOX.phone.>").await.unwrap();
+    kitty.flush().await.unwrap();
+    daemon
+        .publish("_INBOX.phone.synthetic", "private response".into())
+        .await
+        .unwrap();
+    daemon.flush().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), foreign_inbox.next())
+            .await
+            .map_or(true, |message| message.is_none()),
+        "producer must not eavesdrop another identity's RPC reply inbox"
+    );
+    let mut foreign_inline = kitty.subscribe("sx.confirmed.>").await.unwrap();
+    kitty.flush().await.unwrap();
+    daemon
+        .publish(
+            "sx.confirmed.event.open.foreign.kind",
+            "private inline payload".into(),
+        )
+        .await
+        .unwrap();
+    daemon.flush().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), foreign_inline.next())
+            .await
+            .map_or(true, |message| message.is_none()),
+        "producer cannot bypass its scoped consumer with a raw stream subscription"
+    );
     // Nor can a producer read another producer's acknowledgments.
     assert!(kitty.subscribe("sx.ack.phone").await.is_ok());
     let mut probe = kitty.subscribe("sx.ack.phone").await.unwrap();
@@ -664,7 +825,7 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         .unwrap();
     let stream = js.get_stream(h.subjects.confirmed_stream()).await.unwrap();
     let message = stream
-        .get_last_raw_message_by_subject(&h.subjects.confirmed_event("open","command.imported"))
+        .get_last_raw_message_by_subject(&h.subjects.confirmed_event("open", "command.imported"))
         .await
         .unwrap();
     let confirmed: Confirmed = serde_json::from_slice(&message.payload).unwrap();
@@ -673,7 +834,7 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
     };
     assert_eq!(event.source, "kitty");
     assert!(event.payload.is_none());
-    assert_eq!(event.withheld,Some(sinex_protocol::Withheld::Grants));
+    assert_eq!(event.withheld, Some(sinex_protocol::Withheld::Grants));
     let _ = &h.nats;
 }
 
@@ -789,14 +950,13 @@ impl Harness {
         let request = Excise {
             materials: materials.to_vec(),
         };
-        let reply = self
-            .client
-            .request(
-                self.subjects.excise(producer),
-                serde_json::to_vec(&request).unwrap().into(),
-            )
-            .await
-            .unwrap();
+        let reply = rpc(
+            &self.client,
+            self.subjects.excise(producer),
+            serde_json::to_vec(&request).unwrap().into(),
+        )
+        .await
+        .unwrap();
         serde_json::from_slice(&reply.payload).unwrap()
     }
 
@@ -912,9 +1072,10 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     let request = tokio::spawn(async move {
         let body = serde_json::to_vec(&RecordedQuery {
             frames: vec!["m1".into()],
+            ..Default::default()
         })
         .unwrap();
-        client.request(subject, body.into()).await.unwrap()
+        rpc(&client, subject, body).await.unwrap()
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(
@@ -931,7 +1092,8 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
         .await
         .unwrap()
         .unwrap();
-    let acks: Vec<Acknowledgment> = serde_json::from_slice(&reply.payload).unwrap();
+    let page: sinex_protocol::RecordedPage = serde_json::from_slice(&reply.payload).unwrap();
+    let acks = page.acknowledgments;
     assert_eq!(acks.len(), 1);
     assert_eq!(acks[0].frame, "m1");
 }
@@ -1485,7 +1647,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         Some(FrameRefusal::Malformed)
     );
     let api = crate::api::Api {
-        derivations:Default::default(),
+        derivations: Default::default(),
         source_config: Default::default(),
         library_roots: Vec::new(),
         reads: h.reads.clone(),
@@ -1575,3 +1737,5 @@ mod fetch_reads;
 mod consumer_reads;
 
 mod families;
+
+mod replies;

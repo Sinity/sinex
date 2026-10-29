@@ -96,15 +96,17 @@ async fn fake_ingress_with_configuration(
             if let Some(count) = &declarations_count {
                 count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            declarer
-                .publish(
-                    message.reply.unwrap(),
-                    serde_json::to_vec(&sinex_protocol::ProducerWelcome { refusal: None,..Default::default() })
-                        .unwrap()
-                        .into(),
-                )
-                .await
-                .unwrap();
+            sinex_transport::replies::publish_json(
+                &declarer,
+                message.reply.unwrap().to_string(),
+                sinex_protocol::ProducerWelcome {
+                    refusal: None,
+                    ..Default::default()
+                },
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
         }
     });
     jetstream_stream(&client, subjects).await;
@@ -148,8 +150,8 @@ async fn fake_ingress_with_configuration(
                 }
                 Some(message) = queries.next() => {
                     let query: sinex_protocol::RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
-                    let replies: Vec<_> = query.frames.iter().filter_map(|id| recorded.get(id).cloned()).collect();
-                    client.publish(message.reply.unwrap(), serde_json::to_vec(&replies).unwrap().into()).await.unwrap();
+                    let acknowledgments=recorded.values().filter(|receipt|(query.frames.contains(&receipt.frame)||receipt.number.is_some_and(|number|query.numbers.contains(&number)))&&receipt.number.is_some_and(|number|number>query.after)).cloned().collect();
+                    sinex_transport::replies::publish_json(&client,message.reply.unwrap().to_string(),sinex_protocol::RecordedPage{acknowledgments,next:None},std::time::Duration::from_secs(10)).await.unwrap();
                     timeout.notify_one();
                 }
                 changed = available.changed() => {
@@ -162,6 +164,7 @@ async fn fake_ingress_with_configuration(
             if receiving {
                 for (frame, message) in pending.drain(..) {
                     let id = frame.frame().to_string();
+                    let next_number = recorded.len() as i64 + 1;
                     let ack = recorded
                         .entry(id.clone())
                         .or_insert_with(|| {
@@ -177,6 +180,7 @@ async fn fake_ingress_with_configuration(
                             if connections.is_some() && !configuration_refused {
                                 configuration_refused = true;
                                 return Acknowledgment {
+                                    number: Some(next_number),
                                     material_extents: vec![],
                                     frame: id.clone(),
                                     material: None,
@@ -189,6 +193,7 @@ async fn fake_ingress_with_configuration(
                                 };
                             }
                             Acknowledgment {
+                                number: Some(next_number),
                                 material_extents: vec![],
                                 frame: id.clone(),
                                 material,
@@ -209,7 +214,12 @@ async fn fake_ingress_with_configuration(
                     client
                         .publish(
                             ack_subject.clone(),
-                            serde_json::to_vec(&ack).unwrap().into(),
+                            serde_json::to_vec(&sinex_protocol::ReceiptHint {
+                                number: ack.number.unwrap(),
+                                frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
+                            })
+                            .unwrap()
+                            .into(),
                         )
                         .await
                         .unwrap();
@@ -761,18 +771,17 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
     let responder = tokio::spawn(async move {
         while let Some(message) = declarations.next().await {
             received.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            client
-                .publish(
-                    message.reply.unwrap(),
-                    serde_json::to_vec(&sinex_protocol::ProducerWelcome {
-                        refusal: Some("producer bytes cannot be stored sealed".into()),
-                        ..Default::default()
-                    })
-                    .unwrap()
-                    .into(),
-                )
-                .await
-                .unwrap();
+            sinex_transport::replies::publish_json(
+                &client,
+                message.reply.unwrap().to_string(),
+                sinex_protocol::ProducerWelcome {
+                    refusal: Some("producer bytes cannot be stored sealed".into()),
+                    ..Default::default()
+                },
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
         }
     });
     let dir = tempfile::tempdir().unwrap();

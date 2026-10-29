@@ -10,15 +10,17 @@ pub(crate) async fn hello(nats: &devkit::nats::TestNats, subjects: &Subjects, pr
         while let Some(message) = requests.next().await {
             let hello: ProducerHello = serde_json::from_slice(&message.payload).unwrap();
             assert_eq!(hello.version, sinex_protocol::PRODUCER_VERSION);
-            client
-                .publish(
-                    message.reply.unwrap(),
-                    serde_json::to_vec(&ProducerWelcome { refusal: None,..Default::default() })
-                        .unwrap()
-                        .into(),
-                )
-                .await
-                .unwrap();
+            sinex_transport::replies::publish_json(
+                &client,
+                message.reply.unwrap().to_string(),
+                ProducerWelcome {
+                    refusal: None,
+                    ..Default::default()
+                },
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
         }
     });
 }

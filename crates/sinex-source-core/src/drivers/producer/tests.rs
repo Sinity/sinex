@@ -673,14 +673,11 @@ async fn a_stale_malformed_acknowledgment_does_not_refuse_another_frame() {
     .await
     .unwrap();
     let client = async_nats::connect(nats.url()).await.unwrap();
-    let stale = Acknowledgment {
-        material_extents: vec![],
-        frame: "malformed/another-frame".into(),
-        material: None,
-        admitted: vec![],
-        outcome: json!({"refusal_kind": FrameRefusal::Malformed}),
-        refusal: Some("a delayed malformed frame".into()),
-        commit_seq: None,
+    let stale = sinex_protocol::ReceiptHint {
+        number: 999,
+        frame_hash: blake3::hash(b"malformed/another-frame")
+            .to_hex()
+            .to_string(),
     };
     client
         .publish(

@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone)]
 pub(crate) struct CheckedReplay {
-    pub family:String,
-    pub write_kind_prefixes:Vec<String>,
+    pub family: String,
+    pub write_kind_prefixes: Vec<String>,
     pub producer: String,
     pub frame: String,
     pub sequence: ProducerReplay,
@@ -16,7 +16,7 @@ pub(crate) struct CheckedReplay {
 pub(super) async fn select(
     conn: &mut PgConnection,
     producer: &str,
-    family:&str,
+    family: &str,
     query: &ReplayScopeQuery,
 ) -> Result<Vec<ReplaySelection>, Check> {
     let rows = sinex_store::replay::producer_materials(conn, producer)
@@ -24,7 +24,11 @@ pub(super) async fn select(
         .map_err(|e| Check::Unavailable(e.to_string()))?;
     let ids: Vec<_> = rows.iter().map(|row| row.0).collect();
     let unknown=sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1 AND material_id=ANY($2) AND family IS DISTINCT FROM $3) AS "unknown!""#,producer,&ids,family).fetch_one(&mut *conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
-    if unknown {return Err(Check::Refused("historical material family ownership requires an explicit mapping".into()));}
+    if unknown {
+        return Err(Check::Refused(
+            "historical material family ownership requires an explicit mapping".into(),
+        ));
+    }
     let descriptors=sqlx::query!("SELECT m.id,m.length,x.descriptor FROM raw.materials m JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting WHERE m.id=ANY($1)",&ids)
         .fetch_all(&mut *conn).await.map_err(|error|Check::Unavailable(error.to_string()))?;
     let descriptors: BTreeMap<_, _> = descriptors
@@ -85,6 +89,22 @@ pub(super) async fn select(
     Ok(selections)
 }
 
+pub(super) async fn select_page(
+    conn: &mut PgConnection,
+    producer: &str,
+    family: &str,
+    query: &ReplayScopeQuery,
+) -> Result<sinex_protocol::ReplayScopePage, Check> {
+    let selections = select(conn, producer, family, query).await?;
+    let sequences = selections
+        .into_iter()
+        .filter(|selection| query.after.is_none_or(|after| selection.root > after))
+        .take(64)
+        .collect::<Vec<_>>();
+    let next = (sequences.len() == 64).then(|| sequences.last().expect("full page").root);
+    Ok(sinex_protocol::ReplayScopePage { sequences, next })
+}
+
 async fn live_hash(
     conn: &mut PgConnection,
     producer: &str,
@@ -128,6 +148,7 @@ pub(crate) async fn check_scope(
         return Err("replay needs the producer parser build and version".into());
     }
     let query = ReplayScopeQuery {
+        after: None,
         materials: sequence.materials.iter().map(|m| m.id).collect(),
         event_types: sequence.event_types.clone(),
         from: sequence.from,
@@ -177,7 +198,7 @@ pub(crate) async fn check(conn: &mut PgConnection, request: &CheckedReplay) -> R
                 let validator = sinex_model::event_types::find(&event.kind.name)
                     .filter(|k| (k.declaration)() == *declaration)
                     .ok_or("validator_unavailable")?;
-                (validator.normalize)(&event.payload).map_err(|_|"invalid bundled replacement")?
+                (validator.normalize)(&event.payload).map_err(|_| "invalid bundled replacement")?
             } else {
                 event.payload.clone()
             };
@@ -273,10 +294,10 @@ impl Ingest {
         run: RunId,
         sequence: ProducerReplay,
     ) -> Result<Acknowledgment, String> {
-        let write=authority::write(&self.grants,producer).map_err(|error|error.to_string())?;
+        let write = authority::write(&self.grants, producer).map_err(|error| error.to_string())?;
         let request = CheckedReplay {
-            family:write.family.clone(),
-            write_kind_prefixes:write.kind_prefixes.clone(),
+            family: write.family.clone(),
+            write_kind_prefixes: write.kind_prefixes.clone(),
             producer: producer.into(),
             frame: frame.into(),
             sequence,
@@ -350,13 +371,25 @@ impl Ingest {
             }],
         }];
         for batch in &s.batches {
-            let records=self.events(&request.producer,&batch.events,&batch.failures).await?;
-            let assign_orders=batch.events.iter().zip(records.iter().flat_map(|record|match record {RecordOutcome::Events{events,..}=>events.as_slice(),RecordOutcome::Failure{..}=>&[]})).filter_map(|(offered,stored)|offered.reading_order.is_none().then_some(stored.id)).collect();
+            let records = self
+                .events(&request.producer, &batch.events, &batch.failures)
+                .await?;
+            let assign_orders = batch
+                .events
+                .iter()
+                .zip(records.iter().flat_map(|record| match record {
+                    RecordOutcome::Events { events, .. } => events.as_slice(),
+                    RecordOutcome::Failure { .. } => &[],
+                }))
+                .filter_map(|(offered, stored)| {
+                    offered.reading_order.is_none().then_some(stored.id)
+                })
+                .collect();
             batches.push(Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
-                    family:Some(request.family.clone()),
-                    write_kind_prefixes:request.write_kind_prefixes.clone(),
+                    family: Some(request.family.clone()),
+                    write_kind_prefixes: request.write_kind_prefixes.clone(),
                     assign_orders,
                     producer: request.producer.clone(),
                     frame: String::new(),

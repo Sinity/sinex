@@ -54,7 +54,7 @@ pub(super) async fn assign(conn:&mut PgConnection,batch:&Batch,events:&mut[Event
     }
     let orders=highwaters.values().map(|order|order.expect("every distinct key was offered")).collect::<Vec<_>>();
     sqlx::query!(r#"INSERT INTO core.producer_orders(source,event_type,key_hash,reading_order)
-      SELECT * FROM unnest($1::text[],$2::text[],$3::bytea[],$4::bigint[])
+      SELECT * FROM unnest($1::text[],$2::text[],$3::bytea[],$4::bigint[]) WHERE true
       ON CONFLICT(source,event_type,key_hash) DO UPDATE SET reading_order=greatest(core.producer_orders.reading_order,EXCLUDED.reading_order)"#,&sources,&kinds,&hashes,&orders).execute(conn).await?;
     Ok(())
 }
