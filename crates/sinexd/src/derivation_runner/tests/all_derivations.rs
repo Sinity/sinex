@@ -31,6 +31,19 @@ fn captured<P: EventPayload>(payload: &P, source: &str, anchor: u64) -> Event {
     .unwrap()
 }
 
+fn polylogue(kind: &str, payload: Value, anchor: u64) -> Event {
+    external::record(&format!("polylogue.{kind}"), payload, Origin::Record {
+        location: RecordLocation { material: MaterialId(uuid::Uuid::from_u128(u128::from(anchor) + 1)), anchor },
+        output_index: 0,
+    })
+}
+
+async fn declared_world(db: devkit::pg::TestDatabase) -> World {
+    let world = World::new(db).await;
+    external::register(&world.url).await;
+    world
+}
+
 /// Two days of a person at the machine: shells, windows, the browser, music,
 /// copies, notifications, mail, chat, commits, the journal and a watch.
 fn world() -> Vec<Event> {
@@ -56,18 +69,15 @@ fn world() -> Vec<Event> {
             next(),
         ));
     }
-    let session: sinex_model::event_types::polylogue::Session = serde_json::from_value(json!({
+    out.push(polylogue("session", json!({
         "session":"test-session","origin":"synthetic","kind":"main","cwd":["/synthetic/repo"],
         "repo":"synthetic/repo","branch":"task","machine":"box","started":at(0),
         "last_activity":at(2 * 86_400),"links":[]
-    }))
-    .unwrap();
-    out.push(captured(&session, "polylogue", next()));
-    let prompt: sinex_model::event_types::polylogue::Message = serde_json::from_value(json!({
+    }), next()));
+    out.push(polylogue("message", json!({
         "message":"test-prompt","session":"test-session","role":"user","written_by":"human","prompt_kind":"prose",
         "at":at(100),"text":"Resume the recorded task","usage":{},"attachments":[],"copies":[]
-    })).unwrap();
-    out.push(captured(&prompt, "polylogue", next()));
+    }), next()));
     let key = sinex_model::event_types::library::item_key("box", "/library", "example.png");
     out.push(captured(
         &sinex_model::event_types::library::FileCopy {
@@ -130,6 +140,8 @@ fn world() -> Vec<Event> {
             out.push(zsh(&command, s, next()));
             out.push(captured(
                 &WindowFocused {
+            scope: Some("synthetic-compositor".into()),
+            host: Some("box".into()),
                     received_at: at(s + 30),
                     window: Some(format!("w{i}")),
                     class: Some(if i % 2 == 0 { "kitty" } else { "firefox" }.into()),
@@ -140,6 +152,8 @@ fn world() -> Vec<Event> {
             ));
             out.push(captured(
                 &WindowSpan {
+            scope: None,
+            host: None,
                     bucket: "aw-watcher-window_box".into(),
                     span_id: base + i,
                     started_at: at(s + 30),
@@ -168,13 +182,18 @@ fn world() -> Vec<Event> {
             ));
             out.push(captured(
                 &ClipboardCopied {
+                    captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
                     received_at: at(s + 90),
                     selection: "clipboard".into(),
-                    mime_types: vec!["text/plain".into()],
+                    mime_types: Some(vec!["text/plain".into()]),
                     mime_type: Some("text/plain".into()),
                     text: Some(format!("copied {day} {i}")),
-                    bytes: 12,
+                    bytes: Some(12),
                     content_hash: None,
+                    sha256: None,
+                    window: None,
+                    imported_from: None,
+                    extra: Default::default(),
                     secret: false,
                 },
                 "desktop.clipboard",
@@ -222,6 +241,8 @@ fn world() -> Vec<Event> {
         }
         out.push(captured(
             &PresenceSpan {
+            scope: None,
+            host: None,
                 bucket: "aw-watcher-afk_box".into(),
                 row: base,
                 started_at: at(base),
@@ -233,6 +254,8 @@ fn world() -> Vec<Event> {
         ));
         out.push(captured(
             &PresenceSpan {
+            scope: None,
+            host: None,
                 bucket: "aw-watcher-afk_box".into(),
                 row: base + 1,
                 started_at: at(base + 7_200),
@@ -272,6 +295,9 @@ fn world() -> Vec<Event> {
         ));
         out.push(captured(
             &PlayerChanged {
+                captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
+                position_us: None,
+                heartbeat: false,
                 received_at: at(base + 302),
                 player: "org.mpris.MediaPlayer2.spotify".into(),
                 status: Some("Playing".into()),
@@ -288,6 +314,9 @@ fn world() -> Vec<Event> {
         ));
         out.push(captured(
             &NotificationShown {
+                captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
+                notification_id: None,
+                extra: Default::default(),
                 received_at: at(base + 700),
                 app: "mail".into(),
                 summary: format!("New mail {day}"),
@@ -305,11 +334,14 @@ fn world() -> Vec<Event> {
         for source in ["communication.imap", "communication.mbox"] {
             out.push(captured(
                 &MailMessage {
-                    message_id: format!("<m{day}@example.org>"),
+                    account: Some("synthetic@example.org".into()),
+                    native_id: None,
+                    message_id: Some(format!("<m{day}@example.org>")),
                     date: Some(at(base + 800)),
                     from: vec!["a@example.org".into()],
                     to: vec!["b@example.org".into()],
                     cc: vec![],
+                    bcc: vec![],
                     subject: Some("Hello".into()),
                     in_reply_to: None,
                     references: vec![],
@@ -350,6 +382,9 @@ fn world() -> Vec<Event> {
                 committed_at: at(base + 1_000),
                 message: "m".into(),
                 refs: vec![],
+                worktrees: vec![],
+                files: None,
+                original_bytes: Default::default(),
             },
             "code.git",
             next(),
@@ -369,6 +404,7 @@ fn world() -> Vec<Event> {
                 uid: None,
                 command: None,
                 transport: None,
+                from_sinex: false,
                 fields: Default::default(),
             },
             "machine.journald",
@@ -423,7 +459,7 @@ async fn every_derivation_gives_the_same_outputs_at_once_and_piece_by_piece(
     db: devkit::pg::TestDatabase,
 ) {
     let events = world();
-    let once = World::new(db).await;
+    let once = declared_world(db).await;
     once.admit(events.clone()).await;
     derive_all(&once).await;
     let expected = derived_set(&once).await;
@@ -443,7 +479,7 @@ async fn every_derivation_gives_the_same_outputs_at_once_and_piece_by_piece(
     assert!(silent.is_empty(), "derivations with no output: {silent:?}");
 
     // The same world in five pieces, newest first, deriving after each.
-    let pieces = World::new(devkit::pg::test_database().unwrap()).await;
+    let pieces = declared_world(devkit::pg::test_database().unwrap()).await;
     let mut reversed = events;
     reversed.reverse();
     for piece in reversed.chunks(reversed.len().div_ceil(5)) {
@@ -529,7 +565,7 @@ async fn comparing_then_switching_the_derivations_matches_a_fresh_computation(
     db: devkit::pg::TestDatabase,
 ) {
     let events = world();
-    let switched = World::new(db).await;
+    let switched = declared_world(db).await;
     switched.admit(events.clone()).await;
     derive_all(&switched).await;
     let before = derived_set(&switched).await;
@@ -595,7 +631,7 @@ async fn comparing_then_switching_the_derivations_matches_a_fresh_computation(
     assert_eq!(archived, i64::try_from(previous_hourly.len()).unwrap());
     read.close().await.unwrap();
 
-    let fresh = World::new(devkit::pg::test_database().unwrap()).await;
+    let fresh = declared_world(devkit::pg::test_database().unwrap()).await;
     fresh.admit(events).await;
     let mut recomputed = fresh
         .driver_with(

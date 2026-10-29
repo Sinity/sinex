@@ -5,6 +5,9 @@ use sinex_derivations::work::{ActivityDays, ContextPacks, WorkActs, WorkEpisodes
 use sinex_model::event_types::work::{ContextPack, WorkAct, WorkEpisode};
 
 fn record(kind: &str, payload: Value, anchor: u64) -> Event {
+    if kind.starts_with("polylogue.") {
+        return external::record(kind, payload, location(anchor));
+    }
     (sinex_model::event_types::find(kind).unwrap().build)(
         &payload,
         "synthetic.work",
@@ -39,6 +42,11 @@ fn work_derivations() -> Vec<Box<dyn AnyKeyed>> {
         Box::new(ActivityDays),
     ]
 }
+async fn world(db: devkit::pg::TestDatabase) -> World {
+    let world = World::with_keys(db, work_derivations()).await;
+    external::register(&world.url).await;
+    world
+}
 async fn runner(w: &World) -> DerivationRunner {
     let mut runner = w.driver_with(work_derivations(), vec![]).await;
     runner.clock = Some(at(2_000_000));
@@ -51,7 +59,7 @@ const LIVE_WITH_ARCHIVED_PARENT: &str = "SELECT count(*) FROM core.events e JOIN
 async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
     db: devkit::pg::TestDatabase,
 ) {
-    let w = World::with_keys(db, work_derivations()).await;
+    let w = world(db).await;
     w.admit(vec![
         session("a", "first"),
         session("b", "second"),
@@ -72,7 +80,7 @@ async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
         .unwrap();
     assert_eq!(first.trail.len(), 2);
     assert_eq!(first.suspensions.len(), 2);
-    let env = Env::at(at(2_000_000));
+    let env = Env::at(at(2_000_000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let query = Keyed::inputs(&WorkEpisodes, &json!({"episode": first.episode}), &env).unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))
@@ -116,7 +124,7 @@ async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
 async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
     db: devkit::pg::TestDatabase,
 ) {
-    let w = World::with_keys(db, work_derivations()).await;
+    let w = world(db).await;
     let first = prompt("a", 0);
     let later = prompt("a", 1000);
     w.admit(vec![session("a", "task"), first.clone(), later])
@@ -190,7 +198,7 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
 
 #[devkit::test]
 async fn wake_day_reads_stop_at_the_next_recorded_wake(db: devkit::pg::TestDatabase) {
-    let w = World::with_keys(db, work_derivations()).await;
+    let w = world(db).await;
     let sleep = |start, end| {
         record(
             "rest.fused",
@@ -200,7 +208,7 @@ async fn wake_day_reads_stop_at_the_next_recorded_wake(db: devkit::pg::TestDatab
     };
     w.admit(vec![sleep(0, 100), sleep(900, 1000), sleep(1900, 2000)])
         .await;
-    let env = Env::at(at(3000));
+    let env = Env::at(at(3000), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let query = Keyed::inputs(&ActivityDays, &json!({"start":at(100)}), &env).unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))
@@ -216,7 +224,7 @@ async fn wake_day_reads_stop_at_the_next_recorded_wake(db: devkit::pg::TestDatab
 
 #[devkit::test]
 async fn an_episode_becomes_dormant_without_a_new_act(db: devkit::pg::TestDatabase) {
-    let w = World::with_keys(db, work_derivations()).await;
+    let w = world(db).await;
     w.admit(vec![session("a", "task"), prompt("a", 0)]).await;
     let mut runner = w.driver_with(work_derivations(), vec![]).await;
     runner.clock = Some(at(0));

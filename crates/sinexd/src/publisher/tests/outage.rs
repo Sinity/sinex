@@ -209,7 +209,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
             .unwrap(),
     );
     let url = db.url(None);
-    let mut conn = PgConnection::connect(&url).await.unwrap();
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let (commits, commits_seen) = watch::channel(0u64);
     let (stop, stopped) = watch::channel(false);
     let publisher = tokio::spawn(run(
