@@ -25,7 +25,7 @@
 //! whole materials the producer registered.
 mod bytes;
 pub(crate) mod fetch;
-mod consumer;
+mod confirmed_consumer;
 pub(crate) mod replay;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
