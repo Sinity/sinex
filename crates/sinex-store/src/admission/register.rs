@@ -2,6 +2,7 @@
 //! material) and the acknowledgment of an ingress frame.
 use super::*;
 use crate::Error;
+use std::collections::BTreeSet;
 use sinex_model::{InputId, ObservationId, RevisionChange, RevisionId, SourceProgress, Timestamp};
 
 /// Upsert the input, record the observation, open a revision when the content
@@ -363,14 +364,21 @@ pub(super) async fn provenance(
             "native source fingerprint differs from the owner catalog".into(),
         ));
     }
-    let refs = batch.events().map(Event::kind_ref).collect::<Vec<_>>();
-    let kinds = sinex_schema::kinds::load(conn, &refs).await?;
+    let refs = batch.events().map(Event::kind_ref).collect::<BTreeSet<_>>();
+    let kinds = sinex_schema::kinds::load(conn, &refs.into_iter().collect::<Vec<_>>()).await?;
+    // Definitions and the source contract are immutable within this admission
+    // snapshot. Validate each exact kind once; every event still proves source
+    // and membership below, including repeated kinds with a different source.
+    if kinds
+        .values()
+        .any(|kind| !declaration.allows(&kind.kind, &kind.definition_hash()))
+    {
+        return Err(Error::Invalid(
+            "event is outside its exact native source declaration".into(),
+        ));
+    }
     for event in batch.events() {
-        if event.source != source.name
-            || kinds
-                .get(&event.kind_ref())
-                .is_none_or(|kind| !declaration.allows(&kind.kind, &kind.definition_hash()))
-        {
+        if event.source != source.name || !kinds.contains_key(&event.kind_ref()) {
             return Err(Error::Invalid(
                 "event is outside its exact native source declaration".into(),
             ));

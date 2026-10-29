@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sinex_model::kinds::{KeyRule, Normalization, RemovedRule, TimeRule};
 use sinex_model::{DbCheck, KindDeclaration, KindRef};
 use sqlx::PgConnection;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Debug)]
@@ -31,10 +31,13 @@ pub async fn load(
     if refs.is_empty() {
         return Ok(BTreeMap::new());
     }
+    // A caller may name the same kind once per event. SQL joins and immutable
+    // definition validation operate on exact kind identities, once each.
+    let refs = refs.iter().collect::<BTreeSet<_>>();
     let names: Vec<_> = refs.iter().map(|r| r.name.clone()).collect();
     let versions: Vec<_> = refs
         .iter()
-        .map(KindRef::database_version)
+        .map(|reference| reference.database_version())
         .collect::<Result<_, _>>()
         .map_err(invalid)?;
     let rows: Vec<Value> = sqlx::query_scalar(

@@ -24,6 +24,117 @@ fn declared(name: &str, version: u64) -> KindDeclaration {
 }
 
 #[devkit::test]
+async fn duplicate_kind_references_keep_exact_versions_missing_and_invalid_identity(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ninth = declared("example.reading", 9);
+    let mut tenth = declared("example.reading", 10);
+    tenth.search = sinex_model::kinds::Search::None;
+    let mut tx = conn.begin().await.unwrap();
+    sinex_schema::kinds::register(&mut tx, "example", &[ninth.clone(), tenth.clone()])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let missing = KindRef {
+        name: "example.missing".into(),
+        version: 9,
+    };
+    let references = [
+        tenth.kind.clone(),
+        ninth.kind.clone(),
+        missing.clone(),
+        ninth.kind.clone(),
+        tenth.kind.clone(),
+        missing.clone(),
+    ];
+    let loaded = sinex_schema::kinds::load(&mut conn, &references)
+        .await
+        .unwrap();
+    assert_eq!(loaded.len(), 2);
+    assert_eq!(loaded.get(&ninth.kind), Some(&ninth));
+    assert_eq!(loaded.get(&tenth.kind), Some(&tenth));
+    assert!(!loaded.contains_key(&missing));
+    let invalid = KindRef {
+        name: ninth.kind.name.clone(),
+        version: u64::MAX,
+    };
+    assert!(
+        sinex_schema::kinds::load(&mut conn, &[ninth.kind, invalid.clone(), invalid])
+            .await
+            .is_err(),
+        "deduplication never hides an invalid full reference"
+    );
+}
+
+#[devkit::test]
+async fn repeated_native_kinds_still_check_each_event_source_and_membership(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let source = sinex_model::SourceRef {
+        name: "synthetic.native".into(),
+        version: 1,
+    };
+    let declaration = sinex_model::SourceDeclaration {
+        source: source.clone(),
+        family: "sinex".into(),
+        kinds: vec![CommandExecuted::declaration()],
+    };
+    crate::source_declarations::register(&mut conn, std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
+    let mut offered = batch(vec![
+        keyed(&source.name, 0, 1, 1),
+        keyed(&source.name, 1, 1, 1),
+    ]);
+    offered.kind = BatchKind::Replay {
+        operation: OperationId::new(),
+        source: Some(source.clone()),
+        host: Some("synthetic".into()),
+    };
+    let provenance = register::provenance(&mut conn, &offered, None)
+        .await
+        .unwrap();
+    assert_eq!(provenance.family.as_deref(), Some("sinex"));
+    assert_eq!(provenance.source_version, Some(1));
+    assert_eq!(
+        provenance.source_fingerprint,
+        Some(declaration.fingerprint())
+    );
+    let mut wrong_source = offered.clone();
+    if let RecordOutcome::Events { events, .. } = &mut wrong_source.records[0] {
+        events[1].source = "synthetic.foreign".into();
+    }
+    let error = register::provenance(&mut conn, &wrong_source, None)
+        .await
+        .err()
+        .expect("a later event cannot borrow the first event's source");
+    assert!(
+        error
+            .to_string()
+            .contains("outside its exact native source declaration")
+    );
+    for version in [CommandImported::VERSION, 9_999] {
+        let mut wrong_kind = offered.clone();
+        if let RecordOutcome::Events { events, .. } = &mut wrong_kind.records[0] {
+            events[1].event_type = CommandImported::EVENT_TYPE.into();
+            events[1].kind_version = version;
+        }
+        assert!(
+            register::provenance(&mut conn, &wrong_kind, None)
+                .await
+                .is_err(),
+            "a registered foreign kind or unavailable exact version cannot join a permitted batch"
+        );
+    }
+}
+
+#[devkit::test]
 async fn immutable_registration_checks_the_whole_frame_and_exact_versions(
     db: devkit::pg::TestDatabase,
 ) {
