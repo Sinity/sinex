@@ -9,27 +9,6 @@ use sqlx::PgConnection;
 use std::sync::Arc;
 use std::time::Instant;
 
-// Temporary bounded diagnostics for the original native backfill stall.
-fn trace_intake(
-    enabled: bool,
-    started: Instant,
-    batch: u64,
-    phase: &str,
-    events: Option<usize>,
-    ok: Option<bool>,
-) {
-    if enabled && (batch <= 4 || batch.is_power_of_two()) {
-        eprintln!(
-            "{}",
-            serde_json::json!({"native_intake": {
-                "batch":batch, "phase":phase,
-                "elapsed_ms":started.elapsed().as_secs_f64()*1000.0,
-                "events":events, "ok":ok,
-            }})
-        );
-    }
-}
-
 pub(crate) struct Submission {
     pub outcome: Outcome,
     pub material: Option<MaterialId>,
@@ -121,9 +100,6 @@ impl Intake<'_> {
         F: FnMut(sinex_model::Batch, AdmissionCheck) -> A,
         A: std::future::Future<Output = Result<Outcome, String>>,
     {
-        let measure = std::env::var_os("SINEX_BENCH_TIMINGS").is_some();
-        let submitted = Instant::now();
-        trace_intake(measure, submitted, 0, "capacity_wait", None, None);
         let check = self.material.admission_check(self.check.clone());
         check()?;
         let material = acquired.material.as_ref().map(|m| m.id);
@@ -140,25 +116,14 @@ impl Intake<'_> {
         let mut batches =
             blocking::Batches::start(self.priority, move |send| work.run(acquired, carry, send))
                 .await?;
-        trace_intake(measure, submitted, 0, "capacity_ready", None, None);
         let cancelled = batches.cancellation_check();
         let check: AdmissionCheck = Arc::new(move || {
             cancelled()?;
             check()
         });
         let mut outcome = Outcome::default();
-        let mut ordinal = 0u64;
         let result = async {
             while let Some(parsed) = batches.next().await {
-                ordinal = ordinal.saturating_add(1);
-                trace_intake(
-                    measure,
-                    submitted,
-                    ordinal,
-                    "batch_received",
-                    None,
-                    Some(parsed.is_ok()),
-                );
                 let parsed = parsed?;
                 let mut permit = parsed.permit;
                 if let Some(length) = parsed.material_length {
@@ -174,41 +139,14 @@ impl Intake<'_> {
                 let service_started = Arc::new(std::sync::Mutex::new(None));
                 let service_clock = service_started.clone();
                 let admission_check = check.clone();
-                let batch_ordinal = ordinal;
                 let writer_check: AdmissionCheck = Arc::new(move || {
-                    let mut clock = service_clock.lock().map_err(|e| e.to_string())?;
-                    if clock.is_none() {
-                        trace_intake(
-                            measure,
-                            submitted,
-                            batch_ordinal,
-                            "writer_check",
-                            Some(events),
-                            None,
-                        );
-                    }
-                    clock.get_or_insert_with(Instant::now);
-                    drop(clock);
+                    service_clock
+                        .lock()
+                        .map_err(|e| e.to_string())?
+                        .get_or_insert_with(Instant::now);
                     admission_check()
                 });
-                trace_intake(
-                    measure,
-                    submitted,
-                    ordinal,
-                    "writer_submit",
-                    Some(events),
-                    None,
-                );
-                let admitted = admit(batch, writer_check).await;
-                trace_intake(
-                    measure,
-                    submitted,
-                    ordinal,
-                    "writer_returned",
-                    Some(events),
-                    Some(admitted.is_ok()),
-                );
-                let admitted = admitted?;
+                let admitted = admit(batch, writer_check).await?;
                 let elapsed = started.elapsed();
                 let queue = service_started
                     .lock()
@@ -227,24 +165,7 @@ impl Intake<'_> {
             Ok(Submission { outcome, material })
         }
         .await;
-        trace_intake(
-            measure,
-            submitted,
-            ordinal,
-            "cleanup_start",
-            None,
-            Some(result.is_ok()),
-        );
-        let finished = batches.finish().await;
-        trace_intake(
-            measure,
-            submitted,
-            ordinal,
-            "cleanup_end",
-            None,
-            Some(finished.is_ok()),
-        );
-        finished?;
+        batches.finish().await?;
         result
     }
 }
@@ -407,8 +328,6 @@ impl Preparation {
         send: blocking::BatchSender,
     ) -> Result<(), String> {
         let started = Instant::now();
-        let measure = std::env::var_os("SINEX_BENCH_TIMINGS").is_some();
-        trace_intake(measure, started, 0, "preparation_start", None, None);
         (self.check)()?;
         let prepared = drivers::prepare(
             self.source.as_ref(),
@@ -428,56 +347,19 @@ impl Preparation {
         )
         .map_err(|e| e.to_string())?
         .with_host(self.host.clone());
-        trace_intake(measure, started, 0, "bytes_ready", None, None);
         let mut material_length = Some(prepared.material_len());
         let mut batches = prepared.batches().map_err(|e| e.to_string())?;
-        trace_intake(measure, started, 0, "parser_ready", None, None);
         let mut setup = started.elapsed();
-        let preparation_started = started;
-        let mut ordinal = 0u64;
         loop {
-            ordinal = ordinal.saturating_add(1);
-            trace_intake(
-                measure,
-                preparation_started,
-                ordinal,
-                "permit_wait",
-                None,
-                None,
-            );
             // The permit covers parsing, waiting in the channel, and the commit answer.
             let Some(permit) = send.permit() else {
                 return Ok(());
             };
-            trace_intake(
-                measure,
-                preparation_started,
-                ordinal,
-                "parse_start",
-                None,
-                None,
-            );
             (self.check)()?;
             let started = Instant::now();
             let Some(batch) = batches.next() else {
-                trace_intake(
-                    measure,
-                    preparation_started,
-                    ordinal,
-                    "parse_end",
-                    None,
-                    Some(true),
-                );
                 return Ok(());
             };
-            trace_intake(
-                measure,
-                preparation_started,
-                ordinal,
-                "parse_end",
-                None,
-                Some(batch.is_ok()),
-            );
             let mut batch = batch.map_err(|e| e.to_string())?;
             if self.atomic {
                 if batches.next().is_some() {
@@ -492,15 +374,6 @@ impl Preparation {
                 }
             }
             self.material.prepare_batch(&mut batch, self.registered)?;
-            let events = batch.event_count();
-            trace_intake(
-                measure,
-                preparation_started,
-                ordinal,
-                "material_ready",
-                Some(events),
-                None,
-            );
             (self.check)()?;
             let elapsed = started.elapsed() + std::mem::take(&mut setup);
             if !send.send(blocking::Parsed {
@@ -511,14 +384,6 @@ impl Preparation {
             }) {
                 return Ok(());
             }
-            trace_intake(
-                measure,
-                preparation_started,
-                ordinal,
-                "batch_sent",
-                Some(events),
-                None,
-            );
         }
     }
 }
