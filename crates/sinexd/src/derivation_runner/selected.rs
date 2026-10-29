@@ -6,10 +6,11 @@ pub(super) async fn read(
     conn: &mut PgConnection,
     derivation: &dyn AnyKeyed,
     key: &Value,
+    inputs: &[Event],
     env: &Env,
     in_snapshot: bool,
 ) -> Result<Option<SelectedInputs>, String> {
-    let Some(selection) = derivation.selected_query(key, env) else {
+    let Some(selection) = derivation.selected_query(key, inputs, env) else {
         return Ok(None);
     };
     let selected = if in_snapshot {

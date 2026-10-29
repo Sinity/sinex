@@ -35,6 +35,8 @@ read status per source binding and host, including failure reasons, alongside th
 declared intervals that overlap the question. A running process or a successful
 read without declared temporal bounds does not establish observed coverage.
 
+`recall.products` version 2 keys work by the admitted question's existing canonical request identity. The complete query, declaration snapshot and grants stay on the retained request, read through the current input snapshot before selection. They are not copied into database index keys, and knowing a request identity grants no access. Earlier producer versions and their stored readings retain their original identity and follow the same explicit comparison and switch policy.
+
 ## Declarations
 
 Each derivation declares:

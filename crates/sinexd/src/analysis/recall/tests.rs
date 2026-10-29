@@ -57,7 +57,12 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
         read_as: 42,
         signature: "synthetic-inputs".into(),
     };
-    let result = compute(&json!(request), std::slice::from_ref(&input), &selected).unwrap();
+    let result = compute(
+        &key(&request.request),
+        std::slice::from_ref(&input),
+        &selected,
+    )
+    .unwrap();
     assert_eq!(result.payload["analysis"]["answer"], answer);
     assert_eq!(result.class, Class::Guarded);
     assert_eq!(result.payload["read_as"], 42);
@@ -74,6 +79,83 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
             .map(|section| section.findings.len())
             .sum::<usize>(),
         10_001
+    );
+}
+
+#[devkit::test]
+fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_definition() {
+    let at = Timestamp::from_unix_secs(1_000).unwrap();
+    let request = AnalysisRequest {
+        request: "canonical-existing-request-id".into(),
+        operation: "recall".into(),
+        recipe: None,
+        from: "1970-01-01".into(),
+        to: "1970-01-01".into(),
+        metrics: vec![],
+        min_observed_fraction: None,
+        zone: "Etc/UTC".into(),
+        day_start: "06:00:00".into(),
+        grants: vec![],
+        started_at: at,
+        ended_at: at,
+        by: "fixture".into(),
+        requested_at: at,
+        selection: Some(QuerySelection {
+            query: "recall last".into(),
+            now: at,
+            read_as: None,
+            zone: "Etc/UTC".into(),
+            day_start: "06:00:00".into(),
+            grants: vec![],
+            selected: json!({"kind":"window","from":at,"to":at}),
+            declarations: json!({"schema":"x".repeat(32_768)}),
+        }),
+    };
+    let input = Event::build(
+        &request,
+        "analysis.request",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let env = Env::at(
+        at,
+        sinex_model::time_settings::TimeSettings::new("Etc/UTC", 6, 0).unwrap(),
+    );
+    let view = KeyView {
+        event_id: input.id,
+        event_type: &input.event_type,
+        ts_orig: input.ts_orig.at,
+        payload: &input.payload,
+    };
+    let keys = RecallProducts.keys_for(&view, &env);
+    assert_eq!(
+        keys,
+        vec![json!({"request":"canonical-existing-request-id"})]
+    );
+    assert_eq!(keys[0].as_object().unwrap().len(), 1);
+    let selected = RecallProducts
+        .selected_query(&keys[0], std::slice::from_ref(&input), &env)
+        .unwrap();
+    assert_eq!(selected, request.selection.unwrap());
+    assert!(
+        RecallProducts.selected_query(&keys[0], &[], &env).is_none(),
+        "the key never substitutes for admitted request evidence"
+    );
+    let mut wrong = input.clone();
+    wrong.payload["request"] = json!("different request");
+    assert!(
+        RecallProducts
+            .selected_query(&keys[0], &[wrong], &env)
+            .is_none()
     );
 }
 

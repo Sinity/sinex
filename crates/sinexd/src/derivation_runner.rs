@@ -475,8 +475,15 @@ impl DerivationRunner {
             .map_err(|error| error.to_string())?;
         let read = t.elapsed();
         let t = Instant::now();
-        let selected =
-            selected::read(&mut snapshot, self.keyed[index].as_ref(), key, env, true).await?;
+        let selected = selected::read(
+            &mut snapshot,
+            self.keyed[index].as_ref(),
+            key,
+            &inputs,
+            env,
+            true,
+        )
+        .await?;
         let issues = input_issues(
             &mut snapshot,
             &inputs,
@@ -1407,7 +1414,8 @@ impl KeyComputation<'_> {
                 let (key, dirty_seq) = &work[i];
                 let t = Instant::now();
                 let selected =
-                    selected::read(&mut *self.read, self.derivation, key, env, true).await?;
+                    selected::read(&mut *self.read, self.derivation, key, &input, env, true)
+                        .await?;
                 let issues = input_issues(
                     self.read,
                     &input,

@@ -22,7 +22,7 @@ impl AnyKeyed for RecallProducts {
         "recall.products"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn inputs_types(&self) -> &'static [&'static str] {
         static TYPES: OnceLock<Vec<&'static str>> = OnceLock::new();
@@ -42,7 +42,11 @@ impl AnyKeyed for RecallProducts {
     }
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
         if input.event_type == "analysis.request" && input.payload["operation"] == "recall" {
-            vec![input.payload.clone()]
+            input.payload["request"]
+                .as_str()
+                .map(key)
+                .into_iter()
+                .collect()
         } else {
             vec![]
         }
@@ -53,10 +57,8 @@ impl AnyKeyed for RecallProducts {
             equal: vec![("request".into(), key.get("request")?.clone())],
         }]))
     }
-    fn selected_query(&self, key: &Value, _: &Env) -> Option<QuerySelection> {
-        serde_json::from_value::<AnalysisRequest>(key.clone())
-            .ok()?
-            .selection
+    fn selected_query(&self, key: &Value, inputs: &[Event], _: &Env) -> Option<QuerySelection> {
+        request_input(key, inputs).ok()?.1.selection
     }
     fn nearby_inputs(&self, input: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
         (input.event_type != "analysis.request").then(|| {
@@ -101,9 +103,32 @@ impl AnyKeyed for RecallProducts {
     }
 }
 
+fn key(request: &str) -> Value {
+    json!({"request":request})
+}
+
+fn request_input<'a>(
+    key: &Value,
+    inputs: &'a [Event],
+) -> Result<(&'a Event, AnalysisRequest), String> {
+    let id = key["request"]
+        .as_str()
+        .ok_or("recall key has no canonical request identity")?;
+    let event = inputs
+        .iter()
+        .find(|event| {
+            event.event_type == "analysis.request"
+                && event.payload["request"].as_str() == Some(id)
+                && event.payload["operation"] == "recall"
+        })
+        .ok_or("recall request event is unavailable")?;
+    let request =
+        serde_json::from_value(event.payload.clone()).map_err(|error| error.to_string())?;
+    Ok((event, request))
+}
+
 fn compute(key: &Value, inputs: &[Event], selected: &SelectedInputs) -> Result<Event, String> {
-    let request: AnalysisRequest =
-        serde_json::from_value(key.clone()).map_err(|error| error.to_string())?;
+    let (request_event, request) = request_input(key, inputs)?;
     let selection = request
         .selection
         .as_ref()
@@ -118,11 +143,7 @@ fn compute(key: &Value, inputs: &[Event], selected: &SelectedInputs) -> Result<E
     if parents.is_empty() {
         return Err("recall has no admitted request parent".into());
     }
-    let question = inputs
-        .iter()
-        .find(|event| event.event_type == "analysis.request")
-        .ok_or("recall request event is unavailable")?
-        .id;
+    let question = request_event.id;
     let sections = sections(&selected.value, &parents, Some(question));
     let mut current_selection = selection.clone();
     current_selection.selected["_fingerprint"] = json!(selected.signature);
@@ -409,44 +430,40 @@ pub(crate) async fn materialize(
             return Ok(pack.citation);
         }
     }
-    let key = match existing {
-        Some(key) => key,
-        None => {
-            let acquired = sinex_sources::sources::analysis::request_material(
-                request.clone(),
-                actor,
-                host,
-                sinex_model::Timestamp::now(),
-            );
-            let mut source = sinex_sources::sources::analysis::request_source();
-            if request
-                .grants
-                .iter()
-                .any(|grant| grant == "guarded" || grant == "sealed")
-            {
-                source.spec.class = Class::Guarded;
-            }
-            let done = crate::intake::request(
-                conn,
-                writer,
-                blobs,
-                std::sync::Arc::new(source),
-                &format!("analysis.request:{actor}@{host}"),
-                host,
-                acquired,
-            )
-            .await?;
-            if done.outcome.failures != 0 {
-                return Err("recall request was not admitted".into());
-            }
-            serde_json::to_value(request).map_err(|error| error.to_string())?
+    if existing.is_none() {
+        let acquired = sinex_sources::sources::analysis::request_material(
+            request.clone(),
+            actor,
+            host,
+            sinex_model::Timestamp::now(),
+        );
+        let mut source = sinex_sources::sources::analysis::request_source();
+        if request
+            .grants
+            .iter()
+            .any(|grant| grant == "guarded" || grant == "sealed")
+        {
+            source.spec.class = Class::Guarded;
         }
-    };
+        let done = crate::intake::request(
+            conn,
+            writer,
+            blobs,
+            std::sync::Arc::new(source),
+            &format!("analysis.request:{actor}@{host}"),
+            host,
+            acquired,
+        )
+        .await?;
+        if done.outcome.failures != 0 {
+            return Err("recall request was not admitted".into());
+        }
+    }
     crate::derivation_runner::compute_now(
         conn,
         writer,
         &RecallProducts,
-        vec![key],
+        vec![key(&id)],
         host,
         time_settings,
     )
