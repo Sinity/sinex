@@ -4,7 +4,6 @@ type Tuple = (i64, EventId, &'static str);
 
 pub(super) fn tuple(message: &Confirmed) -> Option<Tuple> {
     match message {
-        Confirmed::Event(e) => Some((e.commit_seq, e.id, "event")),
         Confirmed::EventReference { commit_seq, event } => Some((*commit_seq, *event, "event")),
         Confirmed::Archived(a) => Some((a.archived_seq, a.event, "archived")),
         Confirmed::Unhidden(a) => Some((a.unhidden_seq, a.event, "unhidden")),

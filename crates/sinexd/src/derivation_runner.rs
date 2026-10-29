@@ -399,16 +399,13 @@ impl DerivationRunner {
     ) -> Result<sinex_derivations::Computed, String> {
         let d = &self.keyed[index];
         let name = d.name();
-        let Some(q) = d.inputs(key, env) else {
-            return Ok(sinex_derivations::Computed::default());
-        };
         let t = Instant::now();
-        let inputs: Vec<Event> = derivations::read_window(&mut self.read, &to_window(&q, env.now))
-            .await
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|c| c.event)
-            .collect();
+        let inputs=if let Some(ids)=d.exact_inputs(key,env) {
+            exact_inputs(&mut self.read,ids).await?
+        }else{
+            let Some(q)=d.inputs(key,env) else{return Ok(sinex_derivations::Computed::default())};
+            derivations::read_window(&mut self.read,&to_window(&q,env.now)).await.map_err(|error|error.to_string())?.into_iter().map(|input|input.event).collect()
+        };
         let read = t.elapsed();
         let t = Instant::now();
         let computed = self.keyed[index].compute(key, &inputs, env);
@@ -921,6 +918,10 @@ impl KeyComputation<'_> {
         let mut windows: Vec<Window> = Vec::new();
         let mut window_keys: Vec<usize> = Vec::new();
         for (i, (key, _)) in work.iter().enumerate() {
+            if let Some(ids)=self.derivation.exact_inputs(key,env) {
+                let inputs=exact_inputs(self.read,ids).await?;
+                ready.push((i,inputs,true));continue;
+            }
             match self.derivation.inputs(key, env) {
                 Some(q) => {
                     windows.push(to_window(&q, env.now));
@@ -1080,4 +1081,11 @@ pub(crate) async fn compute_now(
     let counts = result?;
     ended?;
     Ok(counts)
+}
+
+/// Exact targets use the same snapshot as the key's read mark, including
+/// unknown-time evidence. Transfer budgets never substitute a nearby record.
+async fn exact_inputs(conn:&mut PgConnection,ids:Vec<sinex_model::EventId>)->Result<Vec<Event>,String>{
+    let mut reader=derivations::ExactInputs::new(ids,ROWS_PER_PAGE,sinex_store::PAGE_BYTES).map_err(|error|error.to_string())?;
+    let mut inputs=Vec::new();while let Some(page)=reader.next(conn).await.map_err(|error|error.to_string())?{inputs.extend(page.into_iter().map(|row|row.event));}Ok(inputs)
 }

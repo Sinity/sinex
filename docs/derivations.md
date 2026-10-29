@@ -277,3 +277,7 @@ Targets are stated as hardware-independent figures (rows read per key, invalidat
 - **construct-declared**: every shipped label and detection has its declaration of measure, fields, denominator and agreement evidence, checked at registration.
 - **complete-outputs**: document outputs beyond 4 MiB are complete and range-exact, and no parent list is truncated.
 - **providers-off**: with providers disabled there is no provider construction, probe or call at start or on any CLI, MCP or HTTP path, and local OCR runs when its engine is installed.
+
+### Exact target inputs
+
+A keyed consumer can name exact event IDs instead of a time window, for example when a recorded model result cites a frame or audio segment. These inputs use the same private current-policy projection and input snapshot as temporal reads. They are transferred in commit order with count and byte page budgets, including unknown-time records. Missing, archived or policy-unavailable targets remain absent; the consumer compares the actual IDs and target content identities with its required evidence and reports unavailable or waiting. It never substitutes a nearby record.

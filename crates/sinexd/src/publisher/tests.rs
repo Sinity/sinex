@@ -130,7 +130,6 @@ async fn publishes_only_references_in_commit_order(db: devkit::pg::TestDatabase)
     let seqs: Vec<i64> = messages
         .iter()
         .filter_map(|m| match m {
-            Confirmed::Event(e) => Some(e.commit_seq),
             Confirmed::EventReference { commit_seq, .. } => Some(*commit_seq),
             Confirmed::Archived(_) | Confirmed::Unhidden(_) | Confirmed::Excised { .. } | Confirmed::PositionComplete{..} | Confirmed::Gap{..} => None,
         })
@@ -138,7 +137,10 @@ async fn publishes_only_references_in_commit_order(db: devkit::pg::TestDatabase)
     assert_eq!(seqs, [1, 2, 3]);
     assert!(matches!(&messages[0],Confirmed::EventReference{commit_seq:1,..}));
     assert!(matches!(&messages[1],Confirmed::EventReference{commit_seq:2,..}));
-    assert!(messages.iter().all(|message|!matches!(message,Confirmed::Event(_))),"all metadata is fetched under current policy");
+    for message in messages.iter().filter(|message|matches!(message,Confirmed::EventReference{..})) {
+        let wire=serde_json::to_value(message).unwrap();let object=wire.as_object().unwrap();
+        assert_eq!(object.len(),3);assert!(object.contains_key("kind")&&object.contains_key("event")&&object.contains_key("commit_seq"));
+    }
     let Confirmed::Archived(change) = &messages[3] else {
         panic!("the change follows the event that caused it")
     };
@@ -401,7 +403,6 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
     let mut visibility = Vec::new();
     for message in messages {
         match message {
-            Confirmed::Event(_) => panic!("inline metadata is not the current stream contract"),
             Confirmed::EventReference{event,..}=>{assert!(live.insert(event));}
             Confirmed::Archived(n) => {
                 assert_eq!(n.event, id);
@@ -589,6 +590,6 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         read_all(&js, &subjects)
             .await
             .iter()
-            .all(|m| !matches!(m, Confirmed::Event(_)|Confirmed::EventReference{..}))
+            .all(|m| !matches!(m, Confirmed::EventReference{..}))
     );
 }

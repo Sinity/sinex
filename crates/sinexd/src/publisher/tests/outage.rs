@@ -314,7 +314,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     let mut ids = BTreeSet::new();
     for message in &all {
         let Confirmed::EventReference{commit_seq,event} = message else {
-            assert!(!matches!(message,Confirmed::Event(_)));continue;
+            continue;
         };
         assert!(ids.insert(*event), "{event} published twice");
         let stored:i64=sqlx::query_scalar("SELECT commit_seq FROM core.events WHERE id=$1").bind(event.0).fetch_one(&mut conn).await.unwrap();
