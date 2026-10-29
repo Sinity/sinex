@@ -56,5 +56,5 @@ will render the operation declarations as a committed page.
 - [docs/README.md](docs/README.md): every page of the design.
 - [AGENTS.md](AGENTS.md): how work is done in this repository.
 
-Cloud setup, including the explicit rootless native backend, is described in
+Cloud setup and shell startup, including the explicit native backend, are described in
 [the shared setup guide](https://github.com/Sinity/polylogue-sinex-common/blob/master/dev/cloud/README.md).

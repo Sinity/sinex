@@ -372,21 +372,27 @@ measurement is fine; report figures, not contents.
 
 ## Cloud sessions and changes to polylogue-sinex-common
 
-Cloud sessions run `cargo xtask` directly without AgentCTL or the operator's
-services. Include polylogue-sinex-common and run `bash dev/cloud/setup.sh`.
-The [shared cloud setup guide](https://github.com/Sinity/polylogue-sinex-common/blob/master/dev/cloud/README.md)
-owns backend selection, pinned tools, shell startup and readiness checks.
-Use `CLOUD_BACKEND=native` for a restricted cloud runtime; the default Nix
-backend uses the repository's development shell.
+In cloud sessions, check for `${CLOUD_PREFIX:-../.cloud}/env.sh` from the
+checkout root before development commands. When present, source it in every
+command shell:
+
+```sh
+. "${CLOUD_PREFIX:-../.cloud}/env.sh"
+```
+
+If absent, read the
+[shared cloud setup guide](https://github.com/Sinity/polylogue-sinex-common/blob/master/dev/cloud/README.md)
+before choosing a backend or running `bash dev/cloud/setup.sh`. The included
+polylogue-sinex-common checkout owns that setup implementation and its pins.
+Preserve a resumed task's branch, commits and uncommitted work; sourcing
+initializes tools. Run `cargo xtask` directly; each run owns its services.
 
 - A Sinex session must include the polylogue-sinex-common repository: Cargo
   fetches Git dependencies from it, and a session reaches only the
   repositories it includes.
 - `cargo xtask check`, `cargo xtask compile -p <package> [--tests]` and
   `cargo xtask test [-p <package>] [-E <filterset>]` work as on the host.
-  Each run owns its PostgreSQL cluster and NATS server; PostgreSQL runs as
-  `nobody` when started by root and as the calling user otherwise. The setup
-  installer needs elevated permissions; ordinary commands need not run as root.
+  The shared guide describes PostgreSQL, TimescaleDB and NATS readiness.
   The first workspace build takes minutes; run it in the background. The
   NixOS VM checks, `xtask bench` and anything that reads the operator's data
   do not run there; report them as not run.
