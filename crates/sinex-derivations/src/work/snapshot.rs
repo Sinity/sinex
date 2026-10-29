@@ -117,7 +117,7 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
         return Computed{outputs:vec![coverage(parent,session,Some(REDUCER_VERSION),WorkCoverageState::Complete,Some(0),Some(0),Some(0),[("retired".into(),1)].into())],..Default::default()}
     }
     let sparse=snapshot.sources.iter().filter(|source|source.selected&&source.projection.as_ref().is_some_and(|projection|projection.block_ordinals.len()as u64!=projection.block_count||projection.block_ordinals.iter().any(|ordinal|*ordinal>=projection.block_count)||projection.block_ordinals.iter().collect::<BTreeSet<_>>().len()!=projection.block_ordinals.len())).count();
-    let mut entries=Vec::new();
+    let mut entries=Vec::new();let mut uncertain_outcomes=0u64;
     for message in snapshot.messages {
         if message.role=="user"&&message.written_by=="human"&&message.prompt_kind.as_deref()==Some("prose")
             &&metadata["kind"]=="main"&&metadata.get("mode").is_none_or(Value::is_null) {
@@ -127,6 +127,7 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
     }
     for call in snapshot.calls {
         if call.session!=session{return unavailable(parent,session,Some(REDUCER_VERSION),"entry_session_mismatch")}
+        uncertain_outcomes+=u64::from(matches!(call.outcome,Outcome::Unknown{..}));
         let failed=matches!(call.outcome,Outcome::Error{..})||call.check_passed==Some(false);
         entries.push(Entry{kind:"call",id:call.call,at:call.at,at_evidence:call.at_evidence,end:call.result_at,end_evidence:Some(call.result_at_evidence),agency:Agency::Delegated,
             action:call.action,path:call.path,failed,revision:call.revision,check_name:call.check_name,check_passed:call.check_passed});
@@ -147,6 +148,7 @@ pub(super) fn compute(key:&Value,inputs:&[Event])->Computed {
     if !envelope.native_unavailable.is_empty(){reasons.insert("native_metadata_unavailable".into(),envelope.native_unavailable.len()as u64);}
     if !snapshot.unavailable.is_empty(){reasons.insert("snapshot_source_unavailable".into(),snapshot.unavailable.len()as u64);}
     if sparse>0 {reasons.insert("sparse_selected_source".into(),sparse as u64);}
+    if uncertain_outcomes>0 {reasons.insert("tool_outcome_unknown".into(),uncertain_outcomes);}
     if snapshot.session.is_none(){reasons.insert("session_metadata_unavailable".into(),1);}
     entries.sort_by(|left,right|(left.at,left.kind,&left.id).cmp(&(right.at,right.kind,&right.id)));
     for entry in entries {
