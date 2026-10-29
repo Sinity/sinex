@@ -438,6 +438,9 @@ pub async fn request_bytes<T: DeserializeOwned + Send + 'static>(
                 )
                 .await
                 .map_err(transport)?;
+            // A caller-owned current-thread runtime may stop driving NATS as
+            // soon as this future returns. Finish the flow handshake first.
+            client.flush().await.map_err(transport)?;
             Ok(value)
         }
         (result, decoded) => {
@@ -449,6 +452,7 @@ pub async fn request_bytes<T: DeserializeOwned + Send + 'static>(
                         .into(),
                 )
                 .await;
+            let _ = client.flush().await;
             Err(result
                 .err()
                 .or_else(|| decoded.err())

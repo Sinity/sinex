@@ -216,3 +216,53 @@ async fn a_wrong_flow_ack_does_not_acknowledge_another_stream_or_extend_its_dead
         .unwrap();
     assert!(matches!(task.await.unwrap(), Err(ReplyError::Idle)));
 }
+
+#[devkit::test(multi_thread)]
+async fn the_final_flow_ack_reaches_the_server_before_a_caller_runtime_quiesces() {
+    let server = devkit::nats::test_nats().unwrap();
+    let responder = async_nats::connect(server.url()).await.unwrap();
+    let mut requests = responder.subscribe("current-thread.reader").await.unwrap();
+    responder.flush().await.unwrap();
+    let responding = tokio::spawn(async move {
+        let request = requests.next().await.unwrap();
+        publish_json(
+            &responder,
+            request.reply.unwrap().to_string(),
+            vec![1u8, 2, 3],
+            Duration::from_millis(300),
+        )
+        .await
+    });
+    let url = server.url().to_owned();
+    let (ready_send, ready) = tokio::sync::oneshot::channel();
+    let (resume, wait) = std::sync::mpsc::channel();
+    let caller = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = runtime.block_on(async_nats::connect(url)).unwrap();
+        let value: Vec<u8> = runtime
+            .block_on(request_json(
+                &client,
+                "current-thread.reader",
+                "reader",
+                &serde_json::json!({}),
+                Duration::from_secs(5),
+            ))
+            .unwrap();
+        assert_eq!(value, vec![1, 2, 3]);
+        ready_send.send(()).unwrap();
+        wait.recv().unwrap();
+        drop(client);
+        drop(runtime);
+    });
+    ready.await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), responding).await;
+    resume.send(()).unwrap();
+    caller.join().unwrap();
+    assert!(
+        result.unwrap().unwrap().is_ok(),
+        "server observes the completed flow while caller runtime is idle"
+    );
+}
