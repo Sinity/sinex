@@ -6,9 +6,9 @@
 //! incarnation, so a lost broker store replays from PostgreSQL.
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
-use sinex_model::{Class, EventId, OperationId, RecordLocation, RunId, Timestamp};
-use sinex_protocol::{Archived, Confirmed, ConfirmedEvent, Subjects, Unhidden, Withheld};
-use sinex_store::commit_log::{self, ArchiveChange, Committed};
+use sinex_model::{EventId, OperationId};
+use sinex_protocol::{Archived, Confirmed, Subjects, Unhidden};
+use sinex_store::commit_log::{self, ArchiveChange};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -28,7 +28,7 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
         .build(client)
 }
 
-const CONTRACT: &str = "2";
+const CONTRACT: &str = "3";
 const CONTRACT_KEY: &str = "sinex_confirmed_contract";
 
 async fn confirmed_stream(js:&jetstream::Context,subjects:&Subjects)->Result<stream::Stream,String>{
@@ -41,7 +41,7 @@ async fn confirmed_stream(js:&jetstream::Context,subjects:&Subjects)->Result<str
     let found=js.get_or_create_stream(config.clone()).await.map_err(|error|format!("confirmed stream: {error}"))?;
     if found.cached_info().config.metadata.get(CONTRACT_KEY).map(String::as_str)!=Some(CONTRACT){
         if found.cached_info().state.last_sequence>0 {
-            return Err("confirmed_stream_contract_mismatch: existing stream requires an explicit version-2 conversion or parallel-stream decision".into());
+            return Err("confirmed_stream_contract_mismatch: existing stream requires an explicit reference-only version-3 conversion or parallel-stream decision".into());
         }
         js.update_stream(config).await.map_err(|error|format!("confirmed stream contract: {error}"))?;
         return js.get_stream(subjects.confirmed_stream()).await.map_err(|error|error.to_string());
@@ -49,15 +49,15 @@ async fn confirmed_stream(js:&jetstream::Context,subjects:&Subjects)->Result<str
     Ok(found)
 }
 
-/// Create a fresh version-2 stream, or verify the existing stream's contract.
+/// Create a fresh reference-only version-3 stream, or verify the existing stream's contract.
 pub(crate) async fn ensure_stream(js:&jetstream::Context,subjects:&Subjects)->Result<(),String>{
     confirmed_stream(js,subjects).await.map(drop)
 }
 
-fn stream_instance(stream:&stream::Stream)->String {
+pub(crate) fn stream_instance(stream:&stream::Stream)->String {
     format!("{}/{}",stream.cached_info().config.name,stream.cached_info().created.unix_timestamp_nanos())
 }
-fn consumer_for(instance:&str)->String {format!("{CONSUMER}/{instance}")}
+pub(crate) fn consumer_for(instance:&str)->String {format!("{CONSUMER}/{instance}")}
 
 /// Counts for one publishing pass, for status and measurement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -197,18 +197,28 @@ async fn publish_chunk(
     entries:&[commit_log::CommittedChange],complete:Option<i64>,total:&mut Published,
 )->Result<(Duration,Duration,Duration),String>{
     let acknowledge_started=Instant::now();
+    let mut tx=conn.begin().await.map_err(|error|error.to_string())?;
+    let policy=sinex_store::privacy::projection::lock_epoch(&mut tx).await.map_err(|error|error.to_string())?;
+    if !policy.ready(){return Err("privacy_projection_stale".into())}
     let mut acks=Vec::new();
-    let limit=js.client().server_info().max_payload as u64;
     for entry in entries {
         let (message,subject,id,event)=match &entry.change {
-            commit_log::Change::Event(event)=>(event_message(event,limit)?,
-                subjects.confirmed_event(&event.class,&event.event_type),format!("event-{}",entry.position),Some(event.id)),
+            commit_log::Change::Event(event)=>{
+                let class:Option<String>=sqlx::query_scalar("SELECT class FROM privacy.event_outputs WHERE event_id=$1 AND epoch=$2 AND state='complete'")
+                  .bind(event.id).bind(policy.active).fetch_optional(&mut *tx).await.map_err(|error|error.to_string())?;
+                let class=class.ok_or("privacy_projection_unavailable")?;
+                (Confirmed::EventReference{commit_seq:event.commit_seq,event:EventId(event.id)},
+                  subjects.confirmed_event(&class,&event.event_type),format!("event-{}",entry.position),Some(event.id))
+            },
             commit_log::Change::Archive(lifecycle)=>{
                 let change=&lifecycle.archive;
                 let message=if change.archived {Confirmed::Archived(archived_message(change)?)}else{
                     Confirmed::Unhidden(Unhidden{change_seq:change.change_seq,event:EventId(change.event_id),
                         unhidden_seq:entry.position,operation:change.operation_id.map(OperationId)})};
-                (message,subjects.confirmed_lifecycle(&lifecycle.class,&lifecycle.event_type),format!("archive-{}",change.change_seq),None)
+                let class:Option<String>=sqlx::query_scalar("SELECT CASE WHEN e.id IS NULL THEN t.class WHEN o.epoch=$2 AND o.state='complete' THEN o.class END FROM (SELECT $1::uuid AS id) wanted LEFT JOIN core.events e ON e.id=wanted.id LEFT JOIN privacy.event_outputs o ON o.event_id=wanted.id LEFT JOIN core.event_tombstones t ON t.event_id=wanted.id")
+                  .bind(change.event_id).bind(policy.active).fetch_one(&mut *tx).await.map_err(|error|error.to_string())?;
+                let class=class.ok_or("privacy_projection_unavailable")?;
+                (message,subjects.confirmed_lifecycle(&class,&lifecycle.event_type),format!("archive-{}",change.change_seq),None)
             },
             commit_log::Change::Excised(change)=>(Confirmed::Excised{commit_seq:Some(entry.position),
                 original_commit_seq:Some(change.original_commit_seq),event:EventId(change.event_id),operation:OperationId(change.operation_id)},
@@ -223,7 +233,6 @@ async fn publish_chunk(
         else {total.changes+=1;}}
     let mut acknowledge=acknowledge_started.elapsed();
     let record_started=Instant::now();
-    let mut tx=conn.begin().await.map_err(|error|error.to_string())?;
     commit_log::record_published_in(&mut tx,instance,&placed).await.map_err(|error|error.to_string())?;
     total.excised+=erase_excised_in(&mut tx,js,subjects,instance).await?;
     let mut record=record_started.elapsed();
@@ -279,55 +288,6 @@ async fn publish(
     js.publish_with_headers(subject, headers, body.into())
         .await
         .map_err(|e| format!("publish {id}: {e}"))
-}
-
-/// Metadata can be larger than a broker message too. Carry the same logical
-/// event by reference and let the authorized fetch path transfer it in chunks.
-fn event_message(event:&Committed,limit:u64)->Result<Confirmed,String>{
-    let message=Confirmed::Event(Box::new(confirmed_event(event)?));
-    let body=serde_json::to_vec(&message).map_err(|error|error.to_string())?;
-    let headers=format!("NATS/1.0\r\nNats-Msg-Id: event-{}\r\n\r\n",event.commit_seq);
-    if body.len() as u64+headers.len() as u64>limit {
-        Ok(Confirmed::EventReference{commit_seq:event.commit_seq,event:EventId(event.id)})
-    }else{Ok(message)}
-}
-
-fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
-    let class: Class = serde_json::from_value(serde_json::Value::String(e.class.clone()))
-        .map_err(|err| format!("event {}: class {:?}: {err}", e.id, e.class))?;
-    let location = match (e.material_id, e.anchor) {
-        (Some(material), Some(anchor)) => Some(RecordLocation {
-            material: sinex_model::MaterialId(material),
-            anchor: u64::try_from(anchor)
-                .map_err(|_| format!("event {}: negative anchor", e.id))?,
-        }),
-        _ => None,
-    };
-    Ok(ConfirmedEvent {
-        kind_version: u64::try_from(e.kind_version).map_err(|_| "invalid stored kind version")?,
-        validation: serde_json::from_value(serde_json::json!(e.validation))
-            .map_err(|_| "invalid stored validation")?,
-        commit_seq: e.commit_seq,
-        id: EventId(e.id),
-        event_type: e.event_type.clone(),
-        source: e.source.clone(),
-        run: RunId(e.run_id),
-        location,
-        output_index: u64::try_from(e.output_index)
-            .map_err(|_| format!("event {} has an invalid output index", e.id))?,
-        parents: e.parents.iter().flatten().map(|p| EventId(*p)).collect(),
-        ts_orig: e.ts_orig.map(Timestamp),
-        ts_quality: e.ts_quality.clone(),
-        ts_coided: e.ts_coided.map(Timestamp),
-        ts_persisted: Timestamp(e.ts_persisted),
-        record_state: e.record_state.clone(),
-        class,
-        equivalence_key: e.equivalence_key.clone(),
-        reading_order: e.reading_order,
-        record_hash: e.record_hash.iter().map(|b| format!("{b:02x}")).collect(),
-        payload: None,
-        withheld: Some(Withheld::Grants),
-    })
 }
 
 fn archived_message(n: &ArchiveChange) -> Result<Archived, String> {

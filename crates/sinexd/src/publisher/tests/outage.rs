@@ -277,7 +277,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
             .await
             .into_iter()
             .map(|m| match m {
-                Confirmed::Event(e) => (e.commit_seq, e.id.0),
+                Confirmed::EventReference{commit_seq,event} => (commit_seq,event.0),
                 other => panic!("an event subject carried {other:?}"),
             })
             .collect();
@@ -308,26 +308,17 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     );
     assert_eq!(changes[1].1, sinex_model::ArchiveReason::Hide);
 
-    // Each message equals its stored row, record hash included.
+    // References retain exact original positions and IDs, with no inline
+    // payload, key or other source metadata surviving a later rule edit.
     let all = read_filtered(&direct, &stream, vec![subjects.confirmed_all()]).await;
     let mut ids = BTreeSet::new();
     for message in &all {
-        let Confirmed::Event(e) = message else {
-            continue;
+        let Confirmed::EventReference{commit_seq,event} = message else {
+            assert!(!matches!(message,Confirmed::Event(_)));continue;
         };
-        assert!(ids.insert(e.id), "{} published twice", e.id);
-        assert_eq!(e.withheld, Some(sinex_protocol::Withheld::Grants));
-        let stored: (String, serde_json::Value, i64) = sqlx::query_as(
-            "SELECT encode(record_hash, 'hex'), payload, reading_order FROM core.events WHERE id = $1",
-        )
-        .bind(e.id.0)
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-        assert_eq!(
-            (&e.record_hash, e.payload.as_ref(), e.reading_order),
-            (&stored.0, None, stored.2)
-        );
+        assert!(ids.insert(*event), "{event} published twice");
+        let stored:i64=sqlx::query_scalar("SELECT commit_seq FROM core.events WHERE id=$1").bind(event.0).fetch_one(&mut conn).await.unwrap();
+        assert_eq!(*commit_seq,stored);
     }
     let events: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL")

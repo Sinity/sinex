@@ -1,7 +1,7 @@
 use super::*;
 use futures::StreamExt;
 use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Event, MaterialId, Origin, ReadingOrder, RecordOutcome,
+    ArchiveRequest, Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordOutcome, RecordLocation, RunId, Timestamp,
     event_types::CommandExecuted,
 };
 
@@ -84,7 +84,7 @@ async fn instance(js:&jetstream::Context,subjects:&Subjects)->String{
 }
 
 #[devkit::test]
-async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
+async fn publishes_only_references_in_commit_order(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -136,16 +136,9 @@ async fn publishes_in_commit_order_masked_once(db: devkit::pg::TestDatabase) {
         })
         .collect();
     assert_eq!(seqs, [1, 2, 3]);
-    let Confirmed::Event(guarded) = &messages[1] else {
-        panic!("event")
-    };
-    assert_eq!(guarded.class, Class::Guarded);
-    assert_eq!(guarded.payload, None, "guarded payloads are withheld");
-    assert_eq!(guarded.withheld, Some(Withheld::Grants));
-    let Confirmed::Event(open) = &messages[0] else {
-        panic!("event")
-    };
-    assert_eq!(open.payload,None);assert_eq!(open.withheld,Some(Withheld::Grants));
+    assert!(matches!(&messages[0],Confirmed::EventReference{commit_seq:1,..}));
+    assert!(matches!(&messages[1],Confirmed::EventReference{commit_seq:2,..}));
+    assert!(messages.iter().all(|message|!matches!(message,Confirmed::Event(_))),"all metadata is fetched under current policy");
     let Confirmed::Archived(change) = &messages[3] else {
         panic!("the change follows the event that caused it")
     };
@@ -183,16 +176,8 @@ async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit:
         .unwrap();
     assert_eq!(done.events, 2);
     let messages = read_all(&js, &subjects).await;
-    let Confirmed::Event(big) = &messages[0] else {
-        panic!("event")
-    };
-    assert_eq!(big.payload, None);
-    assert_eq!(big.withheld,Some(Withheld::Grants));
-    let Confirmed::Event(small) = &messages[1] else {
-        panic!("event")
-    };
-    assert_eq!(small.payload,None);
-    assert_eq!(small.withheld,Some(Withheld::Grants));
+    assert!(matches!(&messages[0],Confirmed::EventReference{commit_seq:1,..}));
+    assert!(matches!(&messages[1],Confirmed::EventReference{commit_seq:2,..}));
 }
 
 #[devkit::test]
@@ -343,7 +328,7 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     assert!(
         !messages
             .iter()
-            .any(|m| matches!(m, Confirmed::Event(e) if e.id == secret_id)),
+            .any(|m| matches!(m, Confirmed::EventReference{event,..} if *event == secret_id)),
         "the excised event's message is gone"
     );
     let removed_seq:Option<i64>=sqlx::query_scalar("SELECT commit_seq FROM core.event_tombstones WHERE event_id=$1").bind(secret_id.0).fetch_one(&mut conn).await.unwrap();
@@ -374,7 +359,7 @@ async fn excision_erases_the_published_message(db: devkit::pg::TestDatabase) {
     publish_pending(&mut publisher_conn, &js, &subjects).await.unwrap();
     let rebuilt = read_wire_all(&js, &subjects).await;
     assert_eq!(rebuilt.iter().filter_map(commit_order::tuple).collect::<Vec<_>>(), expected);
-    assert!(!rebuilt.iter().any(|message| matches!(message, Confirmed::Event(event) if event.id == secret_id)));
+    assert!(!rebuilt.iter().any(|message| matches!(message, Confirmed::EventReference{event,..} if *event == secret_id)));
 }
 
 #[devkit::test]
@@ -416,9 +401,8 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
     let mut visibility = Vec::new();
     for message in messages {
         match message {
-            Confirmed::Event(e) => {
-                assert!(live.insert(e.id));
-            }
+            Confirmed::Event(_) => panic!("inline metadata is not the current stream contract"),
+            Confirmed::EventReference{event,..}=>{assert!(live.insert(event));}
             Confirmed::Archived(n) => {
                 assert_eq!(n.event, id);
                 live.remove(&n.event);
@@ -430,7 +414,6 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
                 visibility.push((n.unhidden_seq, live.contains(&id)));
             }
             Confirmed::Excised { .. } => panic!("no excision requested"),
-            Confirmed::EventReference { .. } => panic!("fixture metadata fits in a message"),
             Confirmed::PositionComplete{..}=>{},Confirmed::Gap{reason}=>panic!("unexpected gap: {reason}"),
         }
     }
@@ -495,7 +478,7 @@ async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
     let messages = read_all(&js, &subjects).await;
     assert!(matches!(&messages[2], Confirmed::Archived(_)));
     assert!(
-        matches!(&messages[3], Confirmed::Event(e) if e.id == last_id && e.payload.is_none() && e.withheld == Some(Withheld::Grants))
+        matches!(&messages[3], Confirmed::EventReference{event,..} if *event == last_id)
     );
 }
 
@@ -521,7 +504,7 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
         &js,
         subjects.confirmed_event(&committed.class,&committed.event_type),
         format!("event-{}", committed.commit_seq),
-        &Confirmed::Event(Box::new(confirmed_event(committed).unwrap())),
+        &Confirmed::EventReference{commit_seq:committed.commit_seq,event:EventId(committed.id)},
     )
     .await
     .unwrap()
@@ -581,7 +564,7 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         &js,
         subjects.confirmed_event(&committed.class,&committed.event_type),
         "another-copy".into(),
-        &Confirmed::Event(Box::new(confirmed_event(committed).unwrap())),
+        &Confirmed::EventReference{commit_seq:committed.commit_seq,event:EventId(committed.id)},
     )
     .await
     .unwrap()
@@ -606,6 +589,6 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         read_all(&js, &subjects)
             .await
             .iter()
-            .all(|m| !matches!(m, Confirmed::Event(_)))
+            .all(|m| !matches!(m, Confirmed::Event(_)|Confirmed::EventReference{..}))
     );
 }

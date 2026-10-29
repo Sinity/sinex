@@ -286,7 +286,10 @@ pub async fn apply(
 
     sqlx::query!(
         r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, operation_id,commit_seq,original_commit_seq,class)
-           SELECT id, source, event_type, ts_orig, $2,$3,commit_seq,class FROM core.events WHERE id = ANY($1)
+           SELECT e.id,e.source,e.event_type,e.ts_orig,$2,$3,e.commit_seq,
+             (SELECT o.class FROM privacy.event_outputs o JOIN privacy.policy_state p ON p.id
+              WHERE o.event_id=e.id AND o.epoch=p.desired_epoch AND p.active_epoch=p.desired_epoch AND o.state='complete')
+           FROM core.events e WHERE e.id = ANY($1)
            ON CONFLICT DO NOTHING"#,
         &ids,
         operation.0,

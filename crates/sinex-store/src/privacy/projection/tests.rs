@@ -115,3 +115,18 @@ async fn retained_history_proves_an_unmutated_legacy_row_before_future_rules(db:
     privacy::add_rule(&mut conn,&rule()).await.unwrap();ensure_current(&mut conn).await.unwrap();assert_eq!(visible(&mut conn,id).await["text"],"[masked]");
     privacy::end_rule(&mut conn,"configured field","fixture").await.unwrap();ensure_current(&mut conn).await.unwrap();assert_eq!(visible(&mut conn,id).await,original);
 }
+
+#[devkit::test]
+async fn transformed_source_key_is_not_resolved_from_the_private_original(db:devkit::pg::TestDatabase){
+    use sinex_model::query::Reference;
+    let mut conn=AdmissionContext::connect(&db.url(None)).await.unwrap();let parent=document("fixture.policy","ordinary");let parent_id=parent.id;admit(&mut conn,vec![parent]).await;
+    let child=derived_command(parent_id,"ordinary command");let id=child.id;let original_key=child.equivalence_key.as_ref().unwrap().0.clone();admit(&mut conn,vec![child]).await;
+    let original_ref=Reference::Key{source:"fixture.derived".into(),event_type:"command.executed".into(),key:original_key};
+    assert_eq!(crate::query::resolve(&mut conn,&original_ref).await.unwrap(),id.0);
+    privacy::add_rule(&mut conn,&NewRule{name:"configured key".into(),source:"fixture.derived".into(),event_type:Some("command.executed".into()),field:Some("/native_id".into()),matcher:"pattern".into(),matcher_arg:Some("derived".into()),class:Class::Guarded,action:Action::Mask,author:"fixture".into()}).await.unwrap();ensure_current(&mut conn).await.unwrap();
+    assert!(crate::query::resolve(&mut conn,&original_ref).await.is_err());
+    let shown=crate::query::show(&mut conn,&Reference::Event(id.0)).await.unwrap();assert_eq!(shown["payload"],json!({"withheld":"guarded"}));assert_eq!(shown["id"],json!(id));
+    crate::query::set_grants(&mut conn,"guarded").await.unwrap();assert!(crate::query::resolve(&mut conn,&original_ref).await.is_err());
+    let shown=crate::query::show(&mut conn,&Reference::Event(id.0)).await.unwrap();assert_eq!(shown["payload"]["native_id"],"[masked]");
+    let projected_ref=Reference::Key{source:"fixture.derived".into(),event_type:"command.executed".into(),key:shown["key"].as_str().unwrap().into()};assert_eq!(crate::query::resolve(&mut conn,&projected_ref).await.unwrap(),id.0);
+}

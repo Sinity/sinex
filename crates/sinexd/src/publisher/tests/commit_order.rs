@@ -134,15 +134,39 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db:devkit::pg
     event.origin=Origin::Derived{parents:parents.clone()};
     admit(&mut conn,batch(vec![event],vec![])).await;
     let page=commit_log::after(&mut conn,1,1,i64::MAX).await.unwrap();
-    let full=Confirmed::Event(Box::new(confirmed_event(&page.events[0]).unwrap()));
-    assert!(serde_json::to_vec(&full).unwrap().len()>js.client().server_info().max_payload);
+    assert!(serde_json::to_vec(&page.events[0].parents).unwrap().len()>js.client().server_info().max_payload);
     let transfer=commit_log::changes_page(&mut conn,commit_log::ChangeCursor::after(1),100,js.client().server_info().max_payload as i64).await.unwrap();
     assert_eq!(transfer.entries.len(),1,"giant metadata is allowed alone and its completion waits for the next page");
     assert!(matches!(transfer.entries[0].change,commit_log::Change::Event(_)));
     publish_pending(&mut conn,&js,&subjects).await.unwrap();
     let messages=read_wire_all(&js,&subjects).await;
-    assert!(matches!(&messages[0],Confirmed::Event(event) if event.id==parent_id));
+    assert!(matches!(&messages[0],Confirmed::EventReference{event,..} if *event==parent_id));
     assert_eq!(messages[1..],[Confirmed::EventReference{commit_seq:2,event:id},Confirmed::PositionComplete{commit_seq:2}]);
     let stored:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT parents FROM core.events WHERE id=$1").bind(id.0).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(stored,parents.iter().map(|id|id.0).collect::<Vec<_>>(),"the transport fallback preserves complete stored metadata");
+    assert_eq!(stored,parents.iter().map(|id|id.0).collect::<Vec<_>>(),"reference-only transport preserves complete stored metadata");
+}
+
+#[devkit::test]
+async fn references_expose_no_source_key_and_route_by_current_policy_class(db:devkit::pg::TestDatabase){
+    let nats=devkit::nats::test_nats().unwrap();let subjects=Subjects::new(nats.prefix());let js=context(async_nats::connect(nats.url()).await.unwrap());
+    let mut conn=sinex_store::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    sinex_store::privacy::add_rule(&mut conn,&sinex_store::privacy::NewRule{name:"configured native key".into(),source:"atuin".into(),event_type:Some("command.executed".into()),field:Some("/native_id".into()),matcher:"pattern".into(),matcher_arg:Some("route-secret".into()),class:Class::Guarded,action:sinex_store::privacy::Action::Mask,author:"fixture".into()}).await.unwrap();
+    let event=executed("route-secret","ordinary command",1,Class::Open);let id=event.id;admit(&mut conn,batch(vec![event],vec![])).await;
+    assert!(publish_pending(&mut conn,&js,&subjects).await.unwrap_err().contains("privacy_projection_stale"));
+    assert_eq!(commit_log::consumer_position(&mut conn,&consumer_for(&instance(&js,&subjects).await)).await.unwrap().0,0);
+    sinex_store::privacy::projection::ensure_current(&mut conn).await.unwrap();publish_pending(&mut conn,&js,&subjects).await.unwrap();
+    let stream=js.get_stream(subjects.confirmed_stream()).await.unwrap();let raw=stream.get_raw_message(1).await.unwrap();
+    assert_eq!(raw.subject,subjects.confirmed_event("guarded","command.executed"));assert!(!String::from_utf8_lossy(&raw.payload).contains("route-secret"));
+    let wire:Confirmed=serde_json::from_slice(&raw.payload).unwrap();assert_eq!(wire,Confirmed::EventReference{commit_seq:1,event:id});
+    let key:String=sqlx::query_scalar("SELECT equivalence_key FROM core.events WHERE id=$1").bind(id.0).fetch_one(&mut *conn).await.unwrap();assert!(key.contains("route-secret"),"the exact original remains private");
+}
+
+#[devkit::test]
+async fn retained_inline_contract_two_is_refused_without_erasing_messages(db:devkit::pg::TestDatabase){
+    let nats=devkit::nats::test_nats().unwrap();let subjects=Subjects::new(nats.prefix());let js=context(async_nats::connect(nats.url()).await.unwrap());
+    let mut config=stream::Config{name:subjects.confirmed_stream(),subjects:vec![subjects.confirmed_all()],..Default::default()};config.metadata.insert(CONTRACT_KEY.into(),"2".into());
+    js.create_stream(config).await.unwrap();let old=serde_json::json!({"type":"event","equivalence_key":"synthetic-inline-key"});
+    js.publish(subjects.confirmed_event("open","fixture.event"),serde_json::to_vec(&old).unwrap().into()).await.unwrap().await.unwrap();
+    let mut conn=PgConnection::connect(&db.url(None)).await.unwrap();assert!(publish_pending(&mut conn,&js,&subjects).await.unwrap_err().starts_with("confirmed_stream_contract_mismatch:"));
+    let stream=js.get_stream(subjects.confirmed_stream()).await.unwrap();assert_eq!(stream.cached_info().state.messages,1);assert_eq!(stream.cached_info().config.metadata[CONTRACT_KEY],"2");
 }
