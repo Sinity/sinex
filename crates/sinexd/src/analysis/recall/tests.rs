@@ -133,7 +133,6 @@ fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitted_def
         sinex_model::time_settings::TimeSettings::new("Etc/UTC", 6, 0).unwrap(),
     );
     let view = KeyView {
-        event_id: input.id,
         event_type: &input.event_type,
         ts_orig: input.ts_orig.at,
         payload: &input.payload,
