@@ -25,7 +25,7 @@ use std::path::PathBuf;
 /// File times move in coarse ticks: a look taken this soon after the file's
 /// last change cannot tell a same-size edit in the same tick from no change,
 /// so the next look hashes instead of trusting the stat tuple.
-const RACY_NS: i128 = 50_000_000;
+pub const RACY_NS: i128 = 50_000_000;
 /// The most bytes one poll reads past its cursor (more only for a single
 /// record longer than this): a file of any size is read in bounded parts.
 const PART: u64 = 64 << 20;
