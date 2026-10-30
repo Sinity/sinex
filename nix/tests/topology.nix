@@ -50,6 +50,7 @@ self: {
       systemd.tmpfiles.rules = [ "d /srv/watched 0755 root root -" ];
       users.groups.sinex.gid = 2900;
       services.sinex.exclude."machine.journald".reason = "The satellite fixture tests only file changes.";
+      services.sinex.exclude."machine.udev".reason = "The satellite fixture tests only file changes.";
       services.sinex.captureNode = {
         enable = true;
         nats = "server:4222";
