@@ -33,16 +33,21 @@ let
   };
   plan = builtins.fromJSON config.environment.etc."sinex/sources.json".text;
   fails = extra: !(builtins.tryEval (evaluate extra).system.build.toplevel.drvPath).success;
+  zoneScripts = extra:
+    let checked = evaluate (lib.recursiveUpdate {
+      services.sinex.backfills.zone = [ "zsh=/synthetic/history" ];
+    } extra);
+    in [ checked.systemd.services.sinexd.script checked.systemd.services.sinex-backfill-zone.script ];
   tests = [
     (builtins.tryEval (evaluate { }).system.build.toplevel.drvPath).success
-    (lib.hasInfix "--zone Europe/Warsaw" (evaluate {
+    (lib.all (lib.hasInfix "--zone Europe/Warsaw") (zoneScripts {
       time.timeZone = "Europe/Warsaw";
-    }).systemd.services.sinexd.script)
-    (lib.hasInfix "--zone America/New_York" (evaluate {
+    }))
+    (lib.all (lib.hasInfix "--zone America/New_York") (zoneScripts {
       time.timeZone = "Europe/Warsaw";
       services.sinex.zone = "America/New_York";
-    }).systemd.services.sinexd.script)
-    (!(lib.hasInfix "--zone " (evaluate { }).systemd.services.sinexd.script))
+    }))
+    (lib.all (script: !(lib.hasInfix "--zone " script)) (zoneScripts { }))
     (plan.exclude."desktop.clipboard".reason == "Synthetic operator exclusion")
     (plan.exclude."terminal.atuin-history" == null)
     (!(plan.sources."terminal.atuin-history" ? enable))
