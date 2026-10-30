@@ -15,6 +15,7 @@ let
     concatStringsSep concatMapStringsSep mapAttrs mapAttrsToList escapeShellArg;
 
   cfg = config.services.sinex;
+  zone = if cfg.zone != null then cfg.zone else config.time.timeZone;
   node = config.services.sinex.captureNode;
   catalog = lib.importJSON ./catalog.json;
   postgresDefaults = lib.importJSON ./postgres.json;
@@ -670,7 +671,7 @@ in
             --socket ${escapeShellArg cfg.api.socket} \
             ${optionalString (cfg.api.listen != null) "--listen ${escapeShellArg cfg.api.listen}"} \
             --tokens ${cfg.stateDir}/tokens \
-            ${optionalString (cfg.zone != null) "--zone ${escapeShellArg cfg.zone}"} \
+            ${optionalString (zone != null) "--zone ${escapeShellArg zone}"} \
             --day-start ${escapeShellArg cfg.dayStart} \
             --telemetry-spool ${cfg.stateDir}/spool/telemetry \
             --sources /etc/sinex/sources.json
@@ -813,7 +814,7 @@ in
               --database ${escapeShellArg dbUrl} \
               --store ${escapeShellArg cfg.storeDir} \
               --host ${escapeShellArg cfg.host} \
-              ${optionalString (cfg.zone != null) "--zone ${escapeShellArg cfg.zone}"} \
+              ${optionalString (zone != null) "--zone ${escapeShellArg zone}"} \
               --day-start ${escapeShellArg cfg.dayStart} \
               ${concatMapStringsSep " " (input: "--read ${escapeShellArg input}") inputs}
           '';

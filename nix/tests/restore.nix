@@ -5,6 +5,7 @@ self: {
   nodes.machine = { pkgs, ... }: {
     imports = [ self.nixosModules.default ];
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
+    time.timeZone = "Etc/UTC";
     environment.etc."sinex-test/nats-daemon".text = "daemon-secret";
     environment.etc."sinex-test/borg-pass".text = "borg-pass";
     environment.systemPackages = [ pkgs.borgbackup ];

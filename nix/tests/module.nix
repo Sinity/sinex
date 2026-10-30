@@ -35,6 +35,14 @@ let
   fails = extra: !(builtins.tryEval (evaluate extra).system.build.toplevel.drvPath).success;
   tests = [
     (builtins.tryEval (evaluate { }).system.build.toplevel.drvPath).success
+    (lib.hasInfix "--zone 'Europe/Warsaw'" (evaluate {
+      time.timeZone = "Europe/Warsaw";
+    }).systemd.services.sinexd.script)
+    (lib.hasInfix "--zone 'America/New_York'" (evaluate {
+      time.timeZone = "Europe/Warsaw";
+      services.sinex.zone = "America/New_York";
+    }).systemd.services.sinexd.script)
+    (!(lib.hasInfix "--zone " (evaluate { }).systemd.services.sinexd.script))
     (plan.exclude."desktop.clipboard".reason == "Synthetic operator exclusion")
     (plan.exclude."terminal.atuin-history" == null)
     (!(plan.sources."terminal.atuin-history" ? enable))

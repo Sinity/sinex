@@ -7,6 +7,7 @@ self: {
   nodes.machine = { pkgs, ... }: {
     imports = [ self.nixosModules.default ];
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
+    time.timeZone = "Etc/UTC";
     environment.etc."sinex-test/nats-daemon".text = "daemon secret: with @ and /";
     environment.etc."sinex-test/nats-session".text = "session-secret";
     environment.systemPackages = [ pkgs.curl ];

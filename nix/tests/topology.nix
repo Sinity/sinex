@@ -7,6 +7,7 @@ self: {
     server = { ... }: {
       imports = [ self.nixosModules.default ];
       virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
+      time.timeZone = "Etc/UTC";
       networking.firewall.enable = false;
       environment.etc."sinex-test/nats-daemon".text = "daemon-secret";
       environment.etc."sinex-test/nats-satellite".text = "satellite-secret";
