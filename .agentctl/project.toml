@@ -9,9 +9,8 @@ command = ["nix", "develop", "--command"]
 inherit = ["HOME", "USER", "LANG", "PATH", "TMPDIR", "XDG_RUNTIME_DIR", "CARGO_TARGET_DIR"]
 unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
 [environment.values]
-# Two builds run at once under the host cargo cap; -j8 each keeps them
-# inside their memory ceilings instead of each spawning one rustc per thread.
-CARGO_BUILD_JOBS = "8"
+# Two builds share the host cargo cap; each uses two compiler workers.
+CARGO_BUILD_JOBS = "2"
 # Incremental state is half of each target directory and the drive is write-bound;
 # agent builds rarely reuse it across commits.
 CARGO_INCREMENTAL = "0"
