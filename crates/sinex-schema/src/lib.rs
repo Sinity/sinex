@@ -12,10 +12,19 @@
 use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod model_calls;
+mod owner_protocol;
+mod privacy_epoch;
+mod query_cursors;
+mod read_boundary;
+mod source_declarations;
+pub use read_boundary::require as require_read_boundary;
 mod description;
 pub mod kinds;
+mod signals;
 mod tables;
 mod upgrades;
+mod vectors;
 
 /// The session advisory lock held by the database's one writer.
 pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
@@ -34,6 +43,10 @@ pub enum Error {
     Unversioned,
     #[error("a writer holds the database; stop sinexd before upgrading its schema")]
     WriterRunning,
+    #[error(
+        "unsafe SQL reader privileges; run sinexd admin prepare-database as the database superuser before applying or starting Sinex"
+    )]
+    UnsafeReadBoundary,
     #[error("{0}")]
     Declaration(String),
 }
@@ -65,7 +78,9 @@ fn privileged() -> Vec<String> {
     [
         "CREATE EXTENSION IF NOT EXISTS timescaledb",
         "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+        "CREATE EXTENSION IF NOT EXISTS vector",
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_writer') THEN CREATE ROLE sinex_writer; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_reader') THEN CREATE ROLE sinex_reader; END IF; END $$",
+        read_boundary::HARDEN,
     ]
     .map(String::from)
     .to_vec()
@@ -83,6 +98,16 @@ pub async fn prepare(connection: &mut PgConnection, owner: &str) -> Result<(), E
     connection
         .execute(format!("GRANT sinex_writer, sinex_reader TO {}", quote_ident(owner)).as_str())
         .await?;
+    connection
+        .execute(
+            format!(
+                "GRANT EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) TO {}",
+                quote_ident(owner)
+            )
+            .as_str(),
+        )
+        .await?;
+    read_boundary::require_context(connection).await?;
     Ok(())
 }
 
@@ -94,7 +119,7 @@ pub fn declarations() -> Vec<String> {
     }
     statements.push("CREATE TABLE sinex_schema.applied (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())".into());
     statements.extend(description::Description::current().statements());
-    statements.extend(grants());
+    statements.extend(grants(&description::Description::current()));
     statements
 }
 
@@ -150,6 +175,24 @@ impl Checks {
 /// without the grant: the event, its type and time stay visible, its payload
 /// and equivalence key do not.
 fn visibility() -> Vec<String> {
+    vec![
+        "CREATE OR REPLACE FUNCTION core.payload_time(value text) RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN
+ IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN NULL; END IF;
+ RETURN value::timestamptz;
+ EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN RETURN NULL; END $$".to_string(),
+        "CREATE OR REPLACE FUNCTION core.class_visible(class text) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT class = 'open'
+      OR class = ANY (string_to_array(coalesce(current_setting('sinex.grants', true), ''), ','))
+$$"
+        .to_string(),
+        crate::privacy_epoch::VISIBLE_EVENTS.into(),
+        crate::privacy_epoch::VISIBLE_VECTORS.into(),
+        crate::privacy_epoch::VISIBLE_SEARCH.into(),
+        crate::privacy_epoch::DERIVATION_EVENTS.into(),
+    ]
+}
+
+pub(crate) fn visibility_before_privacy_epoch() -> Vec<String> {
     vec![
         "CREATE OR REPLACE FUNCTION core.payload_time(value text) RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN
  IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN NULL; END IF;
@@ -223,27 +266,66 @@ fn kind_view(kind: &event_types::RegisteredEventType) -> description::View {
     }
 }
 
-fn grants() -> Vec<String> {
+fn grants(description: &description::Description) -> Vec<String> {
     let mut out = Vec::new();
     for schema in tables::SCHEMAS {
         out.push(format!(
             "GRANT USAGE ON SCHEMA {schema} TO sinex_writer, sinex_reader"
         ));
         out.push(format!(
-            "GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO sinex_reader, sinex_writer"
-        ));
-        out.push(format!(
-            "GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO sinex_writer"
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO sinex_writer"
         ));
         out.push(format!(
             "GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO sinex_writer"
         ));
+        // New internal tables stay private until their output projection is declared.
+        out.push(format!(
+            "REVOKE ALL ON ALL TABLES IN SCHEMA {schema} FROM sinex_reader, PUBLIC"
+        ));
     }
-    // Read-only SQL sees events only through the visibility views.
-    out.push(
-        "REVOKE SELECT ON core.events, telemetry.events, core.search_text FROM sinex_reader"
-            .to_string(),
-    );
+    // A table-level REVOKE does not remove an older column-level SELECT grant.
+    let schemas = tables::SCHEMAS
+        .iter()
+        .map(|name| format!("'{name}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    out.push(format!(r#"DO $reader_columns$ DECLARE relation record; BEGIN
+      FOR relation IN SELECT n.nspname,c.relname,string_agg(quote_ident(a.attname),', ' ORDER BY a.attnum) AS columns
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL
+        WHERE n.nspname=ANY(ARRAY[{schemas}]::text[]) AND c.relkind IN ('r','p','v','m','f')
+        GROUP BY n.nspname,c.relname
+      LOOP EXECUTE format('REVOKE SELECT (%s) ON %I.%I FROM sinex_reader, PUBLIC',relation.columns,relation.nspname,relation.relname); END LOOP;
+    END $reader_columns$"#));
+    out.push("GRANT SELECT ON ALL TABLES IN SCHEMA event_types TO sinex_reader".into());
+    for relations in [
+        &[
+            "registry.sources",
+            "registry.derivations",
+            "registry.event_types",
+            "registry.kind_prefixes",
+            "registry.source_declarations",
+        ][..],
+        &[
+            "core.visible_events",
+            "core.visible_search_text",
+            "core.visible_embedding_vectors",
+            "core.counters",
+            "core.source_counts",
+        ][..],
+    ] {
+        let readable = relations
+            .iter()
+            .copied()
+            .filter(|name| description.declares_relation(name))
+            .collect::<Vec<_>>();
+        if !readable.is_empty() {
+            out.push(format!(
+                "GRANT SELECT ON {} TO sinex_reader",
+                readable.join(", ")
+            ));
+        }
+    }
     out
 }
 
@@ -260,10 +342,10 @@ pub async fn apply_url(url: &str) -> Result<Applied, Error> {
 /// Refuse a database that is not at this build's schema version.
 pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error> {
     let found: Option<i32> = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
-        .fetch_one(connection)
+        .fetch_one(&mut *connection)
         .await?;
     match found {
-        Some(VERSION) => Ok(()),
+        Some(VERSION) => require_read_boundary(connection).await,
         Some(found) => Err(Error::Version { found }),
         None => Err(Error::Unversioned),
     }
@@ -286,6 +368,7 @@ pub async fn apply_with_owners(
     .fetch_one(&mut *connection)
     .await?;
     if has_version_table {
+        read_boundary::require_context(connection).await?;
         let found: Option<i32> =
             sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
                 .fetch_one(&mut *connection)
@@ -486,9 +569,10 @@ async fn apply_views(
                 .await?;
         }
     }
-    for statement in grants() {
+    for statement in grants(description) {
         connection.execute(statement.as_str()).await?;
     }
+    require_read_boundary(connection).await?;
     Ok(())
 }
 

@@ -325,7 +325,7 @@ fn capture_deadline_reaps_clipboard_and_audio_children() {
 fn run_deadline_reaps_both_clipboard_selections() {
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = tokio::runtime::Runtime::new().unwrap();
-    _runtime.block_on(hello::hello(
+    let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
         "fixture",
@@ -349,7 +349,7 @@ fn run_signals_join_capture_threads_and_reap_children() {
     for signal in ["INT", "TERM"] {
         let nats = devkit::nats::test_nats().unwrap();
         let _runtime = tokio::runtime::Runtime::new().unwrap();
-        _runtime.block_on(hello::hello(
+        let _hello = _runtime.block_on(hello::hello(
             &nats,
             &sinex_protocol::Subjects::new(nats.prefix()),
             "fixture",
@@ -374,7 +374,7 @@ fn run_signals_join_capture_threads_and_reap_children() {
 fn publishing_errors_leave_capture_children_running_until_stopped() {
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = tokio::runtime::Runtime::new().unwrap();
-    _runtime.block_on(hello::hello(
+    let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
         "fixture",
@@ -398,7 +398,7 @@ fn publishing_errors_leave_capture_children_running_until_stopped() {
 fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_continues() {
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = tokio::runtime::Runtime::new().unwrap();
-    _runtime.block_on(hello::hello(
+    let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
         "fixture",
@@ -421,9 +421,12 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
             .into_iter()
             .flatten()
             .filter_map(Result::ok)
-            .filter_map(|entry| std::fs::read(entry.path()).ok())
-            .filter_map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .filter(|position| position["cursor"]["inner"]["offset"] == 0)
+            .filter_map(|entry| {
+                let path = entry.path();
+                let binding = path.file_stem()?.to_str()?;
+                sinex_source_core::drivers::producer::Position::load(path.parent()?, binding).ok()
+            })
+            .filter(|position| position.cursor["inner"]["offset"] == 0)
             .count();
         if positions == 2 {
             break;
@@ -448,7 +451,7 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
 fn drain_without_spools_exits_without_starting_session_captures() {
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = tokio::runtime::Runtime::new().unwrap();
-    _runtime.block_on(hello::hello(
+    let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
         "fixture",
@@ -472,7 +475,7 @@ fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowle
     use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = tokio::runtime::Runtime::new().unwrap();
-    _runtime.block_on(hello::hello(
+    let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
         "fixture",
@@ -518,4 +521,73 @@ fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowle
     for (path, bytes) in before {
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
+}
+
+/// Only the capture command receives the signal. It must stop and reap the
+/// journal reader in its separate process group before reporting success.
+#[devkit::test]
+async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
+    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+    let dir = tempfile::tempdir().unwrap();
+    let journalctl = dir.path().join("journalctl");
+    let child_pid_file = dir.path().join("child.pid");
+    std::fs::write(
+        &journalctl,
+        "#!/bin/sh\necho $$ > \"$TEST_CHILD_PID\"\nexec sleep 300\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&journalctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut daemon = Session {
+        child: Some(
+            Command::new(env!("CARGO_BIN_EXE_sinex-session"))
+                .args(["capture", "journald", "--spool"])
+                .arg(dir.path().join("spool"))
+                .args(["--option", "follow=true"])
+                .env("PATH", path)
+                .env("TEST_CHILD_PID", &child_pid_file)
+                .process_group(0)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        ),
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let child = loop {
+        assert!(
+            daemon.child.as_mut().unwrap().try_wait().unwrap().is_none(),
+            "capture stopped before its reader started"
+        );
+        if let Ok(pid) = std::fs::read_to_string(&child_pid_file)
+            && let Ok(pid) = pid.trim().parse::<u32>()
+        {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "journal reader never started");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &daemon.child.as_mut().unwrap().id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    loop {
+        if let Some(status) = daemon.child.as_mut().unwrap().try_wait().unwrap() {
+            assert!(status.success(), "capture exited with {status}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "capture did not stop");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        !Path::new(&format!("/proc/{child}")).exists(),
+        "journal reader was not reaped"
+    );
 }

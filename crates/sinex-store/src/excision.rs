@@ -4,7 +4,7 @@
 //! materials they were read from, and nothing else:
 //!
 //! - each material goes whole: its row, its failures, the reader memory saved
-//!   at it and the producer frames that registered it or its events; its
+//!   at it; negative producer receipts retain only their idempotency identity; its
 //!   blob is deleted once nothing refers to it, and kept while another
 //!   material shares it; an input left with no material goes with its
 //!   observations and revisions;
@@ -26,7 +26,7 @@
 //!
 //! Each excision is recorded once in `core.operations`. The writer applies the
 //! plan in one transaction, checking that the readings it removes are still
-//! exactly the planned ones, and deletes the old blob files after commit.
+//! exactly the planned ones, and punches the old blob extents after commit.
 //! Running the same request again after a crash finds what is left and
 //! finishes it.
 use crate::admission::{DirtyKeys, mark_archived_dirty, remove_live};
@@ -82,8 +82,7 @@ pub struct Applied {
     /// Stored bytes the excised events cited that nothing else refers to.
     pub blobs_deleted: usize,
     pub dirty_keys: usize,
-    /// Blob files no row refers to any more; the writer deletes them after
-    /// commit.
+    /// Unreferenced blob names; the writer punches their extents after commit.
     pub delete_after_commit: Vec<String>,
 }
 
@@ -247,6 +246,11 @@ pub async fn apply(
     actor: &str,
     keys: &dyn DirtyKeys,
 ) -> Result<Applied> {
+    // The global counter precedes policy and metadata row locks everywhere.
+    let seq = crate::commit_log::allocate_position(conn).await?;
+    sqlx::query("SELECT desired_epoch FROM privacy.policy_state WHERE id FOR UPDATE")
+        .execute(&mut *conn)
+        .await?;
     if self::plan(conn, target).await? != *plan {
         return Err(Error::Invalid(
             "the readings to excise changed after planning; plan the excision again".into(),
@@ -254,6 +258,13 @@ pub async fn apply(
     }
     removable(conn, plan).await?;
     let ids: Vec<Uuid> = plan.events.iter().copied().collect();
+    let material_ids = plan
+        .materials
+        .iter()
+        .map(|material| material.id.0)
+        .collect::<Vec<_>>();
+    let affected_frames:Vec<i64>=sqlx::query_scalar("SELECT DISTINCT f.number FROM core.ingress_frames f WHERE f.material_id=ANY($1) OR f.admitted && $2 OR EXISTS(SELECT 1 FROM core.events e WHERE e.id=ANY($2) AND e.producer_frame=f.number)")
+        .bind(&material_ids).bind(&ids).fetch_all(&mut *conn).await?;
     let mut applied = Applied::default();
 
     let mut scope = match target {
@@ -278,24 +289,34 @@ pub async fn apply(
     )
     .fetch_all(&mut *conn)
     .await?;
-    let seq = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
-        .fetch_one(&mut *conn)
-        .await?;
-    applied.dirty_keys = mark_archived_dirty(conn, &live, seq, keys).await?;
+    applied.dirty_keys = mark_archived_dirty(conn, &live, seq, keys, None, None).await?;
     remove_live(conn, &ids).await?;
 
     sqlx::query!(
-        r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, operation_id)
-           SELECT id, source, event_type, ts_orig, $2 FROM core.events WHERE id = ANY($1)
+        r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, operation_id,commit_seq,original_commit_seq,class)
+           SELECT e.id,e.source,e.event_type,e.ts_orig,$2,$3,e.commit_seq,
+             (SELECT o.class FROM privacy.event_outputs o JOIN privacy.policy_state p ON p.id
+              WHERE o.event_id=e.id AND o.epoch=p.desired_epoch AND p.active_epoch=p.desired_epoch AND o.state='complete')
+           FROM core.events e WHERE e.id = ANY($1)
            ON CONFLICT DO NOTHING"#,
         &ids,
         operation.0,
+        seq,
     )
     .execute(&mut *conn)
     .await?;
     // Read models hold payload text; it goes with the events.
     sqlx::query!(
         "DELETE FROM core.search_text WHERE event_id = ANY($1)",
+        &ids
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM core.embedding_vectors WHERE embedding_id=ANY($1) OR target_id=ANY($1)",
         &ids
     )
     .execute(&mut *conn)
@@ -321,20 +342,32 @@ pub async fn apply(
     )
     .execute(&mut *conn)
     .await?;
-    crate::admission::erase_archive_history(conn, &ids).await?;
-    sqlx::query!("DELETE FROM core.commit_log WHERE event_id = ANY($1)", &ids)
-        .execute(&mut *conn)
-        .await?;
+    // Commit order, archive transitions and lineage contain no payload. Keep
+    // their skeleton metadata so stream rebuilds preserve the same identities.
     sqlx::query!(
         "SELECT set_config('sinex.excise_operation', $1, true)",
         operation.0.to_string()
     )
     .fetch_one(&mut *conn)
     .await?;
+    sqlx::query("DELETE FROM privacy.original_events WHERE event_id=ANY($1)")
+        .bind(&ids)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM privacy.event_outputs WHERE event_id=ANY($1)")
+        .bind(&ids)
+        .execute(&mut *conn)
+        .await?;
     let deleted = sqlx::query!("DELETE FROM core.events WHERE id = ANY($1)", &ids)
         .execute(&mut *conn)
         .await?;
     applied.events = usize::try_from(deleted.rows_affected()).unwrap_or(usize::MAX);
+    sqlx::query!(
+        "UPDATE core.counters SET value = value + $1 WHERE name = 'excised'",
+        i64::try_from(deleted.rows_affected()).expect("deleted count fits bigint"),
+    )
+    .execute(&mut *conn)
+    .await?;
 
     // Bytes the excised events cited: gone with them unless something else
     // (another event, a material, a revision) still refers to them.
@@ -353,7 +386,7 @@ pub async fn apply(
         }
     }
 
-    remove_materials(conn, plan, &ids, operation, &mut applied).await?;
+    remove_materials(conn, plan, &affected_frames, operation, &mut applied).await?;
     sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
         .fetch_one(&mut *conn)
         .await?;
@@ -365,7 +398,7 @@ pub async fn apply(
 async fn remove_materials(
     conn: &mut PgConnection,
     plan: &Plan,
-    events: &[Uuid],
+    frames: &[i64],
     operation: OperationId,
     applied: &mut Applied,
 ) -> Result<()> {
@@ -383,17 +416,15 @@ async fn remove_materials(
     )
     .execute(&mut *conn)
     .await?;
-    sqlx::query!(
-        "DELETE FROM core.ingress_frames WHERE material_id = ANY($1) OR admitted && $2",
-        &materials,
-        events,
-    )
-    .execute(&mut *conn)
-    .await?;
-    // Empty bytes hold nothing to keep out.
+    // The same owner table retains a negative idempotency receipt, including
+    // when immutable sibling events still cite its reserved number.
+    sqlx::query("UPDATE core.ingress_frames f SET material_id=NULL,admitted='{}',commit_seq=NULL,family=NULL,write_kind_prefixes=NULL,source_name=NULL,source_version=NULL,source_fingerprint=NULL,producer_host=NULL,outcome=jsonb_strip_nulls(jsonb_build_object('frame_content_hash',f.outcome->'frame_content_hash','refusal_kind',CASE WHEN EXISTS(SELECT 1 FROM core.events e WHERE e.producer_frame=f.number) THEN 'partially_excised' ELSE 'excised' END)),refusal=CASE WHEN EXISTS(SELECT 1 FROM core.events e WHERE e.producer_frame=f.number) THEN 'frame partially excised; frozen admission cannot be replayed' ELSE 'frame excised; frozen admission cannot be replayed' END WHERE f.number=ANY($1)")
+        .bind(frames).execute(&mut *conn).await?;
+    // Empty bodies do not ban their shared digest; their removed identity
+    // still cannot be registered again.
     sqlx::query!(
         r#"INSERT INTO core.excised_materials (material_id, blob, operation_id)
-           SELECT id, blob, $2 FROM raw.materials WHERE id = ANY($1) AND length > 0
+           SELECT id, blob, $2 FROM raw.materials WHERE id = ANY($1)
            ON CONFLICT DO NOTHING"#,
         &materials,
         operation.0,
@@ -512,7 +543,7 @@ pub(crate) async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<
     .await?)
 }
 
-/// Delete the files of blobs left `deleting`, then their rows: after an
+/// Punch the extents of blobs left `deleting`, then remove their rows: after an
 /// excision commits, and at daemon start for any a crash left behind. A blob
 /// registered again meanwhile is `present` and is kept, as is one a row
 /// refers to again. Returns the blobs deleted and those whose file could not
@@ -557,6 +588,10 @@ pub async fn finish_deletions(
         )
         .execute(&mut *tx)
         .await?;
+        sqlx::query("DELETE FROM core.blob_extents WHERE hash=$1")
+            .bind(&name)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         deleted.push(name);
     }

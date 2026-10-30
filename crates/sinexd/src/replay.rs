@@ -328,10 +328,15 @@ pub(crate) async fn run(
 /// Daemon replay uses the saved local binding or its named parser. An `ingress:`
 /// binding belongs to its producer, which supplies replacement readings through
 /// ReplayScopeQuery and ReplaySequence.
+struct NativeReplaySource {
+    source: Box<dyn Source>,
+    host: Option<String>,
+}
+
 async fn sources_of(
     read_conn: &mut sqlx::PgConnection,
     sequence: &[Stored],
-) -> Result<Vec<Box<dyn Source>>, String> {
+) -> Result<Vec<NativeReplaySource>, String> {
     if sequence.iter().any(|m| {
         m.binding
             .as_deref()
@@ -364,6 +369,9 @@ async fn sources_of(
             None => None,
         };
         // The material names the parser it was read with.
+        let host = stored_binding
+            .as_ref()
+            .map(|binding| binding.settings.host.clone());
         let binding = match stored_binding {
             Some(b) => sinex_source_core::Binding {
                 parser: m.parser.clone(),
@@ -374,7 +382,10 @@ async fn sources_of(
                 format!("material {}: no source has parser {}", m.id, m.parser)
             })?,
         };
-        out.push(sources::source_for(&binding).map_err(|e| format!("material {}: {e}", m.id))?);
+        out.push(NativeReplaySource {
+            source: sources::source_for(&binding).map_err(|e| format!("material {}: {e}", m.id))?,
+            host,
+        });
     }
     Ok(out)
 }
@@ -427,7 +438,7 @@ struct Read {
 fn read_sequence(
     blobs: &sinex_store::Blobs,
     sequence: &[Stored],
-    parsers: &[Box<dyn Source>],
+    parsers: &[NativeReplaySource],
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
@@ -449,7 +460,7 @@ fn read_sequence(
 fn read_sequence_into(
     blobs: &sinex_store::Blobs,
     sequence: &[Stored],
-    parsers: &[Box<dyn Source>],
+    parsers: &[NativeReplaySource],
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
@@ -474,7 +485,11 @@ fn read_sequence_into(
     };
     send(Batch {
         run: RunId::new(),
-        kind: BatchKind::Replay { operation },
+        kind: BatchKind::Replay {
+            operation,
+            source: None,
+            host: None,
+        },
         records: Vec::new(),
         archive: vec![ArchiveRequest::Replay {
             scope: ReplayScope {
@@ -489,7 +504,8 @@ fn read_sequence_into(
         }],
     })?;
     let mut carry = Value::Null;
-    for (position, (m, source)) in sequence.iter().zip(parsers).enumerate() {
+    for (position, (m, native)) in sequence.iter().zip(parsers).enumerate() {
+        let source = &native.source;
         // A later part read again what the reader had not admitted of this one.
         let admitted = sequence
             .get(position + 1)
@@ -584,7 +600,14 @@ fn read_sequence_into(
             crate::material_access::sealing::seal_records(&mut records, key)?;
             send(Batch {
                 run: RunId::new(),
-                kind: BatchKind::Replay { operation },
+                kind: BatchKind::Replay {
+                    operation,
+                    source: Some(sinex_model::SourceRef {
+                        name: source.spec().name.into(),
+                        version: source.spec().parser_version,
+                    }),
+                    host: native.host.clone(),
+                },
                 records,
                 archive: Vec::new(),
             })?;

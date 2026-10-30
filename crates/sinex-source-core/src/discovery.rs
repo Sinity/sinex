@@ -162,6 +162,14 @@ pub struct Configuration {
     pub exclude: BTreeMap<String, Option<Exclusion>>,
     pub discovery: DiscoveryContext,
     pub derivations: BTreeMap<String, bool>,
+    /// Daemon-only derivation settings pass through capture configuration unchanged.
+    pub tags: Vec<serde_json::Value>,
+    pub activity: serde_json::Value,
+    pub project_attribution: serde_json::Value,
+    #[serde(default)]
+    pub rhythm: serde_json::Value,
+    pub signals: serde_json::Value,
+    pub model_accounting: serde_json::Value,
 }
 
 impl Configuration {
@@ -182,3 +190,6 @@ impl Configuration {
         context
     }
 }
+
+#[cfg(test)]
+mod tests;

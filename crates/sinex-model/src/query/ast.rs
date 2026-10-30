@@ -75,7 +75,7 @@ pub enum Reference {
         material: Uuid,
         offset: i64,
         event_type: Option<String>,
-        output: Option<i16>,
+        output: Option<u64>,
     },
     /// `sinex:key/<source>/<event type>/<equivalence key>`.
     Key {
@@ -87,6 +87,14 @@ pub enum Reference {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
+    Truth {
+        value: query_language::semantics::Truth,
+        operand: Operand,
+    },
+    /// A supplied vector reference ranks the filtered relation; it is not a predicate.
+    Similar {
+        reference: Uuid,
+    },
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
@@ -163,6 +171,34 @@ pub enum FieldRef {
     },
     /// A column of a grouped stage: a key or an aggregate.
     Group(String),
+    /// A shared-bound output column whose physical type is refreshed by binding.
+    TypedGroup(BoundColumn),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoundColumn {
+    info: std::sync::Arc<query_language::scope::FieldInfo>,
+    physical: Option<super::FieldType>,
+}
+impl BoundColumn {
+    pub(super) fn new(info: query_language::scope::FieldInfo) -> Self {
+        Self {
+            info: std::sync::Arc::new(info),
+            physical: None,
+        }
+    }
+    pub fn name(&self) -> &str {
+        &self.info.field.name
+    }
+    pub fn field_type(&self) -> Option<super::FieldType> {
+        self.physical
+    }
+    pub(super) fn info(&self) -> &query_language::scope::FieldInfo {
+        &self.info
+    }
+    pub(super) fn bind(&mut self, ty: super::FieldType) {
+        self.physical = Some(ty);
+    }
 }
 
 impl FieldRef {
@@ -173,6 +209,7 @@ impl FieldRef {
                 format!("payload.{}", path.join("."))
             }
             FieldRef::Group(name) => name.clone(),
+            FieldRef::TypedGroup(column) => column.name().to_owned(),
         }
     }
 }
@@ -213,41 +250,19 @@ impl TimeFn {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Op {
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    /// Contains, case-insensitive.
-    Contains,
-    /// Starts with; on a path, "is or lies under".
-    Prefix,
+pub use query_language::ast::Op;
+pub trait OrderingOp {
+    fn ordering(self) -> bool;
 }
-
-impl Op {
-    pub fn symbol(self) -> &'static str {
-        match self {
-            Op::Eq => "=",
-            Op::Ne => "!=",
-            Op::Lt => "<",
-            Op::Le => "<=",
-            Op::Gt => ">",
-            Op::Ge => ">=",
-            Op::Contains => "~",
-            Op::Prefix => "^",
-        }
-    }
-
-    pub fn ordering(self) -> bool {
-        matches!(self, Op::Lt | Op::Le | Op::Gt | Op::Ge)
+impl OrderingOp for Op {
+    fn ordering(self) -> bool {
+        matches!(self, Self::Lt | Self::Le | Self::Gt | Self::Ge)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    Unknown,
     Text(String),
     /// A text parameter checked for its type while saving a definition.
     PlaceholderText(String),
@@ -395,4 +410,72 @@ pub enum SortBy {
     Operand(Operand),
     /// Full-text relevance.
     Rank,
+}
+
+impl Query {
+    pub fn finite_time_bounds(&self, field: &FieldRef) -> Option<(Timestamp, Timestamp)> {
+        super::fill::finite_time_bounds(self, field)
+    }
+    pub fn similar_reference(&self) -> Result<Option<Uuid>, super::QueryError> {
+        fn visit(
+            e: &Expr,
+            allowed: bool,
+            found: &mut Option<Uuid>,
+        ) -> Result<(), super::QueryError> {
+            match e {
+                Expr::Similar { reference } => {
+                    if !allowed {
+                        return Err(super::QueryError::new(
+                            "similar is a ranking directive and cannot appear under OR or NOT",
+                        ));
+                    }
+                    if found.is_some_and(|old| old != *reference) {
+                        return Err(super::QueryError::new(
+                            "a query must choose one supplied similarity vector",
+                        ));
+                    }
+                    *found = Some(*reference);
+                }
+                Expr::And(a, b) => {
+                    visit(a, allowed, found)?;
+                    visit(b, allowed, found)?;
+                }
+                Expr::Or(a, b) => {
+                    visit(a, false, found)?;
+                    visit(b, false, found)?;
+                }
+                Expr::Not(e) => visit(e, false, found)?,
+                _ => {}
+            }
+            Ok(())
+        }
+        let mut found = None;
+        if let Some(e) = &self.filter {
+            visit(e, true, &mut found)?;
+        }
+        for stage in &self.stages {
+            if let Stage::Where(e) = stage {
+                visit(e, true, &mut found)?;
+            }
+        }
+        if found.is_some() && self.stages.iter().any(|s| matches!(s, Stage::Group(_))) {
+            return Err(super::QueryError::new(
+                "similar ranks event rows before grouping",
+            ));
+        }
+        Ok(found)
+    }
+}
+impl Expr {
+    /// Remove rank directives structurally before compiling the predicate.
+    pub fn predicate(&self) -> Option<Expr> {
+        match self {
+            Self::Similar { .. } => None,
+            Self::And(a, b) => match (a.predicate(), b.predicate()) {
+                (Some(a), Some(b)) => Some(Self::And(Box::new(a), Box::new(b))),
+                (a, b) => a.or(b),
+            },
+            _ => Some(self.clone()),
+        }
+    }
 }

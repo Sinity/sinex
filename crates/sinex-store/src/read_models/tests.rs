@@ -3,6 +3,7 @@ use super::*;
 /// Bring the search read model up to the newest commit without the daemon's
 /// reader, page by page with its position.
 pub(crate) async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64> {
+    crate::privacy::projection::ensure_current(conn).await?;
     let (mut position, _) = crate::commit_log::consumer_position(conn, SEARCH_TEXT).await?;
     loop {
         let page = crate::commit_log::after(conn, position, 2_000, i64::MAX).await?;
@@ -170,12 +171,96 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    admit_search_kinds(&mut conn, sinex_model::Class::Open).await;
-    let mut page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
+    let mut declaration = sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef {
+            name: "synthetic.search".into(),
+            version: 1,
+        },
+        "synthetic".into(),
+    );
+    declaration.search = sinex_model::kinds::Search::Words;
+    sinex_schema::kinds::register(&mut conn, "synthetic", std::slice::from_ref(&declaration))
         .await
         .unwrap();
-    page.events[0].class = "sealed".into();
-    page.events[1].payload = serde_json::json!({"count": 1});
+    let key = sinex_sealing::new_key().unwrap();
+    let events: Vec<sinex_model::Event> = [
+        (
+            serde_json::json!({"text":"private"}),
+            sinex_model::Class::Sealed,
+        ),
+        (serde_json::json!({"count":1}), sinex_model::Class::Open),
+        (
+            serde_json::json!({"text":"visible"}),
+            sinex_model::Class::Open,
+        ),
+    ]
+    .into_iter()
+    .map(|(payload, class)| {
+        let mut event = sinex_model::Event::submitted(
+            declaration.kind.clone(),
+            payload,
+            "synthetic".into(),
+            sinex_model::Origin::Record {
+                location: sinex_model::RecordLocation {
+                    material: sinex_model::MaterialId::new(),
+                    anchor: 0,
+                },
+                output_index: 0,
+            },
+            sinex_model::ReadingOrder(1),
+            [1; 32],
+            class,
+        );
+        if class == sinex_model::Class::Sealed {
+            sinex_sealing::seal_event(&mut event, &key).unwrap();
+        }
+        event
+    })
+    .collect();
+    let sealed_id = events
+        .iter()
+        .find(|event| event.class == sinex_model::Class::Sealed)
+        .unwrap()
+        .id;
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(
+        &sinex_model::Batch {
+            run: sinex_model::RunId::new(),
+            kind: sinex_model::BatchKind::Api {
+                actor: "synthetic".into(),
+            },
+            records: vec![sinex_model::RecordOutcome::Events {
+                location: None,
+                events,
+            }],
+            archive: vec![],
+        },
+        &crate::NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let sealed_payload: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+            .bind(sealed_id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        sinex_sealing::unseal_payload(&sealed_payload, &key.key).unwrap(),
+        serde_json::json!({"text":"private"})
+    );
+    let wrong_key = sinex_sealing::new_key().unwrap();
+    assert!(sinex_sealing::unseal_payload(&sealed_payload, &wrong_key.key).is_err());
+    // Rebuilding the read model starts empty, while canonical policy outputs
+    // retain the actual sealed class and payload with no searchable text.
+    sqlx::query("DELETE FROM core.search_text")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
+        .await
+        .unwrap();
     let mut tx = conn.begin().await.unwrap();
     apply_search_text(&mut tx, &page.events).await.unwrap();
     crate::commit_log::set_consumer_position(&mut tx, SEARCH_TEXT, page.up_to.unwrap(), 0)

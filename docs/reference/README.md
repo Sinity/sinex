@@ -29,3 +29,6 @@ Until a page's generator exists, the hand-written table it replaces stays in
 the area page that owns the subject; the change that adds the generator
 deletes that table. Kinds that other products register (Polylogue's
 `polylogue.*` kinds) will be listed in that product's own planned reference.
+
+[Default non-model derivations](default-derivations.md) lists the implemented
+portfolio, its stored kinds and the explicit evidence limitations.

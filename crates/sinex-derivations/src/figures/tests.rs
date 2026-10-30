@@ -90,7 +90,11 @@ fn key(metric: &str) -> Value {
 }
 
 fn env(now: i64) -> Env {
-    Env::at(Timestamp::from_unix_secs(T + now).unwrap())
+    Env::at(
+        Timestamp::from_unix_secs(T + now).unwrap(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
 }
 
 /// The hourly figures of `metric` from `inputs`, as the runner reads them.
@@ -359,4 +363,51 @@ fn a_day_adds_up_its_hours() {
         .find(|f| f.metric == "shell.commands" && f.dimension_value == "/a")
         .unwrap();
     assert_eq!(a.value, Some(2.0));
+}
+
+#[devkit::test]
+fn activity_seconds_use_supported_presence_and_keep_afk_claims_as_inputs_only() {
+    use sinex_model::event_types::desktop::{PresenceInterval, PresenceSpan};
+    let parent = parent();
+    let present = derived(
+        &PresenceInterval {
+            scope: "box".into(),
+            day: "2024-06-15".into(),
+            started_at: at(10),
+            ended_at: at(30),
+            state: "present".into(),
+            method: "physical".into(),
+            support: vec![],
+            claims: vec![],
+            contradictions: vec![],
+            profile: "presence/v1".into(),
+        },
+        "presence.intervals",
+        [&parent],
+    );
+    let claim = Event::build(
+        &PresenceSpan {
+            scope: None,
+            host: None,
+            bucket: "afk_box".into(),
+            row: 1,
+            started_at: at(0),
+            ended_at: at(3600),
+            status: "not-afk".into(),
+        },
+        "desktop.activitywatch",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let out = hourly("activity.active_seconds", &[present, claim], 100_000);
+    assert_eq!(total_at(&out, 0).value, Some(20.0));
 }

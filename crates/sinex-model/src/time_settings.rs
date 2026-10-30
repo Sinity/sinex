@@ -53,23 +53,25 @@ impl TimeSettings {
         })
     }
 
-    /// The operator's setting today: Europe/Warsaw, days from 04:00.
-    pub fn operator_default() -> Self {
-        Self::new("Europe/Warsaw", 4, 0).expect("the bundled tz database has Europe/Warsaw")
+    pub fn from_parts(zone: TimeZone, day_starts_at: Time) -> Self {
+        let zone_name = zone
+            .iana_name()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{zone:?}"));
+        Self {
+            zone,
+            zone_name,
+            day_starts_at,
+        }
     }
 
     pub fn zone_name(&self) -> &str {
         &self.zone_name
     }
 
-    /// The setting as people write it: `04:00 Europe/Warsaw`.
+    /// The local day start and zone, including any configured seconds.
     pub fn label(&self) -> String {
-        format!(
-            "{:02}:{:02} {}",
-            self.day_starts_at.hour(),
-            self.day_starts_at.minute(),
-            self.zone_name
-        )
+        format!("{} {}", self.day_starts_at, self.zone_name)
     }
 
     fn instant(t: Timestamp) -> Result<jiff::Timestamp, TimeSettingsError> {
@@ -97,7 +99,14 @@ impl TimeSettings {
                 Some(p) if p == after => after,
                 _ => before,
             },
-            AmbiguousOffset::Gap { after, .. } => after,
+            AmbiguousOffset::Gap { .. } => {
+                return Self::back(
+                    self.day_setting()?
+                        .local(dt)
+                        .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))?
+                        .instant,
+                );
+            }
         };
         let t = offset
             .to_timestamp(dt)
@@ -127,28 +136,30 @@ impl TimeSettings {
         self.hour_start(Self::back(next)?)
     }
 
-    /// The logical day `t` belongs to: its local date, shifted back by the
-    /// day-start time, so 03:59 belongs to the previous day.
+    /// The shared logical-day setting; unnamed zones are refused.
+    pub fn day_setting(&self) -> Result<query_language::time::DaySetting, TimeSettingsError> {
+        query_language::time::DaySetting::new(self.zone.clone(), self.day_starts_at)
+            .map_err(|_| TimeSettingsError::UnknownZone(self.zone_name.clone()))
+    }
     pub fn day(&self, t: Timestamp) -> Result<Date, TimeSettingsError> {
-        let local = Self::instant(t)?.to_zoned(self.zone.clone()).datetime();
-        let date = local.date();
-        Ok(if local.time() < self.day_starts_at {
-            date.yesterday()
-                .map_err(|_| TimeSettingsError::OutOfRange(date.to_string()))?
-        } else {
-            date
-        })
+        self.day_setting()?
+            .logical_day(Self::instant(t)?)
+            .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))
     }
-
     pub fn day_start(&self, day: Date) -> Result<Timestamp, TimeSettingsError> {
-        self.resolve(day.to_datetime(self.day_starts_at), None)
+        Self::back(
+            self.day_setting()?
+                .start_of(day)
+                .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))?,
+        )
     }
-
     pub fn day_end(&self, day: Date) -> Result<Timestamp, TimeSettingsError> {
-        let next = day
-            .tomorrow()
-            .map_err(|_| TimeSettingsError::OutOfRange(day.to_string()))?;
-        self.day_start(next)
+        Self::back(
+            self.day_setting()?
+                .day(day)
+                .map_err(|error| TimeSettingsError::OutOfRange(error.to_string()))?
+                .end,
+        )
     }
 }
 

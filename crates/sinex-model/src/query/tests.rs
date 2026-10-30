@@ -23,7 +23,7 @@ fn ts(s: &str) -> Timestamp {
 
 #[devkit::test]
 fn bare_words_search_events() {
-    let query = q("tide offset");
+    let query = q("harbor tide");
     assert_eq!(
         query.source,
         Source::Table {
@@ -35,8 +35,17 @@ fn bare_words_search_events() {
     let Some(Expr::And(a, b)) = query.filter else {
         panic!("two words are joined with and")
     };
-    assert!(matches!(*a, Expr::Words(ref w) if w.words == ["tide"] && !w.phrase));
-    assert!(matches!(*b, Expr::Words(ref w) if w.words == ["offset"]));
+    let terms = [*a, *b];
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.words == ["harbor"] && !w.phrase))
+    );
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.words == ["tide"] && !w.phrase))
+    );
 }
 
 #[devkit::test]
@@ -45,8 +54,17 @@ fn quoted_phrases_and_prefixes() {
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
-    assert!(matches!(*a, Expr::Words(ref w) if w.phrase && w.words == ["cargo", "test"]));
-    assert!(matches!(*b, Expr::Words(ref w) if w.prefix && w.words == ["deploy"]));
+    let terms = [*a, *b];
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.phrase && w.words == ["cargo", "test"]))
+    );
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.prefix && w.words == ["deploy"]))
+    );
 }
 
 #[devkit::test]
@@ -65,22 +83,20 @@ fn a_misspelled_table_is_refused_with_a_suggestion() {
 
 #[devkit::test]
 fn table_with_filter_and_clauses() {
-    let query = q("commands where exit_code != 0 and cwd ^ /src/tide sort when desc limit 20");
+    let query = q("commands where exit_code != 0 AND cwd ^ /src/tide sort when desc limit 20");
     assert_eq!(query.source.alias().unwrap().name, "commands");
     let Some(Expr::And(a, b)) = &query.filter else {
         panic!()
     };
-    assert!(matches!(
-        **a,
-        Expr::Compare {
-            op: Op::Ne,
-            rhs: Value::Integer(0),
-            ..
-        }
-    ));
-    assert!(
-        matches!(**b, Expr::Compare { op: Op::Prefix, rhs: Value::Text(ref p), .. } if p == "/src/tide")
-    );
+    let terms = [&**a, &**b];
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Ne, rhs: Value::Text(value) }
+        if field.name == "exit_code" && field.ty == FieldType::Integer && value == "0"
+    )));
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Prefix, rhs: Value::Text(path) }
+        if field.name == "cwd" && path == "/src/tide"
+    )));
     assert_eq!(query.stages.len(), 2);
     assert!(matches!(&query.stages[0], Stage::Sort(k) if k[0].descending));
     assert_eq!(query.stages[1], Stage::Limit(20));
@@ -97,13 +113,32 @@ fn field_colon_value_means_equals() {
 
 #[devkit::test]
 fn and_binds_tighter_than_or_and_both_bounds_are_kept() {
-    let query = q("events where source = a or source = b and event_type = c");
-    let Some(Expr::Or(_, right)) = query.filter else {
+    let query = q("events where source = a OR source = b AND event_type = c");
+    let Some(Expr::Or(left, right)) = query.filter else {
         panic!("or at the top")
     };
-    assert!(matches!(*right, Expr::And(..)));
+    let branches = [*left, *right];
+    assert!(branches.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
+        if field.name == "source" && value == "a"
+    )));
+    let grouped = branches
+        .iter()
+        .find_map(|term| match term {
+            Expr::And(a, b) => Some([&**a, &**b]),
+            _ => None,
+        })
+        .expect("the AND branch stays grouped under OR");
+    assert!(grouped.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
+        if field.name == "source" && value == "b"
+    )));
+    assert!(grouped.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
+        if field.name == "event_type" && value == "c"
+    )));
     // Two time bounds are both required.
-    let query = q("events where when > 2026-09-01 and when < 2026-09-10");
+    let query = q("events where when > 2026-09-01 AND when < 2026-09-10");
     assert!(matches!(query.filter, Some(Expr::And(..))));
 }
 
@@ -179,63 +214,80 @@ fn ranges_are_half_open_logical_days() {
 #[devkit::test]
 fn a_bare_duration_with_an_ordering_is_refused() {
     let e = err("events where when > 7d");
-    assert!(e.message.contains("since 7d"), "{e}");
+    assert!(
+        e.message.contains("a bare duration is not a time instant"),
+        "{e}"
+    );
+    assert!(e.message.contains("when in last 7d"), "{e}");
 }
 
 #[devkit::test]
 fn payload_paths_use_their_schema_types() {
-    let query = q("events where payload.exit_code > 0 and payload.url ~ github");
+    let query = q("events where payload.exit_code > 0 AND payload.url ~ github");
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
+    let terms = [*a, *b];
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::TypedPayload { path, ty: FieldType::Integer }), op: Op::Gt, rhs: Value::Text(value) }
+        if path == &["exit_code"] && value == "0"
+    )));
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::TypedPayload { path, ty: FieldType::Text }), op: Op::Contains, rhs: Value::Text(value) }
+        if path == &["url"] && value == "github"
+    )));
+    let text = "materials where payload.x = 1";
+    let error = err(text);
     assert!(
-        matches!(*a, Expr::Compare { lhs: Operand::Field(FieldRef::TypedPayload { path: ref p, ty: FieldType::Integer }), rhs: Value::Integer(0), .. } if p == &["exit_code"])
-    );
-    assert!(matches!(
-        *b,
-        Expr::Compare {
-            op: Op::Contains,
-            rhs: Value::Text(_),
-            ..
-        }
-    ));
-    assert!(
-        err("materials where payload.x = 1")
+        error
             .message
-            .contains("no payload")
+            .contains("unknown field `payload.x` on `materials`"),
+        "{error}"
     );
+    assert_eq!(error.at, text.find("payload.x"));
 }
 
 #[devkit::test]
 fn lists_and_exists() {
     let query =
-        q("events where event_type = [command.executed, command.imported] and not material exists");
+        q("events where event_type = [command.executed, command.imported] AND NOT material exists");
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
-    assert!(matches!(*a, Expr::Compare { rhs: Value::List(ref l), .. } if l.len() == 2));
-    assert!(matches!(*b, Expr::Not(ref inner) if matches!(**inner, Expr::Exists(_))));
+    let terms = [*a, *b];
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::List(values) }
+        if field.name == "event_type" && values == &[Value::Text("command.executed".into()), Value::Text("command.imported".into())]
+    )));
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Not(inner) if matches!(&**inner, Expr::Exists(Operand::Field(FieldRef::Field(field))) if field.name == "material")
+    )));
 }
 
 #[devkit::test]
 fn time_functions_and_differences() {
-    let query = q("events where hour(when) >= 1 and weekday(when) = Saturday and seen - when > 1d");
-    let Some(Expr::And(left, diff)) = query.filter else {
-        panic!()
-    };
-    assert!(matches!(*diff, Expr::TimeDiff { seconds, .. } if seconds == 86_400.0));
-    let Expr::And(hour, weekday) = *left else {
-        panic!()
-    };
-    assert!(matches!(
-        *hour,
-        Expr::Compare {
-            lhs: Operand::TimeFn(TimeFn::Hour, _),
-            rhs: Value::Integer(1),
-            ..
+    let query = q("events where hour(when) >= 1 AND weekday(when) = Saturday AND seen - when > 1d");
+    fn terms(expr: &Expr) -> Vec<&Expr> {
+        match expr {
+            Expr::And(left, right) => [terms(left), terms(right)].concat(),
+            _ => vec![expr],
         }
-    ));
-    assert!(matches!(*weekday, Expr::Compare { rhs: Value::Text(ref d), .. } if d == "sat"));
+    }
+    let filter = query.filter.unwrap();
+    let terms = terms(&filter);
+    assert_eq!(terms.len(), 3);
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::TimeDiff { a: FieldRef::Field(a), b: FieldRef::Field(b), op: Op::Gt, seconds }
+        if a.name == "seen" && b.name == "when" && *seconds == 86_400.0
+    )));
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::TimeFn(TimeFn::Hour, FieldRef::Field(field)), op: Op::Ge, rhs: Value::Integer(1) }
+        if field.name == "when"
+    )));
+    assert!(terms.iter().any(|term| matches!(term,
+        Expr::Compare { lhs: Operand::TimeFn(TimeFn::Weekday, FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(day) }
+        if field.name == "when" && day == "sat"
+    )));
 }
 
 #[devkit::test]
@@ -249,19 +301,21 @@ fn joins_take_an_inner_query() {
     assert_eq!(j.kind, JoinKind::Near);
     assert_eq!(j.within_secs, Some(300.0));
     assert_eq!(j.inner.source.alias().unwrap().name, "commands");
-    let query = q("commands during (intervals where state = focused)");
+    let query = q("commands during (intervals where state = present)");
     assert!(matches!(query.stages.first(), Some(Stage::Join(j)) if j.kind == JoinKind::During));
     assert!(err("events near (commands) ").message.contains("within"));
     // The columns a join adds can be shown and sorted on.
     let query = q("events near (commands) within 5m fields when, near, offset sort offset");
-    assert!(matches!(&query.stages[1], Stage::Fields(f) if f[1] == FieldRef::Group("near".into())));
+    assert!(
+        matches!(&query.stages[1], Stage::Fields(f) if matches!(&f[1], FieldRef::TypedGroup(column) if column.name() == "near" && column.field_type() == Some(FieldType::Id)))
+    );
     // The n-th join's columns carry `_n`.
     let query = q("events near (commands) within 5m during (commands) fields near, during_2");
     assert!(matches!(&query.stages[2], Stage::Fields(f) if f.len() == 2));
     let query =
         q("events near (commands) within 5m after (commands) within 1m fields near_2, offset_2");
     assert!(
-        matches!(&query.stages[2], Stage::Fields(f) if f[0] == FieldRef::Group("near_2".into()))
+        matches!(&query.stages[2], Stage::Fields(f) if matches!(&f[0], FieldRef::TypedGroup(column) if column.name() == "near_2" && column.field_type() == Some(FieldType::Id)))
     );
 }
 
@@ -270,7 +324,7 @@ fn grouping_makes_a_relation_of_groups() {
     let query = q("commands group by cwd count where count > 1 sort count desc limit 5");
     assert!(matches!(&query.stages[0], Stage::Group(g) if g.keys.len() == 1));
     assert!(
-        matches!(&query.stages[1], Stage::Where(Expr::Compare { lhs: Operand::Field(FieldRef::Group(c)), .. }) if c == "count")
+        matches!(&query.stages[1], Stage::Where(Expr::Compare { lhs: Operand::Field(FieldRef::TypedGroup(c)), .. }) if c.name() == "count" && c.field_type() == Some(FieldType::Integer))
     );
     // After grouping, row fields are gone.
     assert!(
@@ -365,8 +419,10 @@ fn recall_windows() {
 
 #[devkit::test]
 fn reserved_words_must_be_quoted_to_search() {
-    assert!(err("sort algorithm").message.contains("quote"));
-    assert!(q(r#""sort" algorithm"#).ranked);
+    let error = err("offset algorithm");
+    assert!(error.message.contains("`offset` is a field"), "{error}");
+    assert_eq!(error.at, Some(0));
+    assert!(q(r#""offset" algorithm"#).ranked);
 }
 
 #[devkit::test]
@@ -422,3 +478,176 @@ fn every_alias_reads_registered_event_types() {
 }
 
 mod gaps;
+
+#[devkit::test]
+fn record_citations_preserve_wide_unsigned_output_ordinals() {
+    let material = uuid::Uuid::nil();
+    for output in [
+        0,
+        32_768,
+        65_536,
+        u64::try_from(i64::MAX).unwrap(),
+        u64::MAX,
+    ] {
+        let citation = format!("sinex:record/{material}/120/command.imported/{output}");
+        assert!(matches!(parse_reference(&citation).unwrap(),
+            Reference::Record {offset:120, output:Some(actual),..} if actual==output));
+    }
+    for output in ["-1", "18446744073709551616"] {
+        assert!(
+            parse_reference(&format!(
+                "sinex:record/{material}/120/command.imported/{output}"
+            ))
+            .is_err()
+        );
+    }
+}
+
+#[devkit::test]
+fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
+    let until = q("events until 2026-09-14");
+    let before = q("events where when < 2026-09-14");
+    let get = |q: Query| match q.filter.or_else(|| {
+        q.stages.into_iter().find_map(|s| {
+            if let Stage::Where(e) = s {
+                Some(e)
+            } else {
+                None
+            }
+        })
+    }) {
+        Some(Expr::Compare {
+            op: Op::Lt,
+            rhs: Value::Time(t),
+            ..
+        }) => t,
+        _ => panic!("exclusive upper time bound"),
+    };
+    assert_eq!(get(until), ts("2026-09-15T02:00:00Z"));
+    assert_eq!(get(before), ts("2026-09-14T02:00:00Z"));
+    assert_eq!(
+        get(q("events until 2026-09-14T10:00:00Z")),
+        ts("2026-09-14T10:00:00Z")
+    );
+}
+#[devkit::test]
+fn shared_similarity_directives_cannot_change_filter_membership() {
+    let id = "00000000-0000-0000-0000-000000000001";
+    let query = q(&format!(
+        "events where source = synthetic AND similar:sinex:ev/{id}"
+    ));
+    assert!(query.ranked);
+    assert_eq!(
+        query.similar_reference().unwrap(),
+        Some(id.parse().unwrap())
+    );
+    assert!(matches!(
+        query.filter.unwrap().predicate(),
+        Some(Expr::Compare { .. })
+    ));
+    for text in [
+        format!("events where source = synthetic OR similar:sinex:ev/{id}"),
+        format!("events where NOT similar:sinex:ev/{id}"),
+        "events where similar:unprovided-text".into(),
+    ] {
+        assert!(bind(&text, &ctx()).is_err(), "{text}");
+    }
+}
+
+#[devkit::test]
+fn shared_repeated_groups_bind_aggregates_to_their_incoming_relation() {
+    let query = q("events group by source count group by count sum(count)");
+    let Stage::Group(group) = &query.stages[1] else {
+        panic!("second group")
+    };
+    assert!(
+        matches!(&group.aggregates[0].field,Some(FieldRef::TypedGroup(column)) if column.name()=="count" && column.field_type()==Some(FieldType::Integer))
+    );
+}
+
+#[devkit::test]
+fn shared_match_unknown_and_any_keep_their_explicit_predicate_meanings() {
+    assert!(matches!(
+        q("events where when:unknown").filter,
+        Some(Expr::Not(_))
+    ));
+    assert!(matches!(
+        q("events where when:*").filter,
+        Some(Expr::Truth {
+            value: query_language::semantics::Truth::True,
+            ..
+        })
+    ));
+    assert!(matches!(
+        q("events where when = unknown").filter,
+        Some(Expr::Compare {
+            rhs: Value::Unknown,
+            ..
+        })
+    ));
+}
+
+#[devkit::test]
+fn scalar_quotes_preserve_identifier_patterns_and_literal_payload_operators() {
+    for text in [
+        "events where source = terminal.*",
+        "events where source = \"terminal.*\"",
+        "events where event_type = metric.*",
+        "events where event_type = \"metric.*\"",
+    ] {
+        assert!(
+            matches!(
+                q(text).filter,
+                Some(Expr::Compare {
+                    rhs: Value::Glob(_),
+                    ..
+                })
+            ),
+            "{text}"
+        );
+    }
+    for text in [
+        "events where payload.note = alpha*beta",
+        "events where payload.note = \"alpha*beta\"",
+        "events where payload.note != alpha*beta",
+        "events where payload.note ~ alpha*beta",
+        "events where payload.note ^ alpha*beta",
+    ] {
+        assert!(
+            matches!(q(text).filter, Some(Expr::Compare {rhs:Value::Text(ref value), ..}) if value == "alpha*beta"),
+            "{text}"
+        );
+    }
+    for text in [
+        "commands where payload.exit_code = 42",
+        "commands where payload.exit_code = \"42\"",
+    ] {
+        assert!(
+            matches!(
+                q(text).filter,
+                Some(Expr::Compare {
+                    rhs: Value::Text(ref value),
+                    ..
+                }) if value == "42"
+            ),
+            "{text}"
+        );
+    }
+}
+
+#[devkit::test]
+fn numeric_looking_payload_text_keeps_its_literal_spelling() {
+    for value in ["001", "1.00", "-0.0"] {
+        for literal in [value.to_string(), format!("\"{value}\"")] {
+            let text = format!("events where payload.note = {literal}");
+            assert!(
+                matches!(q(&text).filter,
+                    Some(Expr::Compare { rhs: Value::Text(ref actual), .. }) if actual == value
+                ),
+                "{text}"
+            );
+        }
+    }
+}
+
+mod literals;

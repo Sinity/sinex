@@ -89,3 +89,28 @@ pub struct HardwareState {
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub values: Map<String, Value>,
 }
+
+use std::collections::BTreeMap;
+
+/// One sample of one part of Sinex: the writer, the publisher, a derivation, a
+/// source. `measures` are the part's numbers at `sampled_at` (`behind`,
+/// `dirty_keys`, `events`), each under a plain name.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2,
+    type = "sinex.telemetry",
+    key = ["component", "name", "sampled_at"],
+    replace = repeat,
+    time = sampled_at,
+    quality = captured
+)]
+pub struct SinexTelemetry {
+    /// `writer`, `publisher`, `search index`, `derivation` or `source`.
+    pub component: String,
+    /// The derivation or source sampled; empty for the daemon's own parts.
+    pub name: String,
+    pub sampled_at: Timestamp,
+    pub measures: BTreeMap<String, f64>,
+}
+
+/// Daemon self-observation events, separate from machine resource samples.
+pub const TYPES: &[&str] = &["sinex.telemetry"];

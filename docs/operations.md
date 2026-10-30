@@ -15,6 +15,14 @@ The flake provides the packages (`sinexd`, `sinexctl`, `sinex-schema`, `sinex-se
 `services.sinex` runs the daemon and its stores on the main host:
 
 - **PostgreSQL with TimescaleDB**, its cluster initialized with data checksums, and a setup unit that adds the extensions and the roles (the writer, the API, and the SQL reader role of [admission.md](admission.md#read-models)).
+
+The database superuser runs `sinexd admin prepare-database` for initial setup
+and privileged upgrades. In this database, it removes public execution of
+PostgreSQL's `set_config` function and retains execution for the database owner
+and writer. Public SQL runs as the reader and cannot change its grants or role.
+Schema application and daemon startup refuse an unhardened boundary. The NixOS
+`sinex-db-setup` unit reruns when the package changes, before dependent daemon
+startup; activating that change includes the database preparation and restart.
 - **NATS with JetStream** for the ingress and the confirmed stream, with one user per producer identity and per registered outside consumer ([producers.md](producers.md)). The NATS configuration holds only password hashes; each process reads its own password from a file, never from its arguments.
 - **`sinexd`**, capturing every source whose input exists ([capture by default](sources.md#capture-by-default)). The per-source options are the source's typed settings and its exclusions, generated from the one source declaration in Rust, so what is captured is configuration, not database state. Inputs must be readable by the daemon's user.
 - **Capture units** for streams the daemon does not read itself (journald through `sinex-capture`).

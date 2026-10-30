@@ -28,6 +28,7 @@ fn key_parts(key: &Value) -> Option<(String, jiff::civil::Date)> {
 impl Keyed for ShellSessions {
     const NAME: &'static str = "shell.sessions";
     const VERSION: u32 = 1;
+    const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[CommandFused::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[ShellSession::EVENT_TYPE];
 

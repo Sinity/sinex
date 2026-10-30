@@ -35,6 +35,12 @@ pub enum Caveat {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "template", rename_all = "snake_case")]
 pub enum Template {
+    Observation {
+        event_type: String,
+        source: String,
+        when: Option<String>,
+        description: String,
+    },
     MetricValue {
         metric: String,
         unit: String,
@@ -124,7 +130,8 @@ impl Finding {
             }
             Template::MetricChange { a, b, .. } => ((b - a) / a.abs().max(1.0)).abs(),
             Template::Trend { p, .. } => 1.0 - p,
-            Template::MetricValue { .. }
+            Template::Observation { .. }
+            | Template::MetricValue { .. }
             | Template::NotFound { .. }
             | Template::Missing { .. }
             | Template::Coverage { .. } => 0.0,
@@ -145,6 +152,17 @@ impl Finding {
     /// or not at all.
     pub fn markdown(&self) -> String {
         let mut s = match &self.template {
+            Template::Observation {
+                event_type,
+                source,
+                when,
+                description,
+            } => format!(
+                "{description} ({event_type}, {source}{})",
+                when.as_ref()
+                    .map(|at| format!(", {at}"))
+                    .unwrap_or_default()
+            ),
             Template::MetricValue {
                 metric,
                 unit,
@@ -252,7 +270,10 @@ impl Finding {
                 let seen = if *observed_fraction <= 0.0 {
                     "not observed".to_owned()
                 } else {
-                    format!("{:.0}% observed", observed_fraction * 100.0)
+                    format!(
+                        "{} observed",
+                        crate::coverage::percent_label(*observed_fraction)
+                    )
                 };
                 format!("{source} on {unit}: {seen} ({completeness}; {bounded_by})")
             }
@@ -261,8 +282,8 @@ impl Finding {
             let note = match c {
                 Caveat::PartialCoverage { observed_fraction } => {
                     format!(
-                        "only {:.0}% of the unit was observed",
-                        observed_fraction * 100.0
+                        "only {} of the unit was observed",
+                        crate::coverage::percent_label(*observed_fraction)
                     )
                 }
                 Caveat::LowerBound => "a lower bound: the source's coverage is unknown".into(),
@@ -280,8 +301,23 @@ impl Finding {
             };
             let _ = write!(s, " [{note}]");
         }
-        s
+        one_line(&s)
     }
+}
+
+fn one_line(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '\r' => output.push_str("\\r"),
+            '\n' => output.push_str("\\n"),
+            '\u{85}' => output.push_str("\\u{85}"),
+            '\u{2028}' => output.push_str("\\u{2028}"),
+            '\u{2029}' => output.push_str("\\u{2029}"),
+            character => output.push(character),
+        }
+    }
+    output
 }
 
 fn num(v: f64) -> String {

@@ -112,7 +112,14 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     let decoded = archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     let mut bindings = readers(&path);
@@ -120,7 +127,6 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut bindings,
         stop.clone(),
@@ -146,17 +152,18 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
     assert_eq!(originals.len(), 2);
     assert_ne!(originals[0].0, originals[1].0);
     assert_eq!(originals[0].1, originals[1].1);
-    let materials: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials")
-        .fetch_one(&mut ctx.read_conn)
-        .await
-        .unwrap();
+    let materials: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
     // Fresh reader objects model a daemon restart. A completed cursor reads nothing.
     let mut restarted = readers(&path);
     let resumed = read(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut restarted,
         stop.clone(),
@@ -173,7 +180,10 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         &ctx.blobs,
         &ctx.writer,
         crate::replay::Options {
-            scope: crate::replay::Scope::default(),
+            scope: crate::replay::Scope {
+                event_types: Some(vec!["health.record".into(), "task.revised".into()]),
+                ..Default::default()
+            },
             compare: false,
             resume: None,
             actor: "synthetic".into(),
@@ -191,10 +201,12 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         assert_eq!(after.iter().filter(|e| *e == event).count(), 2);
     }
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM raw.materials")
-            .fetch_one(&mut ctx.read_conn)
-            .await
-            .unwrap(),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'"
+        )
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap(),
         materials
     );
     ctx.close().await.unwrap();
@@ -208,7 +220,14 @@ async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg:
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.tasks','guarded','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
@@ -218,7 +237,6 @@ async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg:
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut bindings,
         stop,
@@ -247,7 +265,14 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(true);
     let mut bindings = readers(&path);
@@ -257,7 +282,6 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            RunId::new(),
             &sink,
             &mut bindings,
             stop,
@@ -274,7 +298,6 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut restarted,
         stop,
@@ -334,7 +357,14 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         } else {
             archive(&path);
         }
-        let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+        let mut ctx = ReaderContext::open(
+            &url,
+            &dir.join("store"),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        )
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
         let identity = sinex_sealing::Identity::generate();
         let recipient = identity.to_public();
@@ -349,14 +379,13 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             bindings
         };
         // The second batch fails through real admission, leaving a durable partial part.
-        sqlx::raw_sql("CREATE FUNCTION synthetic_stop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT count(*) FROM core.events) >= 2 THEN RAISE EXCEPTION 'synthetic admission stop'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_stop BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION synthetic_stop();").execute(&mut ctx.read_conn).await.unwrap();
+        sqlx::raw_sql("CREATE FUNCTION synthetic_stop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type <> 'source.coverage' AND (SELECT count(*) FROM core.events WHERE event_type <> 'source.coverage') >= 2 THEN RAISE EXCEPTION 'synthetic admission stop'; END IF; RETURN NEW; END $$; CREATE TRIGGER synthetic_stop BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION synthetic_stop();").execute(&mut ctx.read_conn).await.unwrap();
         let mut bindings = make_bound();
         let name = bindings[0].binding.name.clone();
         let first = read(
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            RunId::new(),
             &sink,
             &mut bindings,
             stop.clone(),
@@ -392,7 +421,6 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            RunId::new(),
             &sink,
             &mut restarted,
             stop.clone(),
@@ -418,7 +446,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         );
         let unlock = crate::material_access::sealing::Unlock::new(
             identity,
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(120),
         )
         .unwrap();
         let mut restarted = make_bound();
@@ -426,7 +454,6 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            RunId::new(),
             &sink,
             &mut restarted,
             stop.clone(),
@@ -454,7 +481,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
         assert_eq!(final_cursor.original_material, Some(original));
         let before = live_events(&mut ctx.read_conn).await;
         assert_eq!(before.len(), 40);
-        let keys: Vec<String> = sqlx::query_scalar("SELECT key_ref FROM privacy.data_keys")
+        let keys: Vec<String> = sqlx::query_scalar("SELECT k.key_ref FROM privacy.data_keys k JOIN raw.materials m ON m.id=k.material_id WHERE m.parser <> 'source-observation'")
             .fetch_all(&mut ctx.read_conn)
             .await
             .unwrap();
@@ -526,7 +553,6 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            RunId::new(),
             &sink,
             &mut changed,
             stop,
@@ -554,7 +580,6 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            RunId::new(),
             &sink,
             &mut changed,
             stop,
@@ -592,7 +617,14 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("export.tgz");
     archive(&path);
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES ('google.fit','sealed','synthetic'),('google.tasks','sealed','synthetic')").execute(&mut ctx.read_conn).await.unwrap();
     let identity = sinex_sealing::Identity::generate();
     let recipient = identity.to_public();
@@ -603,7 +635,6 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut bindings,
         stop,
@@ -626,11 +657,12 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
 }
 
 async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
-    sqlx::query_as("SELECT e.source,e.equivalence_key,e.payload,e.material_id,e.anchor FROM core.events e WHERE e.id IN (SELECT event_id FROM core.live_equivalence UNION SELECT event_id FROM core.live_locations) ORDER BY source,equivalence_key,material_id,anchor").fetch_all(conn).await.unwrap()
+    sqlx::query_as("SELECT e.source,e.equivalence_key,e.payload,e.material_id,e.anchor FROM core.events e WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION SELECT event_id FROM core.live_locations) ORDER BY source,equivalence_key,material_id,anchor").fetch_all(conn).await.unwrap()
 }
 
 mod directory;
 mod long_history;
+mod model_disabled_media;
 
 #[devkit::test]
 async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestDatabase) {
@@ -639,7 +671,14 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
     std::fs::create_dir_all(&dir).unwrap();
     let history = dir.join("zsh_history");
     std::fs::write(&history, b": 1700000000:0;echo one\n").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     let format = sinex_sources::sources::format("zsh").unwrap();
@@ -660,7 +699,6 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
             &mut ctx.read_conn,
             &ctx.blobs,
             &ctx.writer,
-            RunId::new(),
             &sink,
             bindings,
             stop.clone(),

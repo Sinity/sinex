@@ -25,9 +25,10 @@ fn options(url: &str, password_file: Option<&Path>) -> Result<async_nats::Connec
             let password = std::fs::read_to_string(file)
                 .map_err(|e| format!("NATS password {}: {e}", file.display()))?;
             Ok(async_nats::ConnectOptions::with_user_and_password(
-                user,
+                user.clone(),
                 password.trim_end_matches('\n').to_owned(),
-            ))
+            )
+            .custom_inbox_prefix(format!("_INBOX.{user}")))
         }
         (None, None) => Ok(async_nats::ConnectOptions::new()),
         (Some(user), None) => Err(format!(

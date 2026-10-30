@@ -80,7 +80,7 @@ async fn saved_queries_bind_parameters_and_replace_definitions_through_admission
 ) {
     let w = world(db).await;
     admit(&w, &["synthetic first", "synthetic second"], 0).await;
-    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where event_type = command.executed and payload.cwd = $directory count","parameter":["directory:text"]})).await;
+    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where event_type = command.executed AND payload.cwd = $directory count","parameter":["directory:text"]})).await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
     let (_, answer) = call(
         &w,
@@ -151,7 +151,7 @@ async fn context_windows_count_back_from_the_end_and_timeline_uses_the_same_quer
     let (_,b) = call(&w,Some(READ),json!({"method":"query","query":"events where source = terminal.atuin since 2026-09-14T08:01:00Z"})).await;
     assert_eq!(a["result"]["rows"], b["result"]["rows"]);
     assert_eq!(a["result"]["total"], 2);
-    let (_,completion) = call(&w,Some(READ),json!({"method":"query-complete","query":"events where event_type = command.executed and payload.dur"})).await;
+    let (_,completion) = call(&w,Some(READ),json!({"method":"query-complete","query":"events where event_type = command.executed AND payload.dur"})).await;
     assert_eq!(
         completion["result"]["fields"][0]["name"],
         "payload.duration_ns"
@@ -235,7 +235,7 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
         0,
     )
     .await;
-    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed and payload.cwd = $directory fields id","parameter":["directory:text"]})).await;
+    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory fields id","parameter":["directory:text"]})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
     let (_, page) = call(
         &w,
@@ -246,7 +246,7 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
     assert_eq!(page["outcome"], "ok", "{page}");
     let cursor = page["result"]["page"]["cursor"].clone();
     assert!(cursor.is_string());
-    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed and payload.cwd = $directory sort when desc fields id","parameter":["directory:text"]})).await;
+    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory sort when desc fields id","parameter":["directory:text"]})).await;
     assert_eq!(changed["outcome"], "ok", "{changed}");
     let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
     assert_eq!(continued["outcome"], "refused", "{continued}");

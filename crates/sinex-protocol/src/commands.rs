@@ -87,6 +87,77 @@ const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous p
 /// they cannot drift apart.
 pub const COMMANDS: &[Command] = &[
     Command {
+        name: "model-call",
+        summary: "Inspect model execution availability (provider execution remains disabled)",
+        args: &[pos(
+            "operation",
+            ArgKind::Text,
+            "Configured model operation",
+        )],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "model-policy",
+        summary: "Record and authorize an explicit operator model policy",
+        args: &[pos("definition", ArgKind::Text, "Complete policy JSON")],
+        access: Access::Operator,
+        mcp: true,
+    },
+    Command {
+        name: "model-record",
+        summary: "Retain a supplied model response and reconcile its actual charge",
+        args: &[
+            pos(
+                "policy",
+                ArgKind::Reference,
+                "Exact authorized policy event",
+            ),
+            pos(
+                "definition",
+                ArgKind::Text,
+                "Complete recorded response JSON",
+            ),
+        ],
+        access: Access::Operator,
+        mcp: true,
+    },
+    Command {
+        name: "model-receipt",
+        summary: "Record an actual receipt without asserting a verified model request",
+        args: &[
+            pos(
+                "policy",
+                ArgKind::Reference,
+                "Exact authorized policy event",
+            ),
+            pos(
+                "definition",
+                ArgKind::Text,
+                "Complete actual receipt and accounting basis JSON",
+            ),
+        ],
+        access: Access::Operator,
+        mcp: true,
+    },
+    Command {
+        name: "signal",
+        summary: "Author or inspect standing signal rules",
+        access: Access::Agent,
+        mcp: true,
+        args: &[
+            pos(
+                "action",
+                ArgKind::Text,
+                "add, list, enable, disable or remove",
+            ),
+            opt("name", ArgKind::Text, "rule name"),
+            opt("rule", ArgKind::Text, "complete shared signal rule as JSON"),
+            PAGE,
+            CURSOR,
+        ],
+    },
+    Command {
         name: "kinds",
         summary: "List immutable kind declarations",
         access: Access::Read,
@@ -188,6 +259,16 @@ pub const COMMANDS: &[Command] = &[
                 "title",
                 ArgKind::Text,
                 "focused window title observed by the client",
+            ),
+            opt(
+                "command_record",
+                ArgKind::Text,
+                "native command record key observed by the client",
+            ),
+            opt(
+                "focus_record",
+                ArgKind::Text,
+                "native focus record key observed by the client",
             ),
         ],
         access: Access::Operator,
@@ -390,6 +471,11 @@ pub const COMMANDS: &[Command] = &[
                 "show old against new without writing outputs",
             ),
             opt(
+                "switch",
+                ArgKind::Integer,
+                "select the producer version using a full comparison ID",
+            ),
+            opt(
                 "from",
                 ArgKind::Text,
                 "only keys touched by inputs at or after this time (RFC 3339)",
@@ -587,7 +673,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "analysis-run",
-        summary: "Run an analysis recipe (correlations, trends, deviations) over the daily metric figures of some logical days; the answer is computed when asked, at one commit position.",
+        summary: "Read the maintained answer of a canonical analysis question (correlations, trends, deviations), with its stored coverage, evidence and selected commit position.",
         args: &[
             pos(
                 "recipe",
@@ -626,6 +712,21 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        name: "gaps",
+        summary: "Where each source could not have recorded between two logical days: the stretches its coverage (its runs, reads and records) does not reach, or the whole span when its coverage is unknown.",
+        args: &[
+            pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
+            pos("to", ArgKind::Text, "last logical day, included"),
+            opt(
+                "source",
+                ArgKind::List,
+                "only this source; repeat for more (default: every source with events)",
+            ),
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
         name: "analysis-why",
         summary: "Why a metric's cell for one logical day is missing, partial or observed: its state and the coverage each of its sources had.",
         args: &[
@@ -639,7 +740,11 @@ pub const COMMANDS: &[Command] = &[
         name: "brief",
         summary: "The brief for one logical day: data quality first, the day's metrics, departures from the recent level, associations over the days before, the machine.",
         args: &[
-            opt("day", ArgKind::Text, "YYYY-MM-DD; default today"),
+            opt(
+                "day",
+                ArgKind::Text,
+                "YYYY-MM-DD or a stored context-pack citation; default today",
+            ),
             opt(
                 "budget",
                 ArgKind::Integer,

@@ -1,5 +1,6 @@
 use super::rules::{
-    CLIPBOARD, COMMANDS, CONVERSATIONS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, POSTS, RULES, VISITS,
+    CLIPBOARD, COMMANDS, CONVERSATIONS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, POSTS, REST, RULES,
+    VISITS,
 };
 use super::*;
 use sinex_model::event_types::browser::LinkFollowed;
@@ -17,7 +18,7 @@ fn at(secs: f64) -> Timestamp {
     Timestamp::from_unix_ns((secs * 1e9) as i128).unwrap()
 }
 
-fn captured<P: EventPayload>(payload: &P, source: &str, class: Class) -> Event {
+pub(crate) fn captured<P: EventPayload>(payload: &P, source: &str, class: Class) -> Event {
     Event::build(
         payload,
         source,
@@ -75,6 +76,7 @@ pub(crate) fn zsh(command: &str, secs: f64) -> Event {
 /// A compositor focus interval, as the interval derivation writes it.
 fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> Event {
     let payload = StateInterval {
+        fenced_at: None,
         interval_id: format!("desktop.focus:{class}:{from}"),
         state_kind: "desktop.focus".into(),
         subject_id: Some(class.into()),
@@ -94,6 +96,8 @@ fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> Event {
 fn activitywatch(app: &str, title: &str, from: f64, to: f64) -> Event {
     captured(
         &WindowSpan {
+            scope: None,
+            host: None,
             bucket: "aw-watcher-window_box".into(),
             span_id: from as i64,
             started_at: at(from),
@@ -269,7 +273,11 @@ fn notification(summary: &str, secs: f64) -> Event {
 /// what its query admits. Outputs sorted by start, then record.
 fn fuse_events(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Event> {
     let fusion = Fusion(rule);
-    let env = Env::at(Timestamp::from_unix_secs(2_000_000_000).unwrap());
+    let env = Env::at(
+        Timestamp::from_unix_secs(2_000_000_000).unwrap(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let mut keys: Vec<Value> = Vec::new();
     for e in inputs {
         let view = KeyView {
@@ -738,6 +746,68 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
 fn mail_from_a_source_no_input_names_is_not_fused() {
     let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
     assert!(out.is_empty());
+}
+
+// Rest.
+
+fn health(provider: &str, category: &str, from: f64, to: f64) -> Event {
+    captured(
+        &sinex_model::event_types::health::HealthRecord::new(
+            provider.into(),
+            category.into(),
+            format!("{provider}:{from}"),
+            Some(at(from)),
+            Some(at(to)),
+            None,
+            Default::default(),
+            vec![],
+        )
+        .unwrap(),
+        if provider == "sleep-as-android" {
+            "health.sleep-as-android"
+        } else {
+            "health.samsung"
+        },
+        Class::Guarded,
+    )
+}
+
+#[devkit::test]
+fn one_night_two_providers_is_one_rest_and_a_nap_its_own() {
+    let night = H;
+    let out = fuse(
+        &REST,
+        &[
+            health("sleep-as-android", "sleep", night, night + 8.0 * 3600.0),
+            health(
+                "samsung-health",
+                "Sleep",
+                night + 600.0,
+                night + 7.9 * 3600.0,
+            ),
+            health(
+                "samsung-health",
+                "Shealth Vitality Nap Data",
+                night + 15.0 * 3600.0,
+                night + 15.5 * 3600.0,
+            ),
+            // Not rest at all.
+            health("samsung-health", "Heart Rate", night + 60.0, night + 60.0),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:#?}");
+    assert_eq!(
+        observed_by(&out[0]),
+        ["health.sleep-as-android", "health.samsung"]
+    );
+    assert_eq!(out[0]["kind"], "sleep");
+    assert_eq!(
+        out[0]["started_at"],
+        serde_json::to_value(at(night)).unwrap(),
+        "times come from the preferred provider"
+    );
+    assert_eq!(out[1]["kind"], "nap");
+    assert_eq!(observed_by(&out[1]), ["health.samsung"]);
 }
 
 // Posts: the GDPR export and the public archive name the same Reddit IDs.

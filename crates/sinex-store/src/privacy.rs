@@ -1,14 +1,8 @@
-//! Privacy rules run in admission, once. A rule names a source, optionally an
-//! event type and a payload field by JSON Pointer, one matcher and one action.
-//! Rules are insert-only rows: a change inserts a new version and a removal
-//! inserts its end, so the rule set in force at any moment can be read back,
-//! and every admitted run records the rule-set position it was admitted under.
-//! Reads never apply a rule again; a new rule reaches old data by replay.
-//!
-//! Each source also has a class floor: the class its declaration gives, raised
-//! by the operator's per-source setting. No event is admitted below its
-//! source's floor, and a derived event is never below the highest class of its
-//! parents.
+//! Configured output rules and their atomic, grant-independent projection.
+pub mod comparisons;
+pub mod estimability;
+pub mod projection;
+pub mod refresh;
 use crate::{Error, Result};
 use regex::Regex;
 use serde_json::Value;
@@ -46,7 +40,8 @@ pub enum Matcher {
     Iban,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Action {
     /// Raise the class only.
     Classify,
@@ -74,10 +69,27 @@ pub struct RuleSet {
 }
 
 /// What applying the rules did to one event.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Applied {
     pub matched: usize,
     pub changed: bool,
+    pub trace: Vec<AffectedPath>,
+}
+
+/// Private policy provenance. No original value is retained in this trace.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AffectedPath {
+    pub path: String,
+    pub action: Action,
+    pub rule: Uuid,
+}
+impl Action {
+    pub fn transforms(self) -> bool {
+        self != Self::Classify
+    }
+}
+fn child_pointer(parent: &str, child: &str) -> String {
+    format!("{parent}/{}", child.replace('~', "~0").replace('/', "~1"))
 }
 
 pub fn class_name(c: Class) -> &'static str {
@@ -306,7 +318,7 @@ impl RuleSet {
         for rule in self.rules.iter().filter(|r| {
             r.source == source && r.event_type.as_deref().is_none_or(|t| t == event_type)
         }) {
-            if self.apply_rule(rule, event) {
+            if self.apply_rule(rule, event, &mut applied.trace) {
                 applied.matched += 1;
                 event.class = event.class.max(rule.class);
                 applied.changed |= rule.action != Action::Classify;
@@ -330,8 +342,16 @@ impl RuleSet {
     }
 
     /// Whether `rule` matched; applies its action.
-    fn apply_rule(&self, rule: &Rule, event: &mut Event) -> bool {
-        if rule.field.is_none() && matches!(rule.matcher, Matcher::All) {
+    fn apply_rule(&self, rule: &Rule, event: &mut Event, trace: &mut Vec<AffectedPath>) -> bool {
+        if rule.field.is_none()
+            && matches!(rule.matcher, Matcher::All)
+            && rule.action == Action::Classify
+        {
+            trace.push(AffectedPath {
+                path: String::new(),
+                action: rule.action,
+                rule: rule.id,
+            });
             return true;
         }
         match &rule.field {
@@ -340,12 +360,17 @@ impl RuleSet {
                     return false;
                 };
                 if rule.action == Action::DropField && self.matches_value(rule, target) {
+                    trace.push(AffectedPath {
+                        path: pointer.clone(),
+                        action: rule.action,
+                        rule: rule.id,
+                    });
                     remove_pointer(&mut event.payload, pointer);
                     return true;
                 }
-                self.rewrite(rule, target)
+                self.rewrite(rule, target, pointer, trace)
             }
-            None => self.rewrite(rule, &mut event.payload),
+            None => self.rewrite(rule, &mut event.payload, "", trace),
         }
     }
 
@@ -364,13 +389,24 @@ impl RuleSet {
 
     /// Rewrite every string under `value` the rule matches. Returns whether any
     /// matched.
-    fn rewrite(&self, rule: &Rule, value: &mut Value) -> bool {
+    fn rewrite(
+        &self,
+        rule: &Rule,
+        value: &mut Value,
+        path: &str,
+        trace: &mut Vec<AffectedPath>,
+    ) -> bool {
         match value {
             Value::String(s) => {
                 let spans = rule.matcher.spans(s);
                 if spans.is_empty() {
                     return false;
                 }
+                trace.push(AffectedPath {
+                    path: path.into(),
+                    action: rule.action,
+                    rule: rule.id,
+                });
                 match rule.action {
                     Action::Classify => {}
                     Action::Hash => *s = self.keyed(s),
@@ -380,15 +416,15 @@ impl RuleSet {
             }
             Value::Array(items) => {
                 let mut any = false;
-                for v in items {
-                    any |= self.rewrite(rule, v);
+                for (index, v) in items.iter_mut().enumerate() {
+                    any |= self.rewrite(rule, v, &child_pointer(path, &index.to_string()), trace);
                 }
                 any
             }
             Value::Object(map) => {
                 let mut any = false;
-                for v in map.values_mut() {
-                    any |= self.rewrite(rule, v);
+                for (key, v) in map.iter_mut() {
+                    any |= self.rewrite(rule, v, &child_pointer(path, key), trace);
                 }
                 any
             }
@@ -397,6 +433,11 @@ impl RuleSet {
                 if rule.matcher.spans(&text).is_empty() {
                     return false;
                 }
+                trace.push(AffectedPath {
+                    path: path.into(),
+                    action: rule.action,
+                    rule: rule.id,
+                });
                 match rule.action {
                     Action::Classify => {}
                     Action::Hash => *value = Value::String(self.keyed(&text)),
@@ -478,28 +519,7 @@ pub async fn load<'a>(
     let seq = sqlx::query_scalar!(r#"SELECT coalesce(max(seq), 0) AS "seq!" FROM privacy.rules"#)
         .fetch_one(&mut *conn)
         .await?;
-    let rows = sqlx::query!(
-        r#"SELECT DISTINCT ON (name) id, name, source, event_type, field, matcher, matcher_arg,
-                  class, action, ended
-           FROM privacy.rules WHERE source = ANY($1)
-           ORDER BY name, seq DESC"#,
-        &sources
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut rules = Vec::new();
-    for r in rows.into_iter().filter(|r| !r.ended) {
-        rules.push(Rule {
-            id: r.id,
-            name: r.name,
-            source: r.source,
-            event_type: r.event_type,
-            field: r.field,
-            matcher: Matcher::parse(&r.matcher, r.matcher_arg.as_deref())?,
-            class: parse_class(&r.class)?,
-            action: Action::parse(&r.action)?,
-        });
-    }
+    let rules = active_rules(conn, &sources).await?;
     let floors = sqlx::query!(
         r#"SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
            WHERE source = ANY($1) ORDER BY source, seq DESC"#,
@@ -516,6 +536,34 @@ pub async fn load<'a>(
         floors,
         hash_key: hash_key(conn).await?,
     })
+}
+
+/// Effective rules for an output authorization snapshot. This read path does
+/// not initialize signing/hash material or require a writable transaction.
+pub(crate) async fn active_rules(conn: &mut PgConnection, sources: &[String]) -> Result<Vec<Rule>> {
+    let rows = sqlx::query!(
+        r#"SELECT DISTINCT ON (name) id, name, source, event_type, field, matcher, matcher_arg,
+                  class, action, ended
+           FROM privacy.rules WHERE source = ANY($1)
+           ORDER BY name, seq DESC"#,
+        sources
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut rules = Vec::new();
+    for r in rows.into_iter().filter(|r| !r.ended) {
+        rules.push(Rule {
+            id: r.id,
+            name: r.name,
+            source: r.source,
+            event_type: r.event_type,
+            field: r.field,
+            matcher: Matcher::parse(&r.matcher, r.matcher_arg.as_deref())?,
+            class: parse_class(&r.class)?,
+            action: Action::parse(&r.action)?,
+        });
+    }
+    Ok(rules)
 }
 
 /// Compiled rules belong to one validated writer session. The complete set
@@ -792,9 +840,7 @@ pub async fn list_rules(conn: &mut PgConnection, history: bool) -> Result<Vec<Ru
         .collect())
 }
 
-/// Events whose class is below what their source's floor or the rules in force
-/// now give them (admitted before a rule or floor changed): the class
-/// verification. A replay brings them up.
+/// Current projected class floor coverage. Original admission classes remain unchanged.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Verification {
     pub checked: u64,
@@ -803,13 +849,14 @@ pub struct Verification {
 }
 
 pub async fn verify_classes(conn: &mut PgConnection) -> Result<Verification> {
+    projection::ensure_current(conn).await?;
     let rows = sqlx::query!(
         r#"WITH floors AS (
              SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
              ORDER BY source, seq DESC),
            rank(c, r) AS (VALUES ('open', 0), ('guarded', 1), ('sealed', 2))
            SELECT e.source AS "source!", count(*) AS "n!"
-           FROM core.events e
+           FROM core.visible_events e
            JOIN (SELECT event_id FROM core.live_locations
                  UNION SELECT event_id FROM core.live_equivalence) lk ON lk.event_id = e.id
            JOIN floors f ON f.source = e.source

@@ -15,6 +15,10 @@ use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "unit.started", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct UnitStarted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     /// The journal entry's cursor.
     pub cursor: String,
     pub logged_at: Option<Timestamp>,
@@ -34,6 +38,10 @@ pub struct UnitStarted {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "unit.stopped", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct UnitStopped {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     pub cursor: String,
     pub logged_at: Option<Timestamp>,
     pub unit: String,
@@ -69,6 +77,8 @@ pub struct UnitReloaded {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "boot.started", key = ["boot_id"], replace = repeat, time = started_at, quality = intrinsic)]
 pub struct BootStarted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub boot_id: String,
     /// When the kernel started; unknown when a phase is missing.
     pub started_at: Option<Timestamp>,
@@ -85,6 +95,10 @@ pub struct BootStarted {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "sleep.started", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct SleepStarted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     pub cursor: String,
     pub logged_at: Option<Timestamp>,
     /// `suspend`, `hibernate`, `hybrid-sleep` or `suspend-then-hibernate`.
@@ -95,6 +109,10 @@ pub struct SleepStarted {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "sleep.ended", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct SleepEnded {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     pub cursor: String,
     pub logged_at: Option<Timestamp>,
     pub state: Option<String>,
@@ -104,6 +122,10 @@ pub struct SleepEnded {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "shutdown.started", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct ShutdownStarted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     pub cursor: String,
     pub logged_at: Option<Timestamp>,
     /// `reboot`, `power-off`, `halt`, `kexec`…, as logind wrote it.

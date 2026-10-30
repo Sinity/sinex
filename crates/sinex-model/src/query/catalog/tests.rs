@@ -129,7 +129,7 @@ fn each_query_and_join_binds_to_its_selected_saved_kinds() {
     number.kind.name = "example.number".into();
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(QueryCatalog::new([text, number]));
-    let query = crate::query::bind("events where event_type = example.text and payload.value = 7 near (events where event_type = example.number and payload.value = 7 fields payload.value) within 5m fields payload.value", &ctx).unwrap();
+    let query = crate::query::bind("events where event_type = example.text AND payload.value = 7 near (events where event_type = example.number AND payload.value = 7 fields payload.value) within 5m fields payload.value", &ctx).unwrap();
     assert!(query.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Text, .. }))));
     let inner = query
         .stages
@@ -145,7 +145,7 @@ fn each_query_and_join_binds_to_its_selected_saved_kinds() {
     assert!(inner.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Integer, .. }))));
     assert!(
         crate::query::bind(
-            "events where event_type = example.number and payload.value = wrong",
+            "events where event_type = example.number AND payload.value = wrong",
             &ctx
         )
         .is_err()

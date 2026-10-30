@@ -32,6 +32,290 @@ impl Description {
         }
     }
 
+    pub(crate) fn before_output_ordinals() -> Self {
+        let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| crate::model_calls::before(statement));
+        description.tables.retain(|statement| {
+            crate::source_declarations::before(statement)
+                && crate::privacy_epoch::before(statement)
+                && crate::owner_protocol::before(statement)
+                && !statement.contains("core.signal_checkpoints")
+                && !statement.contains("core.embedding_spaces")
+                && !statement.contains("core.embedding_vectors")
+                && !statement.starts_with("CREATE INDEX embedding_target_space ")
+                && !statement.contains("core.query_cursor_key")
+                && !statement.contains("VALUES ('query_metadata',0)")
+        });
+        description.after_tables.retain(|statement| {
+            crate::source_declarations::before(statement)
+                && crate::privacy_epoch::before(statement)
+                && crate::owner_protocol::before(statement)
+                && crate::query_cursors::before(statement)
+        });
+        description.visibility = crate::visibility_before_privacy_epoch();
+        for statement in &mut description.tables {
+            crate::source_declarations::previous(statement);
+            if statement.starts_with("CREATE TABLE core.ingress_frames (") {
+                *statement = statement
+                    .replace(",\n  family text", "")
+                    .replace(",\n  write_kind_prefixes text[]", "");
+            }
+        }
+
+        for statement in &mut description.tables {
+            *statement = statement
+                .replace("output_index bigint", "output_index smallint")
+                .replace(
+                    "ord bigint PRIMARY KEY CHECK (ord >= 0)",
+                    "ord integer PRIMARY KEY",
+                )
+                .replace(
+                    "output_index smallint NOT NULL CHECK (output_index >= 0)",
+                    "output_index smallint NOT NULL",
+                );
+            if statement.starts_with("CREATE TABLE core.live_locations (")
+                || statement.starts_with("CREATE TABLE core.hidden_records (")
+            {
+                *statement = statement.replace(
+                    "  CONSTRAINT output_index_in_range CHECK (output_index >= 0),\n",
+                    "",
+                );
+            }
+        }
+        description
+    }
+
+    /// Type and range changes come from the same declarations as fresh tables.
+    pub(crate) fn output_ordinal_changes() -> Vec<String> {
+        let before = Self::before_output_ordinals();
+        let after = Self::current();
+        let mut changes = Vec::new();
+        for (name, column) in [
+            ("core.events", "output_index"),
+            ("core.live_locations", "output_index"),
+            ("core.hidden_records", "output_index"),
+            ("core.admission_stage", "output_index"),
+            ("core.admission_stage", "ord"),
+        ] {
+            let declared = after
+                .tables
+                .iter()
+                .filter_map(|sql| Table::read(sql))
+                .find(|table| table.name == name)
+                .expect("ordinal table is declared");
+            let prior = before
+                .tables
+                .iter()
+                .filter_map(|sql| Table::read(sql))
+                .find(|table| table.name == name)
+                .expect("prior ordinal table is declared");
+            let definition = &declared.columns[column];
+            let data_type = definition
+                .split_whitespace()
+                .next()
+                .expect("ordinal SQL type");
+            changes.push(format!(
+                "ALTER TABLE {name} ALTER COLUMN {column} TYPE {data_type}"
+            ));
+            if let Some((_, check)) = definition.split_once(" CHECK ") {
+                changes.push(format!("ALTER TABLE {name} ADD CHECK {check}"));
+            }
+            for constraint in &declared.constraints {
+                if !prior.constraints.contains(constraint) {
+                    changes.push(format!("ALTER TABLE {name} ADD {constraint}"));
+                }
+            }
+        }
+        changes
+    }
+
+    pub(crate) fn before_foundations() -> Self {
+        let mut description = Self::before_output_ordinals();
+        description
+            .tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        description
+            .after_tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        for statement in &mut description.tables {
+            crate::source_declarations::previous(statement);
+        }
+        description.after_tables.retain(|statement| {
+            crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement)
+        });
+        description.tables.retain(|statement| {
+            crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement)
+        });
+        description.tables.retain(|statement| {
+            !statement.starts_with("CREATE TABLE core.signal_checkpoints (")
+                && !statement.starts_with("CREATE TABLE core.embedding_spaces (")
+                && !statement.starts_with("CREATE TABLE core.embedding_vectors (")
+                && !statement.starts_with("CREATE INDEX embedding_target_space ")
+                && !statement.starts_with("CREATE TABLE core.query_cursor_key (")
+                && !statement.starts_with("INSERT INTO core.query_cursor_key ")
+                && !statement.contains("VALUES ('query_metadata',0)")
+                && !statement.starts_with("CREATE TABLE core.blob_segments (")
+                && !statement.starts_with("CREATE TABLE core.blob_extents (")
+                && !statement.starts_with("CREATE TABLE core.producer_orders (")
+                && !statement.starts_with("CREATE INDEX events_feed ")
+                && !statement.starts_with("CREATE INDEX archive_changes_feed ")
+                && !statement.starts_with("CREATE INDEX tombstones_feed ")
+                && !statement.starts_with("CREATE INDEX tombstones_original_position ")
+        });
+        description.visibility = crate::visibility_before_privacy_epoch();
+        description.visibility.retain(|statement| {
+            !statement.starts_with("CREATE VIEW core.visible_embedding_vectors ")
+        });
+        for statement in &mut description.tables {
+            if statement.starts_with("CREATE TABLE core.ingress_frames (") {
+                *statement = statement
+                    .replace(",\n  family text", "")
+                    .replace(",\n  write_kind_prefixes text[]", "");
+            }
+            if statement.starts_with("CREATE TABLE core.published (") {
+                *statement = statement
+                    .replace(",\n  stream_instance text NOT NULL DEFAULT ''", "")
+                    .replace(
+                        "PRIMARY KEY (event_id, stream_seq, stream_instance)",
+                        "PRIMARY KEY (event_id, stream_seq)",
+                    );
+            }
+            if statement.starts_with("CREATE TABLE core.event_tombstones (") {
+                *statement = statement
+                    .replace(",\n  commit_seq bigint", "")
+                    .replace(",\n  original_commit_seq bigint", "")
+                    .replace(",\n  class text", "");
+            }
+            *statement = statement.replace(
+                "VALUES ('commit_seq', 0), ('excised', 0)",
+                "VALUES ('commit_seq', 0)",
+            );
+            if statement.starts_with("CREATE TABLE registry.derivations (")
+                || statement.starts_with("CREATE TABLE derivation.comparisons (")
+            {
+                *statement = statement
+                    .replace("version bigint NOT NULL", "version integer NOT NULL")
+                    .replace(",\n  context jsonb NOT NULL DEFAULT '{}'::jsonb", "")
+                    .replace(",\n  build text NOT NULL DEFAULT ''", "");
+            }
+        }
+        description
+    }
+
+    pub(crate) fn before_segments() -> Self {
+        let mut description = Self::before_output_ordinals();
+        description
+            .tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        description
+            .after_tables
+            .retain(|statement| crate::source_declarations::before(statement));
+        for statement in &mut description.tables {
+            crate::source_declarations::previous(statement);
+        }
+        description.after_tables.retain(|statement| {
+            crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement)
+        });
+        description.tables.retain(|statement| {
+            crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement)
+        });
+        description.tables.retain(|statement| {
+            !statement.starts_with("CREATE TABLE core.signal_checkpoints (")
+                && !statement.starts_with("CREATE TABLE core.embedding_spaces (")
+                && !statement.starts_with("CREATE TABLE core.embedding_vectors (")
+                && !statement.starts_with("CREATE INDEX embedding_target_space ")
+                && !statement.starts_with("CREATE TABLE core.query_cursor_key (")
+                && !statement.starts_with("INSERT INTO core.query_cursor_key ")
+                && !statement.contains("VALUES ('query_metadata',0)")
+                && !statement.starts_with("CREATE TABLE core.blob_segments (")
+                && !statement.starts_with("CREATE TABLE core.blob_extents (")
+                && !statement.starts_with("CREATE TABLE core.producer_orders (")
+                && !statement.starts_with("CREATE INDEX events_feed ")
+                && !statement.starts_with("CREATE INDEX archive_changes_feed ")
+                && !statement.starts_with("CREATE INDEX tombstones_feed ")
+                && !statement.starts_with("CREATE INDEX tombstones_original_position ")
+        });
+        description.visibility = crate::visibility_before_privacy_epoch();
+        description.visibility.retain(|statement| {
+            !statement.starts_with("CREATE VIEW core.visible_embedding_vectors ")
+        });
+        for statement in &mut description.tables {
+            if statement.starts_with("CREATE TABLE core.ingress_frames (") {
+                *statement = statement
+                    .replace(",\n  family text", "")
+                    .replace(",\n  write_kind_prefixes text[]", "");
+            }
+            if statement.starts_with("CREATE TABLE core.published (") {
+                *statement = statement
+                    .replace(",\n  stream_instance text NOT NULL DEFAULT ''", "")
+                    .replace(
+                        "PRIMARY KEY (event_id, stream_seq, stream_instance)",
+                        "PRIMARY KEY (event_id, stream_seq)",
+                    );
+            }
+            if statement.starts_with("CREATE TABLE core.event_tombstones (") {
+                *statement = statement
+                    .replace(",\n  commit_seq bigint", "")
+                    .replace(",\n  original_commit_seq bigint", "")
+                    .replace(",\n  class text", "");
+            }
+        }
+        description
+    }
+
+    /// Producer metadata is additive; its version columns widen without changing values.
+    pub(crate) fn producer_metadata_changes() -> Vec<String> {
+        let after = Self::before_segments();
+        let mut before = Self::before_foundations();
+        let mut changes = Vec::new();
+        for name in ["registry.derivations", "derivation.comparisons"] {
+            let declared = after
+                .tables
+                .iter()
+                .filter_map(|statement| Table::read(statement))
+                .find(|table| table.name == name)
+                .expect("producer table is declared");
+            let definition = declared
+                .columns
+                .get("version")
+                .expect("producer version is declared");
+            let data_type = definition
+                .split_whitespace()
+                .next()
+                .expect("version has a SQL type");
+            let qualified = name
+                .split('.')
+                .map(crate::quote_ident)
+                .collect::<Vec<_>>()
+                .join(".");
+            changes.push(format!(
+                "ALTER TABLE {qualified} ALTER COLUMN version TYPE {data_type}"
+            ));
+            for statement in &mut before.tables {
+                if statement.starts_with(&format!("CREATE TABLE {name} (")) {
+                    *statement = statement
+                        .replace("version integer NOT NULL", &format!("version {definition}"));
+                }
+            }
+        }
+        // The named data step fills the new counter from preserved rows.
+        for statement in &mut before.tables {
+            if statement.starts_with("INSERT INTO core.counters") {
+                if let Some(initializer) = after
+                    .tables
+                    .iter()
+                    .find(|current| current.starts_with("INSERT INTO core.counters"))
+                {
+                    statement.clone_from(initializer);
+                }
+            }
+        }
+        changes.extend(after.changes_from(&before, &[]));
+        changes
+    }
+
     pub(crate) fn before_kind_declarations() -> Self {
         Self {
             tables: version_nine::tables(&version_nine::checks()),
@@ -53,6 +337,17 @@ impl Description {
     ) -> Result<(), crate::Error> {
         crate::kinds::install(connection, owners, &self.kinds).await?;
         crate::apply_views(connection, self).await
+    }
+
+    pub(crate) fn declares_relation(&self, name: &str) -> bool {
+        self.tables
+            .iter()
+            .filter_map(|statement| Table::read(statement))
+            .any(|table| table.name == name)
+            || self.visibility.iter().any(|statement| {
+                statement.starts_with(&format!("CREATE VIEW {name} AS "))
+                    || statement.starts_with(&format!("CREATE OR REPLACE VIEW {name} AS "))
+            })
     }
 
     pub(crate) fn statements(&self) -> Vec<String> {

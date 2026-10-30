@@ -43,7 +43,14 @@ impl Drop for Fixture {
 async fn fixture(db: devkit::pg::TestDatabase) -> Fixture {
     let url = db.url(None);
     let dir = std::env::temp_dir().join(format!("sinexd-replay-{}", Uuid::now_v7()));
-    let ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     Fixture { _db: db, ctx, dir }
 }
 

@@ -24,12 +24,14 @@ pub(crate) async fn admit_commands(
 ) -> Vec<(Uuid, Uuid)> {
     let mut events = Vec::new();
     let mut ids = Vec::new();
+    // Source record coordinates remain distinct across fixture acquisitions.
+    let acquisition = Uuid::now_v7();
     for (i, (command, cwd)) in commands.iter().enumerate() {
         let started_at = Timestamp::from_unix_secs(BASE + 60 * i as i64).unwrap();
         let exit_code = if i == 2 { None } else { Some((i % 2) as i64) };
         let observed = Event::build(
             &CommandExecuted {
-                native_id: format!("n{i}"),
+                native_id: format!("{acquisition}-n{i}"),
                 command: command.to_string(),
                 cwd: cwd.to_string(),
                 session: "s".into(),
@@ -81,20 +83,31 @@ pub(crate) async fn admit_commands(
         events.push(observed);
         events.push(fused);
     }
-    let batch = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "test".into(),
-        },
-        records: vec![RecordOutcome::Events {
-            location: None,
-            events,
-        }],
-        archive: vec![],
-    };
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&batch, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    // Derived inputs are committed readings, including in fixtures.
+    for derived in [false, true] {
+        let selected: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(&event.origin, Origin::Derived { .. }) == derived)
+            .cloned()
+            .collect();
+        if selected.is_empty() {
+            continue;
+        }
+        let batch = Batch {
+            run: RunId::new(),
+            kind: BatchKind::Api {
+                actor: "test".into(),
+            },
+            records: vec![RecordOutcome::Events {
+                location: None,
+                events: selected,
+            }],
+            archive: vec![],
+        };
+        let mut tx = conn.begin().await.unwrap();
+        tx.admit(&batch, &NoDerivations).await.unwrap();
+        tx.commit().await.unwrap();
+    }
     ids
 }
 
@@ -147,7 +160,7 @@ async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown(db: devkit:
         column(&a, "command"),
         [json!("git push origin master"), json!("ls -la")]
     );
-    let a = ask(&mut conn, "commands where not exit_code exists").await;
+    let a = ask(&mut conn, "commands where NOT exit_code exists").await;
     assert_eq!(column(&a, "command"), [json!("cargo build")]);
 }
 
@@ -172,7 +185,7 @@ async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatab
     world(&mut conn).await;
     let a = ask(
         &mut conn,
-        "events where source = terminal.atuin and source = derive.shell-fusion",
+        "events where source = terminal.atuin AND source = derive.shell-fusion",
     )
     .await;
     assert_eq!(a.total, 0);
@@ -199,7 +212,7 @@ async fn words_search_ranks_and_marks_snippets(db: devkit::pg::TestDatabase) {
     assert!(a.rows[0]["snippet"].as_str().unwrap().contains("[cargo]"));
     let a = ask(&mut conn, r#"commands where "test --workspace""#).await;
     assert_eq!(column(&a, "command"), [json!("cargo test --workspace")]);
-    let a = ask(&mut conn, "commands where tide* and not cargo").await;
+    let a = ask(&mut conn, "commands where tide* AND NOT cargo").await;
     assert_eq!(column(&a, "command"), [json!("git push origin master")]);
     // Words are case-folded.
     let a = ask(&mut conn, "commands where CARGO").await;
@@ -444,7 +457,7 @@ async fn time_functions_bucket_in_the_zone_with_logical_days(db: devkit::pg::Tes
     assert_eq!(a.total, 5);
     let a = ask(
         &mut conn,
-        "commands where weekday(when) = mon and day(when) = 2026-09-14",
+        "commands where weekday(when) = mon AND day(when) = 2026-09-14",
     )
     .await;
     assert_eq!(a.total, 5);
@@ -502,6 +515,7 @@ async fn read_only_sql_reads_and_cannot_write(db: devkit::pg::TestDatabase) {
 }
 
 mod cursor;
+mod event_labels;
 
 /// Admit derived events built from `payloads`, each with one fused command as
 /// its parent.
@@ -552,6 +566,7 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
         .unwrap();
     let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
     let interval = |id: &str, ended: Option<i64>| StateInterval {
+        fenced_at: None,
         interval_id: id.into(),
         state_kind: "desktop.focus".into(),
         subject_id: Some(id.into()),
@@ -607,7 +622,7 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
     assert_eq!(column(&closed, "state"), vec![json!("desktop.focus")]);
     let days = ask(
         &mut conn,
-        "figures where grain = day and dimension != cwd fields day, value",
+        "figures where grain = day AND dimension != cwd fields day, value",
     )
     .await;
     assert_eq!(days.total, 1);
@@ -631,4 +646,30 @@ mod gaps;
 
 mod kinds;
 
+mod signals;
+
+mod calendar;
+
 mod follow;
+
+#[devkit::test]
+async fn read_only_sql_rejects_stale_projection_even_when_the_view_is_pruned(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let positive = super::read_sql::run(&mut conn, "SELECT 7 AS n")
+        .await
+        .unwrap();
+    assert_eq!(positive, vec![serde_json::json!({"n":7})]);
+    sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES('synthetic-stale','guarded','test')").execute(&mut conn).await.unwrap();
+    let error = super::read_sql::run(
+        &mut conn,
+        "SELECT count(*) FROM core.visible_search_text WHERE false",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("privacy_projection_stale"),
+        "{error}"
+    );
+}

@@ -8,7 +8,7 @@ use crate::cell::{Cell, Missing};
 use crate::coverage::{Completeness, Coverage};
 use crate::span::{MICROS_PER_SECOND, Span, SpanSet};
 use serde::{Deserialize, Serialize};
-use sinex_derivations::figures::{Law, Metric};
+use sinex_derivations::figures::{Calculation, Metric};
 use sinex_model::Timestamp;
 use sinex_model::time_settings::{TimeSettings, TimeSettingsError};
 
@@ -78,9 +78,6 @@ pub struct PanelCell {
     pub reference: Option<String>,
 }
 
-/// A day counts as fully observed when coverage misses less than this.
-const OBSERVED_FRACTION: f64 = 0.999;
-
 /// What the metric's sources covered, any of them sufficing, and whether any
 /// of the coverage is of unknown completeness (which makes figures lower
 /// bounds).
@@ -117,9 +114,9 @@ pub fn cells(
             let value = match figure {
                 Some(f) => f.value,
                 // Nothing counted: zero, unless the metric is a ratio of nothing.
-                None => match metric.law {
-                    Law::Count | Law::Seconds { .. } => Some(0.0),
-                    Law::Ratio { .. } => None,
+                None => match metric.calculation {
+                    Calculation::Count | Calculation::Seconds { .. } => Some(0.0),
+                    Calculation::Ratio { .. } => None,
                 },
             };
             if fraction <= 0.0 {
@@ -137,10 +134,10 @@ pub fn cells(
                 None => Cell::Missing {
                     reason: Missing::NotApplicable,
                 },
-                Some(value) if fraction >= OBSERVED_FRACTION => Cell::Observed { value },
+                Some(value) if observed.len() == unit.span.len() => Cell::Observed { value },
                 Some(value) => Cell::Partial {
                     value,
-                    observed_fraction: (fraction * 1000.0).round() / 1000.0,
+                    observed_fraction: fraction,
                 },
             }
         };

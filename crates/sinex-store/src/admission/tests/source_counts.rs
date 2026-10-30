@@ -223,3 +223,182 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
     assert_eq!(before, after);
     assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
 }
+
+async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from: i32) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let parent = keyed("source", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![parent.clone()])).await;
+    let mut child = keyed("derived", 2, 2, 1);
+    child.origin = Origin::Derived {
+        parents: vec![parent.id],
+    };
+    admit_one(&mut conn, &batch(vec![child.clone()])).await;
+    let telemetry = Event::build(
+        &sinex_model::event_types::telemetry::SinexTelemetry {
+            component: "writer".into(),
+            name: String::new(),
+            sampled_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+            measures: [("events".into(), 1.0)].into(),
+        },
+        "sinex.telemetry",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let mut sample = batch(vec![telemetry]);
+    sample.kind = BatchKind::Replay {
+        operation: OperationId::new(),
+        source: None,
+        host: None,
+    };
+    admit_one(&mut conn, &sample).await;
+    let before: Vec<Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    crate::test_schema::remove_foundations(&mut conn).await;
+    if from < 4 {
+        crate::test_schema::remove_version_4(&mut conn).await;
+        if from == 3 {
+            conn.execute("CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)").await.unwrap();
+        }
+    }
+    if from >= 5 {
+        restore_blob_tracking(&mut conn).await;
+    }
+    sqlx::query("UPDATE sinex_schema.applied SET version = $1")
+        .bind(from)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        sinex_schema::apply(&mut conn).await.unwrap(),
+        sinex_schema::Applied::Upgraded {
+            from,
+            to: sinex_schema::VERSION
+        }
+    );
+    let after: Vec<Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(before, after);
+    let metadata: Vec<(i64, String)> =
+        sqlx::query_as("SELECT kind_version,validation FROM core.events ORDER BY id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        metadata,
+        vec![(1, "unvalidated".into()); 3],
+        "the versionless predecessor has unknown version-one declarations, never inferred current metadata"
+    );
+    let edges: Vec<(uuid::Uuid, uuid::Uuid)> =
+        sqlx::query_as("SELECT parent, child FROM core.event_children")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(edges, [(parent.id.0, child.id.0)]);
+    let names = [
+        "sinex.telemetry",
+        "tag.applied",
+        "activity.window",
+        "activity.session",
+        "activity.span",
+        "conversation.day",
+        "rest.fused",
+        "document.text",
+    ];
+    let expected = sinex_model::event_types::declarations()
+        .into_iter()
+        .filter(|kind| names.contains(&kind.kind.name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(expected.len(), names.len());
+    let references = expected
+        .iter()
+        .map(|kind| kind.kind.clone())
+        .collect::<Vec<_>>();
+    let stored = sinex_schema::kinds::load(&mut conn, &references)
+        .await
+        .unwrap();
+    for definition in expected {
+        assert_eq!(
+            stored.get(&definition.kind),
+            Some(definition),
+            "current typed definition remains immutable beside historical unknown version one"
+        );
+    }
+    assert!(matches!(
+        sinex_schema::apply(&mut conn).await.unwrap(),
+        sinex_schema::Applied::Current { .. }
+    ));
+}
+
+#[devkit::test]
+async fn upgrading_from_version_2_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
+    upgrade_keeps_activity_and_telemetry(db, 2).await;
+}
+
+#[devkit::test]
+async fn upgrading_from_version_3_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
+    upgrade_keeps_activity_and_telemetry(db, 3).await;
+}
+
+#[devkit::test]
+async fn upgrading_refuses_to_drop_a_populated_telemetry_table(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_one(&mut conn, &batch(vec![keyed("synthetic", 1, 1, 1)])).await;
+    crate::test_schema::remove_foundations(&mut conn).await;
+    restore_blob_tracking(&mut conn).await;
+    conn.execute("INSERT INTO telemetry.events (id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class) SELECT id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class FROM core.events").await.unwrap();
+    conn.execute("UPDATE sinex_schema.applied SET version = 5")
+        .await
+        .unwrap();
+    let error = sinex_schema::apply(&mut conn).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("the telemetry table holds records"),
+        "{error}"
+    );
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM telemetry.events")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(stored, 1);
+    let ordinary: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(ordinary, 1);
+    let version: i32 = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(version, 5);
+}
+
+#[devkit::test]
+async fn upgrading_from_version_5_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase) {
+    upgrade_keeps_activity_and_telemetry(db, 5).await;
+}
+
+async fn restore_blob_tracking(conn: &mut PgConnection) {
+    sqlx::raw_sql("INSERT INTO core.counters(name,value) VALUES('blob_changes',0); CREATE FUNCTION core.note_blob_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE core.counters SET value=value+1 WHERE name='blob_changes'; RETURN NULL; END $$; CREATE TRIGGER blob_changes AFTER INSERT OR DELETE OR TRUNCATE ON core.blobs FOR EACH STATEMENT EXECUTE FUNCTION core.note_blob_change();").execute(conn).await.unwrap();
+}

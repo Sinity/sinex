@@ -51,7 +51,11 @@ fn fit(source: &str, secs: i64, value: f64) -> Event {
 }
 
 fn env() -> Env {
-    Env::at(at(10 * 86_400))
+    Env::at(
+        at(10 * 86_400),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
 }
 
 fn keys(d: &dyn crate::AnyKeyed, e: &Event) -> Vec<Value> {
@@ -92,7 +96,7 @@ fn a_point_dirties_its_civil_hour_and_only_fit_points_count() {
     let query = HourlyFigures
         .inputs(&json!({"hour": "2024-06-15T01:00:00Z"}), &env())
         .unwrap();
-    assert_eq!(query.window, (at(0), at(3_600)));
+    assert_eq!(query.window, Some((at(0), at(3_600))));
     assert_eq!(
         query.kinds,
         vec![crate::Kind {

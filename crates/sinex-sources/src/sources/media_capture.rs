@@ -23,7 +23,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Whatever was on screen or within the microphone's reach.
     class: Class::Guarded,
     parser: "media-segment",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["media.segment"],
     framer: sinex_source_core::Framer::export(
         media::whole,
@@ -73,6 +73,11 @@ impl Parser for MediaParser {
                 target: s("target"),
                 width: n("width"),
                 height: n("height"),
+                accessibility_text: match m.get("accessibility_text") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(text)) => Some(text.clone()),
+                    Some(_) => return Err(RecordError::new("accessibility_text is not text")),
+                },
             }],
             (),
         ))

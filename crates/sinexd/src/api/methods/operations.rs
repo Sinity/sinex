@@ -95,6 +95,7 @@ impl Api {
         caller: &Caller,
         derivation: &str,
         compare: bool,
+        switch: Option<i64>,
         range: Option<(sinex_model::Timestamp, sinex_model::Timestamp)>,
         examples: usize,
     ) -> Reply {
@@ -110,13 +111,22 @@ impl Api {
             writer.clone(),
             derivation,
             &self.host,
+            &self.derivations,
+            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
         )
         .await
         {
-            Ok(d) => d,
+            Ok(d) => d.with_blobs(self.blobs.clone()),
             Err(e) => return refused(e),
         };
-        let result = if compare {
+        let result = if let Some(comparison) = switch {
+            if compare || range.is_some() {
+                Err("switch requires a comparison ID and no compare or range options".to_owned())
+            } else {
+                driver.switch(derivation, comparison, caller.actor).await
+                    .map(|count| json!({"derivation": derivation, "comparison": comparison, "keys_marked": count}))
+            }
+        } else if compare {
             driver
                 .compare(derivation, range, examples)
                 .await

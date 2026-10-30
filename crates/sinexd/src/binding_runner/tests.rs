@@ -90,10 +90,28 @@ fn replanning_adds_late_files_once_and_keeps_other_inputs_running() {
 }
 
 #[devkit::test]
-fn every_included_source_declares_emitted_types_before_input_arrives() {
-    let types = emitted(&Config::default()).unwrap();
-    assert!(types.contains(&"command.executed"));
-    assert!(types.contains(&"lake.observed"));
+fn every_included_source_declares_its_native_version_before_input_arrives() {
+    let declarations = crate::catalog::source_declarations();
+    for spec in sources::specs() {
+        let declaration = declarations
+            .iter()
+            .find(|declaration| {
+                declaration.source.name == spec.name
+                    && declaration.source.version == spec.parser_version
+            })
+            .expect("every native specification has its exact declaration version");
+        for event_type in spec.event_types {
+            assert!(
+                declaration
+                    .kinds
+                    .iter()
+                    .any(|kind| kind.kind.name == *event_type),
+                "{} v{} omits {event_type}",
+                spec.name,
+                spec.parser_version
+            );
+        }
+    }
     let configured = config(json!({"derivations":{"metric.hourly":false}}));
     assert!(!configured.runs("metric.hourly"));
     assert!(configured.runs("command.fusion"));
@@ -171,12 +189,18 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
         .remove(0);
     let store = root.path().join("store");
     let url = db.url(None);
-    let mut context = ReaderContext::open(&url, &store).await.unwrap();
+    let mut context = ReaderContext::open(
+        &url,
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     binding_reader::once(
         &mut context.read_conn,
         &context.blobs,
         &context.writer,
-        "h",
         vec![BindingReader::new(format, original.clone()).unwrap()],
     )
     .await
@@ -187,7 +211,14 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
         .unwrap();
     context.close().await.unwrap();
     let configuration = config(json!({"sources":{"terminal.zsh-history":{"paths":[history]}}}));
-    let mut context = ReaderContext::open(&url, &store).await.unwrap();
+    let mut context = ReaderContext::open(
+        &url,
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let saved = saved(&mut context.read_conn, &url, "h").await.unwrap();
     let planned = discovery::reconcile(plan(&configuration, "h").unwrap(), &saved).bindings;
     assert_eq!(planned[0].1.name, original.name);
@@ -199,15 +230,16 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
         &mut context.read_conn,
         &context.blobs,
         &context.writer,
-        "h",
         readers,
     )
     .await
     .unwrap();
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
-        .fetch_one(&mut context.read_conn)
-        .await
-        .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE event_type = 'command.imported'",
+    )
+    .fetch_one(&mut context.read_conn)
+    .await
+    .unwrap();
     assert_eq!(count, 1, "rediscovery must not admit the location again");
     assert_eq!(
         sinex_store::positions::load(&mut context.read_conn, &original.name)
@@ -325,4 +357,41 @@ async fn saved_bindings_reconnect_after_the_database_connection_is_lost(
         .await
         .unwrap();
     assert_eq!(alive, 1);
+}
+
+#[devkit::test]
+fn tags_require_an_explicit_choice() {
+    assert!(!Config::default().runs("tag.applier"));
+    assert!(config(serde_json::json!({"derivations": {"tag.applier": true}})).runs("tag.applier"));
+}
+
+#[devkit::test]
+fn disabling_the_tag_applier_supplies_empty_rules_for_cleanup() {
+    let c = config(serde_json::json!({"derivations":{"tag.applier":false},
+        "tags":[{"tag":"x","event_type":"command.imported"}]}));
+    assert!(c.derivation_configuration().tags.is_empty());
+    let c = config(serde_json::json!({"derivations":{"tag.applier":true},
+        "tags":[{"tag":"x","event_type":"command.imported"}]}));
+    assert_eq!(c.derivation_configuration().tags.len(), 1);
+}
+
+#[devkit::test]
+fn activity_break_threshold_is_configured_and_zero_is_refused() {
+    let c = config(serde_json::json!({"activity":{"break_seconds":600}}));
+    assert_eq!(c.derivation_configuration().activity.break_seconds, 600);
+    assert!(
+        serde_json::from_value::<Config>(serde_json::json!({"activity":{"break_seconds":0}}))
+            .is_err()
+    );
+}
+
+#[devkit::test]
+fn project_registry_reaches_the_versioned_derivation() {
+    let c = config(serde_json::json!({"project_attribution":{"projects":[{
+        "project":"example","common_dirs":["/captured/example/.git"]}]}}));
+    let configuration = c.derivation_configuration();
+    assert_eq!(
+        configuration.project_attribution.projects[0]["project"],
+        "example"
+    );
 }

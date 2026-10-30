@@ -62,6 +62,10 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
             "host" => "(SELECT r.host FROM core.runs r WHERE r.id = {t}.run_id)",
             "when" => "{t}.ts_orig",
             "time_quality" => "{t}.ts_quality",
+            "time_suspect" => {
+                "(CASE WHEN {t}.ts_orig > {t}.ts_coided + interval '5 minutes' THEN 'future' \
+                  WHEN {t}.ts_orig = 'epoch'::timestamptz THEN 'epoch zero' END)"
+            }
             "seen" => "{t}.ts_coided",
             "written" => "{t}.ts_persisted",
             "origin" => "(CASE WHEN {t}.material_id IS NULL THEN 'derived' ELSE 'material' END)",
@@ -70,6 +74,10 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
             "output" => "{t}.output_index::bigint",
             "parents" => "{t}.parents",
             "producer" => "(SELECT r.name FROM core.runs r WHERE r.id = {t}.run_id)",
+            "producer_version" => {
+                "(SELECT m.version FROM core.runs r JOIN core.manifests m ON m.id = r.manifest_id \
+                  WHERE r.id = {t}.run_id)"
+            }
             "run" => "{t}.run_id",
             "text" => "(SELECT s.text FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
             "key" => "{t}.equivalence_key",
@@ -111,15 +119,15 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
             "part" => "{t}.part_index::bigint",
             "previous_part" => "{t}.previous_part_id",
             "events" => {
-                "(SELECT count(*) FROM core.events me WHERE me.material_id = {t}.id \
+                "(SELECT count(*) FROM core.visible_events me WHERE me.material_id = {t}.id \
                   AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
             }
             "first" => {
-                "(SELECT min(me.ts_orig) FROM core.events me WHERE me.material_id = {t}.id \
+                "(SELECT min(me.ts_orig) FROM core.visible_events me WHERE me.material_id = {t}.id \
                   AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
             }
             "last" => {
-                "(SELECT max(me.ts_orig) FROM core.events me WHERE me.material_id = {t}.id \
+                "(SELECT max(me.ts_orig) FROM core.visible_events me WHERE me.material_id = {t}.id \
                   AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
             }
             _ => return None,
@@ -205,6 +213,7 @@ fn payload_bool(path: &str) -> String {
 /// A promoted field of an alias.
 pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
     Some(match (alias, name) {
+        ("telemetry", "component" | "name") => payload_text(name),
         ("shell-sessions", "host" | "day") => payload_text(name),
         ("shell-sessions", "commands" | "failed") => payload_number(name),
         ("shell-sessions", "start") => payload_time("started_at"),
@@ -254,14 +263,14 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("intervals" | "now", "start") => payload_time("started_at"),
         ("intervals" | "now", "end") => payload_time("ended_at"),
         ("intervals" | "now", "duration") => format!(
-            "extract(epoch from (coalesce({}, now()) - {}))",
+            "extract(epoch from ({} - {}))",
             payload_time("ended_at"),
             payload_time("started_at")
         ),
         ("intervals" | "now", "state") => payload_text("state_kind"),
         ("intervals" | "now", "subject") => payload_text("label"),
         ("intervals" | "now", "open") => {
-            "(coalesce(jsonb_typeof({t}.payload -> 'ended_at'), 'null') = 'null')".to_string()
+            "(coalesce(jsonb_typeof({t}.payload -> 'ended_at'), 'null') = 'null' AND coalesce(jsonb_typeof({t}.payload -> 'fenced_at'), 'null') = 'null')".to_string()
         }
         _ => return None,
     })
@@ -271,6 +280,11 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
 /// that is unknown is an open span. The boolean marks an included upper bound.
 pub(crate) fn span(table: Table, alias: Option<&str>) -> Option<(String, String, bool)> {
     match (table, alias) {
+        (Table::Events, Some(a @ ("intervals" | "now"))) => Some((
+            alias_field(a,"start")?,
+            "coalesce(core.payload_time({t}.payload ->> 'ended_at'), core.payload_time({t}.payload ->> 'fenced_at'))".into(),
+            false,
+        )),
         (Table::Events, Some(a)) => Some((
             alias_field(a, "start")?,
             alias_field(

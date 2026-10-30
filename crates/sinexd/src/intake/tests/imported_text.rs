@@ -15,15 +15,9 @@ async fn ingest(
     settings.options = options;
     let binding = (format.plan.unwrap())(path, &settings).unwrap().remove(0);
     let reader = BindingReader::new(format, binding.clone()).unwrap();
-    once(
-        &mut ctx.read_conn,
-        &ctx.blobs,
-        &ctx.writer,
-        "example-host",
-        vec![reader],
-    )
-    .await
-    .unwrap();
+    once(&mut ctx.read_conn, &ctx.blobs, &ctx.writer, vec![reader])
+        .await
+        .unwrap();
     binding
 }
 async fn live(ctx: &mut ReaderContext, event_type: &str) -> Vec<Value> {
@@ -68,9 +62,14 @@ async fn sparse_binary_document_is_admitted_guarded_and_replayed_without_the_roo
     file.set_len(bytes.len() as u64).unwrap();
     file.write_all_at(b"head", 0).unwrap();
     file.write_all_at(b"tail", tail as u64).unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let binding = ingest(&mut ctx, &documents::FORMAT, &root, json!({})).await;
     let before = live(&mut ctx, "document.captured").await;
     assert_eq!(before.len(), 1);
@@ -112,7 +111,14 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
     let path = dir.path().join("whisper.json");
     std::fs::write(&path,br#"{"segments":[{"id":0,"text":"same","start":0,"end":1},{"id":1,"text":"same","start":2,"end":3}],"language":"pl","model":"example-model","external_run":"example-run"}"#).unwrap();
     let store = dir.path().join("store");
-    let mut ctx = ReaderContext::open(&db.url(None), &store).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let binding = ingest(&mut ctx, &transcript::WHISPER_FORMAT, &path, json!({})).await;
     let before = live(&mut ctx, "transcript.cue").await;
     assert_eq!(before.len(), 2);
@@ -138,7 +144,14 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
     }
     ctx.close().await.unwrap();
     std::fs::remove_file(&path).unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &store).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     replay(&mut ctx, &binding).await;
     assert_eq!(live(&mut ctx, "transcript.cue").await, before);
     ctx.close().await.unwrap();
@@ -153,9 +166,14 @@ async fn document_metadata_changes_keep_distinct_observations_of_the_same_bytes(
     std::fs::create_dir(&root).unwrap();
     let path = root.join("example.txt");
     std::fs::write(&path, b"same bytes").unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let binding = ingest(&mut ctx, &documents::FORMAT, &root, json!({})).await;
     let before = live(&mut ctx, "document.captured").await;
     assert_eq!(before.len(), 1);
@@ -185,9 +203,14 @@ async fn imported_text_refusal_keeps_bytes_and_advances_before_the_next_revision
     let path = dir.path().join("transcript.json");
     let malformed = b"[{malformed JSON";
     std::fs::write(&path, malformed).unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let binding = ingest(&mut ctx, &transcript::JSON_FORMAT, &path, json!({})).await;
     let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, &binding.name)
         .await

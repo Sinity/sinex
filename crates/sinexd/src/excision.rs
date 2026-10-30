@@ -77,12 +77,12 @@ fn holds_only_the_record(
     spec: &sinex_source_core::SourceSpec,
     m: &Material,
 ) -> Result<(), String> {
-    let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let length = blobs
-        .copy_to(&m.blob, &mut file)
-        .map_err(|e| e.to_string())?;
+    let mut reader = blobs
+        .read_plain_seek(&m.blob, m.length, || Ok(()))
+        .map_err(|error| error.to_string())?;
+    std::io::copy(&mut reader, &mut std::io::sink()).map_err(|error| error.to_string())?;
     let records =
-        crate::stored::StoredReader::new(file, length).records(&m.manifest, spec.framer)?;
+        crate::stored::StoredReader::new(reader, m.length).records(&m.manifest, spec.framer)?;
     if records
         .iter()
         .any(|(start, _)| i64::try_from(*start).map_or(true, |s| !m.anchors.contains(&s)))
@@ -108,16 +108,16 @@ pub(crate) async fn excise(
     let done = apply(blobs, writer, target, plan, actor).await?;
     let a = &done.applied;
     let mut out = format!(
-        "excised events {} | materials removed {} | inputs removed {} | blob files deleted {}",
+        "excised events {} | materials removed {} | inputs removed {} | blob extents punched {}",
         a.events,
         a.materials_removed,
         a.inputs_removed,
-        a.delete_after_commit.len() - done.files_left.len()
+        a.delete_after_commit.len() - done.blobs_left.len()
     );
-    if !done.files_left.is_empty() {
+    if !done.blobs_left.is_empty() {
         out.push_str(&format!(
-            "\nblob files no row refers to but that could not be deleted: {}",
-            done.files_left.join(", ")
+            "\nunreferenced blob extents that could not be punched: {}",
+            done.blobs_left.join(", ")
         ));
     }
     Ok(out)
@@ -137,17 +137,24 @@ pub(crate) async fn excise_for_producer(
     if materials.is_empty() {
         return Err("an excise request names at least one material".into());
     }
-    let own = format!("ingress:{producer}");
     let mut plans = Vec::with_capacity(materials.len());
     for material in materials {
         let target = Target::Material(*material);
         let plan = excision::plan(conn, target)
             .await
             .map_err(|e| e.to_string())?;
+        let ids = plan
+            .materials
+            .iter()
+            .map(|material| material.id.0)
+            .collect::<Vec<_>>();
+        let own = sinex_store::producer_reads::materials_registered_by(conn, producer, &ids)
+            .await
+            .map_err(|error| error.to_string())?;
         if let Some(other) = plan
             .materials
             .iter()
-            .find(|m| m.binding.as_deref() != Some(own.as_str()))
+            .find(|material| !own.contains(&material.id.0))
         {
             return Err(format!(
                 "material {} was not registered by {producer}; a producer excises only its own \

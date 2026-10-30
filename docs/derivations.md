@@ -26,6 +26,17 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 - A key whose time window is still open (an hour or day in progress) is **provisional**. Its value is held as one current row per key in the derivation's provisional table, overwritten at each recompute, and readable and citable as provisional. It is admitted as an event only at window close, and again whenever a later input dirties the closed key. Superseded provisional values are not kept (default; open operator question).
 - Keys dirtied by a lifecycle operation in progress recompute after its last batch.
 
+The `analysis.products` derivation reads admitted `analysis.request` questions,
+selected daily figures and `source.coverage` observations. It stores panels,
+recipe answers, findings and daily context packs. An empty or not-estimable answer
+retains its request as a parent. Questions reuse their canonical identity; changed
+inputs replace the complete output set. The selected coverage retains the latest
+read status per source binding and host, including failure reasons, alongside the
+declared intervals that overlap the question. A running process or a successful
+read without declared temporal bounds does not establish observed coverage.
+
+`recall.products` version 2 keys work by the admitted question's existing canonical request identity. The complete query, declaration snapshot and grants stay on the retained request, read through the current input snapshot before selection. Creation and retained-input validation use the same canonical identity computation with sorted JSON object keys, so PostgreSQL JSONB roundtrips preserve it; a changed selector cannot reuse a supplied request identity. They are not copied into database index keys, and knowing a request identity grants no access. Earlier producer versions and their stored readings retain their original identity and follow the same explicit comparison and switch policy.
+
 ## Declarations
 
 Each derivation declares:
@@ -54,6 +65,14 @@ Every event records the producer version of the parser or derivation that made i
 - **Each derivation declares what a switch does to history.** `recompute` replays its whole history through the dirty-key path, archiving the old outputs as a set with their chains; `keep_history` keeps outputs made by the old version and applies the new one from the switch onward. Readers see the producer version on every output, and an answer spanning outputs of several versions says so.
 - **Nothing recomputes at daemon start.** A build carrying a new version computes only new and dirty keys with it, and answers spanning both versions disclose the mix. History is recomputed, for `recompute` derivations, only by the switch, after its compare. Status shows each derivation's pending switch and its compare result.
 - **A changed setting is a new version.** A change to anything a derivation reads as configuration (a profile parameter, the logical-day boundary, a fusion rule file) is a version change of that derivation and follows the same rules.
+
+`recompute DERIVATION --compare` stores a comparison ID tied to the installed build, its logical-day settings, and the input and lifecycle positions used throughout the comparison. A comparison that covered only a time range cannot select a version. `recompute DERIVATION --switch ID` consumes a full comparison of that same declaration and build; changed inputs refuse the switch and require another comparison. The writer records the caller and comparison in `producer_switch`, selects the version and, for `recompute`, archives its live output chains before scheduling the complete new output set. A `keep_history` declaration preserves those chains and its read position. Startup records available producers and leaves stored keys and positions unchanged. `status` lists selected and available versions. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
+
+Stored products disclose the producers that actually made their selected inputs and ancestors,
+grouped by source, run manifest and build, and material parser version. A shared
+daemon run does not replace a source parser's version. Missing historical run or
+manifest metadata remains an explicit null entry with its event count.
+
 
 ## Identity of derived records
 
@@ -176,7 +195,7 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 
 - An interval carries a stable start-record key, state kind, subject, start, optional end, labels and attributes, and **every transition whose fields affect it as a parent**, including same-state refreshes that changed a label.
 - Scope is the observation's original host and session; systemd units add boot, manager and unit. The host that ran the derivation never supplies missing observation scope.
-- A next different focus or workspace closes the previous interval in its scope. A matching unit stop closes only that unit; a repeated start closes the previous run as a restart; a stop without a start invents no interval; a boot boundary stops a stop from closing a previous boot's unit.
+- A next different focus or workspace closes the previous interval in its scope. A matching unit stop closes only that unit; a repeated start closes the previous run as a restart; a stop without a start invents no interval; a boot boundary stops a stop from closing a previous boot's unit. A boot fence records `fenced_at` while leaving `ended_at` unknown, so it bounds the earlier state without claiming uptime until the new boot. Fenced intervals are absent from `now`; their unknown duration remains null.
 - Genuine suspend or hibernate cuts open desktop intervals; resume alone does not establish a new focus. Transitions come from the source's typed journal and logind events, never from log text containing "Started".
 - Equal-time transitions order by recorded sequence, then stable record identity.
 - The `intervals` and `now` query aliases show an open end as unknown and the evidence's age separately.
@@ -220,6 +239,8 @@ Local OCR runs. It calls no provider and spends nothing, so the off switch above
 
 - It is a deterministic-tool derivation of `screen.text` from stored frames, and runs by default when the engine is installed. Its producer version includes the engine and the engine's version.
 - `screen.text` is searchable.
+- One segment has one canonical `screen.text` reading. Captured accessibility text, including observed empty text, takes precedence; an explicitly selected and validated recorded OCR binding comes next, followed by the configured local engine. Ambiguous requested bindings report unavailable until selected rather than choosing a receipt by arrival time.
+- A versioned screen reading distinguishes available text (`Some("")` is observed empty) from typed unavailable status with no text, regions or effect claims. A new unavailable reading replaces stale text under the same segment key. Historical positive readings remain available historical evidence. Requested missing or archived target references are unavailable status, not verified evidence or fabricated parents.
 
 ### The contract every model output follows
 
@@ -237,7 +258,34 @@ Local OCR runs. It calls no provider and spends nothing, so the off switch above
 | Classification and labels | values from a recorded vocabulary, evidence spans, method and abstention; out-of-vocabulary labels refused; inferred and unchecked until evaluated |
 | Narratives and summaries | the [narrative contract](higher-layer.md#narratives) |
 
+### Recorded requests and operating budgets
+
+`model-policy` records an operator's explicit policy as `model.policy`. The policy names each route's provider, provider account, model and revision, retains prompt, rubric and settings content with their versions and checked hashes, and declares its accounting scope, currency, integer unit, absolute period, limit and prices. Policy authoring and recording an incurred expenditure require operator access. A captured policy is inert until the writer validates it and commits its private authorization mark; a payload's author label grants no authority.
+
+`model.request` retains the exact target readings and each target's source, kind and version, stable record, original reading hash, selected content hash and byte length. Admission reconstructs these identities from current transformed inputs. A byte selection also proves the retained material or owned content and its exact range. The request's spend identity preserves ordered input positions, including repeated inputs, and uses their verified stable identities, route, full instructions and configured maximum output, while exact reading IDs remain its provenance. The input hash and response output hash are separate values. Payload and settings identities use SJSON1, the same canonical JSON bytes as projected payload identities.
+
+The writer reserves the configured per-call, per-input-byte and per-output-unit estimate in one admission transaction. The input byte count comes from verified selected content and the output bound comes from the operator's route. Missing policy and insufficient configured budget return explicit refusal states. Scope, currency, unit and period identify the account independently of policy name, version and changing limits, so revising a policy retains prior spend and pending reservations.
+
+`model-record` first retains an already supplied `model.response` with known input classification. The writer matches its exact request identity and authorized policy to a retained request, then reconciles its reported actual charge, including after the targets or policy are archived. A new effect binding separately requires current input proof; the reply states when that binding is unavailable. Without a retained matching request or current proof for a new one, the retained response remains explicitly unaccounted. Actual expenditure is recorded even when it exceeds the estimate or limit. The overrun is recorded at reconciliation, and later reservations use the actual spend when checking remaining capacity. Repeated effects reuse the same accounting row; contradictory output, charge or provider receipt identities are refused. Uncertain calls retain their reservation. An unrepresentable estimate refuses a new reservation; an already incurred exact charge is still recorded with an absent quote, never an invented zero. The private ledger keeps request and receipt hashes and accounting metadata through replay, archive and removal of response content; those lifecycle acts never refund a purchase.
+
+`model-receipt` records actual expenditure without asserting a model request. It requires operator access and a separate deployment capability, disabled by default. The retained receipt supplies the provider, provider account, native receipt identity, actual amount and currency/unit, exact accounting scope and period, and policy name/version. Missing facts leave the receipt unavailable or unaccounted; the recording clock supplies no incurred period, amount or exchange rate. An `actual_unbound` accounting entry has no request hash and cites its receipt with that frozen basis.
+
+The private accounting period retains exact integer Unix nanoseconds, including sub-microsecond boundaries. A repeat or later binding compares that frozen basis without timestamp rounding; observation time never changes the incurred period.
+
+Provider, account and native receipt identify one actual charge across bound and unbound paths. A later verified request binds that entry without moving its period or charging again. Its matching pending hold merges in the same writer transaction, leaving ordinary request and reservation source facts intact. Conflicting amount, currency, policy version or period requires operator review. The existing ledger holds pending reservations and actual expenditure; it is not a provider-side account mutation. Receipt-only replies carry canonical references, opaque receipt/account identities and operational state. Financial basis, amount and labels are read through the ordinary current projected receipt/policy views. An identity reference does not assert equality with raw payload bytes or grant access to them.
+
+Policy authority and incurred-cost accounting read their immutable canonical records privately, so a display mask cannot rewrite a route or erase known expenditure. New calls and new bindings still require current authorized policy and current transformed target equivalence. Raw response material can be reused after a target replay only through a newly verified current request, and derived outputs retain exact current parents. Ordinary configured output rules govern all source records and derived text.
+
+The `model-call` entry remains `provider_disabled` before acquiring content, credentials or a provider. These recorded-effect and accounting operations do not activate execution or choose a financial configuration.
+
 **Embeddings rank; they never filter.** Once embeddings are on, Sinex search may combine a stored similarity as a ranking term over the filtered set (`similar:`); it never removes a row the filters selected.
+
+Supplied `embedding.supplied` receipts cite their target reading as a parent. The deterministic `text.embeddings` derivation validates the receipt's identity fields, BLAKE3 digest encoding, provider/model/revision/settings/dimension space, finite components and exact count, then stores a complete `text.embedding` with the supplied receipt as its parent. This path constructs no provider and rereads no purchased embedding. Source replacement archives the old embedding before recomputation.
+
+The `read.embeddings` consumer builds a pgvector projection and an HNSW index for each supported space and dimension. Original f64 components remain in the stored event. Projection rows state indexed, exact, fallback or unavailable coverage and its reason. Extension type/index limits and precision range choose a fallback; they never truncate the stored vector. Initial projection and rebuild read retained events in bounded pages, including after commit-log pruning, and commit the projection with its position. Tombstoning removes projected copies in the same transaction.
+
+`similar:sinex:ev/<embedding-id>` reuses that exact supplied embedding under the reader's grants and read position. Similarity scores every filtered row, using the best compatible chunk where several are present. Rows without a compatible vector retain unknown rank. The approximate index supplies candidates for optimization, while query membership and exact fallback remain independent of its recall. Model-driven text-to-vector requests remain disabled.
+
 
 ## Performance
 
@@ -270,3 +318,8 @@ Targets are stated as hardware-independent figures (rows read per key, invalidat
 - **construct-declared**: every shipped label and detection has its declaration of measure, fields, denominator and agreement evidence, checked at registration.
 - **complete-outputs**: document outputs beyond 4 MiB are complete and range-exact, and no parent list is truncated.
 - **providers-off**: with providers disabled there is no provider construction, probe or call at start or on any CLI, MCP or HTTP path, and local OCR runs when its engine is installed.
+
+
+### Exact target inputs
+
+A keyed consumer can name exact event IDs instead of a time window, for example when a recorded model result cites a frame or audio segment. These inputs use the same private current-policy projection and input snapshot as temporal reads. They are transferred in commit order with count and byte page budgets, including unknown-time records. Missing, archived or policy-unavailable targets remain absent; the consumer compares the actual IDs and target content identities with its required evidence and reports unavailable or waiting. It never substitutes a nearby record.

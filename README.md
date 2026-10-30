@@ -55,6 +55,8 @@ will render the operation declarations as a committed page.
 - [docs/architecture.md](docs/architecture.md): how Sinex is put together and why.
 - [docs/README.md](docs/README.md): every page of the design.
 - [AGENTS.md](AGENTS.md): how work is done in this repository.
+- [Development](docs/development.md): the declared Rust toolchain, shell and
+  local overrides.
 
 Cloud setup and shell startup, including the explicit native backend, are described in
 [the shared setup guide](https://github.com/Sinity/polylogue-sinex-common/blob/master/dev/cloud/README.md).

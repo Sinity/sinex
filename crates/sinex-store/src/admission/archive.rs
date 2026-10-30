@@ -5,7 +5,7 @@ use crate::Error;
 use sinex_model::{ArchiveReason, OperationId, ReplayScope};
 
 mod history;
-pub use history::erase_archive_history;
+mod restore;
 pub(super) use history::{archive_at, position};
 
 /// Archive the live readings a replay re-reads: those read from the scope's
@@ -32,7 +32,7 @@ pub(super) async fn replay_scope(
            descendants AS (
              SELECT id FROM read_here
              UNION
-             SELECT d.id FROM core.events d JOIN descendants p ON d.parents @> ARRAY[p.id])
+             SELECT edge.child FROM core.event_children edge JOIN descendants p ON edge.parent = p.id)
            SELECT x.id AS "id!" FROM descendants x
            WHERE EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = x.id)
               OR EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = x.id)"#,
@@ -44,7 +44,7 @@ pub(super) async fn replay_scope(
     .fetch_all(&mut *conn)
     .await?;
     let seq = position(conn).await?;
-    let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
+    let dirty = mark_archived_dirty(conn, &live, seq, keys, None, None).await?;
     archive_at(
         conn,
         &live,
@@ -88,7 +88,7 @@ pub(super) async fn request(
                    VALUES ($1, $2, $3,
                      CASE WHEN $3::text IS NULL THEN $4::uuid END,
                      CASE WHEN $3::text IS NULL THEN $5::bigint END,
-                     CASE WHEN $3::text IS NULL THEN $6::smallint END, $7)
+                     CASE WHEN $3::text IS NULL THEN $6::bigint END, $7)
                    ON CONFLICT DO NOTHING"#,
                 event.source,
                 event.event_type,
@@ -112,7 +112,7 @@ pub(super) async fn request(
             )
             .await?;
             let seq = position(conn).await?;
-            let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
+            let dirty = mark_archived_dirty(conn, &live, seq, keys, None, Some(*operation)).await?;
             archive_at(
                 conn,
                 &live,
@@ -136,7 +136,7 @@ pub(super) async fn request(
             let removed = sqlx::query_scalar!(
                 r#"DELETE FROM core.hidden_records WHERE source = $1 AND event_type = $2
                    AND ((equivalence_key = $3) OR ($3::text IS NULL AND material_id = $4 AND anchor = $5 AND output_index = $6))
-                   RETURNING id"#,
+                   RETURNING operation_id"#,
                 event.source,
                 event.event_type,
                 event.equivalence_key,
@@ -146,6 +146,24 @@ pub(super) async fn request(
             )
             .fetch_optional(&mut *conn)
             .await?;
+            let owners = sqlx::query!(
+                "SELECT derivation, key FROM derivation.outputs WHERE event_id = $1",
+                target.0,
+            )
+            .fetch_all(&mut *conn)
+            .await?;
+            if !owners.is_empty() {
+                let seq = position(conn).await?;
+                return super::derived::mark_dirty(
+                    conn,
+                    owners
+                        .into_iter()
+                        .map(|row| (row.derivation, row.key))
+                        .collect(),
+                    seq,
+                )
+                .await;
+            }
             if removed.is_none() {
                 return Ok(0);
             }
@@ -167,30 +185,18 @@ pub(super) async fn request(
             .fetch_optional(&mut *conn)
             .await?;
             let Some(r) = unhidden else { return Ok(0) };
-            if !history::unhide_at(conn, r.id, seq, operation.0).await? {
-                return Err(Error::Invalid(
-                    "hidden reading changed before it was unhidden".into(),
-                ));
-            }
-            match &event.equivalence_key {
-                Some(key) => {
-                    sqlx::query!(
-                        "INSERT INTO core.live_equivalence (source, event_type, equivalence_key, event_id, reading_order, record_hash) VALUES ($1,$2,core.encode_equivalence_key($3),$4,$5,$6)",
-                        event.source, event.event_type, key, r.id, r.reading_order, r.record_hash,
-                    )
-                    .execute(&mut *conn)
-                    .await?;
-                }
-                None => {
-                    sqlx::query!(
-                        "INSERT INTO core.live_locations (material_id, anchor, event_type, output_index, event_id, reading_order, record_hash) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-                        r.material_id, r.anchor, event.event_type, r.output_index, r.id, r.reading_order, r.record_hash,
-                    )
-                    .execute(&mut *conn)
-                    .await?;
-                }
-            }
-            mark_archived_dirty(conn, &[r.id], seq, keys).await
+            restore::reading(conn, r.id, seq, operation.0).await?;
+            let dirty = mark_archived_dirty(conn, &[r.id], seq, keys, None, None).await?;
+            let restored = restore::descendants(
+                conn,
+                r.id,
+                removed.expect("the hidden record was removed"),
+                seq,
+                operation.0,
+                keys,
+            )
+            .await?;
+            Ok(dirty + restored)
         }
     }
 }
@@ -203,7 +209,7 @@ async fn live_reading(
     key: Option<&str>,
     material: Option<Uuid>,
     anchor: Option<i64>,
-    output_index: i16,
+    output_index: i64,
 ) -> Result<Vec<Uuid>> {
     Ok(match key {
         Some(key) => sqlx::query_scalar!(

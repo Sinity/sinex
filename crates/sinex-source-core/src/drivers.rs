@@ -216,6 +216,7 @@ pub fn batches(
 pub struct Prepared<'s> {
     source: &'s dyn Source,
     binding: String,
+    host: Option<String>,
     run: RunId,
     input: InputRef,
     observation: ObservationFacts,
@@ -294,6 +295,7 @@ pub fn prepare<'s>(
     Ok(Prepared {
         source,
         binding: binding.to_owned(),
+        host: None,
         run,
         input: acquired.input,
         observation: acquired.observation,
@@ -306,6 +308,12 @@ pub fn prepare<'s>(
 }
 
 impl Prepared<'_> {
+    /// Bind reader authority supplied by its owner, independently of the input claim.
+    pub fn with_host(mut self, host: Option<String>) -> Self {
+        self.host = host;
+        self
+    }
+
     /// The decoded record body length, if the poll produced a material.
     pub fn material_len(&self) -> Option<usize> {
         self.material
@@ -323,6 +331,11 @@ impl Prepared<'_> {
         memory: Option<sinex_model::ReaderMemory>,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
+            source: Some(sinex_model::SourceRef {
+                name: self.source.spec().name.to_owned(),
+                version: self.source.spec().parser_version,
+            }),
+            host: self.host.clone(),
             data_keys: Vec::new(),
             binding: self.binding.clone(),
             input: self.input.clone(),

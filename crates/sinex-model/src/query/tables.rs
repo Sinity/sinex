@@ -39,6 +39,10 @@ const fn f(name: &'static str, ty: FieldType, phrase: &'static str) -> Field {
 
 const ORIGINS: &[&str] = &["material", "derived"];
 const RUN_STATUS: &[&str] = &["running", "finished"];
+/// Why a stated time looks implausible: later than Sinex read it, or the
+/// Unix epoch itself, which a reader that found no time often writes. A label
+/// only; the time is kept as stated.
+const TIME_SUSPECT: &[&str] = &["future", "epoch zero"];
 
 macro_rules! event_fields {
     ($($extra:expr),* $(,)?) => {
@@ -51,6 +55,7 @@ macro_rules! event_fields {
             f("host", FieldType::Text, "host"),
             f("when", FieldType::Time, "time it happened"),
             f("time_quality", FieldType::Enum(TimeQuality::VALUES), "time quality"),
+            f("time_suspect", FieldType::Enum(TIME_SUSPECT), "why its time looks wrong"),
             f("seen", FieldType::Time, "time Sinex read it"),
             f("written", FieldType::Time, "time it was written"),
             f("origin", FieldType::Enum(ORIGINS), "origin"),
@@ -59,6 +64,7 @@ macro_rules! event_fields {
             f("output", FieldType::Integer, "output number"),
             f("parents", FieldType::IdList, "parent events"),
             f("producer", FieldType::Text, "producer"),
+            f("producer_version", FieldType::Text, "producer version"),
             f("run", FieldType::Id, "run"),
             f("text", FieldType::Text, "text"),
             f("key", FieldType::Text, "equivalence key"),
@@ -329,6 +335,17 @@ pub struct Alias {
 }
 
 pub const ALIASES: &[Alias] = &[
+    Alias {
+        name: "telemetry",
+        kinds: &["sinex.telemetry"],
+        phrase: "samples of Sinex's own state",
+        fields: &[
+            f("component", FieldType::Text, "component"),
+            f("name", FieldType::Text, "component name"),
+        ],
+        spans: false,
+        only: None,
+    },
     Alias {
         name: "commands",
         kinds: &["command.fused"],

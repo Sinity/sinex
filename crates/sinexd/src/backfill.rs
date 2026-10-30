@@ -12,7 +12,7 @@ use crate::writer;
 use sinex_model::RunId;
 use sinex_source_core::{Binding, InputFormat, Settings, Source, drivers};
 use sinex_sources::sources;
-use sinex_store::{bindings, positions, runs};
+use sinex_store::{bindings, positions};
 use sqlx::PgConnection;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -25,6 +25,7 @@ pub(crate) struct Options {
     /// The zone sources with local times were written in (IANA name); the
     /// system zone when unset. Recorded with each binding.
     pub zone: Option<String>,
+    pub time_settings: sinex_model::time_settings::TimeSettings,
     /// A source option as `key=value` (a clipboard spool's `selection`).
     pub options: Vec<String>,
     pub host: String,
@@ -56,7 +57,7 @@ pub(crate) struct Totals {
     older: usize,
     hidden: usize,
     superseded: usize,
-    failures: usize,
+    pub(crate) failures: usize,
     dirty_keys: usize,
     admit_time: Duration,
     poll_time: Duration,
@@ -134,28 +135,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             planned.push((format, b));
         }
     }
-    let mut ctx = ReaderContext::open(&o.database, &o.store).await?;
+    let mut ctx = ReaderContext::open(&o.database, &o.store, o.time_settings.clone()).await?;
     let sink = Sink(ctx.blobs.clone());
-    let emits: Vec<&'static str> = {
-        let mut types: Vec<&'static str> = planned
-            .iter()
-            .filter_map(|(format, b)| (format.specs)().into_iter().find(|s| s.parser == b.parser))
-            .flat_map(|s| s.event_types.iter().copied())
-            .collect();
-        types.sort_unstable();
-        types.dedup();
-        types
-    };
-    let manifest = runs::Manifest {
-        name: "sinexd backfill",
-        kind: "source",
-        version: env!("CARGO_PKG_VERSION"),
-        build: option_env!("SINEX_BUILD").unwrap_or("dev"),
-        emits: &emits,
-    };
-    let run = runs::start(&mut ctx.read_conn, &manifest, &o.host)
-        .await
-        .map_err(|e| e.to_string())?;
     // Totals per source, in the order sources were first read.
     let mut per_source: Vec<(String, Totals)> = Vec::new();
     let mut readers = planned
@@ -167,7 +148,6 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        run,
         &sink,
         &mut readers,
         stop,
@@ -203,9 +183,6 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             println!("{source} {totals}");
         }
     }
-    runs::end(&mut ctx.read_conn, run)
-        .await
-        .map_err(|e| e.to_string())?;
     ctx.close().await?;
     if failures.is_empty() {
         Ok(())
@@ -236,6 +213,7 @@ pub(crate) async fn drive(
     run: RunId,
     source: std::sync::Arc<dyn Source>,
     binding: &str,
+    host: &str,
     sink: &Sink,
     access: crate::material_access::Access<'_>,
     minimum_class: sinex_model::Class,
@@ -287,6 +265,7 @@ pub(crate) async fn drive(
             .reopen(read_conn, source.as_ref(), &mut acquired)
             .await?;
         crate::intake::Intake {
+            host: Some(host),
             writer: handle,
             source: source.clone(),
             binding,

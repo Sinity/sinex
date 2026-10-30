@@ -62,9 +62,11 @@ An observation records every metadata item the acquisition can read, not a fixed
 Raw bytes go into the shared append-only **segment log** ([`hashed-blobs`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md)). The writer appends a group's new bytes, syncs once per group, and commits the extents in the same transaction as the rows that cite them. A crash leaves at most an uncommitted segment tail, which is truncated when the segment is opened; the full durability order and its crash states are in [architecture](architecture.md#durability-order).
 
 - **An event cites only stored bytes.** A material row names extents already appended and synced.
-- **Held material.** The newest part of a growing input is held until its final cursor is admitted, so a failed admission retries the same bytes.
+- **Held material.** The newest part of a growing input is held until its final cursor is admitted, so a failed admission retries the same bytes. After process loss, a driver may capture input again into a new linked part. Its manifest records `previous_through`, the exact admitted cut of the predecessor; replay reads the predecessor only to that cut. The predecessor's stored bytes remain intact.
 - **Open parts** are flushed before any event citing their bytes commits. Each batch carries the part's synced length, and admission refuses an anchor beyond it.
 - **Deduplication of bytes** checks the stored-bytes index plus the hashes appended in groups not yet committed, so two equal blobs in flight are stored once.
+- **Read authority** is the encoded extent descriptor in `core.blob_extents`; `core.blob_segments` records the committed end. Producer material acknowledgments and material/replay listings carry those descriptors so shared-store readers need no database access or hash-based file lookup.
+- **Owned JSON records** decode through bounded record-range readers and hash the same bytes as they stream. Borrowed text parsers retain the input their parsing contract needs; the storage reader retains a compressed frame and a decoded frame rather than the whole record.
 - **Names** are `blake3:<hex>` of the uncompressed bytes. Frames are seekable zstd; a range read decompresses and verifies only the frames it needs.
 
 Deduplication here is of stored bytes only. Whether a second copy of the same content becomes a second material and how its records are recognised is [staging's](#re-staging-identical-content) and [identity's](events.md#identity) concern.

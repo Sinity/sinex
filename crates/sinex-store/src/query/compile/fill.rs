@@ -27,55 +27,71 @@ impl Compiler<'_> {
             .filter(|k| !matches!(k, Operand::TimeFn(..)))
             .map(Operand::column)
             .collect();
-        let interval = if func == TimeFn::Hour {
-            "1 hour"
-        } else {
-            "1 day"
-        };
-        let shift = if func == TimeFn::Hour {
-            "0 hours".into()
-        } else {
-            format!(
-                "{} hours {} minutes",
-                self.ctx.day_start.hour(),
-                self.ctx.day_start.minute()
+        let (ticks, bucket) = if func == TimeFn::Hour {
+            let local = |at| -> Result<SqlFragment> {
+                let mut out = SqlFragment::text("(");
+                out.param(time_value(at)?)
+                    .push(" AT TIME ZONE ")
+                    .param(V::String(Some(self.ctx.zone_name())))
+                    .push(")");
+                Ok(out)
+            };
+            let mut ticks = SqlFragment::text(
+                "SELECT s.tick AS local_at FROM generate_series(date_trunc('hour',",
+            );
+            ticks
+                .append(local(fill.from)?)
+                .push("),date_trunc('hour',")
+                .append(local(
+                    fill.to
+                        .checked_sub(jiff::SignedDuration::from_nanos(1))
+                        .map_err(|e| invalid(e.to_string()))?,
+                )?)
+                .push("),interval '1 hour') s(tick)");
+            (
+                ticks,
+                SqlFragment::text("extract(hour from local_at)::bigint"),
             )
+        } else {
+            let day = self.ctx.clock()?.day;
+            let from = day
+                .logical_day(fill.from)
+                .map_err(|e| invalid(e.to_string()))?;
+            let through = day
+                .logical_day(
+                    fill.to
+                        .checked_sub(jiff::SignedDuration::from_nanos(1))
+                        .map_err(|e| invalid(e.to_string()))?,
+                )
+                .map_err(|e| invalid(e.to_string()))?;
+            let epoch = jiff::civil::date(1970, 1, 1);
+            let first = query_language::time::days_between(epoch, from)
+                .map_err(|e| invalid(e.to_string()))?;
+            let last = query_language::time::days_between(epoch, through)
+                .map_err(|e| invalid(e.to_string()))?;
+            let setting = self
+                .calendar
+                .as_ref()
+                .ok_or_else(|| invalid("fill requires shared day boundaries"))?;
+            let column = match func {
+                TimeFn::Day => "day",
+                TimeFn::Week => "week",
+                TimeFn::Weekday => "weekday",
+                TimeFn::Month => "month",
+                TimeFn::MonthDay => "month_day",
+                TimeFn::Hour => unreachable!(),
+            };
+            let mut ticks = SqlFragment::text(format!(
+                "SELECT {column} AS bucket FROM pg_temp.sinex_query_days WHERE setting="
+            ));
+            ticks
+                .param(V::String(Some(setting.clone())))
+                .push(" AND ordinal>=")
+                .param(V::BigInt(Some(first)))
+                .push(" AND ordinal<=")
+                .param(V::BigInt(Some(last)));
+            (ticks, SqlFragment::text("bucket"))
         };
-        let local = |t| -> Result<SqlFragment> {
-            let mut f = SqlFragment::text("(");
-            f.param(time_value(t)?)
-                .push(" AT TIME ZONE ")
-                .param(V::String(Some(self.ctx.zone_name())))
-                .push(" - ")
-                .param(V::String(Some(shift.clone())))
-                .push("::interval)");
-            Ok(f)
-        };
-        let mut ticks =
-            SqlFragment::text("SELECT s.tick AS local_at FROM generate_series(date_trunc('");
-        ticks
-            .push(if func == TimeFn::Hour { "hour" } else { "day" })
-            .push("', ")
-            .append(local(fill.from)?)
-            .push("), date_trunc('")
-            .push(if func == TimeFn::Hour { "hour" } else { "day" })
-            .push("', ")
-            .append(local(
-                fill.to
-                    .checked_sub(jiff::SignedDuration::from_nanos(1))
-                    .map_err(|e| invalid(e.to_string()))?,
-            )?)
-            .push(format!("), interval '{interval}') AS s(tick)"));
-        // Logical day ticks are shifted back to their wall-clock start.
-        let wall_time = || {
-            let mut at = SqlFragment::text("((local_at + ");
-            at.param(V::String(Some(shift.clone()))).push("::interval");
-            at.push(") AT TIME ZONE ")
-                .param(V::String(Some(self.ctx.zone_name())))
-                .push(")");
-            at
-        };
-        let bucket = self.time_fn(func, wall_time());
         let mut out = SqlFragment::text(
             "WITH filled_groups AS (SELECT filled_input.*, true AS _recorded FROM (",
         );

@@ -42,8 +42,9 @@ A producer is told success only after commit. Detector hits are not written here
 ## Commit log and positions
 
 - **Commit positions** come from one counter row updated as the first statement of every admitting or lifecycle transaction. Values may skip after a rollback; readers rely only on no smaller value becoming visible after a larger one.
-- **`core.commit_log`** is an ordinary table (never a hypertable), written in the same transaction: one row for each event admitted, each archive change, and each position taken by a transaction that admits nothing. Commit-order readers scan it by primary key and fetch events by `id`.
+- **`core.commit_log`** is an ordinary table (never a hypertable), written in the same transaction: one row for each event admitted, each archive change, and each position taken by a transaction that admits nothing. The canonical reader merges events, archive history and excision notices by the global position with deterministic order inside each position. It emits a terminal marker only after that position's data. The event-only derivation projection fetches events by `id`.
 - **Pruning.** Rows below the smallest position of every commit-order reader are pruned. That is the one routine delete in Sinex; as-of reads and time lookups use events and the archive changes, so pruning loses nothing.
+- **Partial positions.** Transfer paging uses a private within-position cursor. A scalar consumer checkpoint advances only over complete positions, after the confirmed publisher's cumulative completion barrier acknowledges. Excision allocates its own global position under the counter lock and preserves the exact original admission position; it never reuses the current head.
 - **Every position is a PostgreSQL row committed with the work it covers**: derivation positions with their outputs, the publisher's and each read model's with their work, source cursors and carry with their events. No position lives in NATS.
 - **Wakeups.** The writer publishes the latest committed position on a watch channel; readers compare it with their own position, with a polling backstop so a lost wakeup only delays.
 
@@ -81,7 +82,7 @@ Every read model is declared, rebuilt from events, and kept current through its 
 
 ### Raw bytes
 
-Raw bytes are in the segment log of [hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md), written by the one writer in the [durability order](architecture.md#durability-order). Material extents and revision extents are segment extents. Per-file blobs from earlier stores are converted into segments by one upgrade step, after which only the segment reader exists. What a material is and how its bytes are read back is [materials.md](materials.md).
+Raw bytes are in the segment log of [hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md), written by the one writer in the [durability order](architecture.md#durability-order). Material extents and revision extents are segment extents. The numbered schema upgrade adds the extent index and committed segment ends. Existing per-file stores require a separately qualified predecessor exporter: its decoded streams are checked against the retained names and lengths, prepared as segments, then committed without changing material, event, key or cursor identities. Startup refuses catalog rows without a converted extent. Original files remain in custody after conversion; their retirement is a separate operational action. Only the segment reader runs in the new product. What a material is and how its bytes are read back is [materials.md](materials.md).
 
 ## Schema evolution
 

@@ -6,14 +6,15 @@
 //!
 //! Built: the writer, the derivation runner for keyed and per-event
 //! derivations, the commit-log reader for read models, the confirmed-stream
-//! publisher and the NATS ingress with its have responder. Every commit wakes
+//! publisher, the NATS ingress with its have responder, and the telemetry
+//! sampler, whose spool the binding runner reads with the configured sources. Every commit wakes
 //! the runner, the reader and the publisher, and the API serves reads from its
 //! own pool and writes through the writer. The source tasks and signals are
 //! added here by their lanes.
 use crate::api::{self, Api};
 use crate::commit_reader::{self, Consumer, ReadModelRunner};
 use crate::dirty_keys::Registered;
-use crate::{binding_runner, derivation_runner, ingress, publisher, writer};
+use crate::{binding_runner, derivation_runner, ingress, publisher, telemetry, writer};
 use sinex_protocol::Subjects;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
@@ -30,6 +31,63 @@ const RUNNER_IDLE: Duration = Duration::from_secs(30);
 /// How often the binding runner reads every configured binding again.
 const BINDINGS_EVERY: Duration = Duration::from_secs(5);
 
+#[derive(Default, serde::Serialize)]
+struct ShutdownSummary {
+    requested: usize,
+    joined: usize,
+    failed: usize,
+    cancelled: usize,
+    panicked: usize,
+    abort_requested: usize,
+    writer_joined: bool,
+    tasks: Vec<StoppedTask>,
+}
+
+#[derive(serde::Serialize)]
+struct StoppedTask {
+    name: Option<&'static str>,
+    outcome: StopOutcome,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StopOutcome {
+    Complete,
+    Failed,
+    Cancelled,
+    Panicked,
+    JoinError,
+}
+
+impl ShutdownSummary {
+    fn record(&mut self, done: Result<(&'static str, Result<(), String>), tokio::task::JoinError>) {
+        self.joined += 1;
+        let (name, outcome) = match done {
+            Ok((name, Ok(()))) => {
+                self.writer_joined |= name == "writer";
+                (Some(name), StopOutcome::Complete)
+            }
+            Ok((name, Err(_))) => {
+                self.failed += 1;
+                (Some(name), StopOutcome::Failed)
+            }
+            Err(error) if error.is_cancelled() => {
+                self.cancelled += 1;
+                (None, StopOutcome::Cancelled)
+            }
+            Err(error) if error.is_panic() => {
+                self.panicked += 1;
+                (None, StopOutcome::Panicked)
+            }
+            Err(_) => {
+                self.failed += 1;
+                (None, StopOutcome::JoinError)
+            }
+        };
+        self.tasks.push(StoppedTask { name, outcome });
+    }
+}
+
 pub(crate) struct Options {
     pub database: String,
     pub store: PathBuf,
@@ -38,12 +96,15 @@ pub(crate) struct Options {
     pub nats: String,
     /// That user's password.
     pub nats_password_file: Option<PathBuf>,
+    pub producer_grants: ingress::fetch::ProducerGrants,
     /// Subject root: `sinex` unless several deployments share a server.
     pub subject_root: String,
     pub host: String,
     pub api: ApiOptions,
     /// The sources configuration (`sources.json`) the binding runner reads.
     pub sources: Option<PathBuf>,
+    /// Where the daemon spools its telemetry samples.
+    pub telemetry_spool: PathBuf,
 }
 
 pub(crate) struct ApiOptions {
@@ -78,7 +139,11 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 
     let writer_conn = connect(&o.database).await?;
     let mut writer_conn = writer::claim(writer_conn).await?;
-    // Blob files an excision committed to deleting but a crash left behind.
+    blobs
+        .recover(&mut writer_conn)
+        .await
+        .map_err(|error| error.to_string())?;
+    // Finish durable excision punches before sources resume.
     let (deleted, left) = sinex_store::excision::finish_deletions(&mut writer_conn, &blobs)
         .await
         .map_err(|e| format!("finishing blob deletions: {e}"))?;
@@ -89,44 +154,49 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             left.len()
         );
     }
-    // Bytes written before an admission that never committed.
-    let without_rows = sinex_store::blobs::delete_files_without_rows(&mut writer_conn, &blobs)
+    // Remove committed extents whose admission left no catalog row.
+    let without_rows = sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs)
         .await
-        .map_err(|e| format!("deleting blob files without a row: {e}"))?;
-    if !without_rows.deleted.is_empty() {
+        .map_err(|e| format!("deleting extents without a row: {e}"))?;
+    if !without_rows.is_empty() {
         eprintln!(
-            "sinexd: deleted {} blob files no row names, written before an admission that never committed",
-            without_rows.deleted.len()
+            "sinexd: deleted {} unreferenced byte extents",
+            without_rows.len()
         );
     }
-    for entry in &without_rows.not_blobs {
-        eprintln!("sinexd: content store: {entry}");
+    crate::catalog::install_native_sources(&mut writer_conn).await?;
+    for grant in o
+        .producer_grants
+        .values()
+        .filter_map(|grant| grant.write.as_ref())
+    {
+        sinex_store::source_declarations::register(&mut writer_conn, &grant.source_declarations)
+            .await
+            .map_err(|error| format!("registering configured source catalog: {error}"))?;
     }
-    sinex_store::registry::write_sources(&mut writer_conn, &crate::catalog::registry_sources())
-        .await
-        .map_err(|e| format!("writing the source registry: {e}"))?;
-    let url = o.database.clone();
-    let writer_store = blobs.clone();
-    tasks.spawn(async move {
-        writer::run_notifying(
-            url,
-            writer_conn,
-            queues,
-            Arc::new(Registered::new(sinex_derivations::keyed())),
-            Some(writer_store),
-            commits_tx,
-        )
-        .await;
-        ("writer", Ok(()))
-    });
-
     // The configured derivations run in the runner, keyed and per-event
     // (screen text included).
-    let sources = match &o.sources {
+    let mut sources = match &o.sources {
         Some(file) => binding_runner::Config::load(file)?,
         None => binding_runner::Config::default(),
     };
-    let (keyed, per_event) = (sinex_derivations::keyed(), derivation_runner::per_event());
+    // The daemon reads its own telemetry spool, whatever is configured.
+    let telemetry_spool = o.telemetry_spool.clone();
+    // Discovery must see the configured spool before its first planning turn.
+    std::fs::create_dir_all(&telemetry_spool)
+        .map_err(|error| format!("telemetry spool: {error}"))?;
+    sources.sources.insert(
+        sinex_sources::sources::telemetry::SPEC.name.to_owned(),
+        binding_runner::SourceConfig {
+            paths: vec![telemetry_spool.display().to_string()],
+            ..Default::default()
+        },
+    );
+    let configuration = sources.derivation_configuration();
+    let (keyed, per_event) = (
+        crate::analysis::keyed_with(&configuration),
+        derivation_runner::per_event_with(&configuration)?,
+    );
     if let Some(name) = sources.derivations.keys().find(|name| {
         !keyed.iter().any(|d| d.name() == name.as_str())
             && !per_event.iter().any(|d| d.name() == name.as_str())
@@ -139,17 +209,40 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .collect();
     let per_event: Vec<_> = per_event
         .into_iter()
-        .filter(|d| sources.runs(d.name()))
+        .filter(|d| d.name() == sinex_derivations::tags::TagApplier::NAME || sources.runs(d.name()))
         .collect();
     for (name, _) in sources.derivations.iter().filter(|(_, runs)| !**runs) {
         eprintln!("sinexd: derivation {name} is turned off by the configuration");
     }
+    let time_settings =
+        sinex_model::time_settings::TimeSettings::from_parts(o.api.zone.clone(), o.api.day_start);
+    let writer_derivations = crate::analysis::keyed_with(&configuration)
+        .into_iter()
+        .filter(|d| sources.runs(d.name()))
+        .collect();
+    let writer_settings = time_settings.clone();
+    let url = o.database.clone();
+    let writer_store = blobs.clone();
+    tasks.spawn(async move {
+        writer::run_notifying(
+            url,
+            writer_conn,
+            queues,
+            Arc::new(Registered::new(writer_derivations, writer_settings)),
+            Some(writer_store),
+            commits_tx,
+        )
+        .await;
+        ("writer", Ok(()))
+    });
+
     let runner = derivation_runner::DerivationRunner::start(
         connect(&o.database).await?,
         handle.clone(),
         keyed,
         per_event,
         &o.host,
+        time_settings,
     )
     .await?
     .with_blobs(blobs.clone());
@@ -202,6 +295,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         blobs: blobs.clone(),
         zone: o.api.zone.clone(),
         day_start: o.api.day_start,
+        derivations: configuration,
         agent_grants: api::agent_grants(&o.api.tokens)
             .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
         unlock: Default::default(),
@@ -230,54 +324,109 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
                 .collect()
         },
     };
-    let config = api::Config {
-        socket: o.api.socket.clone(),
-        listen: o.api.listen,
-        tokens,
-    };
-    let (c, mut s) = (commits.clone(), stop.clone());
-    eprintln!("sinexd: API on {}", o.api.socket.display());
-    tasks.spawn(async move {
-        (
-            "API",
-            api::serve(config, reader_api, c, read_models, async move {
-                let _ = s.wait_for(|s| *s).await;
-            })
-            .await,
-        )
-    });
-
-    // The configured sources, read continuously by the binding runner.
-    if o.sources.is_some() {
-        // A configuration naming an unknown source or format stops the
-        // daemon here; the runner plans it again as files appear.
-        binding_runner::plan(&sources, &o.host)?;
-        let (read_conn, database, b, w, host, s) = (
-            connect(&o.database).await?,
-            o.database.clone(),
-            blobs.clone(),
-            handle.clone(),
-            o.host.clone(),
+    let public_context = crate::public_context::Provider::new(
+        reader_api
+            .context()
+            .clock()
+            .map_err(|error| error.to_string())?
+            .day
+            .wire(),
+        o.host.clone(),
+        reader_api.source_config.signals.as_ref(),
+    )?;
+    if let Some(settings_identity) = public_context.settings_identity.clone() {
+        let (signals_api, signals_client, signals_subjects, signals_grants, c, s) = (
+            reader_api.clone(),
+            client.clone(),
+            subjects.clone(),
+            Arc::new(o.producer_grants.clone()),
+            commits.clone(),
             stop.clone(),
         );
         tasks.spawn(async move {
             (
-                "binding runner",
-                binding_runner::run(
-                    (read_conn, database),
-                    b,
-                    w,
-                    host,
-                    sources,
-                    BINDINGS_EVERY,
+                "signals",
+                crate::signals::run(
+                    signals_api,
+                    signals_client,
+                    signals_subjects,
+                    signals_grants,
+                    settings_identity,
+                    c,
                     s,
                 )
                 .await,
             )
         });
     }
+    let config = api::Config {
+        socket: o.api.socket.clone(),
+        listen: o.api.listen,
+        tokens,
+    };
+    let (c, mut s) = (commits.clone(), stop.clone());
+    let (producer_requests_ready, ready) = tokio::sync::oneshot::channel();
+    tasks.spawn(async move {
+        let result = match ready.await {
+            Ok(()) => {
+                eprintln!("sinexd: API on {}", config.socket.display());
+                api::serve(config, reader_api, c, read_models, async move {
+                    let _ = s.wait_for(|s| *s).await;
+                })
+                .await
+            }
+            Err(_) => Err("producer request subscriptions did not become ready".into()),
+        };
+        ("API", result)
+    });
 
+    // The daemon's own state, sampled into its telemetry spool.
+    let (sample_conn, sample_database, s) = (
+        connect(&o.database).await?,
+        o.database.clone(),
+        stop.clone(),
+    );
+    tasks.spawn(async move {
+        (
+            "telemetry",
+            telemetry::run((sample_conn, sample_database), telemetry_spool, s).await,
+        )
+    });
+
+    // The configured sources and the telemetry spool, read continuously by
+    // the binding runner. A configuration naming an unknown source or format
+    // stops the daemon here; the runner plans it again as files appear.
+    binding_runner::plan(&sources, &o.host)?;
+    let (read_conn, database, b, w, host, s) = (
+        connect(&o.database).await?,
+        o.database.clone(),
+        blobs.clone(),
+        handle.clone(),
+        o.host.clone(),
+        stop.clone(),
+    );
+    tasks.spawn(async move {
+        (
+            "binding runner",
+            binding_runner::run(
+                (read_conn, database),
+                b,
+                w,
+                host,
+                sources,
+                BINDINGS_EVERY,
+                s,
+            )
+            .await,
+        )
+    });
+
+    let producer_grants = Arc::new(o.producer_grants);
     let requests = ingress::Requests {
+        public_context,
+        client: client.clone(),
+        consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        read_grants: producer_grants.clone(),
         subjects: subjects.clone(),
         writer: handle.clone(),
         reads,
@@ -289,9 +438,15 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         connect(&o.database).await?,
         blobs.clone(),
         o.host.clone(),
+        producer_grants,
     )?;
     let s = stop.clone();
-    tasks.spawn(async move { ("ingress", ingress::run(client, ingest, requests, s).await) });
+    tasks.spawn(async move {
+        (
+            "ingress",
+            ingress::run(client, ingest, requests, s, producer_requests_ready).await,
+        )
+    });
     // The writer stops when every handle is gone; the tasks above hold theirs.
     drop(handle);
 
@@ -304,13 +459,28 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         },
     };
     let _ = stop_tx.send(true);
+    // JoinSet::len includes completed tasks whose results are not yet joined.
+    // No task is spawned after this snapshot.
+    let mut shutdown = ShutdownSummary {
+        requested: tasks.len(),
+        ..Default::default()
+    };
     // Give tasks a moment to finish their current step, then stop the rest.
     let drained = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while tasks.join_next().await.is_some() {}
+        while let Some(done) = tasks.join_next().await {
+            shutdown.record(done);
+        }
     })
     .await
     .is_ok();
-    tasks.abort_all();
+    shutdown.abort_requested = tasks.len();
+    if shutdown.abort_requested != 0 {
+        tasks.abort_all();
+    }
+    eprintln!(
+        "sinexd: shutdown {}",
+        serde_json::to_string(&shutdown).expect("shutdown result serializes")
+    );
     if drained && let Err(error) = forget_admitted(&o.database, &blobs).await {
         eprintln!("sinexd: forgetting admitted blob names at shutdown: {error}");
     }
@@ -320,7 +490,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
 
 async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<(), String> {
     let mut conn = writer::claim(connect(database).await?).await?;
-    let result = sinex_store::blobs::forget_files_with_rows(&mut conn, blobs)
+    let result = sinex_store::blobs::commit_pending_extents(&mut conn, blobs)
         .await
         .map_err(|e| e.to_string());
     // Closing the session releases its writer claim even when cleanup fails.

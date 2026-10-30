@@ -6,6 +6,38 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+/// How a payload records the end of an interval starting at `ts_orig`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IntervalEnd {
+    At(&'static str),
+    /// A missing end leaves only the recorded instant, with unknown duration.
+    EndOrInstant(&'static str),
+    AfterNs(&'static str),
+}
+
+impl IntervalEnd {
+    /// A missing timestamp is an open interval; a missing duration is a moment.
+    pub fn at(self, start: Timestamp, payload: &serde_json::Value) -> Option<Timestamp> {
+        match self {
+            Self::At(field) => payload
+                .get(field)
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+            Self::EndOrInstant(field) => Some(Self::At(field).at(start, payload).unwrap_or(start)),
+            Self::AfterNs(field) => Timestamp::from_unix_ns(
+                start.unix_ns()
+                    + i128::from(
+                        payload
+                            .get(field)
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(0)
+                            .max(0),
+                    ),
+            )
+            .ok(),
+        }
+    }
+}
+
 /// An instant with nanosecond precision, serialized as RFC 3339 in UTC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Timestamp(pub OffsetDateTime);
@@ -59,7 +91,18 @@ impl schemars::JsonSchema for Timestamp {
 }
 
 /// How `ts_orig` was obtained.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, crate::DbCheck)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    crate::DbCheck,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TimeQuality {
     /// The source recorded the time of the thing itself.

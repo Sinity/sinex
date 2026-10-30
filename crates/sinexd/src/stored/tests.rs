@@ -48,3 +48,5 @@ fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record() {
             .contains("revoked")
     );
 }
+
+mod oversized;

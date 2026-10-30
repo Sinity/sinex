@@ -71,7 +71,8 @@ pub(super) async fn version_two_keys(conn: &mut PgConnection) {
     .unwrap();
 }
 
-async fn rows(conn: &mut PgConnection) -> Vec<Value> {
+async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Value> {
+    let compact:bool=sqlx::query_scalar("SELECT data_type='bytea' FROM information_schema.columns WHERE table_schema='core' AND table_name='live_equivalence' AND column_name='equivalence_key'").fetch_one(&mut *conn).await.unwrap();
     let tables: Vec<(String,String)> = sqlx::query_as("SELECT schemaname,tablename FROM pg_tables WHERE schemaname=ANY($1) AND schemaname<>'sinex_schema' AND tablename<>'admission_stage' ORDER BY 1,2")
         .bind(sinex_schema::schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut rows = Vec::new();
@@ -84,14 +85,31 @@ async fn rows(conn: &mut PgConnection) -> Vec<Value> {
             schema.replace('"', "\"\""),
             table.replace('"', "\"\"")
         );
-        let query = if table == "live_equivalence" {
+        if predecessor.is_some_and(|rows| {
+            !rows
+                .iter()
+                .any(|row| row["table"].as_str() == Some(name.as_str()))
+        }) {
+            continue;
+        }
+        let query = if table == "live_equivalence" && compact {
             format!(
                 "SELECT to_jsonb(t)||jsonb_build_object('equivalence_key',core.decode_equivalence_key(t.equivalence_key)) FROM {name} t ORDER BY 1"
             )
         } else if matches!(table.as_str(), "events" | "admission_stage") {
-            format!("SELECT to_jsonb(t)-'kind_version'-'validation' FROM {name} t ORDER BY 1")
+            format!(
+                "SELECT to_jsonb(t)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint' FROM {name} t ORDER BY 1"
+            )
         } else if table == "counters" {
-            format!("SELECT to_jsonb(t) FROM {name} t WHERE name <> 'blob_changes' ORDER BY 1")
+            format!(
+                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','privacy_outputs','query_metadata') ORDER BY 1"
+            )
+        } else if table == "event_tombstones" {
+            format!(
+                "SELECT to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class' FROM {name} t ORDER BY 1"
+            )
+        } else if table == "published" {
+            format!("SELECT to_jsonb(t)-'stream_instance' FROM {name} t ORDER BY 1")
         } else if table == "search_text" {
             format!("SELECT to_jsonb(t)-'trigram_indexed' FROM {name} t ORDER BY 1")
         } else {
@@ -124,6 +142,8 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         .collect();
     let mut initial = batch(events.clone());
     initial.kind = BatchKind::Source(Box::new(SourceProgress {
+        source: None,
+        host: None,
         data_keys: vec![],
         binding: "upgrade input".into(),
         input: InputRef {
@@ -190,9 +210,9 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
     crate::read_models::tests::catch_up_search_text(&mut conn)
         .await
         .unwrap();
-    let before = rows(&mut conn).await;
     let catalog = crate::test_schema::catalog(&mut conn).await;
     version_two_keys(&mut conn).await;
+    let before = rows(&mut conn, None).await;
     sqlx::query("UPDATE sinex_schema.applied SET version=2")
         .execute(&mut conn)
         .await
@@ -204,7 +224,33 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
             to: sinex_schema::VERSION
         }
     );
-    assert_eq!(rows(&mut conn).await, before);
+    assert_eq!(
+        rows(&mut conn, Some(&before)).await,
+        before,
+        "every predecessor table keeps its stored facts; new metadata is checked separately"
+    );
+    let unknown: (Option<i64>, Option<String>) = sqlx::query_as(
+        "SELECT original_commit_seq,class FROM core.event_tombstones WHERE event_id=$1",
+    )
+    .bind(removed)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        unknown,
+        (None, None),
+        "historical missing event positions and classes stay unknown"
+    );
+    let edges: Vec<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT parent,child FROM core.event_children ORDER BY parent,child")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    let retained:Vec<(Uuid,Uuid)>=sqlx::query_as("SELECT parent,id FROM core.events CROSS JOIN LATERAL unnest(parents) parent ORDER BY parent,id").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(
+        edges, retained,
+        "the new edge index reproduces every retained parent exactly"
+    );
     assert_eq!(crate::test_schema::catalog(&mut conn).await, catalog);
 }
 

@@ -1,26 +1,14 @@
-//! The confirmed-stream publisher: it reads `core.commit_log` from its saved
-//! position and publishes each committed event to the NATS confirmed stream in
-//! commit order, followed by the archive changes of the same span. Consumers
-//! outside `sinexd` (outside derivations, live views, Polylogue's change feed)
-//! read only this stream, so they see only committed facts, in the order they
-//! committed.
-//!
-//! - **Masked.** A payload is published only for `open` events; for `guarded`
-//!   and `sealed` ones the event's metadata goes out and the payload is withheld, since
-//!   stream consumers hold no class grants. A payload too large for one NATS
-//!   message (the server's `max_payload`) is withheld the same way, so no event
-//!   is held back from the stream for its size; the stored event is whole.
-//! - **At least once, deduplicated.** The position is saved after JetStream
-//!   acknowledges a page; each message carries `Nats-Msg-Id` (`event-<seq>`,
-//!   `archive-<change>`), so a page republished after a crash inside the
-//!   stream's duplicate window is stored once. Consumers identify events by
-//!   ID either way.
-//! - **Kept.** The stream has no age or size limit.
+//! Publish the canonical committed-change feed with cumulative completion
+//! barriers. A scalar checkpoint covers only fully acknowledged positions;
+//! transfer pages may divide a position without advancing it. Shared stream
+//! messages carry references, with payload access decided by authorized fetch.
+//! Publisher checkpoints and exact erasure mappings belong to a native stream
+//! incarnation, so a lost broker store replays from PostgreSQL.
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
-use sinex_model::{Class, EventId, OperationId, RecordLocation, RunId, Timestamp};
-use sinex_protocol::{Archived, Confirmed, ConfirmedEvent, Subjects, Unhidden, Withheld};
-use sinex_store::commit_log::{self, ArchiveChange, Committed};
+use sinex_model::{EventId, OperationId};
+use sinex_protocol::{Archived, Confirmed, Subjects, Unhidden};
+use sinex_store::commit_log::{self, ArchiveChange};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -40,22 +28,65 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
         .build(client)
 }
 
-/// Create the confirmed stream if it does not exist.
-pub(crate) async fn ensure_stream(
+const CONTRACT: &str = "3";
+const CONTRACT_KEY: &str = "sinex_confirmed_contract";
+
+async fn confirmed_stream(
     js: &jetstream::Context,
     subjects: &Subjects,
-) -> Result<(), String> {
-    js.get_or_create_stream(stream::Config {
+) -> Result<stream::Stream, String> {
+    let mut config = stream::Config {
         name: subjects.confirmed_stream(),
         subjects: vec![subjects.confirmed_all()],
         storage: stream::StorageType::File,
         retention: stream::RetentionPolicy::Limits,
         duplicate_window: Duration::from_secs(120),
         ..Default::default()
-    })
-    .await
-    .map(drop)
-    .map_err(|e| format!("confirmed stream: {e}"))
+    };
+    config.metadata.insert(CONTRACT_KEY.into(), CONTRACT.into());
+    let found = js
+        .get_or_create_stream(config.clone())
+        .await
+        .map_err(|error| format!("confirmed stream: {error}"))?;
+    if found
+        .cached_info()
+        .config
+        .metadata
+        .get(CONTRACT_KEY)
+        .map(String::as_str)
+        != Some(CONTRACT)
+    {
+        if found.cached_info().state.last_sequence > 0 {
+            return Err("confirmed_stream_contract_mismatch: existing stream requires an explicit reference-only version-3 conversion or parallel-stream decision".into());
+        }
+        js.update_stream(config)
+            .await
+            .map_err(|error| format!("confirmed stream contract: {error}"))?;
+        return js
+            .get_stream(subjects.confirmed_stream())
+            .await
+            .map_err(|error| error.to_string());
+    }
+    Ok(found)
+}
+
+/// Create a fresh reference-only version-3 stream, or verify the existing stream's contract.
+pub(crate) async fn ensure_stream(
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<(), String> {
+    confirmed_stream(js, subjects).await.map(drop)
+}
+
+pub(crate) fn stream_instance(stream: &stream::Stream) -> String {
+    format!(
+        "{}/{}",
+        stream.cached_info().config.name,
+        stream.cached_info().created.unix_timestamp_nanos()
+    )
+}
+pub(crate) fn consumer_for(instance: &str) -> String {
+    format!("{CONSUMER}/{instance}")
 }
 
 /// Counts for one publishing pass, for status and measurement.
@@ -115,6 +146,7 @@ pub(crate) async fn run(
                 tokio::select! {
                     _ = commits.changed() => {}
                     _ = stop.changed() => {}
+                    _ = tokio::time::sleep(RETRY) => {}
                 }
             }
             Ok(_) => {}
@@ -152,155 +184,314 @@ pub(crate) async fn publish_pending_measured(
     subjects: &Subjects,
     mut page_done: impl FnMut(PageTiming),
 ) -> Result<Published, String> {
+    let stream = confirmed_stream(js, subjects).await?;
+    let instance = stream_instance(&stream);
+    let consumer = consumer_for(&instance);
+    let (position, _) = commit_log::consumer_position(conn, &consumer)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut cursor = commit_log::ChangeCursor::after(position);
+    let mut settled = position;
     let mut total = Published::default();
+    total.excised += erase_excised_in(conn, js, subjects, &instance).await?;
     loop {
-        let read_started = Instant::now();
-        let (seq, change) = commit_log::consumer_position(conn, CONSUMER)
+        let started = Instant::now();
+        let page = commit_log::changes_page(conn, cursor, PAGE, sinex_store::PAGE_BYTES)
             .await
-            .map_err(|e| e.to_string())?;
-        let page = commit_log::after(conn, seq, PAGE, sinex_store::PAGE_BYTES)
+            .map_err(|error| error.to_string())?;
+        let read = started.elapsed();
+        if let Some(gap) = page.gap {
+            publish(
+                js,
+                subjects.confirmed_control(),
+                format!("gap-{}", blake3::hash(gap.reason.as_bytes()).to_hex()),
+                &Confirmed::Gap {
+                    reason: gap
+                        .reason
+                        .split(':')
+                        .next()
+                        .unwrap_or("commit_history_gap")
+                        .to_owned(),
+                },
+            )
+            .await?
             .await
-            .map_err(|e| e.to_string())?;
-        let covered = page.up_to.unwrap_or(seq);
-        // A change follows the commit that caused it: only changes archived at
-        // or before the commit position this page reaches go out with it.
-        let changes: Vec<ArchiveChange> = commit_log::changes_after(conn, change, PAGE)
-            .await
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .take_while(|n| n.commit_seq <= covered)
-            .collect();
-        if page.up_to.is_none() && changes.is_empty() {
-            total.excised += erase_excised(conn, js, subjects).await?;
+            .map_err(|error| error.to_string())?;
+            return Err(gap.reason);
+        }
+        if page.entries.is_empty() {
+            if position == 0
+                && !commit_log::consumer_exists(conn, &consumer)
+                    .await
+                    .map_err(|error| error.to_string())?
+            {
+                publish_chunk(
+                    conn,
+                    js,
+                    subjects,
+                    &instance,
+                    &consumer,
+                    &[],
+                    Some(0),
+                    &mut total,
+                )
+                .await?;
+            }
             return Ok(total);
         }
-        let read = read_started.elapsed();
-        let acknowledge_started = Instant::now();
-        let mut acks = Vec::with_capacity(page.events.len() + changes.len());
-        let limit = js.client().server_info().max_payload as u64;
-        for event in &page.events {
-            let message = Confirmed::Event(Box::new(fit(confirmed_event(event)?, limit)?));
-            acks.push(
-                publish(
-                    js,
-                    subjects.confirmed_event(&event.event_type),
-                    format!("event-{}", event.commit_seq),
-                    &message,
-                )
-                .await?,
-            );
-        }
-        for n in &changes {
-            let message = if n.archived {
-                Confirmed::Archived(archived_message(n)?)
-            } else {
-                Confirmed::Unhidden(Unhidden {
-                    change_seq: n.change_seq,
-                    event: sinex_model::EventId(n.event_id),
-                    unhidden_seq: n.commit_seq,
-                    operation: n.operation_id.map(sinex_model::OperationId),
-                })
-            };
-            acks.push(
-                publish(
-                    js,
-                    subjects.confirmed_archive(),
-                    format!("archive-{}", n.change_seq),
-                    &message,
-                )
-                .await?,
-            );
-        }
-        let mut placed = Vec::with_capacity(page.events.len());
-        for (i, ack) in acks.into_iter().enumerate() {
-            let ack = ack
-                .await
-                .map_err(|e| format!("confirmed stream did not acknowledge: {e}"))?;
-            if let Some(event) = page.events.get(i) {
-                let seq = i64::try_from(ack.sequence).map_err(|e| e.to_string())?;
-                placed.push((event.id, seq));
+        let mut complete = None;
+        let mut split = 0;
+        for (index, entry) in page.entries.iter().enumerate() {
+            if matches!(entry.change, commit_log::Change::PositionComplete) {
+                complete = Some(entry.position);
+                split = index + 1;
             }
         }
-        let acknowledge = acknowledge_started.elapsed();
-        let last_change = changes.last().map_or(change, |n| n.change_seq);
-        let record_started = Instant::now();
-        let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
-        commit_log::record_published(&mut tx, &placed)
-            .await
-            .map_err(|e| e.to_string())?;
-        commit_log::set_consumer_position(&mut tx, CONSUMER, covered, last_change)
-            .await
-            .map_err(|e| e.to_string())?;
-        let record = record_started.elapsed();
-        let commit_started = Instant::now();
-        tx.commit().await.map_err(|e| e.to_string())?;
+        let mut acknowledge = Duration::ZERO;
+        let mut record = Duration::ZERO;
+        let mut commit = Duration::ZERO;
+        if split > 0 {
+            let timing = publish_chunk(
+                conn,
+                js,
+                subjects,
+                &instance,
+                &consumer,
+                &page.entries[..split],
+                complete,
+                &mut total,
+            )
+            .await?;
+            acknowledge += timing.0;
+            record += timing.1;
+            commit += timing.2;
+            settled = complete.unwrap();
+        }
+        if split < page.entries.len() {
+            let timing = publish_chunk(
+                conn,
+                js,
+                subjects,
+                &instance,
+                &consumer,
+                &page.entries[split..],
+                None,
+                &mut total,
+            )
+            .await?;
+            acknowledge += timing.0;
+            record += timing.1;
+            commit += timing.2;
+        }
+        let events = page
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.change, commit_log::Change::Event(_)))
+            .count();
+        let changes = page
+            .entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.change,
+                    commit_log::Change::Archive(_) | commit_log::Change::Excised(_)
+                )
+            })
+            .count();
         page_done(PageTiming {
-            events: page.events.len(),
-            changes: changes.len(),
-            commit_seq: covered,
+            events,
+            changes,
+            commit_seq: settled,
             read,
             acknowledge,
             record,
-            commit: commit_started.elapsed(),
+            commit,
         });
-        total.events += page.events.len() as u64;
-        total.changes += changes.len() as u64;
+        cursor = page
+            .next
+            .expect("a nonempty page has a private continuation");
     }
 }
 
-/// Erase the messages of excised events from the confirmed stream, and tell
-/// consumers to drop what they kept, so excision reaches every surface.
-/// JetStream's message delete without `no_erase` overwrites the stored message,
-/// not only its index entry.
-async fn erase_excised(
+/// Data acknowledgments and exact erasures precede a cumulative completion
+/// barrier. Partial-position ack pairs are durable without a scalar checkpoint.
+#[allow(clippy::too_many_arguments)]
+async fn publish_chunk(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
+    instance: &str,
+    consumer: &str,
+    entries: &[commit_log::CommittedChange],
+    complete: Option<i64>,
+    total: &mut Published,
+) -> Result<(Duration, Duration, Duration), String> {
+    let acknowledge_started = Instant::now();
+    let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
+    let policy = sinex_store::privacy::projection::lock_epoch(&mut tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    if !policy.ready() {
+        return Err("privacy_projection_stale".into());
+    }
+    let mut acks = Vec::new();
+    for entry in entries {
+        let (message, subject, id, event) = match &entry.change {
+            commit_log::Change::Event(event) => {
+                let class = sinex_store::privacy::projection::publication_class(
+                    &mut tx,
+                    event.id,
+                    policy.active,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                let class = class.ok_or("privacy_projection_unavailable")?;
+                (
+                    Confirmed::EventReference {
+                        commit_seq: event.commit_seq,
+                        event: EventId(event.id),
+                    },
+                    subjects.confirmed_event(&class, &event.event_type),
+                    format!("event-{}", entry.position),
+                    Some(event.id),
+                )
+            }
+            commit_log::Change::Archive(lifecycle) => {
+                let change = &lifecycle.archive;
+                let message = if change.archived {
+                    Confirmed::Archived(archived_message(change)?)
+                } else {
+                    Confirmed::Unhidden(Unhidden {
+                        change_seq: change.change_seq,
+                        event: EventId(change.event_id),
+                        unhidden_seq: entry.position,
+                        operation: change.operation_id.map(OperationId),
+                    })
+                };
+                let class = sinex_store::privacy::projection::lifecycle_publication_class(
+                    &mut tx,
+                    change.event_id,
+                    policy.active,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                let class = class.ok_or("privacy_projection_unavailable")?;
+                (
+                    message,
+                    subjects.confirmed_lifecycle(&class, &lifecycle.event_type),
+                    format!("archive-{}", change.change_seq),
+                    None,
+                )
+            }
+            commit_log::Change::Excised(change) => (
+                Confirmed::Excised {
+                    commit_seq: Some(entry.position),
+                    original_commit_seq: Some(change.original_commit_seq),
+                    event: EventId(change.event_id),
+                    operation: OperationId(change.operation_id),
+                },
+                subjects.confirmed_lifecycle(&change.class, &change.event_type),
+                format!("excised-{}-{}", entry.position, change.event_id),
+                None,
+            ),
+            commit_log::Change::PositionComplete => continue,
+        };
+        acks.push((event, publish(js, subject, id, &message).await?));
+    }
+    let mut placed = Vec::new();
+    for (event, ack) in acks {
+        let ack = ack
+            .await
+            .map_err(|error| format!("confirmed stream did not acknowledge: {error}"))?;
+        if let Some(event) = event {
+            placed.push((
+                event,
+                i64::try_from(ack.sequence).map_err(|error| error.to_string())?,
+            ));
+            total.events += 1;
+        } else {
+            total.changes += 1;
+        }
+    }
+    let mut acknowledge = acknowledge_started.elapsed();
+    let record_started = Instant::now();
+    commit_log::record_published_in(&mut tx, instance, &placed)
+        .await
+        .map_err(|error| error.to_string())?;
+    total.excised += erase_excised_in(&mut tx, js, subjects, instance).await?;
+    let mut record = record_started.elapsed();
+    if let Some(position) = complete {
+        let barrier_started = Instant::now();
+        publish(
+            js,
+            subjects.confirmed_control(),
+            format!("position-{position}"),
+            &Confirmed::PositionComplete {
+                commit_seq: position,
+            },
+        )
+        .await?
+        .await
+        .map_err(|error| format!("confirmed position did not acknowledge: {error}"))?;
+        acknowledge += barrier_started.elapsed();
+        let record_started = Instant::now();
+        commit_log::set_consumer_position(&mut tx, consumer, position, 0)
+            .await
+            .map_err(|error| error.to_string())?;
+        record += record_started.elapsed();
+    }
+    let commit_started = Instant::now();
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok((acknowledge, record, commit_started.elapsed()))
+}
+
+/// Erasure is an idempotent physical action. Ordered tombstone notices come
+/// from the canonical change feed, never from this cleanup pass.
+async fn erase_excised_in(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+    instance: &str,
 ) -> Result<u64, String> {
     let mut erased = 0;
     loop {
-        let pending = commit_log::excised_on_stream(conn, PAGE)
+        let pending = commit_log::excised_on_stream_in(conn, instance, PAGE)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| error.to_string())?;
         if pending.is_empty() {
             return Ok(erased);
         }
         let stream = js
             .get_stream(subjects.confirmed_stream())
             .await
-            .map_err(|e| format!("confirmed stream: {e}"))?;
-        let mut acks = Vec::with_capacity(pending.len());
-        for e in &pending {
-            let seq = u64::try_from(e.stream_seq).map_err(|err| err.to_string())?;
+            .map_err(|error| error.to_string())?;
+        for item in &pending {
+            let seq = u64::try_from(item.stream_seq).map_err(|error| error.to_string())?;
             if let Err(error) = stream.delete_message(seq).await {
-                // Already gone (erased before a crash) is the goal state.
                 if !error.to_string().contains("no message found") {
                     return Err(format!("erase stream message {seq}: {error}"));
                 }
             }
-            acks.push(
-                publish(
-                    js,
-                    subjects.confirmed_archive(),
-                    format!("excised-{}", e.event_id),
-                    &Confirmed::Excised {
-                        event: EventId(e.event_id),
-                        operation: OperationId(e.operation_id),
-                    },
-                )
-                .await?,
-            );
         }
-        for ack in acks {
-            ack.await
-                .map_err(|e| format!("confirmed stream did not acknowledge: {e}"))?;
-        }
-        let pairs: Vec<_> = pending.iter().map(|e| (e.event_id, e.stream_seq)).collect();
-        commit_log::forget_published(conn, &pairs)
+        let pairs: Vec<_> = pending
+            .iter()
+            .map(|item| (item.event_id, item.stream_seq))
+            .collect();
+        commit_log::forget_published_in(conn, instance, &pairs)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| error.to_string())?;
         erased += pairs.len() as u64;
     }
+}
+
+#[cfg(test)]
+async fn erase_excised(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<u64, String> {
+    let stream = confirmed_stream(js, subjects).await?;
+    erase_excised_in(conn, js, subjects, &stream_instance(&stream)).await
 }
 
 async fn publish(
@@ -315,68 +506,6 @@ async fn publish(
     js.publish_with_headers(subject, headers, body.into())
         .await
         .map_err(|e| format!("publish {id}: {e}"))
-}
-
-/// Room left in a message for the headers and the metadata's own growth.
-const HEADROOM: u64 = 4 * 1024;
-
-/// The message as published: with its payload when the whole message fits the
-/// server's size limit, otherwise the event's metadata alone, saying why. The event is
-/// stored whole either way; no event is held back from the stream for its size.
-fn fit(mut event: ConfirmedEvent, limit: u64) -> Result<ConfirmedEvent, String> {
-    if event.payload.is_none() {
-        return Ok(event);
-    }
-    let size = serde_json::to_vec(&Confirmed::Event(Box::new(event.clone())))
-        .map_err(|e| e.to_string())?
-        .len() as u64;
-    if size + HEADROOM > limit {
-        let payload_bytes = event
-            .payload
-            .take()
-            .map_or(0, |p| p.to_string().len() as u64);
-        event.withheld = Some(Withheld::Size {
-            payload_bytes,
-            limit,
-        });
-    }
-    Ok(event)
-}
-
-fn confirmed_event(e: &Committed) -> Result<ConfirmedEvent, String> {
-    let class: Class = serde_json::from_value(serde_json::Value::String(e.class.clone()))
-        .map_err(|err| format!("event {}: class {:?}: {err}", e.id, e.class))?;
-    let location = match (e.material_id, e.anchor) {
-        (Some(material), Some(anchor)) => Some(RecordLocation {
-            material: sinex_model::MaterialId(material),
-            anchor: u64::try_from(anchor)
-                .map_err(|_| format!("event {}: negative anchor", e.id))?,
-        }),
-        _ => None,
-    };
-    Ok(ConfirmedEvent {
-        kind_version: u64::try_from(e.kind_version).map_err(|_| "invalid stored kind version")?,
-        validation: serde_json::from_value(serde_json::json!(e.validation))
-            .map_err(|_| "invalid stored validation")?,
-        commit_seq: e.commit_seq,
-        id: EventId(e.id),
-        event_type: e.event_type.clone(),
-        source: e.source.clone(),
-        run: RunId(e.run_id),
-        location,
-        output_index: u16::try_from(e.output_index)
-            .map_err(|_| format!("event {} has an invalid output index", e.id))?,
-        parents: e.parents.iter().flatten().map(|p| EventId(*p)).collect(),
-        ts_orig: e.ts_orig.map(Timestamp),
-        ts_quality: e.ts_quality.clone(),
-        ts_coided: e.ts_coided.map(Timestamp),
-        ts_persisted: Timestamp(e.ts_persisted),
-        record_state: e.record_state.clone(),
-        class,
-        equivalence_key: e.equivalence_key.clone(),
-        payload: (class == Class::Open).then(|| e.payload.clone()),
-        withheld: (class != Class::Open).then_some(Withheld::Class),
-    })
 }
 
 fn archived_message(n: &ArchiveChange) -> Result<Archived, String> {

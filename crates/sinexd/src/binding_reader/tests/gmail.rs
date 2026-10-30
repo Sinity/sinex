@@ -50,6 +50,7 @@ async fn submit(
         &ctx.blobs,
         Arc::new(gmail::source()),
         "synthetic-gmail",
+        "synthetic",
         acquired,
     )
     .await
@@ -59,9 +60,14 @@ async fn submit(
 #[devkit::test]
 async fn gmail_restart_failure_gap_and_replay_use_stored_bytes(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path())
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let mut first = reader(vec![
         (
             "/profile",
@@ -179,9 +185,14 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
     db: devkit::pg::TestDatabase,
 ) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), dir.path())
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let steps = Arc::new(Mutex::new(VecDeque::from(vec![
         (
             "/profile",
@@ -226,6 +237,7 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
         RunId::new(),
         Arc::new(gmail::source()),
         "synthetic-gmail-drive",
+        "synthetic",
         &crate::material_access::Sink(ctx.blobs.clone()),
         crate::material_access::Access::default(),
         Class::Open,
@@ -273,9 +285,14 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
         }
     }
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), dir.path())
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        dir.path(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut reader = PolledReader::new(Box::new(Progress(calls.clone())));
     sinex_store::bindings::save(
@@ -296,6 +313,7 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
         RunId::new(),
         Arc::new(gmail::source()),
         "synthetic-progress",
+        "synthetic",
         &crate::material_access::Sink(ctx.blobs.clone()),
         crate::material_access::Access::default(),
         Class::Open,

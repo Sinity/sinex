@@ -12,6 +12,13 @@ Family F01.
 
 **History files.** Zsh handles metafied bytes, extended headers and multiline commands; Bash handles optional timestamp records; Fish handles its escaped multiline structure and path lists. An explicitly declared plain-text history removes only LF or CRLF, preserving spaces, backslashes and timestamp-looking text as command content. Empty lines emit no event; whitespace-only lines are commands. Starts and durations stay unknown. It never guesses a timestamp or a shell. When an untimed file is rewritten, its records are aligned by sequence and multiplicity ([alignment](events.md#identity)); an ambiguous alignment is reported rather than collapsing all equal text into one command.
 
+A **standalone shell binding** reads one native history input independently of
+Atuin or terminal integration. It is an ordinary source binding with its own
+material and progress, not a separate admission path. Zsh, Bash and Fish select
+their declared formats; `terminal.text-history` is explicitly untimed text and
+supplies no shell identity. A later fusion may relate observations; it never
+replaces their original bytes.
+
 **Terminal sessions** are captured automatically.
 - Asciicast v2 and v3 keep the full header and one event per native input, output, resize, marker and exit record. V2 absolute offsets and v3 relative intervals resolve with exact decimal arithmetic. No command-span framing replaces native records; plain-text rendering and command spans are derivations.
 - Kitty records ANSI bytes of all buffers and windows, geometry, modes, session identity, cwd and title, and OSC 133 command facts. Poll snapshots and continuous terminal output are distinct observations. Repeated full snapshots may share content storage, and equal snapshots taken at different times are separate observations of the buffer. Kitty's complete ANSI snapshot stays readable even when a derived tail is empty; computing a tail never erases the full original.
@@ -84,6 +91,8 @@ Other account archives (Samsung account data, Freedom usage, OpenRouter usage an
 Family F05.
 
 **Mail** covers every folder and label of the operator's accounts, including sent, archive, Spam and Trash: complete RFC 5322 and MIME bytes, attachments, duplicate headers, threading, flags, provider IDs, dates and received or internal dates. MIME bytes survive an invalid body encoding. Mbox delimiter quoting and Maildir renames keep message ranges and identity. PST and Outlook CSV are explicit native inputs; a converter is a recorded acquisition tool, not an intermediate format. Message-ID alone is not record identity; a message without one is identified by its real provider or file identity, never a shared empty key. Mail fusion matches Message-ID only within one account and keeps every provider observation.
+
+Outlook conversion retains the native PST as an original material with the acquisition tool, its version and folder identity. Converted mbox materials and their record parts cite that acquisition material. Bindings identify the original PST and folder; private directories under managed scratch belong to their folder readers and are removed when the last reader closes, including after conversion failure. Conversion and storage check the native input's revision, and the next read converts a changed revision again. The PST itself is never rewritten.
 
 **IMAP** uses IDLE where supported, UIDVALIDITY and UID, flags and explicit EXPUNGE and VANISHED observations. A sparse or incomplete UID response never implies deletion.
 

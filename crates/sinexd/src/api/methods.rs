@@ -1,11 +1,11 @@
 //! Executing requests: one function per command of the table, shared by every
 //! surface. Reads use the read pool; writes go to the writer as batches, so
 //! admission stays the only way anything is stored.
-use super::mask::{mask_json, mask_str};
 use crate::writer::{Priority, WriterHandle};
 use serde_json::{Value, json};
-use sinex_model::query::{self, Context, QueryError};
-use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
+use sinex_model::event_types::telemetry::SinexTelemetry;
+use sinex_model::query::{self, Context, QueryError, Source};
+use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, EventPayload, OperationId, RunId};
 use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
 use sinex_store::query::{Answer, Page};
 use sqlx::PgPool;
@@ -13,9 +13,12 @@ use sqlx::PgPool;
 mod analysis;
 mod forecast;
 mod kinds;
+mod model_calls;
 mod operations;
 mod privacy;
 mod queries;
+mod recall;
+mod signals;
 
 /// The daemon's read side and its handle on the writer.
 #[derive(Clone)]
@@ -26,6 +29,7 @@ pub(crate) struct Api {
     pub blobs: sinex_store::Blobs,
     pub zone: jiff::tz::TimeZone,
     pub day_start: jiff::civil::Time,
+    pub derivations: sinex_derivations::Configuration,
     /// Classes the agent token is granted besides `open` (`guarded` only by
     /// the operator's explicit grant; never `sealed`).
     pub agent_grants: Vec<sinex_model::Class>,
@@ -81,8 +85,7 @@ fn not_built(reason: impl Into<String>) -> Reply {
     }
 }
 
-/// A result carrying captured text, with the data notice first. Masking
-/// happens once, in `call`, for every result.
+/// A result carrying captured text, with the data notice first.
 fn data(result: Value) -> Reply {
     let mut out = json!({ "notice": DATA_NOTICE });
     if let (Some(o), Value::Object(r)) = (out.as_object_mut(), result) {
@@ -131,6 +134,12 @@ impl Api {
         Ok(conn)
     }
 
+    pub(crate) fn context_at(&self, at: sinex_model::Timestamp) -> Result<Context, String> {
+        let now =
+            jiff::Timestamp::from_nanosecond(at.unix_ns()).map_err(|error| error.to_string())?;
+        Ok(Context::new(now, self.zone.clone(), self.day_start))
+    }
+
     pub(crate) fn context(&self) -> Context {
         Context::new(jiff::Timestamp::now(), self.zone.clone(), self.day_start)
     }
@@ -138,25 +147,17 @@ impl Api {
     pub(crate) async fn call(&self, request: Request, access: Access) -> Reply {
         let caller = self.caller(access).await;
         let reply = self.dispatch(request, &caller).await;
-        // Sealed values are unsealed for a caller holding the class, then
-        // every string is masked on its way out (unsealing comes first, so the
-        // masker never sees ciphertext).
+        // Sealed values are unsealed only for a caller holding the class.
         match reply {
             Reply::Ok { mut result } => {
                 if caller.grants.split(',').any(|g| g == "sealed")
                     && let Err(e) = self.unseal(&mut result).await
                 {
-                    return refused(mask_str(&e));
+                    return refused(e);
                 }
-                match mask_json(result) {
-                    Ok(result) => Reply::Ok { result },
-                    Err(reason) => refused(reason),
-                }
+                Reply::Ok { result }
             }
-            Reply::Refused { reason, not_built } => Reply::Refused {
-                reason: mask_str(&reason),
-                not_built,
-            },
+            other => other,
         }
     }
 
@@ -194,6 +195,36 @@ impl Api {
     async fn dispatch(&self, request: Request, caller: &Caller) -> Reply {
         let actor = caller.actor;
         match request {
+            Request::ModelCall { operation: _ } => self.model_call_disabled(),
+            Request::ModelPolicy { definition } => self.model_policy(caller, &definition).await,
+            Request::ModelRecord { policy, definition } => {
+                self.model_record(caller, &policy, &definition).await
+            }
+            Request::ModelReceipt { policy, definition } => {
+                self.model_receipt(
+                    caller,
+                    &policy,
+                    &definition,
+                    sinex_model::model_calls::Capabilities {
+                        actual_receipts: self.source_config.model_accounting.actual_receipts,
+                    },
+                )
+                .await
+            }
+
+            Request::Signal {
+                action,
+                name,
+                rule,
+                page,
+                cursor,
+            } => match self
+                .signal(caller, &action, name, rule, Page { size: page, cursor })
+                .await
+            {
+                Ok(result) => data(result),
+                Err(reason) => refused(reason),
+            },
             Request::Kinds { kind, page, cursor } => {
                 self.kind_fields(caller, kind, page, cursor, false).await
             }
@@ -281,7 +312,8 @@ impl Api {
                     text.push_str(" where cwds ^ ");
                     text.push_str(&serde_json::to_string(&cwd).expect("strings serialize"));
                 }
-                self.query(caller, &text, Page { size: page, cursor }).await
+                self.recall(caller, &text, Page { size: page, cursor })
+                    .await
             }
             Request::Trace {
                 reference,
@@ -406,6 +438,7 @@ impl Api {
             Request::Recompute {
                 derivation,
                 compare,
+                switch,
                 from,
                 until,
                 examples,
@@ -425,6 +458,7 @@ impl Api {
                     caller,
                     &derivation,
                     compare.unwrap_or(false),
+                    switch,
                     range,
                     usize::try_from(examples.unwrap_or(5)).unwrap_or(usize::MAX),
                 )
@@ -447,6 +481,7 @@ impl Api {
                                     "id": c.id,
                                     "derivation": c.derivation,
                                     "version": c.version,
+                                    "context": c.context,
                                     "from": c.range.and_then(|r| r.0),
                                     "until": c.range.and_then(|r| r.1),
                                     "made_at": c.made_at,
@@ -484,6 +519,7 @@ impl Api {
             Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
             | Request::AnalysisPanel { .. }
+            | Request::Gaps { .. }
             | Request::AnalysisWhy { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
@@ -531,6 +567,7 @@ impl Api {
             &self.blobs,
             &self.host,
             &self.library_roots,
+            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
             request,
             caller.actor,
         )
@@ -538,15 +575,44 @@ impl Api {
     }
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
-        let mut ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
-            Ok(ctx) => ctx,
-            Err(e) => return refused(e.to_string()),
-        };
+        if text
+            .trim()
+            .split_whitespace()
+            .next()
+            .is_some_and(|word| word.eq_ignore_ascii_case("recall"))
+        {
+            return self.recall(caller, text, page).await;
+        }
+
+        let mut ctx = self.context();
         let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
+            Ok(conn) => conn,
             Err(e) => return refused(e.to_string()),
         };
-        let bound = if let Some(name) = query::saved::reference_name(text) {
+        if let Some(name) = query::saved::reference_name(text) {
+            if let Some(raw) = page.cursor.as_deref() {
+                let seal = match sinex_store::query::continuation::seal_key(&mut conn).await {
+                    Ok(seal) => seal,
+                    Err(e) => return refused(e.to_string()),
+                };
+                let question = match sinex_store::query::continuation::query_identity(text, &ctx)
+                    .and_then(|question| {
+                        sinex_store::query::continuation::identity(
+                            "recall",
+                            &question,
+                            &caller.grants,
+                        )
+                    }) {
+                    Ok(question) => question,
+                    Err(e) => return refused(e.to_string()),
+                };
+                if sinex_store::query::continuation::open(&seal, raw, question, &ctx)
+                    .is_ok_and(|cursor| cursor.context.versions.contains_key("sinex.recall"))
+                {
+                    drop(conn);
+                    return self.recall(caller, text, page).await;
+                }
+            }
             let definitions = match queries::definitions(&mut conn, &name).await {
                 Ok(d) => d,
                 Err(e) => return refused(e),
@@ -556,14 +622,19 @@ impl Api {
                 Err(e) => return refused(e.to_string()),
             };
             ctx.catalog = Some(query::QueryCatalog::new(declarations.into_values()));
-            match query::saved::bind_saved(text, &ctx, &definitions) {
-                Ok(q) => Some(q),
+            let bound = match query::saved::bind_saved(text, &ctx, &definitions) {
+                Ok(q) => q,
                 Err(e) => return query_refusal(text, e),
+            };
+            if matches!(
+                bound.source,
+                Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. }
+            ) {
+                drop(conn);
+                return self.recall(caller, text, page).await;
             }
-        } else {
-            None
-        };
-        match sinex_store::query::run(&mut conn, text, bound.as_ref(), &ctx, &page).await {
+        }
+        match sinex_store::query::run(&mut conn, text, None, &ctx, &page).await {
             Ok(answer) => data(answer_json(answer)),
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
@@ -617,12 +688,68 @@ impl Api {
         let row = sinex_store::diagnostics::positions(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+        let telemetry = sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE)
+            .await
+            .map_err(|e| e.to_string())?;
         let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
         let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+        let selected = sinex_store::registry::selected_derivations(&mut conn)
+            .await
+            .map_err(|error| error.to_string())?;
+        let time_settings =
+            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start);
+        let mut available: Vec<(String, u32, sinex_model::DerivationHistory)> =
+            crate::analysis::keyed_with(&self.derivations)
+                .iter()
+                .map(|d| {
+                    (
+                        d.name().to_owned(),
+                        d.version_for(&time_settings),
+                        d.history_policy(),
+                    )
+                })
+                .collect();
+        available.extend(
+            crate::derivation_runner::per_event_with(&self.derivations)?
+                .iter()
+                .map(|d| (d.name().to_owned(), d.version(), d.history_policy())),
+        );
+        let build = crate::build_identity::current()?;
+        let names: Vec<_> = available.iter().map(|(name, _, _)| name.clone()).collect();
+        let versions: Vec<_> = available
+            .iter()
+            .map(|(_, version, _)| i64::from(*version))
+            .collect();
+        let comparisons =
+            sinex_store::registry::latest_comparisons(&mut conn, &names, &versions, build)
+                .await
+                .map_err(|error| error.to_string())?;
+        let producer_versions: Vec<_> = available.into_iter().map(|(name, version, history)| {
+            let current = selected.iter().find(|(selected_name, _, _)| selected_name == &name);
+            let compared = comparisons.iter().find(|(producer,..)| producer == &name);
+            json!({"name": name, "selected": current.map(|(_,version,_)| version), "selected_build": current.map(|(_,_,build)|build), "available": version,
+                "state": if current.is_some_and(|(_,selected_version,selected_build)| *selected_version == i64::from(version) && selected_build == build) { "selected" } else { "pending_history_switch" },
+                "history": history, "build": build, "last_comparison": compared.map(|(_,id,made_at,keys,changed,complete)| json!({"id":id,"made_at":made_at,"keys":keys,"changed":changed,"complete":complete}))})
+        }).collect();
+        let rule_rows = sinex_store::signals::rule_rows(
+            &mut conn,
+            sinex_model::event_types::signal::RuleWritten::EVENT_TYPE,
+            row.commit_seq,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let evaluation_rows = sinex_store::signals::rule_rows(
+            &mut conn,
+            sinex_model::event_types::signal::EvaluationRecorded::EVENT_TYPE,
+            row.commit_seq,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
         drop(conn);
         let sources = match self
             .query(
@@ -663,6 +790,10 @@ impl Api {
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
+            // The daemon's newest sample of each of its parts.
+            "telemetry": telemetry,
+            "producer_versions": producer_versions,
+            "signals":signals,
             "discovery": discovery,
             "exclusions": exclusions,
         }))

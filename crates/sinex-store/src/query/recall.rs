@@ -54,7 +54,7 @@ pub(super) async fn select(
                 Error::Invalid("mark number is outside the archive's row range".into())
             })?;
             let mark = sqlx::query_scalar!(
-                r#"SELECT jsonb_build_object('id',id,'when',ts_orig,'payload',payload) AS "row!"
+                r#"SELECT jsonb_build_object('id',id,'source',source,'event_type',event_type,'key',equivalence_key,'material',material_id,'offset',anchor,'output',output_index,'when',ts_orig,'payload',payload) AS "row!"
                 FROM core.visible_events WHERE event_type=$3 AND ts_orig IS NOT NULL
                 AND payload IS NOT NULL AND NOT payload ? 'withheld'
                 AND commit_seq <= $1 AND NOT audit.is_archived_at(id,$1)
@@ -196,9 +196,15 @@ async fn latest(
         ],
         ranked: false,
     };
-    let compiled = Compiler::new(ctx, seq).compile(&selector)?;
-    let rendered = render_page(compiled, 0, 1, false);
-    let (text, values) = rendered.rows;
+    let (text, values) = {
+        let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
+        let mut rows = SqlFragment::text(format!(
+            "SELECT {} FROM (",
+            super::json_object(&compiled.columns)
+        ));
+        rows.append(compiled.answer).push(") q");
+        rows.render()
+    };
     Ok(sql::bind_scalar(sqlx::query_scalar(&text), values)
         .fetch_optional(conn)
         .await?)
@@ -245,7 +251,7 @@ async fn mark_links(
         questions.push((
             "session",
             format!(
-                "shell-sessions where host = {} and overlaps {at}",
+                "shell-sessions where host = {} AND overlaps {at}",
                 quote(host)
             ),
         ));
@@ -253,17 +259,17 @@ async fn mark_links(
     let mut focus = format!("focus where overlaps {at}");
     for field in ["app", "title"] {
         if let Some(value) = mark["payload"][field].as_str() {
-            focus.push_str(&format!(" and {field} = {}", quote(value)));
+            focus.push_str(&format!(" AND {field} = {}", quote(value)));
         }
     }
     questions.push(("focus", focus));
     if let Some(command) = mark["payload"]["command"].as_str() {
         let mut text = format!(
-            "commands where command = {} and when >= {from} and when <= {at}",
+            "commands where command = {} AND when >= {from} AND when <= {at}",
             quote(command)
         );
         if let Some(cwd) = mark["payload"]["cwd"].as_str() {
-            text.push_str(&format!(" and cwd = {}", quote(cwd)));
+            text.push_str(&format!(" AND cwd = {}", quote(cwd)));
         }
         text.push_str(" sort when desc limit 1");
         questions.push(("command", text));
@@ -273,7 +279,7 @@ async fn mark_links(
         let text = format!("{text} fields id,event_type,source,key,material,offset,output");
         let query = sinex_model::query::bind(&text, &ctx).map_err(|e| Error::Invalid(e.message))?;
         let (text, values) = {
-            let compiled = Compiler::new(&ctx, seq).compile(&query)?;
+            let compiled = super::compile_query(conn, &ctx, seq, &query).await?;
             let mut sql = SqlFragment::text(format!(
                 "SELECT {} FROM (",
                 super::json_object(&compiled.columns)
@@ -303,4 +309,205 @@ async fn mark_links(
         links.insert(name.into(), Json::Array(rows));
     }
     Ok(Json::Object(links))
+}
+
+/// Questions, definitions and presentation products are not activity evidence.
+pub(super) fn bookkeeping_types() -> &'static [&'static str] {
+    &[
+        <sinex_model::event_types::query::Saved as sinex_model::EventPayload>::EVENT_TYPE,
+        <sinex_model::event_types::analysis::AnalysisRequest as sinex_model::EventPayload>::EVENT_TYPE,
+        <sinex_model::event_types::analysis::AnalysisPanel as sinex_model::EventPayload>::EVENT_TYPE,
+        <sinex_model::event_types::analysis::RecipeAnswer as sinex_model::EventPayload>::EVENT_TYPE,
+        <sinex_model::event_types::analysis::Finding as sinex_model::EventPayload>::EVENT_TYPE,
+        <sinex_model::event_types::work::ContextPack as sinex_model::EventPayload>::EVENT_TYPE,
+    ]
+}
+
+pub(super) fn input_filter() -> Expr {
+    Expr::Not(Box::new(Expr::Compare {
+        lhs: Operand::Field(FieldRef::Field(
+            Table::Events
+                .field("event_type")
+                .expect("event type declared"),
+        )),
+        op: Op::Eq,
+        rhs: Value::List(
+            bookkeeping_types()
+                .iter()
+                .map(|kind| Value::Text((*kind).into()))
+                .collect(),
+        ),
+    }))
+}
+
+fn record_reference(row: &Json) -> Result<Json> {
+    if let (Some(source), Some(kind), Some(key)) = (
+        row["source"].as_str(),
+        row["event_type"].as_str(),
+        row["key"].as_str(),
+    ) {
+        return Ok(serde_json::json!({"source":source,"event_type":kind,"key":key}));
+    }
+    if row["material"].is_string() && row["offset"].is_number() {
+        return Ok(
+            serde_json::json!({"material":row["material"],"offset":row["offset"],"output":row["output"],"event_type":row["event_type"]}),
+        );
+    }
+    row["id"]
+        .as_str()
+        .map(|id| serde_json::json!({"event":id}))
+        .ok_or_else(|| Error::Invalid("selected context has no record coordinates".into()))
+}
+
+impl Selection {
+    pub(super) fn retained(&self, source: &Source) -> Result<Json> {
+        Ok(match self {
+            Self::NoKnownSession => serde_json::json!({"kind":"no_session"}),
+            Self::NoKnownMark => serde_json::json!({"kind":"no_mark"}),
+            Self::Window {
+                from,
+                to,
+                inclusive,
+                session: None,
+            } => {
+                serde_json::json!({"kind":"window","from":from.to_string(),"to":to.to_string(),"inclusive":inclusive})
+            }
+            Self::Window {
+                session: Some(row), ..
+            } => {
+                if let Some(mark) = row.get("mark") {
+                    let radius = match source {
+                        Source::RecallMark { window, .. } => *window,
+                        _ => return Err(Error::Invalid("mark selection has no radius".into())),
+                    };
+                    serde_json::json!({"kind":"mark","anchor":record_reference(mark)?,"radius_seconds":radius})
+                } else {
+                    serde_json::json!({"kind":"session","anchor":record_reference(row)?})
+                }
+            }
+        })
+    }
+
+    pub(super) fn anchor_ids(&self) -> Vec<uuid::Uuid> {
+        let Self::Window {
+            session: Some(row), ..
+        } = self
+        else {
+            return vec![];
+        };
+        let row = row.get("mark").unwrap_or(row);
+        row["id"]
+            .as_str()
+            .and_then(|id| id.parse().ok())
+            .into_iter()
+            .collect()
+    }
+}
+
+async fn anchor_id(conn: &mut PgConnection, anchor: &Json, seq: i64) -> Result<Option<uuid::Uuid>> {
+    if let (Some(source), Some(kind), Some(key)) = (
+        anchor["source"].as_str(),
+        anchor["event_type"].as_str(),
+        anchor["key"].as_str(),
+    ) {
+        return Ok(sqlx::query_scalar("SELECT id FROM core.visible_events WHERE source=$1 AND event_type=$2 AND equivalence_key=$3 AND commit_seq<=$4 AND NOT audit.is_archived_at(id,$4) AND payload IS NOT NULL AND NOT payload ? 'withheld' ORDER BY commit_seq DESC LIMIT 1")
+            .bind(source).bind(kind).bind(key).bind(seq).fetch_optional(conn).await?);
+    }
+    if let (Some(material), Some(offset)) = (anchor["material"].as_str(), anchor["offset"].as_i64())
+    {
+        let material = material
+            .parse::<uuid::Uuid>()
+            .map_err(|error| Error::Invalid(error.to_string()))?;
+        let output = match anchor.get("output") {
+            None | Some(Json::Null) => 0,
+            Some(value) => value
+                .as_u64()
+                .ok_or_else(|| Error::Invalid("invalid retained output index".into()))?,
+        };
+        let output = i64::try_from(output)
+            .map_err(|_| Error::Invalid("retained output index beyond i64".into()))?;
+        return Ok(sqlx::query_scalar("SELECT id FROM core.visible_events WHERE material_id=$1 AND anchor=$2 AND output_index=$3 AND commit_seq<=$4 AND NOT audit.is_archived_at(id,$4) AND payload IS NOT NULL AND NOT payload ? 'withheld' ORDER BY commit_seq DESC LIMIT 1")
+            .bind(material).bind(offset).bind(output).bind(seq).fetch_optional(conn).await?);
+    }
+    let id = anchor["event"]
+        .as_str()
+        .and_then(|id| id.parse::<uuid::Uuid>().ok())
+        .ok_or_else(|| Error::Invalid("invalid retained context coordinates".into()))?;
+    Ok(sqlx::query_scalar("SELECT id FROM core.visible_events WHERE id=$1 AND commit_seq<=$2 AND NOT audit.is_archived_at(id,$2) AND payload IS NOT NULL AND NOT payload ? 'withheld'")
+        .bind(id).bind(seq).fetch_optional(conn).await?)
+}
+
+pub(super) async fn retained(
+    conn: &mut PgConnection,
+    retained: &sinex_model::event_types::analysis::QuerySelection,
+    ctx: &Context,
+    seq: i64,
+) -> Result<Selection> {
+    let selected = &retained.selected;
+    match selected["kind"].as_str() {
+        Some("no_session") => Ok(Selection::NoKnownSession),
+        Some("no_mark") => Ok(Selection::NoKnownMark),
+        Some("window") => {
+            let time = |name| {
+                selected[name]
+                    .as_str()
+                    .and_then(|time| time.parse().ok())
+                    .ok_or_else(|| Error::Invalid("invalid retained window".into()))
+            };
+            Ok(Selection::Window {
+                from: time("from")?,
+                to: time("to")?,
+                inclusive: selected["inclusive"].as_bool().unwrap_or(false),
+                session: None,
+            })
+        }
+        Some("session") => {
+            let Some(id) = anchor_id(conn, &selected["anchor"], seq).await? else {
+                return Ok(Selection::NoKnownSession);
+            };
+            let filter = Expr::Compare {
+                lhs: Operand::Field(FieldRef::Field(
+                    Table::Events.field("id").expect("event id declared"),
+                )),
+                op: Op::Eq,
+                rhs: Value::Id(id),
+            };
+            select(
+                conn,
+                &Source::RecallLast {
+                    filter: Some(filter),
+                },
+                ctx,
+                seq,
+            )
+            .await
+        }
+        Some("mark") => {
+            let Some(id) = anchor_id(conn, &selected["anchor"], seq).await? else {
+                return Ok(Selection::NoKnownMark);
+            };
+            let mark: Json = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'source',source,'event_type',event_type,'key',equivalence_key,'material',material_id,'offset',anchor,'output',output_index,'when',ts_orig,'payload',payload) FROM core.visible_events WHERE id=$1 AND commit_seq<=$2 AND NOT audit.is_archived_at(id,$2)")
+                .bind(id).bind(seq).fetch_one(conn).await?;
+            let at: jiff::Timestamp = mark["when"]
+                .as_str()
+                .and_then(|time| time.parse().ok())
+                .ok_or_else(|| Error::Invalid("retained mark time is unavailable".into()))?;
+            let radius = selected["radius_seconds"]
+                .as_f64()
+                .filter(|radius| radius.is_finite() && *radius > 0.0)
+                .ok_or_else(|| Error::Invalid("invalid retained mark radius".into()))?;
+            let width = jiff::SignedDuration::from_secs_f64(radius);
+            Ok(Selection::Window {
+                from: at
+                    .checked_sub(width)
+                    .map_err(|error| Error::Invalid(error.to_string()))?,
+                to: at
+                    .checked_add(width)
+                    .map_err(|error| Error::Invalid(error.to_string()))?,
+                inclusive: false,
+                session: Some(serde_json::json!({"mark":mark})),
+            })
+        }
+        _ => Err(Error::Invalid("unknown retained recall selector".into())),
+    }
 }

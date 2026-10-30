@@ -1,19 +1,37 @@
 {
   description = "Sinex: a durable record of one person's digital life";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.rust-nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
-  outputs = { self, nixpkgs, rust-nixpkgs }:
+  inputs.devtools-nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay/4748ec2f5ed4a881474ed4c98aa71a5308cdac8d";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+  outputs =
+    {
+      self,
+      nixpkgs,
+      devtools-nixpkgs,
+      rust-overlay,
+    }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
+        overlays = [ rust-overlay.overlays.default ];
         config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ];
       };
-      # The Rust toolchain comes from a pinned nixpkgs that matches the released shared crates.
-      rustPkgs = import rust-nixpkgs { inherit system; };
-      compilerTools = rustPkgs.rustc.llvmPackages;
-      postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
-      server = rustPkgs.rustPlatform.buildRustPackage {
+      toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+      nextest = (import devtools-nixpkgs { inherit system; }).cargo-nextest;
+      rustPlatform = pkgs.makeRustPlatform {
+        cargo = toolchain;
+        rustc = toolchain;
+      };
+      llvmTools = "${toolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin";
+      postgres = pkgs.postgresql_18.withPackages (p: [
+        p.timescaledb
+        p.pgvector
+      ]);
+      server = rustPlatform.buildRustPackage {
         pname = "sinex";
         version = "0.1.0";
         src = ./.;
@@ -22,10 +40,19 @@
           # Git dependencies are fetched at the SHA recorded in Cargo.lock.
           allowBuiltinFetchGit = true;
         };
+        SINEX_BUILD = "${
+          builtins.substring 0 40 (
+            self.rev or self.dirtyRev or (throw "Sinex requires a Git source revision")
+          )
+        };dirty=${if self ? rev then "false" else "true"}";
         nativeBuildInputs = [ postgres ];
         # sinex-sources tests start a throwaway NATS server and make git
         # repositories.
-        nativeCheckInputs = [ pkgs.nats-server pkgs.git pkgs.gnutar ];
+        nativeCheckInputs = [
+          pkgs.nats-server
+          pkgs.git
+          pkgs.gnutar
+        ];
         preBuild = ''
           cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)
@@ -38,10 +65,17 @@
           export DATABASE_URL="postgresql:///foundation?host=$PGHOST&port=$PGPORT"
           # The schema tool has no checked queries, so it builds before the
           # database exists and provisions the one the store's queries need.
-          cargo build --offline --locked -p sinex-schema --target-dir target --target ${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}
-          target/${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
+          cargo build --offline --locked -p sinex-schema --target-dir target --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget}
+          target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
         '';
-        cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
+        cargoBuildFlags = [
+          "-p"
+          "sinexd"
+          "-p"
+          "sinexctl"
+          "-p"
+          "xtask"
+        ];
         doCheck = true;
         preCheck = ''
           export DEVKIT_PG_SOCKET="$PGHOST"
@@ -52,14 +86,31 @@
         # Nix's syscall filter prevents setting xattrs and ACLs. The native
         # xtask suite runs the GNU tar restoration test with those assertions.
         checkFlags = [
-          "--skip" "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size"
-          "--skip" "drivers::dir_snapshot::tests::restore_tar::gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl"
+          "--skip"
+          "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size"
+          "--skip"
+          "drivers::dir_snapshot::tests::restore_tar::gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl"
         ];
         # Schema tests clone the builder's prepared database. Store and daemon
         # database tests run under `xtask test`.
-        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-source-core" "-p" "sinex-sealing" "-p" "sinex-derivations" ];
+        cargoTestFlags = [
+          "-p"
+          "sinex-model"
+          "-p"
+          "sinex-protocol"
+          "-p"
+          "sinex-schema"
+          "-p"
+          "sinex-sources"
+          "-p"
+          "sinex-source-core"
+          "-p"
+          "sinex-sealing"
+          "-p"
+          "sinex-derivations"
+        ];
       };
-      capture = rustPkgs.rustPlatform.buildRustPackage {
+      capture = rustPlatform.buildRustPackage {
         pname = "sinex-capture";
         version = "0.1.0";
         src = ./.;
@@ -67,15 +118,28 @@
           lockFile = ./Cargo.lock;
           allowBuiltinFetchGit = true;
         };
-        cargoBuildFlags = [ "-p" "sinex-session" "-p" "sinex-capture" ];
+        cargoBuildFlags = [
+          "-p"
+          "sinex-session"
+          "-p"
+          "sinex-capture"
+        ];
         doCheck = false;
       };
       package = pkgs.symlinkJoin {
         name = "sinex-0.1.0";
-        paths = [ server capture ];
+        paths = [
+          server
+          capture
+        ];
       };
-    in {
-      packages.${system} = { default = package; sinexd = package; sinexctl = package; };
+    in
+    {
+      packages.${system} = {
+        default = package;
+        sinexd = package;
+        sinexctl = package;
+      };
       nixosModules.default = import ./nix/module.nix self;
       # VM tests: the deployed stack, a satellite capture node, the restore
       # drill. Built on demand, not by `package`.
@@ -86,12 +150,24 @@
         vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);
       };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy compilerTools.llvm pkgs.cargo-llvm-cov pkgs.cargo-fuzz postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config pkgs.mold ];
+        packages = [
+          toolchain
+          pkgs.git
+          nextest
+          pkgs.cargo-llvm-cov
+          pkgs.cargo-fuzz
+          postgres
+          pkgs.nats-server
+          pkgs.python3
+          pkgs.pkg-config
+          pkgs.mold
+          pkgs.poppler-utils
+        ];
         # mold links the test binaries several times faster than the default
         # linker; linking was a third to a half of each test binary's build.
-        DEVKIT_FUZZ_RUSTFLAGS = "-Zexternal-clangrt -Clinker=${compilerTools.clang}/bin/clang -Clink-arg=-fsanitize=address";
-        LLVM_COV = "${compilerTools.llvm}/bin/llvm-cov";
-        LLVM_PROFDATA = "${compilerTools.llvm}/bin/llvm-profdata";
+        RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
+        LLVM_COV = "${llvmTools}/llvm-cov";
+        LLVM_PROFDATA = "${llvmTools}/llvm-profdata";
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
         shellHook = ''
           # Optional host placement; an explicit CARGO_TARGET_DIR is left as is.
@@ -101,14 +177,9 @@
             fi
           fi
           export CARGO_TARGET_DIR="''${CARGO_TARGET_DIR:-$PWD/target}"
-          # Build against a checkout of polylogue-sinex-common when there is
-          # one ($POLYLOGUE_SINEX_COMMON, else the sibling directory), unless
-          # `cargo xtask unlink-common` turned that off.
-          if [ -z "''${LINKING_COMMON:-}" ] && [ -f crates/sinexd/Cargo.toml ] \
-            && [ -f "''${POLYLOGUE_SINEX_COMMON:-../polylogue-sinex-common}/Cargo.toml" ] \
-            && [ ! -e .cargo/local.toml ] && [ ! -e .cargo/common-link.off ]; then
-            LINKING_COMMON=1 cargo xtask link-common \
-              || echo "sinex: linking polylogue-sinex-common failed; see cargo xtask link-common" >&2
+          if [ -d .githooks ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+            && ! git config --get core.hooksPath >/dev/null; then
+            git config --local core.hooksPath .githooks
           fi
         '';
       };

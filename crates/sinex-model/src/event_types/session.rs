@@ -192,6 +192,10 @@ pub struct MediaSegment {
     pub target: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Text captured by the accessibility adapter for this same frame. Empty text
+    /// is an observed empty result, distinct from unavailable accessibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accessibility_text: Option<String>,
 }
 
 /// A still of the focused window, taken when what it shows changes (a

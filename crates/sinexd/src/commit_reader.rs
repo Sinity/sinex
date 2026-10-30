@@ -63,6 +63,19 @@ pub(crate) async fn run(
         if *stop.borrow() {
             return Ok(());
         }
+        if sinex_store::privacy::projection::ensure_current(&mut conn)
+            .await
+            .is_err()
+        {
+            // Output views remain unavailable until a complete epoch activates.
+            // A transient database failure must not retire the maintainer.
+            eprintln!("sinexd: privacy output projection unavailable; retrying");
+            tokio::select! {
+                _ = tokio::time::sleep(RETRY) => {}
+                _ = stop.changed() => {}
+            }
+            continue;
+        }
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
         let read_started = std::time::Instant::now();
@@ -72,6 +85,7 @@ pub(crate) async fn run(
         let Some(up_to) = page.up_to else {
             tokio::select! {
                 _ = commits.changed() => {}
+                _ = tokio::time::sleep(RETRY) => {}
                 _ = stop.changed() => {}
             }
             continue;
@@ -135,6 +149,10 @@ pub(crate) async fn run(
 pub(crate) trait ReadModel: Send + Sync {
     fn name(&self) -> &'static str;
     fn wants(&self, event_type: &str) -> bool;
+    /// Initialize from retained events before following a possibly pruned log.
+    fn initialize<'a>(&'a self, _: &'a mut PgConnection) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
     /// Apply `events` inside the open transaction `tx`.
     fn apply<'a>(
         &'a self,
@@ -145,7 +163,7 @@ pub(crate) trait ReadModel: Send + Sync {
 
 /// Every read model, in one list.
 pub(crate) fn read_models() -> Vec<Box<dyn ReadModel>> {
-    vec![Box::new(SearchText)]
+    vec![Box::new(SearchText), Box::new(EmbeddingVectors)]
 }
 
 /// The full-text read model `core.search_text`: every event's payload text,
@@ -174,6 +192,35 @@ impl ReadModel for SearchText {
     }
 }
 
+/// Vector projection and per-space pgvector indexes over stored embeddings.
+struct EmbeddingVectors;
+impl ReadModel for EmbeddingVectors {
+    fn name(&self) -> &'static str {
+        sinex_store::vectors::CONSUMER
+    }
+    fn wants(&self, kind: &str) -> bool {
+        kind == "text.embedding"
+    }
+    fn initialize<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            sinex_store::vectors::initialize(conn)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+    fn apply<'a>(
+        &'a self,
+        events: &'a [Committed],
+        tx: &'a mut PgConnection,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            sinex_store::vectors::apply(tx, events)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
 /// A read model fed by the reader: its tables and its position change in one
 /// transaction.
 pub(crate) struct ReadModelRunner(pub Box<dyn ReadModel>);
@@ -189,6 +236,7 @@ impl Consumer for ReadModelRunner {
 
     fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
         Box::pin(async move {
+            self.0.initialize(conn).await?;
             commit_log::consumer_position(conn, self.0.name())
                 .await
                 .map(|(seq, _)| seq)

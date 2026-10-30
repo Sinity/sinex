@@ -14,9 +14,14 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "alpha").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let mut readers = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
@@ -25,7 +30,6 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut readers,
         stop.clone(),
@@ -44,7 +48,6 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut restarted,
         stop,
@@ -85,7 +88,6 @@ async fn turn(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         readers,
         stop,
@@ -154,9 +156,14 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
     std::fs::write(root.join("a.md"), "synthetic sealed alpha").unwrap();
     let identity = sinex_sealing::Identity::generate();
     let recipient = identity.to_public();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     sinex_store::privacy::set_source_class(
         &mut ctx.read_conn,
         notes::SPEC.name,
@@ -270,7 +277,25 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "ignored alpha").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
+    // The synthetic parser is a real owner-installed version, with the same
+    // immutable emitted schemas and a distinct parser version.
+    let mut declaration = crate::catalog::source_declarations()
+        .into_iter()
+        .find(|declaration| {
+            declaration.source.name == notes::SPEC.name
+                && declaration.source.version == notes::SPEC.parser_version
+        })
+        .unwrap();
+    declaration.source.version = 99;
+    sinex_store::source_declarations::register(&mut ctx.read_conn, &[declaration])
         .await
         .unwrap();
     let sink = Sink(ctx.blobs.clone());
@@ -318,9 +343,14 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "alpha").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let mut readers = vec![BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()];
@@ -339,7 +369,6 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut restarted,
         stop,
@@ -375,9 +404,14 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     let root = dir.path().join("vault");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.md"), "synthetic guarded alpha").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     sinex_store::privacy::set_source_class(
         &mut ctx.read_conn,
         notes::SPEC.name,
@@ -412,7 +446,25 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     .await
     .unwrap();
     assert_eq!(class, "guarded");
-    let shown:Value=sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'").fetch_one(&mut ctx.read_conn).await.unwrap();
+    assert!(
+        !sinex_store::privacy::projection::epoch(&mut ctx.read_conn)
+            .await
+            .unwrap()
+            .ready()
+    );
+    let pending = sqlx::query_scalar::<_, Value>("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'")
+        .fetch_one(&mut ctx.read_conn).await.unwrap_err();
+    assert_eq!(
+        pending
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("55000")
+    );
+    sinex_store::privacy::projection::ensure_current(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    let shown: Value = sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(shown, json!({"withheld":"guarded"}));
     ctx.close().await.unwrap();
 }

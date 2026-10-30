@@ -21,8 +21,12 @@ fn parse(source: &str, record: &Map<String, Value>) -> Result<Vec<LakeEvent>, Re
         lake_source: lake_source(source).unwrap(),
     };
     parser
-        .parse(record, &(), &sinex_source_core::RecordContext::none())
-        .map(|(events, ())| events)
+        .parse(
+            record,
+            &sequence::Carry::default(),
+            &sinex_source_core::RecordContext::none(),
+        )
+        .map(|(events, _)| events)
 }
 
 fn one(source: &str, lane: &str, payload: Value) -> LakeEvent {
@@ -66,7 +70,7 @@ fn stream_owned_lanes_keep_the_observed_record_for_derivations() {
             assert_eq!(observed.observed_at, envelope_time());
             assert_eq!(
                 lake_source(source).unwrap().spec.event_types,
-                &["lake.observed"]
+                &["lake.observed", "capture.gap"]
             );
         }
     }

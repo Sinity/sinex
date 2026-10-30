@@ -10,6 +10,31 @@ use serde_json::{Map, Value};
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Status,
+    #[serde(rename = "model-call")]
+    ModelCall {
+        operation: String,
+    },
+    #[serde(rename = "model-policy")]
+    ModelPolicy {
+        definition: String,
+    },
+    #[serde(rename = "model-record")]
+    ModelRecord {
+        policy: String,
+        definition: String,
+    },
+    #[serde(rename = "model-receipt")]
+    ModelReceipt {
+        policy: String,
+        definition: String,
+    },
+    Signal {
+        action: String,
+        name: Option<String>,
+        rule: Option<String>,
+        page: Option<u64>,
+        cursor: Option<String>,
+    },
     Kinds {
         kind: Option<String>,
         page: Option<u64>,
@@ -142,6 +167,8 @@ pub enum Request {
         #[serde(default)]
         compare: Option<bool>,
         #[serde(default)]
+        switch: Option<i64>,
+        #[serde(default)]
         from: Option<String>,
         #[serde(default)]
         until: Option<String>,
@@ -199,6 +226,10 @@ pub enum Request {
         app: Option<String>,
         #[serde(default)]
         title: Option<String>,
+        #[serde(default)]
+        command_record: Option<String>,
+        #[serde(default)]
+        focus_record: Option<String>,
     },
     #[serde(rename = "privacy-rules")]
     PrivacyRules {
@@ -257,6 +288,12 @@ pub enum Request {
         metric: Option<Vec<String>>,
         #[serde(default)]
         by: Option<String>,
+    },
+    Gaps {
+        from: String,
+        to: String,
+        #[serde(default)]
+        source: Option<Vec<String>>,
     },
     #[serde(rename = "analysis-why")]
     AnalysisWhy {
@@ -379,6 +416,11 @@ impl Request {
     pub fn method(&self) -> &'static str {
         match self {
             Request::Status => "status",
+            Request::ModelCall { .. } => "model-call",
+            Request::ModelPolicy { .. } => "model-policy",
+            Request::ModelRecord { .. } => "model-record",
+            Request::ModelReceipt { .. } => "model-receipt",
+            Request::Signal { .. } => "signal",
             Request::Kinds { .. } => "kinds",
             Request::Fields { .. } => "fields",
             Request::ForecastIssue { .. } => "forecast-issue",
@@ -417,6 +459,7 @@ impl Request {
             Request::AnalysisCatalog => "analysis-catalog",
             Request::AnalysisRun { .. } => "analysis-run",
             Request::AnalysisPanel { .. } => "analysis-panel",
+            Request::Gaps { .. } => "gaps",
             Request::AnalysisWhy { .. } => "analysis-why",
             Request::Brief { .. } => "brief",
             Request::LibraryAdd { .. } => "library-add",

@@ -1,4 +1,39 @@
+ALTER TABLE core.events DROP CONSTRAINT events_producer_frame;
+DROP TABLE registry.source_declarations;
+DROP FUNCTION registry.keep_source_declaration();
+DROP VIEW core.derivation_events;
+DROP TABLE core.owner_protocol_key;
+DROP TABLE derivation.model_calls,derivation.model_policies;
+DROP TRIGGER rules_policy_epoch ON privacy.rules;
+DROP TRIGGER floors_policy_epoch ON privacy.source_classes;
+DROP TABLE core.signal_checkpoints;
+DROP FUNCTION core.advance_query_metadata() CASCADE;
+DELETE FROM core.counters WHERE name IN ('query_metadata','privacy_outputs');
+DROP VIEW core.visible_embedding_vectors;
+DROP TABLE core.embedding_vectors,core.embedding_spaces,core.query_cursor_key;
+ALTER TABLE core.ingress_frames DROP COLUMN family, DROP COLUMN write_kind_prefixes;
+-- Reconstruct the deployed predecessor before exercising the forward chain.
+CREATE SCHEMA telemetry;
+CREATE TABLE telemetry.events (LIKE core.events INCLUDING ALL);
+DROP TABLE core.event_children;
+ALTER TABLE core.event_tombstones DROP COLUMN commit_seq, DROP COLUMN original_commit_seq, DROP COLUMN class;
+DROP TABLE core.producer_orders;
+DROP INDEX core.events_feed, audit.archive_changes_feed;
+ALTER TABLE derivation.waiting DROP COLUMN refresh_at;
+ALTER TABLE registry.derivations ALTER COLUMN version TYPE integer, DROP COLUMN build;
+ALTER TABLE derivation.comparisons ALTER COLUMN version TYPE integer;
+ALTER TABLE derivation.comparisons DROP COLUMN context;
+DROP TABLE core.blob_extents, core.blob_segments;
+DELETE FROM core.counters WHERE name='excised';
 DROP VIEW core.visible_events CASCADE;
+ALTER TABLE core.events DROP COLUMN producer_family,DROP COLUMN producer_identity,DROP COLUMN producer_host,DROP COLUMN producer_frame,DROP COLUMN source_version,DROP COLUMN source_fingerprint;
+ALTER TABLE core.ingress_frames DROP COLUMN source_name,DROP COLUMN source_version,DROP COLUMN source_fingerprint,DROP COLUMN producer_host;
+ALTER TABLE core.events ALTER COLUMN output_index TYPE smallint;
+ALTER TABLE telemetry.events ALTER COLUMN output_index TYPE smallint;
+ALTER TABLE core.live_locations ALTER COLUMN output_index TYPE smallint, DROP CONSTRAINT output_index_in_range;
+ALTER TABLE core.hidden_records ALTER COLUMN output_index TYPE smallint, DROP CONSTRAINT output_index_in_range;
+ALTER TABLE core.admission_stage ALTER COLUMN output_index TYPE smallint, ALTER COLUMN ord TYPE integer,
+  DROP CONSTRAINT admission_stage_output_index_check, DROP CONSTRAINT admission_stage_ord_check;
 ALTER TABLE core.events DROP COLUMN kind_version, DROP COLUMN validation;
 ALTER TABLE telemetry.events DROP COLUMN kind_version, DROP COLUMN validation;
 ALTER TABLE core.admission_stage DROP COLUMN kind_version, DROP COLUMN validation;
@@ -30,7 +65,12 @@ CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv FROM co
 GRANT SELECT ON core.visible_search_text TO sinex_reader, sinex_writer;
 GRANT INSERT, UPDATE, DELETE ON core.visible_search_text TO sinex_writer;
 ALTER TABLE core.published DROP CONSTRAINT published_pairs_pkey;
+ALTER TABLE core.published DROP COLUMN stream_instance;
 ALTER TABLE core.published ADD CONSTRAINT published_pkey PRIMARY KEY (event_id);
 DROP TRIGGER blob_changes ON core.blobs;
 DROP FUNCTION core.note_blob_change();
 DELETE FROM core.counters WHERE name='blob_changes';
+
+DROP FUNCTION privacy.require_active_epoch();
+DROP FUNCTION privacy.invalidate_outputs();
+DROP TABLE privacy.derivation_contracts,privacy.derivation_epochs,privacy.output_builds,privacy.event_outputs,privacy.original_events,privacy.policy_state;

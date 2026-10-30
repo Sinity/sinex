@@ -96,9 +96,10 @@ Code is shared only where the mechanics are identical.
 ## Building, testing and measuring
 
 Enter the development shell with `nix develop`. It carries the Rust
-toolchain pinned in `rust-toolchain.toml`, nextest, PostgreSQL with
-TimescaleDB, `nats-server` and the mold linker. Point git at the repository's
-hooks once with `git config core.hooksPath .githooks`.
+toolchain read from `rust-toolchain.toml`, nextest, PostgreSQL with
+TimescaleDB, `nats-server` and the mold linker. It installs the repository's
+hooks when no hooks path is set. [Development](docs/development.md) owns
+local overrides and plain commands.
 
 | Command | Does |
 |---|---|
@@ -401,13 +402,11 @@ initializes tools. Run `cargo xtask` directly; each run owns its services.
 A change that needs polylogue-sinex-common changed too starts there.
 `cargo xtask link-common [<path>]` builds this workspace against a checkout
 of it (the path, else `$POLYLOGUE_SINEX_COMMON`, else
-`../polylogue-sinex-common`), and entering the development shell does the
-same when that checkout exists. It writes the git-ignored
+`../polylogue-sinex-common`). Linking is explicit. It writes the git-ignored
 `.cargo/local.toml`, and the workspace locks (the root and `fuzz/`) then name
 the local crates, so those lock changes are not committed.
-`cargo xtask unlink-common` restores both locks and keeps the shell from
-linking again. Merge the common pull request
+`cargo xtask unlink-common` restores both locks. Merge the common pull request
 first; its workflow then opens a pull request here that moves Cargo.lock to
 the new commit. Convert the callers on that branch, or run `cargo update -p
-devkit -p hashed-blobs -p credential-masking` on the branch that converts
+devkit -p hashed-blobs` on the branch that converts
 them, so the lock change and the callers land together.

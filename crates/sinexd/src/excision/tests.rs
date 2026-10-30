@@ -26,14 +26,16 @@ pub(crate) async fn register(
     id: MaterialId,
     bytes: &[u8],
 ) {
+    use sqlx::Connection;
     let blob = blobs.put(bytes).unwrap();
+    let mut tx = conn.begin().await.unwrap();
     let binding = format!("{}:synthetic@h", spec.name);
     sqlx::query(
-        "INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present') ON CONFLICT DO NOTHING",
+        "INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present') ON CONFLICT(hash) DO UPDATE SET status='present'",
     )
     .bind(&blob)
     .bind(bytes.len() as i64)
-    .execute(&mut *conn)
+    .execute(&mut *tx)
     .await
     .unwrap();
     sqlx::query(
@@ -41,7 +43,7 @@ pub(crate) async fn register(
     )
     .bind(&binding)
     .bind(spec.name)
-    .execute(&mut *conn)
+    .execute(&mut *tx)
     .await
     .unwrap();
     let input: uuid::Uuid = sqlx::query_scalar(
@@ -50,7 +52,7 @@ pub(crate) async fn register(
     )
     .bind(uuid::Uuid::now_v7())
     .bind(&binding)
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut *tx)
     .await
     .unwrap();
     sqlx::query(
@@ -63,9 +65,12 @@ pub(crate) async fn register(
     .bind(bytes.len() as i64)
     .bind(spec.parser)
     .bind(spec.parser_version as i32)
-    .execute(&mut *conn)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    blobs.acknowledge(receipt).unwrap();
 }
 
 /// Excise `target` in one transaction on `conn`, as the writer does, for
@@ -106,9 +111,14 @@ struct Clipboard {
 impl Clipboard {
     async fn new(db: devkit::pg::TestDatabase) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-            .await
-            .unwrap();
+        let mut ctx = ReaderContext::open(
+            &db.url(None),
+            &dir.path().join("store"),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        )
+        .await
+        .unwrap();
         let spool = dir.path().join("spool");
         std::fs::create_dir_all(&spool).unwrap();
         let binding = Binding::of(&clipboard::SPEC, &spool, Settings::new("h"));
@@ -301,9 +311,14 @@ async fn records_of_sources_that_read_again_are_refused_without_changes(
 ) {
     use sinex_sources::sources::{atuin, library, mail_imap, notes, takeout_chrome, zsh};
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let bytes = b"synthetic record\n";
     for spec in [
         &zsh::SPEC,

@@ -7,6 +7,8 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+signals.workspace = true
+query-language.workspace = true
 sinex-sealing.workspace = true
 sinex-model.workspace = true
 sinex-schema.workspace = true

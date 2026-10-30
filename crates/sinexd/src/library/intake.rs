@@ -64,8 +64,7 @@ impl Library<'_> {
         let reader = crate::binding_reader::BindingReader::new(format, binding)?;
         crate::intake::request_class(conn, reader.source.as_ref()).await?;
         let counts =
-            crate::binding_reader::once(conn, self.blobs, self.writer, self.host, vec![reader])
-                .await?;
+            crate::binding_reader::once(conn, self.blobs, self.writer, vec![reader]).await?;
         let files = counts.events_offered;
         let seen = counts.admitted;
         let after = reads::copies(conn, self.host, &root_text)
@@ -79,6 +78,7 @@ impl Library<'_> {
             &sinex_derivations::library::LibraryItems,
             keys.into_iter().map(Value::String).collect(),
             self.host,
+            self.time_settings.clone(),
         )
         .await?;
         let mut new_items = 0;

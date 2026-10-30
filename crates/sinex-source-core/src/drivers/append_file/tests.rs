@@ -443,3 +443,313 @@ fn saved_unknown_prefixes_refuse_even_when_the_offset_is_zero() {
         }
     }
 }
+
+/// What a generated write did to the file, and how the next look must class it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FileWrite {
+    Append,
+    /// A same-length edit of one line, in place.
+    Edit,
+    /// Cut to fewer lines, in place.
+    Truncate,
+    /// A new file renamed over the old one.
+    Replace,
+    /// The whole file written again, longer, in place.
+    Rewrite,
+}
+
+/// Change classification under generated write histories: after every write,
+/// one look classes it as the write was (an in-place same-length edit is a
+/// rewrite, never an append or unchanged, however soon after the last look it
+/// came), and every line the file now holds has been read.
+#[devkit::test]
+fn generated_write_histories_are_classified_and_nothing_is_missed() {
+    let mut seed: u64 = 0x5eed_cafe;
+    let mut next = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let mut fresh_id = 0u64;
+    let mut line = || {
+        fresh_id += 1;
+        format!("line {fresh_id:08}\n")
+    };
+    for history in 0..10_000 {
+        let path = temp(&format!("history-{history}"));
+        let d = AppendFile {
+            path: path.clone(),
+            host: "h".into(),
+            framer: crate::Framer::incremental(lines),
+        };
+        let mut content: Vec<String> = (0..1 + next(5)).map(|_| line()).collect();
+        std::fs::write(&path, content.concat()).unwrap();
+        let mut state = AppendState::default();
+        let mut cursor = Value::Null;
+        let mut read: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let look = |cursor: &mut Value,
+                    state: &mut AppendState,
+                    read: &mut std::collections::HashSet<String>|
+         -> RevisionChange {
+            let a = d.poll(cursor, state).unwrap();
+            match &a.material {
+                Some(m) => {
+                    read.extend(records(&a));
+                    *cursor = (m.cursor_at)(crate::test_support::body(m).len()).unwrap();
+                    a.revision
+                }
+                None => {
+                    *cursor = a.cursor_without_material.clone();
+                    RevisionChange::Same
+                }
+            }
+        };
+        assert_eq!(
+            look(&mut cursor, &mut state, &mut read),
+            RevisionChange::Appended
+        );
+        for step in 0..if history < 60 { 25 } else { 5 } {
+            let write = match next(5) {
+                0 => FileWrite::Append,
+                1 => FileWrite::Edit,
+                2 if content.len() > 1 => FileWrite::Truncate,
+                3 => FileWrite::Replace,
+                4 => FileWrite::Rewrite,
+                _ => FileWrite::Append,
+            };
+            match write {
+                FileWrite::Append => {
+                    let added: Vec<String> = (0..1 + next(3)).map(|_| line()).collect();
+                    let mut f = std::fs::OpenOptions::new()
+                        .append(true)
+                        .open(&path)
+                        .unwrap();
+                    f.write_all(added.concat().as_bytes()).unwrap();
+                    content.extend(added);
+                }
+                FileWrite::Edit => {
+                    use std::os::unix::fs::FileExt;
+                    let i = usize::try_from(next(content.len() as u64)).unwrap();
+                    let at: usize = content[..i].iter().map(String::len).sum();
+                    content[i] = line();
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&path)
+                        .unwrap()
+                        .write_all_at(content[i].as_bytes(), at as u64)
+                        .unwrap();
+                }
+                FileWrite::Truncate => {
+                    let keep = 1 + usize::try_from(next(content.len() as u64 - 1)).unwrap();
+                    content.truncate(keep);
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&path)
+                        .unwrap()
+                        .set_len(content.concat().len() as u64)
+                        .unwrap();
+                }
+                FileWrite::Replace => {
+                    let i = usize::try_from(next(content.len() as u64)).unwrap();
+                    content[i] = line();
+                    let staged = path.with_extension("new");
+                    std::fs::write(&staged, content.concat()).unwrap();
+                    std::fs::rename(&staged, &path).unwrap();
+                }
+                FileWrite::Rewrite => {
+                    let i = usize::try_from(next(content.len() as u64)).unwrap();
+                    content[i] = line();
+                    content.push(line());
+                    let mut f = std::fs::OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&path)
+                        .unwrap();
+                    f.write_all(content.concat().as_bytes()).unwrap();
+                }
+            }
+            let class = look(&mut cursor, &mut state, &mut read);
+            let expected = match write {
+                FileWrite::Append => RevisionChange::Appended,
+                FileWrite::Edit | FileWrite::Rewrite => RevisionChange::Rewritten,
+                FileWrite::Truncate => RevisionChange::Truncated,
+                FileWrite::Replace => RevisionChange::Replaced,
+            };
+            // A truncation whose kept lines were all read before reads
+            // nothing new: no material, so no revision is recorded for it.
+            let quiet = write == FileWrite::Truncate && class == RevisionChange::Same;
+            assert!(
+                class == expected || quiet,
+                "history {history} step {step}: {write:?} classed as {class:?}"
+            );
+            let missed: Vec<&String> = content.iter().filter(|l| !read.contains(*l)).collect();
+            assert!(
+                missed.is_empty(),
+                "history {history} step {step} after {write:?}: never read {missed:?}"
+            );
+            // A look straight after changes nothing.
+            assert_eq!(
+                look(&mut cursor, &mut state, &mut read),
+                RevisionChange::Same
+            );
+        }
+    }
+}
+
+/// A middle edit beyond the ordinary part size still changes the prefix.
+#[devkit::test]
+fn large_prefixes_are_hashed_whole_without_changing_the_digest_at_a_part_boundary() {
+    let mut file = tempfile::tempfile().unwrap();
+    let length = (64 << 20) + 8192;
+    file.set_len(length).unwrap();
+    let before = Prefix::read(&mut file, length).unwrap();
+    file.seek(SeekFrom::Start(length / 2)).unwrap();
+    file.write_all(b"changed").unwrap();
+    let after = Prefix::read(&mut file, length).unwrap();
+    assert_ne!(before.digest(), after.digest());
+    file.seek(SeekFrom::End(0)).unwrap();
+    file.write_all(b"appended").unwrap();
+    assert_eq!(
+        after.digest_after(b"appended"),
+        Prefix::read(&mut file, length + 8).unwrap().digest(),
+    );
+}
+
+static REWRITE_WHILE_FRAMING: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn rewrite_while_framing(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    if let Some(path) = REWRITE_WHILE_FRAMING.lock().unwrap().take() {
+        std::fs::write(path, b"new\n").unwrap();
+    }
+    lines(bytes)
+}
+
+#[devkit::test]
+fn a_rewrite_during_the_read_advances_nothing_and_is_read_on_the_next_poll() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history");
+    std::fs::write(&path, b"old\n").unwrap();
+    *REWRITE_WHILE_FRAMING.lock().unwrap() = Some(path.clone());
+    let driver = AppendFile {
+        path,
+        host: "test".into(),
+        framer: Framer::incremental(rewrite_while_framing),
+    };
+    let mut state = AppendState::default();
+    let busy = driver.poll(&Value::Null, &mut state).unwrap();
+    assert!(busy.material.is_none());
+    assert!(busy.observation.unavailable.unwrap().contains("changed"));
+    assert_eq!(busy.cursor_without_material, Value::Null);
+    assert!(state.is_empty());
+    let next = driver.poll(&Value::Null, &mut state).unwrap();
+    assert_eq!(records(&next), ["new\n"]);
+}
+
+/// Opt-in measurement on an existing input, opened read-only. Output contains
+/// counts and timings only; neither the path nor source content is printed.
+#[devkit::test]
+#[ignore = "requires SINEX_APPEND_MEASURE_INPUT naming a live append-file input"]
+fn measure_live_append_prefix() {
+    use std::time::Instant;
+    let path =
+        std::env::var_os("SINEX_APPEND_MEASURE_INPUT").expect("measurement input is required");
+    let mut file = std::fs::File::open(&path).unwrap();
+    let size = file.metadata().unwrap().len();
+    fn io_bytes() -> u64 {
+        std::fs::read_to_string("/proc/self/io")
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("read_bytes: ")?.parse().ok())
+            .unwrap()
+    }
+    fn peak_kib() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("VmHWM:")?
+                    .split_whitespace()
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .unwrap()
+    }
+    for (mode, passes) in [("sampled", 0), ("full", 1), ("full_racy", 2)] {
+        let mut elapsed = Vec::new();
+        let before_io = io_bytes();
+        for _ in 0..3 {
+            let started = Instant::now();
+            if passes == 0 {
+                let length = size.min(4096);
+                file.seek(SeekFrom::Start(size - length)).unwrap();
+                let mut bytes = vec![0; usize::try_from(length).unwrap()];
+                file.read_exact(&mut bytes).unwrap();
+                std::hint::black_box(blake3::hash(&bytes));
+            } else {
+                for _ in 0..passes {
+                    std::hint::black_box(Prefix::read(&mut file, size).unwrap().digest());
+                }
+            }
+            elapsed.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        let physical_bytes = io_bytes() - before_io;
+        println!(
+            "append_prefix_measure {}",
+            serde_json::json!({
+                "mode": mode, "input_bytes": size, "bytes_per_poll": if passes == 0 {size.min(4096)} else {size * passes},
+                "elapsed_ms": elapsed, "physical_read_bytes": physical_bytes, "peak_rss_kib": peak_kib(),
+            })
+        );
+    }
+    let facts = file_facts(std::path::Path::new(&path)).unwrap();
+    let cursor = Cursor {
+        offset: size,
+        size,
+        inode: facts.inode.unwrap(),
+        mtime_ns: facts.mtime_ns.unwrap() - 1,
+        ctime_ns: facts.ctime_ns.unwrap(),
+        window: Some(Prefix::read(&mut file, size).unwrap().digest()),
+        ..Default::default()
+    };
+    let driver = AppendFile {
+        path: PathBuf::from(path),
+        host: "measurement".into(),
+        framer: crate::Framer::incremental(lines),
+    };
+    let before_io = io_bytes();
+    let started = Instant::now();
+    // An older stat forces verification without modifying the input. This
+    // measures the real metadata-only poll, with no appended records.
+    let acquired = driver
+        .poll(
+            &serde_json::to_value(cursor).unwrap(),
+            &mut AppendState::default(),
+        )
+        .unwrap();
+    let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+    assert!(acquired.material.is_none());
+    println!(
+        "append_prefix_measure {}",
+        serde_json::json!({
+            "mode": "metadata_poll", "input_bytes": size, "bytes_per_poll": size,
+            "elapsed_ms": [elapsed], "physical_read_bytes": io_bytes() - before_io, "peak_rss_kib": peak_kib(),
+        })
+    );
+    assert_eq!(
+        file.metadata().unwrap().len(),
+        size,
+        "measurement input changed size"
+    );
+}
+
+#[devkit::test]
+fn append_cursors_require_the_stat_and_observation_times_used_for_prefix_checks() {
+    let saved = serde_json::to_value(Cursor::default()).unwrap();
+    for field in ["ctime_ns", "looked_ns"] {
+        let mut missing = saved.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<Cursor>(missing).is_err());
+    }
+}

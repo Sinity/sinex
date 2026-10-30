@@ -39,11 +39,16 @@ async fn keyed_computations_wait_before_reading_inputs(db: devkit::pg::TestDatab
         read: &mut read,
         writer: &w.handle,
         derivation: &derivation,
+        time_settings: TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
         run: RunId::new(),
         counts: &mut counts,
     };
-    let env = Env::at(at(0));
-    let mut computation = Box::pin(work.compute(vec![(json!("item"), 0, false)], &env));
+    let env = Env::at(
+        at(0),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
+    let mut computation = Box::pin(work.compute(vec![(json!("item"), 0)], &env));
     assert!(futures::poll!(&mut computation).is_pending());
     assert!(!called.load(Ordering::SeqCst));
     drop(guard);
@@ -63,6 +68,8 @@ async fn a_failed_command_computation_ends_its_run(db: devkit::pg::TestDatabase)
         &sinex_derivations::library::LibraryItems,
         vec![json!("item")],
         "h",
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await;
     assert!(result.is_err());

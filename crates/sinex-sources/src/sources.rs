@@ -2,6 +2,8 @@
 #[cfg(feature = "full")]
 pub mod activitywatch;
 #[cfg(feature = "full")]
+pub mod analysis;
+#[cfg(feature = "full")]
 pub mod arbtt;
 #[cfg(feature = "full")]
 pub mod asciinema;
@@ -15,6 +17,8 @@ pub mod calendar;
 pub mod chromium;
 /// The Wayland clipboard and primary selection.
 pub mod clipboard;
+#[cfg(feature = "full")]
+pub mod coverage;
 /// Capture from the session bus, shared by the D-Bus sources.
 pub mod dbus;
 #[cfg(feature = "full")]
@@ -52,6 +56,8 @@ pub mod mail_imap;
 pub mod media_capture;
 #[cfg(feature = "full")]
 pub mod messenger;
+#[cfg(feature = "full")]
+pub mod model_calls;
 /// Media players (MPRIS) on the session bus.
 pub mod mpris;
 #[cfg(feature = "full")]
@@ -87,6 +93,8 @@ pub mod session_socket;
 /// Numbering shell history records, shared by zsh, bash and fish.
 #[cfg(feature = "full")]
 pub(crate) mod shell_history;
+#[cfg(feature = "full")]
+pub mod signals;
 /// The Sinnix capture lake's lanes.
 #[cfg(feature = "full")]
 pub mod sinnix_lake;
@@ -96,6 +104,8 @@ pub mod sleep_as_android;
 pub mod spotify;
 #[cfg(feature = "full")]
 pub mod takeout_chrome;
+/// Sinex's own state, sampled by the daemon.
+pub mod telemetry;
 pub(crate) mod terminal_text;
 pub mod text_history;
 #[cfg(feature = "full")]
@@ -230,9 +240,14 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &session_socket::FORMAT,
         &media_capture::FORMAT,
         &library::FORMAT,
+        &coverage::FORMAT,
         &forecast::FORMAT,
         &query::FORMAT,
+        &analysis::FORMAT,
+        &model_calls::FORMAT,
+        &signals::FORMAT,
         &page_crawl::FORMAT,
+        &telemetry::FORMAT,
     ];
     FORMATS
 }

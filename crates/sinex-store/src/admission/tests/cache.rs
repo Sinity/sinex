@@ -16,7 +16,8 @@ fn rule(source: &str, name: &str, action: Action) -> NewRule {
 }
 
 async fn stored_class(conn: &mut PgConnection, id: EventId) -> String {
-    sqlx::query_scalar("SELECT class FROM core.events WHERE id=$1")
+    privacy::projection::ensure_current(conn).await.unwrap();
+    sqlx::query_scalar("SELECT class FROM privacy.event_outputs WHERE event_id=$1")
         .bind(id.0)
         .fetch_one(conn)
         .await
@@ -143,11 +144,15 @@ async fn hash_initialization_commits_before_a_failed_admission(db: devkit::pg::T
         key
     );
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
-    let first: String = sqlx::query_scalar("SELECT equivalence_key FROM core.events WHERE id=$1")
-        .bind(event.id.0)
-        .fetch_one(&mut conn)
+    privacy::projection::ensure_current(&mut conn)
         .await
         .unwrap();
+    let first: String =
+        sqlx::query_scalar("SELECT equivalence_key FROM privacy.event_outputs WHERE event_id=$1")
+            .bind(event.id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
     conn.close().await.unwrap();
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
@@ -158,86 +163,52 @@ async fn hash_initialization_commits_before_a_failed_admission(db: devkit::pg::T
 }
 
 #[devkit::test]
-async fn rules_and_floors_committed_out_of_order_reach_the_next_batch(
-    db: devkit::pg::TestDatabase,
-) {
+async fn rules_and_floors_serialize_the_policy_epoch(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
     let mut conn = crate::AdmissionContext::connect(&url).await.unwrap();
-    let mut late = PgConnection::connect(&url).await.unwrap();
     let mut changes = PgConnection::connect(&url).await.unwrap();
-    let mut tx = late.begin().await.unwrap();
-    privacy::add_rule(&mut tx, &rule("s", "late rule", Action::Classify))
+    let mut tx = changes.begin().await.unwrap();
+    privacy::add_rule(&mut tx, &rule("s", "pending", Action::Classify))
         .await
         .unwrap();
-    let maximum = privacy::add_rule(&mut changes, &rule("other", "first rule", Action::Classify))
-        .await
-        .unwrap();
-    let before = keyed("s", 1, 1, 1);
-    admit_one(&mut conn, &batch(vec![before.clone()])).await;
-    assert_eq!(stored_class(&mut conn, before.id).await, "open");
-    tx.commit().await.unwrap();
-    let after = keyed("s", 2, 1, 1);
-    admit_one(&mut conn, &batch(vec![after.clone()])).await;
-    assert_eq!(stored_class(&mut conn, after.id).await, "guarded");
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT max(seq) FROM privacy.rules")
-            .fetch_one(&mut conn)
+    let mut contender = conn.begin().await.unwrap();
+    let error =
+        sqlx::query("SELECT desired_epoch FROM privacy.policy_state WHERE id FOR UPDATE NOWAIT")
+            .execute(&mut *contender)
             .await
-            .unwrap(),
-        maximum
-    );
-
-    let mut tx = late.begin().await.unwrap();
-    privacy::set_source_class(&mut tx, "floor", Class::Guarded, "test")
-        .await
-        .unwrap();
-    let maximum = privacy::set_source_class(&mut changes, "other", Class::Guarded, "test")
-        .await
-        .unwrap();
-    let before = keyed("floor", 1, 1, 1);
-    admit_one(&mut conn, &batch(vec![before.clone()])).await;
-    assert_eq!(stored_class(&mut conn, before.id).await, "open");
-    tx.commit().await.unwrap();
-    let after = keyed("floor", 2, 1, 1);
-    admit_one(&mut conn, &batch(vec![after.clone()])).await;
-    assert_eq!(stored_class(&mut conn, after.id).await, "guarded");
+            .unwrap_err();
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT max(seq) FROM privacy.source_classes")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap(),
-        maximum
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("55P03")
     );
+    contender.rollback().await.unwrap();
+    tx.commit().await.unwrap();
+    privacy::set_source_class(&mut changes, "floor", Class::Guarded, "test")
+        .await
+        .unwrap();
+    let first = keyed("s", 1, 1, 1);
+    let floor = keyed("floor", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![first.clone(), floor.clone()])).await;
+    assert_eq!(stored_class(&mut conn, first.id).await, "guarded");
+    assert_eq!(stored_class(&mut conn, floor.id).await, "guarded");
 }
 
 #[devkit::test]
-async fn a_rolled_back_cache_is_refreshed_even_when_visible_versions_match(
-    db: devkit::pg::TestDatabase,
-) {
-    let url = db.url(None);
-    let mut conn = crate::AdmissionContext::connect(&url).await.unwrap();
-    let mut late = PgConnection::connect(&url).await.unwrap();
-    let mut changes = PgConnection::connect(&url).await.unwrap();
+async fn rolled_back_rule_epoch_does_not_survive_in_the_writer_cache(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let mut tx = conn.begin().await.unwrap();
-    privacy::add_rule(&mut tx, &rule("s", "aborted first", Action::Classify))
+    privacy::add_rule(&mut tx, &rule("s", "aborted", Action::Classify))
         .await
         .unwrap();
-    let mut waiting = late.begin().await.unwrap();
-    privacy::add_rule(&mut waiting, &rule("t", "late second", Action::Classify))
-        .await
-        .unwrap();
-    privacy::add_rule(
-        &mut changes,
-        &rule("other", "committed third", Action::Classify),
-    )
-    .await
-    .unwrap();
     tx.admit(&batch(vec![keyed("s", 1, 1, 1)]), &NoDerivations)
         .await
         .unwrap();
     tx.rollback().await.unwrap();
-    waiting.commit().await.unwrap();
-    // Both snapshots have two rows and the same maximum, but different rules.
+    privacy::add_rule(&mut conn, &rule("t", "committed", Action::Classify))
+        .await
+        .unwrap();
     let open = keyed("s", 2, 1, 1);
     let guarded = keyed("t", 2, 1, 1);
     admit_one(&mut conn, &batch(vec![open.clone(), guarded.clone()])).await;

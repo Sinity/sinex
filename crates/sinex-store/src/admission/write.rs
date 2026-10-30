@@ -2,7 +2,7 @@
 //! the commit log, the live side tables, archived readings, dirty keys and citations; then failures and the
 //! source position.
 use super::classify::Classified;
-use super::derived::{mark_archived_dirty, mark_dirty};
+use super::derived::{mark_archived_dirty, mark_inputs_dirty};
 use super::{DirtyKeys, KeyInput, Outcome};
 use crate::Error;
 use crate::Result;
@@ -20,10 +20,12 @@ pub(super) async fn insert_admitted(
     classified: &Classified,
     keys: &dyn DirtyKeys,
     outcome: &mut Outcome,
+    provenance: &super::register::Provenance,
 ) -> Result<()> {
     let admit_ords = &classified.admit;
     let replaced = &classified.replaced;
-    let n = i64::try_from(admit_ords.len()).expect("count fits i64");
+    let n = i64::try_from(admit_ords.len())
+        .map_err(|_| Error::Invalid("admitted count beyond i64".into()))?;
     let started = std::time::Instant::now();
     let last = sqlx::query_scalar!(
         "UPDATE core.counters SET value = value + $1 WHERE name = 'commit_seq' RETURNING value",
@@ -42,19 +44,34 @@ pub(super) async fn insert_admitted(
              FROM core.admission_stage s)
            INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
-             record_hash, record_state, class, kind_version, validation)
+             record_hash, record_state, class, kind_version, validation, producer_family, producer_identity, producer_host, producer_frame, source_version, source_fingerprint)
            SELECT id, event_type, source, $2, material_id, anchor, output_index, parents, ts_orig,
              ts_quality, seq, payload, equivalence_key, reading_order, record_hash, record_state,
-             class, kind_version, validation
+             class, kind_version, validation, $3, $4, $5, $6, $7, $8
            FROM a"#,
         first,
         batch.run.0,
+        provenance.family,
+        provenance.identity,
+        provenance.host,
+        provenance.frame,
+        provenance.source_version,
+        provenance.source_fingerprint,
     )
     .execute(&mut *conn)
     .await?;
     outcome.timings.insert("events", started.elapsed());
 
     let started = std::time::Instant::now();
+    sqlx::query!(
+        r#"INSERT INTO core.event_children (parent, child)
+           SELECT DISTINCT unnest(s.parents), s.id FROM core.admission_stage s
+           WHERE s.ord = ANY($1) AND s.parents IS NOT NULL"#,
+        admit_ords,
+    )
+    .execute(&mut *conn)
+    .await?;
+
     sqlx::query!(
         r#"INSERT INTO core.source_counts AS c (source, events, first_event, last_event, last_seen)
            SELECT source, count(*), min(ts_orig), max(ts_orig), max(uuid_extract_timestamp(id))
@@ -123,7 +140,7 @@ pub(super) async fn insert_admitted(
 
     let started = std::time::Instant::now();
     if !replaced.is_empty() {
-        let (ords, live): (Vec<i32>, Vec<Uuid>) = replaced.iter().copied().unzip();
+        let (ords, live): (Vec<i64>, Vec<Uuid>) = replaced.iter().copied().unzip();
         let mut replacements = Vec::with_capacity(ords.len());
         for ord in &ords {
             replacements.push(
@@ -142,7 +159,8 @@ pub(super) async fn insert_admitted(
         )
         .await?;
         outcome.replaced = replaced.len();
-        outcome.dirty_keys += mark_archived_dirty(conn, &live, last, keys).await?;
+        outcome.dirty_keys +=
+            mark_archived_dirty(conn, &live, last, keys, Some(batch), None).await?;
     }
 
     outcome.timings.insert("archive", started.elapsed());
@@ -157,11 +175,9 @@ pub(super) async fn insert_admitted(
             ts_orig: event.ts_orig.at.map(|t| t.0),
             payload: &event.payload,
         };
-        dirty.extend(keys.keys(&input));
+        dirty.push(input);
     }
-    outcome.dirty_keys += mark_dirty(conn, dirty, last).await?;
-    outcome.timings.insert("dirty_keys", started.elapsed());
-    let started = std::time::Instant::now();
+    outcome.dirty_keys += mark_inputs_dirty(conn, &dirty, last, keys).await?;
     record_citations(conn, events, admit_ords).await?;
     outcome.timings.insert("citations", started.elapsed());
     Ok(())
@@ -238,7 +254,7 @@ pub(super) async fn save_position(
 
 /// Register the stored bytes admitted events own beyond their materials, so
 /// excision can find and delete them (`core.event_blobs`).
-async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i32]) -> Result<()> {
+async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i64]) -> Result<()> {
     let (mut ids, mut blobs, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
     for ord in ords {
         let event = &events[usize::try_from(*ord).expect("ord is non-negative")];

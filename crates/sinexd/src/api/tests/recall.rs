@@ -1,19 +1,29 @@
 //! Recall through the public API, real writer and actual shell derivation.
 use super::*;
 use sinex_derivations::{Env, Keyed, derived_event::derived, session::ShellSessions};
+use sinex_model::EventId;
 use sinex_model::event_types::{CommandFused, CommandImported};
 
 fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Event> {
     let mut events = Vec::new();
     let mut fused = Vec::new();
     for &(i, cwd, duration) in rows {
-        let mut raw = command(&format!("synthetic {host} command {i}"), i);
-        raw.payload["native_id"] = json!(format!("{host}-{i}"));
-        raw.payload["cwd"] = json!(cwd);
-        raw.payload["hostname"] = json!(host);
-        raw.payload["duration_ns"] = json!(duration);
-        raw.class = class;
-        let c = raw.payload_as::<CommandExecuted>().unwrap();
+        let template = command(&format!("synthetic {host} command {i}"), i);
+        let mut c = template.payload_as::<CommandExecuted>().unwrap();
+        c.native_id = format!("{host}-{i}");
+        c.cwd = cwd.into();
+        c.hostname = host.into();
+        c.duration_ns = duration;
+        let hash = *blake3::hash(&serde_json::to_vec(&c).unwrap()).as_bytes();
+        let raw = Event::build(
+            &c,
+            &template.source,
+            template.origin,
+            template.reading_order,
+            hash,
+            class,
+        )
+        .unwrap();
         let command = derived(
             &CommandFused {
                 record: c.native_id,
@@ -32,7 +42,11 @@ fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Eve
         events.push(raw);
         fused.push(command);
     }
-    let env = Env::at(Timestamp::from_unix_secs(1_789_459_200).unwrap());
+    let env = Env::at(
+        Timestamp::from_unix_secs(1_789_459_200).unwrap(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let sessions = ShellSessions
         .compute(&json!({"host":host,"day":"2026-09-14"}), &fused, &env)
         .outputs;
@@ -319,5 +333,575 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
     assert_eq!(
         visible["result"]["recall"]["session"]["row"]["cwds"],
         json!(["/src/private"])
+    );
+}
+
+#[devkit::test]
+async fn recall_brief_and_machine_render_one_stored_context_pack(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit_events(
+        &w,
+        facts(
+            "synthetic",
+            &[(0, "/src/tide", None), (1, "/src/tide", Some(0))],
+            Class::Open,
+        ),
+    )
+    .await;
+    let (_, recall) = call(
+        &w,
+        Some(READ),
+        json!({"method":"recall","around":"last","cwd":"/src/tide","page":1}),
+    )
+    .await;
+    assert_eq!(recall["outcome"], "ok", "{recall}");
+    let citation = recall["result"]["context_pack"].as_str().unwrap();
+    let (_, brief) = call(
+        &w,
+        Some(READ),
+        json!({"method":"brief","day":citation,"budget":4000}),
+    )
+    .await;
+    assert_eq!(brief["outcome"], "ok", "{brief}");
+    assert_eq!(
+        brief["result"]["context_pack"],
+        recall["result"]["context_pack"]
+    );
+    assert_eq!(brief["result"]["machine"], recall["result"]["machine"]);
+    assert_eq!(
+        brief["result"]["presentation"],
+        recall["result"]["presentation"]
+    );
+    let (_, stored) = call(
+        &w,
+        Some(READ),
+        json!({"method":"show","reference":citation}),
+    )
+    .await;
+    assert_eq!(stored["outcome"], "ok", "{stored}");
+    assert!(
+        stored["result"]["event"]["payload"]["analysis"]["answer"]["rows"]
+            .as_array()
+            .unwrap()
+            .len()
+            > 1
+    );
+    let old_cursor = recall["result"]["page"]["cursor"].as_str().unwrap();
+    admit_events(&w, facts("newer", &[(20, "/src/tide", None)], Class::Open)).await;
+    let (_, continued) = call(
+        &w,
+        Some(READ),
+        json!({"method":"recall","around":"last","cwd":"/src/tide","page":1,"cursor":old_cursor}),
+    )
+    .await;
+    assert_eq!(continued["outcome"], "ok", "{continued}");
+    assert_eq!(
+        continued["result"]["context_pack"],
+        recall["result"]["context_pack"]
+    );
+    assert_eq!(
+        continued["result"]["resolved"],
+        recall["result"]["resolved"]
+    );
+}
+
+#[devkit::test]
+async fn saved_recall_and_context_continuations_keep_their_stored_selection(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let activity = facts(
+        "synthetic",
+        &[(0, "/src/tide", None), (1, "/src/tide", None)],
+        Class::Open,
+    );
+    let activity_ids = activity.iter().map(|event| event.id).collect::<Vec<_>>();
+    admit_events(&w, activity).await;
+    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"remember-tide","query":"recall last where cwds ^ /src/tide"})).await;
+    assert_eq!(saved["outcome"], "ok", "{saved}");
+    let (_, first) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:remember-tide","page":1}),
+    )
+    .await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    assert!(first["result"]["context_pack"].is_string());
+    let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
+    let (_, changed) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query-save","name":"remember-tide","query":"events fields id"}),
+    )
+    .await;
+    assert_eq!(changed["outcome"], "ok", "{changed}");
+    let (_, next) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:remember-tide","page":1,"cursor":cursor}),
+    )
+    .await;
+    assert_eq!(next["outcome"], "ok", "{next}");
+    assert_eq!(
+        next["result"]["context_pack"],
+        first["result"]["context_pack"]
+    );
+    assert_eq!(next["result"]["resolved"], first["result"]["resolved"]);
+    let (_, context) = call(
+        &w,
+        Some(READ),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1}),
+    )
+    .await;
+    assert_eq!(context["outcome"], "ok", "{context}");
+    assert_activity_context(&w, &context, &activity_ids).await;
+    assert_eq!(
+        context["result"]["recall"]["to"], context["result"]["resolved"]["now"],
+        "an open-ended window and its cursor share one evaluation clock"
+    );
+    let cursor = context["result"]["page"]["cursor"].as_str().unwrap();
+    for changed in [
+        json!({"method":"context","since":"2026-09-14T00:00:01Z","page":1,"cursor":cursor}),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","until":context["result"]["recall"]["to"],"page":1,"cursor":cursor}),
+    ] {
+        let (_, refused) = call(&w, Some(READ), changed).await;
+        assert_eq!(refused["outcome"], "refused", "{refused}");
+    }
+    let (_, changed_grants) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1,"cursor":cursor}),
+    )
+    .await;
+    assert_eq!(changed_grants["outcome"], "refused", "{changed_grants}");
+    let (_, next) = call(
+        &w,
+        Some(READ),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1,"cursor":cursor}),
+    )
+    .await;
+    assert_eq!(next["outcome"], "ok", "{next}");
+    assert_eq!(
+        next["result"]["context_pack"],
+        context["result"]["context_pack"]
+    );
+    assert_eq!(next["result"]["resolved"], context["result"]["resolved"]);
+}
+
+async fn assert_activity_context(w: &World, answer: &Value, expected: &[EventId]) {
+    let citation = answer["result"]["context_pack"].as_str().unwrap();
+    let id = uuid::Uuid::parse_str(citation.strip_prefix("sinex:ev/").unwrap()).unwrap();
+    let (class, parents, stored): (String, Vec<uuid::Uuid>, Value) =
+        sqlx::query_as("SELECT class,parents,payload FROM core.events WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *w.reads.acquire().await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(class, "open");
+    let rows = stored["analysis"]["answer"]["rows"].as_array().unwrap();
+    let mut actual = rows
+        .iter()
+        .map(|row| EventId(uuid::Uuid::parse_str(row["id"].as_str().unwrap()).unwrap()))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "activity rows exclude definitions and presentation bookkeeping"
+    );
+    let parent_kinds: Vec<(uuid::Uuid, String)> =
+        sqlx::query_as("SELECT id,event_type FROM core.events WHERE id=ANY($1)")
+            .bind(&parents)
+            .fetch_all(&mut *w.reads.acquire().await.unwrap())
+            .await
+            .unwrap();
+    let mut activity_parents = parent_kinds
+        .iter()
+        .filter(|(_, kind)| kind != "analysis.request")
+        .map(|(id, _)| EventId(*id))
+        .collect::<Vec<_>>();
+    activity_parents.sort_unstable();
+    assert_eq!(activity_parents, expected);
+    assert_eq!(
+        parent_kinds.len(),
+        expected.len() + 1,
+        "the pack also cites its own admitted question"
+    );
+    let digest = &stored["analysis"]["answer"]["recall"];
+    assert!(
+        digest["by_source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["source"] != "query.request"
+                && row["source"] != "synthetic.query-definitions")
+    );
+    assert!(
+        digest["latest_by_source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["event_type"] != "query.saved")
+    );
+}
+
+#[devkit::test]
+async fn recall_context_excludes_saved_definitions_but_inherits_selected_activity_classes(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let activity = facts(
+        "public",
+        &[(0, "/src/public", None), (1, "/src/public", None)],
+        Class::Open,
+    );
+    let activity_ids = activity.iter().map(|event| event.id).collect::<Vec<_>>();
+    admit_events(&w, activity).await;
+    let mut definitions = vec![];
+    for (index, class) in [Class::Open, Class::Guarded].into_iter().enumerate() {
+        let definition = sinex_model::event_types::query::Saved {
+            name: format!("synthetic-definition-{index}"),
+            query: "events fields id".into(),
+            parameters: vec![],
+            by: "synthetic".into(),
+            written_at: Timestamp::from_unix_secs(1_789_372_800 + 120 + index as i64).unwrap(),
+        };
+        definitions.push(
+            Event::build(
+                &definition,
+                "synthetic.query-definitions",
+                Origin::Record {
+                    location: RecordLocation {
+                        material: MaterialId::new(),
+                        anchor: 0,
+                    },
+                    output_index: 0,
+                },
+                ReadingOrder(1),
+                *blake3::hash(&serde_json::to_vec(&definition).unwrap()).as_bytes(),
+                class,
+            )
+            .unwrap(),
+        );
+    }
+    let definition_ids = definitions
+        .iter()
+        .map(|event| event.id.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    admit_events(&w, definitions).await;
+    let (_, ordinary) = call(
+        &w,
+        Some(READ),
+        json!({"method":"query","query":"events where event_type = query.saved"}),
+    )
+    .await;
+    assert_eq!(ordinary["outcome"], "ok", "{ordinary}");
+    let ordinary = ordinary["result"]["rows"].as_array().unwrap();
+    assert_eq!(
+        ordinary
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>(),
+        definition_ids
+    );
+    assert!(
+        ordinary
+            .iter()
+            .any(|row| row["payload"]["withheld"] == "guarded")
+    );
+    assert!(
+        ordinary
+            .iter()
+            .any(|row| row["payload"]["query"] == "events fields id")
+    );
+    let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","until":"2026-09-14T09:00:00Z","page":1});
+    let (_, public) = call(&w, Some(READ), request.clone()).await;
+    assert_eq!(public["outcome"], "ok", "{public}");
+    assert_activity_context(&w, &public, &activity_ids).await;
+    let cursor = public["result"]["page"]["cursor"].as_str().unwrap();
+    let mut continuation = request.clone();
+    continuation["cursor"] = json!(cursor);
+    let (_, next) = call(&w, Some(READ), continuation).await;
+    assert_eq!(next["outcome"], "ok", "{next}");
+    assert_eq!(
+        next["result"]["context_pack"],
+        public["result"]["context_pack"]
+    );
+    assert_eq!(next["result"]["resolved"], public["result"]["resolved"]);
+
+    let private = facts(
+        "private",
+        &[(2, "/src/private-activity", None)],
+        Class::Guarded,
+    );
+    let private_ids = private.iter().map(|event| event.id.0).collect::<Vec<_>>();
+    admit_events(&w, private).await;
+    let (_, hidden) = call(&w, Some(READ), request.clone()).await;
+    assert_eq!(hidden["outcome"], "refused", "{hidden}");
+    assert!(!hidden.to_string().contains("/src/private-activity"));
+    let (_, permitted) = call(&w, Some(OPERATOR), request).await;
+    assert_eq!(permitted["outcome"], "ok", "{permitted}");
+    let citation = permitted["result"]["context_pack"].as_str().unwrap();
+    let id = uuid::Uuid::parse_str(citation.strip_prefix("sinex:ev/").unwrap()).unwrap();
+    let (class, parents): (String, Vec<uuid::Uuid>) =
+        sqlx::query_as("SELECT class,parents FROM core.events WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *w.reads.acquire().await.unwrap())
+            .await
+            .unwrap();
+    assert_eq!(class, "guarded");
+    assert!(
+        private_ids.iter().all(|id| parents.contains(id)),
+        "selected Guarded activity remains exact parent evidence"
+    );
+    assert!(
+        definition_ids
+            .iter()
+            .all(|id| !parents.contains(&uuid::Uuid::parse_str(id).unwrap()))
+    );
+}
+
+#[devkit::test]
+async fn a_stored_recall_cursor_keeps_the_callers_grants(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit_events(
+        &w,
+        facts(
+            "synthetic-private",
+            &[(0, "/src/private", None), (1, "/src/private", None)],
+            Class::Guarded,
+        ),
+    )
+    .await;
+    let (_, first) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"recall","around":"last","page":1}),
+    )
+    .await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
+    let (_, other) = call(
+        &w,
+        Some(READ),
+        json!({"method":"recall","around":"last","page":1,"cursor":cursor}),
+    )
+    .await;
+    assert_eq!(other["outcome"], "refused", "{other}");
+    assert!(!other.to_string().contains("synthetic-private"));
+}
+
+#[devkit::test]
+async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let events = facts(
+        "synthetic",
+        &[(0, "/src/tide", None), (1, "/src/tide", None)],
+        Class::Open,
+    );
+    let original = events
+        .iter()
+        .find(|event| event.event_type == "command.executed")
+        .unwrap()
+        .id;
+    admit_events(&w, events).await;
+    let before = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
+        .await
+        .unwrap();
+    let (_, ordinary) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    assert_eq!(ordinary["outcome"], "ok", "{ordinary}");
+    assert!(ordinary["result"]["context_pack"].is_string());
+    let (_, hidden) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"hide","reference":format!("sinex:ev/{original}")}),
+    )
+    .await;
+    assert_eq!(hidden["outcome"], "ok", "{hidden}");
+    let packs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='context.pack'")
+            .fetch_one(&w.reads)
+            .await
+            .unwrap();
+    let (_, historical) = call(
+        &w,
+        Some(READ),
+        json!({"method":"query","query":format!("recall last as of seq {before}"),"page":1}),
+    )
+    .await;
+    assert_eq!(historical["outcome"], "ok", "{historical}");
+    assert_eq!(
+        historical["result"]["historical_preview"]["materialized"],
+        false
+    );
+    assert_eq!(historical["result"]["resolved"]["commit_seq"], before);
+    assert!(historical["result"]["context_pack"].is_null());
+    assert!(
+        historical["result"]["historical_preview"]["raw_citations"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(format!("sinex:ev/{original}")))
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM core.events WHERE event_type='context.pack'"
+        )
+        .fetch_one(&w.reads)
+        .await
+        .unwrap(),
+        packs
+    );
+    let cursor = historical["result"]["page"]["cursor"].as_str().unwrap();
+    let (_,next) = call(&w,Some(READ),json!({"method":"query","query":format!("recall last as of seq {before}"),"page":1,"cursor":cursor})).await;
+    assert_eq!(next["outcome"], "ok", "{next}");
+    assert_eq!(next["result"]["resolved"], historical["result"]["resolved"]);
+    let (_, current) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    assert_eq!(current["outcome"], "ok", "{current}");
+    assert!(current["result"]["context_pack"].is_string());
+    assert!(current["result"]["historical_preview"].is_null());
+}
+
+#[devkit::test]
+async fn unchanged_explicit_recall_recompute_reuses_its_read_context_and_reading(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit_events(
+        &w,
+        facts(
+            "synthetic",
+            &[(0, "/src/tide", None), (1, "/src/tide", None)],
+            Class::Open,
+        ),
+    )
+    .await;
+    let (_, before) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    assert_eq!(before["outcome"], "ok", "{before}");
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='context.pack'")
+            .fetch_one(&w.reads)
+            .await
+            .unwrap();
+    let connection = w.reads.acquire().await.unwrap().detach();
+    let mut runner = crate::derivation_runner::DerivationRunner::for_one(
+        connection,
+        w.writer.clone(),
+        "recall.products",
+        "h",
+        &Default::default(),
+        sinex_model::time_settings::TimeSettings::from_parts(
+            jiff::tz::TimeZone::get("UTC").unwrap(),
+            jiff::civil::Time::constant(4, 0, 0, 0),
+        ),
+    )
+    .await
+    .unwrap();
+    let comparison = runner.compare("recall.products", None, 5).await.unwrap();
+    assert_eq!(
+        (
+            comparison.same,
+            comparison.added,
+            comparison.changed,
+            comparison.removed
+        ),
+        (1, 0, 0, 0)
+    );
+    assert_eq!(
+        runner.recompute_all("recall.products", None).await.unwrap(),
+        1
+    );
+    runner.catch_up().await.unwrap();
+    runner.end_runs().await.unwrap();
+    let (_, after) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    assert_eq!(after["outcome"], "ok", "{after}");
+    assert_eq!(
+        after["result"]["context_pack"],
+        before["result"]["context_pack"]
+    );
+    assert_eq!(after["result"]["resolved"], before["result"]["resolved"]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM core.events WHERE event_type='context.pack'"
+        )
+        .fetch_one(&w.reads)
+        .await
+        .unwrap(),
+        count
+    );
+}
+
+#[devkit::test]
+async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomputation(
+    db: devkit::pg::TestDatabase,
+) {
+    use sinex_model::event_types::{activity::ActivityEvidence, work::ContextPack};
+    let w = world(db).await;
+    let mut failed = command("synthetic failing check", 0);
+    failed.payload["exit_code"] = json!(1);
+    let evidence = ActivityEvidence {
+        event: failed.id,
+        record: "synthetic-check".into(),
+        event_type: failed.event_type.clone(),
+        source: failed.source.clone(),
+    };
+    admit_events(&w, vec![failed.clone()]).await;
+    let position = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
+        .await
+        .unwrap();
+    let pack = derived(
+        &ContextPack {
+            evaluated_at: Some(Timestamp::now()),
+            day_setting: Some("04:00:00 UTC".into()),
+            producer_versions: None,
+            read_as: Some(position),
+            analysis: None,
+            pack: "resume:synthetic-objective".into(),
+            episode: "synthetic-objective".into(),
+            at: failed.ts_orig.at.unwrap(),
+            stated_goal: None,
+            trail: vec![evidence.clone()],
+            last_edit: None,
+            last_edit_path: None,
+            open_failures: vec![evidence],
+            coverage: vec!["check revision and identity were not recorded".into()],
+            profile: "resume/v1".into(),
+        },
+        "context.packs",
+        [&failed],
+    );
+    let citation = format!("sinex:ev/{}", pack.id);
+    admit_events(&w, vec![pack]).await;
+    let (_, first) = call(&w, Some(READ), json!({"method":"brief","day":citation})).await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    assert_eq!(first["result"]["context_pack"], citation);
+    assert_eq!(first["result"]["machine"]["context_pack"], citation);
+    assert_eq!(first["result"]["machine"]["read_as"], position);
+    assert!(
+        first["result"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Unresolved recorded check failure")
+    );
+    let (_, second) = call(
+        &w,
+        Some(READ),
+        json!({"method":"brief","day":citation,"budget":10000}),
+    )
+    .await;
+    assert_eq!(second["result"]["context_pack"], citation);
+    let mut conn = w.reads.acquire().await.unwrap();
+    assert_eq!(
+        sinex_store::live::of_types(&mut conn, &["context.pack".into()])
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        sinex_store::live::of_types(&mut conn, &["analysis.request".into()])
+            .await
+            .unwrap()
+            .is_empty()
     );
 }

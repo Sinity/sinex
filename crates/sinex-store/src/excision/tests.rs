@@ -1,4 +1,4 @@
-//! Excision laws: every reading of the one record and its descendants go, a
+//! Excision: every reading of the one record and its descendants go, a
 //! tombstone stays, each material the record was read from goes whole with
 //! only its digest kept, and nothing that is not the record changes. Every record
 //! here is alone in its material, as the caller requires.
@@ -42,14 +42,15 @@ async fn material(
     bytes: &[u8],
 ) -> (MaterialId, String) {
     let blob = store.blobs.put(bytes).unwrap();
+    let mut tx = conn.begin().await.unwrap();
     let id = MaterialId::new();
     let binding = format!("{source}:synthetic@h");
     sqlx::query!(
-        "INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present') ON CONFLICT DO NOTHING",
+        "INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present') ON CONFLICT(hash) DO UPDATE SET status='present'",
         blob,
         bytes.len() as i64
     )
-    .execute(&mut *conn)
+    .execute(&mut *tx)
     .await
     .unwrap();
     sqlx::query!(
@@ -57,7 +58,7 @@ async fn material(
         binding,
         source
     )
-    .execute(&mut *conn)
+    .execute(&mut *tx)
     .await
     .unwrap();
     let input = sqlx::query_scalar!(
@@ -66,7 +67,7 @@ async fn material(
         Uuid::now_v7(),
         binding
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut *tx)
     .await
     .unwrap();
     sqlx::query!(
@@ -77,9 +78,12 @@ async fn material(
         blob,
         bytes.len() as i64
     )
-    .execute(&mut *conn)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    let receipt = store.blobs.commit_extents(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    store.blobs.acknowledge(receipt).unwrap();
     (id, blob)
 }
 
@@ -176,6 +180,7 @@ async fn admit_events(conn: &mut crate::AdmissionContext, events: Vec<Event>) ->
 /// does.
 async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Result<Applied> {
     let plan = plan(conn, target).await?;
+    let read_before = crate::ReadMark::now(conn).await?;
     let mut tx = conn.begin().await?;
     let applied = apply(
         &mut tx,
@@ -188,6 +193,11 @@ async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Resul
     .await?;
     tx.commit().await?;
     finish_deletions(conn, &store.blobs).await?;
+    let read_after = crate::ReadMark::now(conn).await?;
+    assert_eq!(
+        read_after.excised - read_before.excised,
+        i64::try_from(applied.events).unwrap()
+    );
     Ok(applied)
 }
 
@@ -343,9 +353,15 @@ async fn every_reading_goes_with_its_materials(db: devkit::pg::TestDatabase) {
         2,
         "the other records stay live"
     );
+    let archived: Vec<Uuid> =
+        sqlx::query_scalar("SELECT event_id FROM audit.archived ORDER BY event_id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     assert_eq!(
-        count(&mut conn, "SELECT count(*) FROM audit.archived").await,
-        0
+        archived,
+        [old.id.0],
+        "payload-free archive history survives with the excised reading's tombstone"
     );
     assert_eq!(
         count(&mut conn, "SELECT events FROM core.source_counts").await,

@@ -45,7 +45,12 @@ answers what was happening, grouped by session.
 
 `context --since T --until T | --around REF | --episode REF | --project P` returns the
 activity around a span, grouped by family (commands, focus, pages, files, git, agent
-sessions, source health), each group with its coverage. With an episode or a project it
+sessions, source health), each group with its coverage. Saved query definitions,
+analysis questions and their presentation products are bookkeeping: they remain
+available through ordinary event queries but do not become activity rows, source
+counts or evidence parents of a recall. Moment marks remain activity evidence.
+This membership is independent of privacy class; selected activity retains its
+classes and the caller's current visibility rules. With an episode or a project it
 returns that episode's resume card; with no argument, the top three candidate episodes,
 the first with its full card ([the resume card](higher-layer.md)).
 
@@ -78,6 +83,7 @@ sinexctl recall mark 2
   commits in under 1 s, so it can sit on a hotkey.
 - The marked time has operator quality. `--at` backdates it; recall never substitutes
   the recording time for an explicitly backdated mark.
+- A marking client may supply `command_record` and `focus_record` native record keys. Without those keys, command text and window titles do not establish a source-record link.
 - Links to what the mark is about arrive later as derived `reference.about` events, by
   source record keys for commands and focus and by containing time for sessions
   ([derivations](derivations.md)).
@@ -107,6 +113,17 @@ query set and template.
 - Every line carries a [citation](query.md#citation-forms).
 - The stored product is complete; a presentation is a budgeted view of it and never
   truncates what is stored.
+
+A response names the exact stored pack with a `sinex:ev/…` citation. Passing that
+citation as `brief --day CITATION` renders the same selected evidence and read
+position at another presentation budget, including when a newer reading has
+replaced the pack. The stored sections and source coverage remain complete.
+
+### Historical previews
+
+An explicit `as of` recall reads its historical position through the ordinary query compiler and returns a labelled `historical_preview`. This is an on-request, unmaterialized presentation: historical inputs can already be archived, and a new live product cannot cite archived parents. The response carries the exact read position, evaluation clock, time-setting version, current grants, source account and raw event citations. It creates no second result store. Current visibility rules and permanent removal still apply; a historical position grants no additional access.
+
+Ordinary current recalls remain stored `context.pack` products. Their cursors pin the exact stored reading, so later inputs or replacement products do not mix positions across pages. Existing historical pack citations continue to render that stored reading.
 
 ## The daily brief
 

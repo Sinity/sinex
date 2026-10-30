@@ -3,9 +3,12 @@
 //!
 //! No maintained Rust reader understands PST, so a store is staged first:
 //! `readpst` (libpst) converts each folder to an mbox file, and those files are
-//! read like any mbox export, as the source `communication.outlook`. The
-//! converted mbox is what Sinex stores and replays; its material path names the
-//! PST and the folder it came from. The PST stays where the operator keeps it.
+//! read like any mbox export, as the source `communication.outlook`. Sinex
+//! retains the native PST and converter version before admitting converted
+//! material, whose manifest cites that acquisition. Folder readers share a private
+//! conversion directory until the last reader closes; bindings identify the
+//! original PST and folder. The
+//! original file is unchanged.
 //!
 //! The CSV export carries no message ID and no date, only the people, subject,
 //! body and a few Outlook fields. Each row is identified by its record
@@ -17,8 +20,7 @@ use sinex_model::event_types::communication::MailMessage;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 pub const PST: SourceSpec = SourceSpec {
     name: "communication.outlook",
@@ -57,57 +59,7 @@ pub fn pst_source() -> DeclaredSource<mail::MailParser> {
     }
 }
 
-/// Convert `pst` into one mbox file per folder under `out`, returning them in
-/// a stable order. The files are named `<pst stem>/<folder path>.mbox`.
-fn stage_pst(pst: &Path, out: &Path) -> Result<Vec<PathBuf>, String> {
-    let stem = pst
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| format!("{}: no file name", pst.display()))?;
-    let dir = out.join(stem);
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    // -r: one directory per folder; -8: UTF-8 output; -q: quiet; -b: no
-    // RTF bodies (the plain and HTML bodies are kept).
-    let status = Command::new("readpst")
-        .args(["-r", "-8", "-q", "-b", "-o"])
-        .arg(&dir)
-        .arg(pst)
-        .status()
-        .map_err(|e| format!("readpst (libpst) is needed to read {}: {e}", pst.display()))?;
-    if !status.success() {
-        return Err(format!("readpst failed on {}: {status}", pst.display()));
-    }
-    let mut found = Vec::new();
-    collect_mbox(&dir, &dir, &mut found)?;
-    found.sort();
-    Ok(found)
-}
-
-/// readpst writes each folder's messages to a file named `mbox`; rename it to
-/// `<folder>.mbox` so the material path names the folder.
-fn collect_mbox(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for entry in entries {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        if path.is_dir() {
-            collect_mbox(root, &path, out)?;
-        } else if path.file_name().is_some_and(|n| n == "mbox") {
-            let folder = path.parent().unwrap_or(root);
-            let named = folder.with_extension("mbox");
-            let named = if folder == root {
-                root.join("root.mbox")
-            } else {
-                named
-            };
-            std::fs::rename(&path, &named).map_err(|e| format!("{}: {e}", named.display()))?;
-            out.push(named);
-        }
-    }
-    Ok(())
-}
+mod staging;
 
 pub fn pst_driver(mbox: PathBuf, host: String) -> ExportArchive {
     mail::mbox_driver(mbox, host)
@@ -216,14 +168,8 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// Where PST stores are converted to mbox files before they are read; the
-/// mbox bytes go to the content store, so this is only a cache.
-fn staging() -> PathBuf {
-    std::env::temp_dir().join("sinex-outlook")
-}
-
 /// `--read outlook=PATH`: each `.pst` under PATH, converted with `readpst`
-/// to one mbox per folder, each folder its own binding.
+/// to one mbox per folder, each folder its own stable binding of the PST.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "outlook",
@@ -241,29 +187,9 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&PST],
-        plan: Some(|input, settings| {
-            let stage = staging();
-            let mut out = Vec::new();
-            for pst in sinex_source_core::binding::files(input, true, |p| {
-                p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pst"))
-            }) {
-                for mbox in stage_pst(&pst, &stage)? {
-                    out.push(sinex_source_core::binding::Binding::of(
-                        &PST,
-                        &mbox,
-                        settings.clone(),
-                    ));
-                }
-            }
-            Ok(out)
-        }),
+        plan: Some(staging::plan),
         source: |_| Ok(Box::new(pst_source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(pst_driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
+        reader: Some(staging::reader),
         capture: None,
     };
 

@@ -469,3 +469,85 @@ fn an_export_tar_member_can_hold_several_records() {
     .unwrap();
     assert_eq!(commands(&chunks), [(0, "a".into()), (2, "b".into())]);
 }
+
+#[devkit::test]
+fn owned_json_records_decode_from_bounded_ranges_and_keep_canonical_volatile_hashes() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Object;
+    impl Parser for Object {
+        type Record<'a> = serde_json::Map<String, Value>;
+        type Carry = ();
+        type Payload = CommandImported;
+        const VOLATILE: &'static [&'static str] = &["last_seen"];
+        fn parse(
+            &self,
+            record: &Self::Record<'_>,
+            _: &(),
+            _: &RecordContext<'_>,
+        ) -> Result<(Vec<CommandImported>, ()), RecordError> {
+            Ok((
+                vec![CommandImported {
+                    command: record["command"].as_str().unwrap().into(),
+                    hostname: "h".into(),
+                    started_at: None,
+                    header_elapsed: None,
+                    paths: vec![],
+                    n: 0,
+                }],
+                (),
+            ))
+        }
+    }
+    struct Stored {
+        bytes: Vec<u8>,
+        maximum: AtomicUsize,
+    }
+    impl RecordRead for Stored {
+        fn length(&self) -> u64 {
+            self.bytes.len() as u64
+        }
+        fn read_exact_at(&self, start: u64, out: &mut [u8]) -> std::io::Result<()> {
+            assert!(
+                out.len() <= 65536,
+                "the storage path requested a whole record: {}",
+                out.len()
+            );
+            self.maximum.fetch_max(out.len(), Ordering::Relaxed);
+            out.copy_from_slice(&self.bytes[start as usize..start as usize + out.len()]);
+            Ok(())
+        }
+    }
+    let mut bytes = b"{\"command\":\"kept\",\"last_seen\":1,\"padding\":[".to_vec();
+    bytes.resize(bytes.len() + (2 << 20), b' ');
+    bytes.extend_from_slice(b"]}\n");
+    let expected = <serde_json::Map<String, Value> as RecordShape>::hash(&bytes, Object::VOLATILE);
+    let stored = Stored {
+        bytes,
+        maximum: AtomicUsize::new(0),
+    };
+    let manifest = Manifest::default();
+    let records = [(0, stored.bytes.len())];
+    let chunks = Drainer::new(
+        &Object,
+        DrainInput {
+            source: "synthetic",
+            class: Class::Open,
+            material: MaterialId::new(),
+            bytes: RecordBytes::Reader(&stored),
+            records: &records,
+            carry: Value::Null,
+            reading_order: &|_| ReadingOrder(0),
+            limits: Limits::default(),
+            manifest: &manifest,
+        },
+    )
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+    let RecordOutcome::Events { events, .. } = &chunks[0].outcomes[0] else {
+        panic!()
+    };
+    assert_eq!(events[0].record_hash, expected);
+    assert_eq!(events[0].payload["command"], "kept");
+    assert!(stored.maximum.load(Ordering::Relaxed) > 0);
+}

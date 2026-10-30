@@ -144,7 +144,7 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
                     *g += 1;
                     *g
                 };
-                let source = format!("law-{n}");
+                let source = format!("source-{n}");
                 let got = tokio::task::block_in_place(|| {
                     rt.block_on(async {
                         let mut conn = conn.lock().await;
@@ -435,6 +435,8 @@ async fn events_and_progress_commit_together(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     let progress = |cursor: i64| SourceProgress {
+        source: None,
+        host: None,
         data_keys: Vec::new(),
         binding: "b".into(),
         input: InputRef {
@@ -508,16 +510,15 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
+    let events = vec![keyed("s", 1, 1, 1), keyed("s", 2, 1, 1)];
+    let target = events[0].id;
     let mut tx = conn.begin().await.unwrap();
-    let out = tx
-        .admit(
-            &batch(vec![keyed("s", 1, 1, 1), keyed("s", 2, 1, 1)]),
-            &ByDay,
-        )
-        .await
-        .unwrap();
+    let out = tx.admit(&batch(events), &ByDay).await.unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(out.dirty_keys, 2);
+    assert_eq!(
+        out.dirty_keys, 4,
+        "both original and projected input keys are marked for each event"
+    );
     let n: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM derivation.dirty WHERE derivation = 'daily'"#
     )
@@ -525,8 +526,41 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     .await
     .unwrap();
     assert_eq!(n, 1, "both events fall on the same day");
+    let (first, last): (i64, i64) = sqlx::query_as(
+        "SELECT first_dirty_seq,last_dirty_seq FROM derivation.dirty WHERE derivation='daily'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let (_, frontier) = out.commit_seq.unwrap();
+    assert_eq!(
+        (first, last),
+        (frontier, frontier),
+        "the atomic batch first marks its key at the completed frontier of every original and projected input"
+    );
+    let mut hide = batch(vec![]);
+    hide.archive.push(ArchiveRequest::Hide {
+        target,
+        operation: OperationId::new(),
+    });
+    let mut tx = conn.begin().await.unwrap();
+    let archived = tx.admit(&hide, &ByDay).await.unwrap();
+    tx.commit().await.unwrap();
+    assert!(archived.dirty_keys > 0);
+    let position = crate::query::current_seq(&mut conn).await.unwrap();
+    assert!(position > frontier);
+    let changed: (i64, i64) = sqlx::query_as(
+        "SELECT first_dirty_seq,last_dirty_seq FROM derivation.dirty WHERE derivation='daily'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        changed,
+        (first, position),
+        "archival preserves the first dirty mark and advances the last one to its actual lifecycle position"
+    );
 }
-
 #[devkit::test]
 async fn dirty_keys_keep_each_derivation_and_advance_existing_keys(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -655,15 +689,146 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
 }
 
 mod archive_history;
+mod commit_order;
+mod compressed;
 mod source_counts;
 
 mod library_upgrade;
+
+#[devkit::test]
+async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestDatabase) {
+    use sinex_model::{EventId, Origin};
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let parent = keyed("source", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![parent.clone()])).await;
+    for id in [EventId::new(), parent.id] {
+        if id == parent.id {
+            let mut archive = batch(vec![]);
+            archive.archive.push(sinex_model::ArchiveRequest::Hide {
+                target: id,
+                operation: sinex_model::OperationId::new(),
+            });
+            admit_one(&mut conn, &archive).await;
+        }
+        let mut child = keyed("derived", 2, 2, 1);
+        child.origin = Origin::Derived { parents: vec![id] };
+        let mut tx = conn.begin().await.unwrap();
+        let result = tx.admit(&batch(vec![child]), &crate::NoDerivations).await;
+        assert!(
+            matches!(result, Err(crate::Error::Invalid(_))),
+            "{result:?}"
+        );
+        tx.rollback().await.unwrap();
+    }
+}
+
+#[devkit::test]
+async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let root = keyed("chain", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![root.clone()])).await;
+    let mut child = keyed("chain", 2, 2, 1);
+    child.origin = Origin::Derived {
+        parents: vec![root.id],
+    };
+    admit_one(&mut conn, &batch(vec![child.clone()])).await;
+    let mut grandchild = keyed("chain", 3, 3, 1);
+    grandchild.origin = Origin::Derived {
+        parents: vec![child.id],
+    };
+    admit_one(&mut conn, &batch(vec![grandchild.clone()])).await;
+    let operation = OperationId::new();
+    let mut hide = batch(vec![]);
+    hide.archive.push(ArchiveRequest::Hide {
+        target: root.id,
+        operation,
+    });
+    admit_one(&mut conn, &hide).await;
+    let ids = [root.id.0, child.id.0, grandchild.id.0];
+    let archived: i64 = sqlx::query_scalar("SELECT count(*) FROM audit.archived WHERE event_id=ANY($1) AND reason='hide' AND operation_id=$2")
+        .bind(ids.as_slice()).bind(operation.0).fetch_one(&mut conn).await.unwrap();
+    assert_eq!(archived, 3);
+    let mut restore = batch(vec![]);
+    restore.archive.push(ArchiveRequest::Unhide {
+        target: root.id,
+        operation: OperationId::new(),
+    });
+    admit_one(&mut conn, &restore).await;
+    let restored: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT event_id FROM core.live_equivalence WHERE source='chain' ORDER BY event_id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    let mut expected = ids.to_vec();
+    expected.sort();
+    assert_eq!(
+        restored, expected,
+        "restore moves the same readings, without a runner"
+    );
+    let count: i64 =
+        sqlx::query_scalar("SELECT events FROM core.source_counts WHERE source='chain'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(count, 3);
+}
+
+#[devkit::test]
+async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let root = keyed("chain", 1, 1, 1);
+    let other = keyed("chain", 2, 2, 1);
+    admit_one(&mut conn, &batch(vec![root.clone(), other.clone()])).await;
+    let mut child = keyed("chain", 3, 3, 1);
+    child.origin = Origin::Derived {
+        parents: vec![root.id, other.id],
+    };
+    admit_one(&mut conn, &batch(vec![child])).await;
+    for target in [root.id, other.id] {
+        let mut hide = batch(vec![]);
+        hide.archive.push(ArchiveRequest::Hide {
+            target,
+            operation: OperationId::new(),
+        });
+        admit_one(&mut conn, &hide).await;
+    }
+    let mut restore = batch(vec![]);
+    restore.archive.push(ArchiveRequest::Unhide {
+        target: root.id,
+        operation: OperationId::new(),
+    });
+    let mut tx = conn.begin().await.unwrap();
+    assert!(matches!(
+        tx.admit(&restore, &NoDerivations).await,
+        Err(crate::Error::Invalid(_))
+    ));
+    tx.rollback().await.unwrap();
+    let live: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.live_equivalence WHERE source='chain'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        live, 0,
+        "a failed restore leaves the complete chain archived"
+    );
+}
 
 mod kinds;
 
 mod cache;
 mod equivalence;
 mod known_fields;
+mod nearby;
 
 #[devkit::test]
 fn outcomes_add_all_counts_positions_and_ids() {
@@ -678,6 +843,7 @@ fn outcomes_add_all_counts_positions_and_ids() {
             older: 5,
             hidden: 6,
             superseded: 7,
+            superseded_input: 0,
             failures: 8,
             dirty_keys: 9,
             replay_archived: 10,
@@ -697,6 +863,7 @@ fn outcomes_add_all_counts_positions_and_ids() {
             older: 10,
             hidden: 12,
             superseded: 14,
+            superseded_input: 0,
             failures: 16,
             dirty_keys: 18,
             replay_archived: 20,
@@ -706,4 +873,273 @@ fn outcomes_add_all_counts_positions_and_ids() {
             timings: [("stage", std::time::Duration::from_millis(2))].into(),
         }
     );
+}
+
+#[devkit::test]
+async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ingress = |name: &str, content: u8| {
+        let event = keyed("atuin", 1, content, 0);
+        let mut batch = batch(vec![event.clone()]);
+        batch.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            content_hash: None,
+            receipt_number: None,
+            coverage: None,
+            native_source: None,
+            source_fingerprint: None,
+            host: None,
+            family: None,
+            write_kind_prefixes: vec![],
+            assign_orders: vec![event.id],
+            producer: "atuin".into(),
+            frame: name.into(),
+            material: None,
+            refusal: None,
+            declarations: vec![],
+            refusal_kind: None,
+            source: None,
+            event_types: vec![],
+        }));
+        batch
+    };
+    let first = ingress("first", 1);
+    let mut tx = conn.begin().await.unwrap();
+    let admitted = tx.admit(&first, &NoDerivations).await.unwrap();
+    let duplicate = tx.admit(&first, &NoDerivations).await.unwrap();
+    assert_eq!(admitted.admitted_ids, duplicate.admitted_ids);
+    assert_eq!(admitted.commit_seq, duplicate.commit_seq);
+    tx.commit().await.unwrap();
+    let rolled_back = ingress("rolled-back", 2);
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&rolled_back, &NoDerivations).await.unwrap();
+    drop(tx);
+    let final_batch = ingress("final", 3);
+    admit_one(&mut conn, &final_batch).await;
+    let mut read = PgConnection::connect(&db.url(None)).await.unwrap();
+    let orders = sqlx::query_scalar!(
+        "SELECT reading_order FROM core.events WHERE source='atuin' ORDER BY commit_seq"
+    )
+    .fetch_all(&mut read)
+    .await
+    .unwrap();
+    assert_eq!(orders, vec![0, 1]);
+    let frames =
+        sqlx::query_scalar!("SELECT count(*) FROM core.ingress_frames WHERE frame='rolled-back'")
+            .fetch_one(&mut read)
+            .await
+            .unwrap();
+    assert_eq!(frames, Some(0));
+}
+
+mod output_ordinals;
+
+#[devkit::test]
+async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_insert(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut catalog = PgConnection::connect(&db.url(None)).await.unwrap();
+    let kind = sinex_model::event_types::declarations()
+        .into_iter()
+        .find(|kind| kind.kind.name == "command.executed")
+        .unwrap();
+    let declarations =
+        ["machine.first", "machine.second"].map(|name| sinex_model::SourceDeclaration {
+            source: sinex_model::SourceRef {
+                name: name.into(),
+                version: 7,
+            },
+            family: "sinex".into(),
+            kinds: vec![kind.clone()],
+        });
+    crate::source_declarations::register(&mut catalog, &declarations)
+        .await
+        .unwrap();
+    crate::source_declarations::register(&mut catalog, &declarations)
+        .await
+        .unwrap();
+    let mut conflicting = declarations[0].clone();
+    conflicting.kinds[0].kind.version += 1;
+    assert!(
+        crate::source_declarations::register(&mut catalog, &[conflicting])
+            .await
+            .is_err()
+    );
+    let mut writer = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let mut offered = Vec::new();
+    for (index, declaration) in declarations.iter().enumerate() {
+        let mut b = batch(vec![keyed(&declaration.source.name, 1, 1, 0)]);
+        let material_id = match &b.events().next().unwrap().origin {
+            Origin::Record { location, .. } => location.material,
+            _ => unreachable!(),
+        };
+        b.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            content_hash: None,
+            receipt_number: None,
+            coverage: None,
+            native_source: Some(declaration.source.clone()),
+            source_fingerprint: Some(declaration.fingerprint()),
+            host: Some("attested-host".into()),
+            family: Some("sinex".into()),
+            write_kind_prefixes: vec!["command".into()],
+            assign_orders: vec![],
+            producer: "one-credential".into(),
+            frame: format!("source-{index}"),
+            material: Some(SourceProgress {
+                source: Some(declaration.source.clone()),
+                host: Some("attested-host".into()),
+                binding: declaration.source.name.clone(),
+                data_keys: vec![],
+                input: InputRef {
+                    kind: "file".into(),
+                    locator: format!("/synthetic/{index}"),
+                    host: "declared-host".into(),
+                },
+                observation: ObservationFacts {
+                    changed: true,
+                    ..Default::default()
+                },
+                revision: RevisionChange::Snapshot,
+                material: Some(sinex_model::MaterialRef {
+                    id: material_id,
+                    input: None,
+                    blob: format!("blake3:{}", blake3::hash(b"synthetic").to_hex()),
+                    length: 9,
+                    part_index: 0,
+                    previous_part: None,
+                    parser: "synthetic".into(),
+                    parser_version: 7,
+                    manifest: Default::default(),
+                }),
+                cursor: Value::Null,
+                carry: Value::Null,
+                memory: None,
+            }),
+            refusal: None,
+            declarations: vec![],
+            refusal_kind: None,
+            source: Some(declaration.source.name.clone()),
+            event_types: vec!["command.executed".into()],
+        }));
+        let first = admit_one(&mut writer, &b).await;
+        let retry = admit_one(&mut writer, &b).await;
+        assert_eq!(first.admitted_ids, retry.admitted_ids);
+        assert_eq!(first.admitted, 1);
+        offered.push(b);
+    }
+    let rows:Vec<(String,Option<String>,Option<String>,Option<String>,Option<i64>,Option<String>,Option<i64>)>=sqlx::query_as("SELECT source,producer_family,producer_identity,producer_host,source_version,source_fingerprint,producer_frame FROM core.events ORDER BY source").fetch_all(&mut catalog).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    for (row, declaration) in rows.iter().zip(&declarations) {
+        assert_eq!(row.0, declaration.source.name);
+        assert_eq!(row.1.as_deref(), Some("sinex"));
+        assert_eq!(row.2.as_deref(), Some("one-credential"));
+        assert_eq!(row.3.as_deref(), Some("attested-host"));
+        assert_eq!(row.4, Some(7));
+        assert_eq!(row.5.as_deref(), Some(declaration.fingerprint().as_str()));
+        let number = row.6.unwrap();
+        let matching:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.ingress_frames WHERE number=$1 AND source_name=$2 AND producer_host='attested-host')").bind(number).bind(&declaration.source.name).fetch_one(&mut catalog).await.unwrap();
+        assert!(matching);
+    }
+    let mut false_label = offered[0].clone();
+    let BatchKind::Ingress(frame) = &mut false_label.kind else {
+        unreachable!()
+    };
+    frame.frame = "false-label".into();
+    frame.native_source = Some(declarations[1].source.clone());
+    frame.source_fingerprint = Some(declarations[1].fingerprint());
+    let mut tx = writer.begin().await.unwrap();
+    assert!(tx.admit(&false_label, &NoDerivations).await.is_err());
+    drop(tx);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.ingress_frames")
+            .fetch_one(&mut catalog)
+            .await
+            .unwrap(),
+        2
+    );
+    assert!(
+        sqlx::query("UPDATE core.events SET producer_host='forged'")
+            .execute(&mut catalog)
+            .await
+            .is_err(),
+        "provenance never needs an event update exception"
+    );
+}
+
+#[devkit::test]
+async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_replacement(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let policy_epoch = crate::privacy::projection::epoch(&mut conn)
+        .await
+        .unwrap()
+        .active;
+    let offered = |position: i64, content: u8| {
+        let mut event = keyed("canonical", 1, content, position);
+        event.origin = Origin::Derived {
+            parents: vec![EventId::new()],
+        };
+        let mut b = batch(vec![event.clone()]);
+        b.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            content_hash: None,
+            receipt_number: None,
+            native_source: None,
+            source_fingerprint: None,
+            host: None,
+            coverage: Some(sinex_model::OwnerCoverage {
+                required: true,
+                stamp: "already-validated-by-admission".into(),
+                position,
+                policy_epoch,
+                scope: "scope".into(),
+                catalog: "catalog".into(),
+                instance: "instance".into(),
+                host: "host".into(),
+                settings_identity: "settings".into(),
+            }),
+            family: Some("canonical".into()),
+            write_kind_prefixes: vec![],
+            assign_orders: vec![],
+            producer: "publisher".into(),
+            frame: String::new(),
+            material: None,
+            refusal: None,
+            declarations: vec![],
+            refusal_kind: None,
+            source: None,
+            event_types: vec![],
+        }));
+        (b, event)
+    };
+    // This unit exercises the order phase after signature validation. The
+    // identical newer payload may be suppressed by classification afterward.
+    for (position, content) in [(10, 1), (20, 1)] {
+        let (batch, event) = offered(position, content);
+        orders::assign(&mut conn, &batch, &mut [event])
+            .await
+            .unwrap();
+    }
+    let order: i64 = sqlx::query_scalar(
+        "SELECT reading_order FROM core.producer_orders WHERE source='canonical'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(order, 20);
+    let (delayed, event) = offered(15, 2);
+    assert!(
+        orders::assign(&mut conn, &delayed, &mut [event])
+            .await
+            .is_err()
+    );
+    let (newer, event) = offered(21, 2);
+    orders::assign(&mut conn, &newer, &mut [event])
+        .await
+        .unwrap();
 }

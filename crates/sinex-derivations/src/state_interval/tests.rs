@@ -4,8 +4,8 @@
 //! so its presence scenarios are span scenarios here.
 use super::*;
 use sinex_model::{
-    Class, EquivalenceKey, EventId, MaterialId, ReadingOrder, RecordLocation, RecordState,
-    ReplaceRule, TimeQuality, TsOrig,
+    Class, EquivalenceKey, MaterialId, ReadingOrder, RecordLocation, ReplaceRule, TimeQuality,
+    TsOrig,
 };
 
 const T: i64 = 1_718_438_400; // 2024-06-15 10:00 CEST
@@ -14,35 +14,36 @@ fn at(secs: i64) -> Timestamp {
     Timestamp::from_unix_secs(T + secs).unwrap()
 }
 
-fn input(event_type: &str, secs: i64, payload: Value) -> Event {
+fn input(event_type: &str, secs: i64, mut payload: Value) -> Event {
+    static SEQUENCE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+    payload["scope"] = json!("synthetic-scope");
     let event_type: &'static str = INPUT_TYPES
         .iter()
         .copied()
         .find(|t| *t == event_type)
         .expect("a lift input type");
-    Event {
-        id: EventId::new(),
-        event_type: event_type.into(),
-        kind_version: 2,
-        validation: sinex_model::Validation::Validated,
-        source: "test".into(),
-        origin: Origin::Record {
+    let mut event = Event::submitted(
+        sinex_model::KindRef {
+            name: event_type.into(),
+            version: 1,
+        },
+        payload,
+        "test".into(),
+        Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
                 anchor: u64::try_from(secs.max(0)).unwrap(),
             },
             output_index: 0,
         },
-        ts_orig: TsOrig::known(at(secs), TimeQuality::Captured),
-        payload,
-        equivalence_key: Some(EquivalenceKey("k".into())),
-        replace: Some(ReplaceRule::SuppressRepeat),
-        reading_order: ReadingOrder(0),
-        record_hash: [0; 32],
-        record_state: RecordState::Present,
-        class: Class::Open,
-        owned_blobs: Vec::new(),
-    }
+        ReadingOrder(SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
+        [0; 32],
+        Class::Open,
+    );
+    event.ts_orig = TsOrig::known(at(secs), TimeQuality::Captured);
+    event.equivalence_key = Some(EquivalenceKey("k".into()));
+    event.replace = Some(ReplaceRule::SuppressRepeat);
+    event
 }
 
 fn focus(secs: i64, window: &str, title: &str) -> Event {
@@ -67,23 +68,6 @@ fn presence(secs: i64, end: i64, status: &str) -> Event {
         secs,
         json!({"bucket": "aw-watcher-afk_box", "row": secs, "started_at": at(secs),
                "ended_at": at(end), "status": status}),
-    )
-}
-
-fn unit(kind: &str, secs: i64, name: &str, run: &str) -> Event {
-    input(
-        kind,
-        secs,
-        json!({"cursor": format!("c{secs}"), "unit": name, "manager": "system", "uid": 0,
-               "invocation_id": run, "outcome": "stopped"}),
-    )
-}
-
-fn sleep(secs: i64) -> Event {
-    input(
-        "sleep.started",
-        secs,
-        json!({"cursor": format!("c{secs}"), "state": "suspend"}),
     )
 }
 
@@ -214,151 +198,6 @@ fn a_span_ending_before_its_start_is_zero_length() {
 }
 
 #[devkit::test]
-fn a_unit_stop_closes_its_start() {
-    let out = lift(
-        "machine.unit",
-        &[
-            unit("unit.started", 0, "a.service", "r1"),
-            unit("unit.started", 5, "b.service", "r2"),
-            unit("unit.stopped", 30, "a.service", "r1"),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-    assert_eq!(out[0].subject_id.as_deref(), Some("a.service"));
-    assert_eq!(out[0].ended_at, Some(at(30)));
-    assert_eq!(out[0].end_event_type.as_deref(), Some("unit.stopped"));
-    assert_eq!(
-        out[0].attributes.get("outcome").map(String::as_str),
-        Some("stopped")
-    );
-    assert_eq!(out[1].ended_at, None);
-}
-
-#[devkit::test]
-fn a_second_start_closes_the_first() {
-    let out = lift(
-        "machine.unit",
-        &[
-            unit("unit.started", 0, "a.service", "r1"),
-            unit("unit.started", 40, "a.service", "r2"),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-    assert_eq!(out[0].ended_at, Some(at(40)));
-    assert_eq!(out[0].end_event_type.as_deref(), Some("unit.started"));
-}
-
-#[devkit::test]
-fn a_stop_with_no_start_closes_nothing() {
-    assert!(
-        lift(
-            "machine.unit",
-            &[unit("unit.stopped", 0, "a.service", "r1")]
-        )
-        .is_empty()
-    );
-}
-
-#[devkit::test]
-fn a_stop_at_its_start_is_zero_length() {
-    let out = lift(
-        "machine.unit",
-        &[
-            unit("unit.started", 10, "a.service", "r1"),
-            unit("unit.stopped", 10, "a.service", "r1"),
-        ],
-    );
-    assert_eq!(out[0].started_at, out[0].ended_at.unwrap());
-}
-
-#[devkit::test]
-fn a_oneshot_run_that_stopped_before_its_start_finished_opens_nothing() {
-    // systemd logs "Deactivated successfully" before "Finished" for a
-    // oneshot service; the next run's stop must not close it hours later.
-    let out = lift(
-        "machine.unit",
-        &[
-            unit("unit.stopped", 10, "job.service", "r1"),
-            unit("unit.started", 11, "job.service", "r1"),
-            unit("unit.stopped", 7200, "job.service", "r2"),
-            unit("unit.started", 7201, "job.service", "r2"),
-        ],
-    );
-    assert!(out.is_empty(), "{out:?}");
-}
-
-#[devkit::test]
-fn a_stop_of_another_run_leaves_the_open_run_alone() {
-    let out = lift(
-        "machine.unit",
-        &[
-            unit("unit.started", 0, "a.service", "r2"),
-            unit("unit.stopped", 5, "a.service", "r1"),
-            unit("unit.stopped", 60, "a.service", "r2"),
-        ],
-    );
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].ended_at, Some(at(60)));
-}
-
-#[devkit::test]
-fn a_user_unit_is_not_the_system_unit_of_the_same_name() {
-    let mut user = unit("unit.started", 0, "a.service", "u1");
-    user.payload["manager"] = json!("user");
-    user.payload["uid"] = json!(1000);
-    let out = lift(
-        "machine.unit",
-        &[
-            unit("unit.started", 0, "a.service", "s1"),
-            user,
-            unit("unit.stopped", 30, "a.service", "s1"),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-    let user = out
-        .iter()
-        .find(|i| i.subject_id.as_deref() == Some("user:1000:a.service"))
-        .unwrap();
-    assert_eq!(user.ended_at, None);
-}
-
-#[devkit::test]
-fn sleep_interrupts_focus() {
-    let out = lift(
-        "desktop.focus",
-        &[
-            focus(0, "0xa", "vim"),
-            sleep(100),
-            focus(9000, "0xb", "web"),
-        ],
-    );
-    assert_eq!(
-        out[0].ended_at,
-        Some(at(100)),
-        "not the 9000 s overnight span"
-    );
-    assert_eq!(out[0].end_event_type.as_deref(), Some("sleep.started"));
-}
-
-#[devkit::test]
-fn sleep_cuts_a_presence_span() {
-    let out = lift(
-        "desktop.activitywatch.afk",
-        &[presence(0, 100, "not-afk"), sleep(15)],
-    );
-    assert_eq!(out[0].ended_at, Some(at(15)));
-}
-
-#[devkit::test]
-fn sleep_does_not_end_units() {
-    let out = lift(
-        "machine.unit",
-        &[unit("unit.started", 0, "a.service", "r1"), sleep(15)],
-    );
-    assert_eq!(out[0].ended_at, None);
-}
-
-#[devkit::test]
 fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     let events = [focus(0, "0xa", "vim"), presence(50, 650, "afk")];
     let f = lift("desktop.focus", &events);
@@ -374,7 +213,11 @@ fn key(state: &str) -> Value {
 
 #[devkit::test]
 fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
-    let env = Env::at(at(100_000));
+    let env = Env::at(
+        at(100_000),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     // Logical day 2024-06-15 runs 04:00 to 04:00 CEST: T-6h .. T+18h.
     let day_end = 18 * 3600;
     let inputs = [
@@ -403,27 +246,34 @@ fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
 
 #[devkit::test]
 fn inputs_ask_for_the_transitions_after_the_day() {
-    let env = Env::at(at(0));
+    let env = Env::at(
+        at(0),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
-    assert_eq!(q.window.0, at(-6 * 3600));
-    assert_eq!(q.window.1, at(18 * 3600));
+    assert_eq!(q.window.unwrap().0, at(-6 * 3600));
+    assert_eq!(q.window.unwrap().1, at(18 * 3600));
     assert!(q.event_types().contains(&"window.focused".to_string()));
     assert!(
         q.event_types().contains(&"presence.span".to_string()),
         "interruptions are inputs"
     );
-    assert!(
-        q.event_types().contains(&"sleep.started".to_string()),
-        "interruptions are inputs"
+    assert_eq!(
+        q.after.len(),
+        1,
+        "AFK closer is separate from the structural next-state range"
     );
-    assert_eq!(q.after.len(), 3, "next transitions, next sleep, next afk");
-    let q = StateIntervals.inputs(&key("machine.unit"), &env).unwrap();
-    assert_eq!(q.after[0].per, Some("unit"));
+    assert!(matches!(q.range, Some(InputRange::StateTransitions { .. })));
 }
 
 #[devkit::test]
 fn keys_cover_the_rules_a_fence_ends() {
-    let env = Env::at(at(0));
+    let env = Env::at(
+        at(0),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     let view = |e: &Event| {
         StateIntervals.keys_for(
             &KeyView {
@@ -434,14 +284,46 @@ fn keys_cover_the_rules_a_fence_ends() {
             &env,
         )
     };
-    // Sleep ends focus, workspace and presence; a unit event is a transition
-    // for units only.
-    assert_eq!(view(&sleep(0)).len(), 3);
-    assert_eq!(
-        view(&unit("unit.started", 0, "cron.service", "r1")),
-        vec![json!({"state": "machine.unit", "day": "2024-06-15"})]
-    );
     // Going AFK ends focus and workspace, and is itself a presence span.
     let afk = presence(0, 10, "afk");
     assert_eq!(view(&afk).len(), 3);
+}
+
+mod machine;
+
+#[devkit::test]
+fn all_changed_refreshes_before_a_late_closer_remain_exact_parents() {
+    let mut events = vec![focus(0, "window-a", "first")];
+    events.extend(
+        (0..130).map(|index| focus(18 * 3600 + index, "window-a", &format!("refresh-{index}"))),
+    );
+    events.push(focus(3 * 86400, "window-b", "other"));
+    let env = Env::at(
+        at(4 * 86400),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
+    let output = StateIntervals.compute(&key("desktop.focus"), &events, &env);
+    let interval = output
+        .outputs
+        .iter()
+        .find(|event| event.ts_orig.at == Some(at(0)))
+        .unwrap();
+    assert_eq!(interval.payload["ended_at"], json!(at(3 * 86400)));
+    let Origin::Derived { parents } = &interval.origin else {
+        panic!("derived interval")
+    };
+    assert_eq!(parents.len(), 132);
+    for event in &events {
+        assert!(parents.contains(&event.id));
+    }
+}
+#[devkit::test]
+fn desktop_transitions_require_the_same_captured_scope() {
+    let first = focus(0, "window-a", "first");
+    let mut other = focus(10, "window-b", "other");
+    other.payload["scope"] = json!("other-host");
+    let output = lift("desktop.focus", &[first, other]);
+    assert_eq!(output.len(), 2);
+    assert!(output.iter().all(|interval| interval.ended_at.is_none()));
 }

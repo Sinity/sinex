@@ -17,21 +17,32 @@ pub mod diagnostics;
 pub mod excision;
 pub mod live;
 pub mod material_bytes;
+pub mod model_calls;
+pub mod owner_protocol;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;
+pub mod producer_reads;
 pub mod query;
+pub mod read_coverage;
 pub mod read_models;
 pub mod registry;
 pub mod replay;
 pub mod runs;
 pub mod sealed;
+pub mod signals;
+pub mod source_declarations;
 mod stage;
+pub mod telemetry;
+pub mod vectors;
 pub mod writer_lock;
 
-pub use admission::{ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome};
+pub use admission::{
+    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
+    ReadMark, native_key,
+};
 pub use blobs::Blobs;
-pub use hashed_blobs::Verified;
+pub use blobs::Verified;
 /// The connection the store's reads take, for crates that call them without
 /// depending on the database driver.
 pub use sqlx::PgConnection as Connection;
@@ -67,3 +78,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod test_schema;
+
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        Self::Blob(error.into())
+    }
+}

@@ -205,3 +205,24 @@ pub struct ConversationFused {
     pub message_id: Option<String>,
     pub observed_by: Vec<String>,
 }
+
+/// A stretch of sleep or a nap, from the health providers that recorded it
+/// (Sleep as Android, Samsung Health). Rest is exclusive, so two providers'
+/// records that begin close together, or one beginning inside another's
+/// span, are the same rest.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 2,
+    type = "rest.fused",
+    key = ["record"],
+    replace = newer,
+    time = started_at,
+    quality = intrinsic
+)]
+pub struct RestFused {
+    pub record: String,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
+    /// `sleep` or `nap`.
+    pub kind: Option<String>,
+    pub observed_by: Vec<String>,
+}

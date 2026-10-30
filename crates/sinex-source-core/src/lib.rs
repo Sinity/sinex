@@ -43,6 +43,14 @@ impl RecordError {
 
 /// How a framed record's bytes become the parser's input.
 pub trait RecordShape<'a>: Sized {
+    /// Owned shapes can decode from a bounded stream; borrowed shapes retain their parser input.
+    const STREAMING: bool = false;
+    fn decode_reader(_reader: &mut dyn std::io::Read) -> Result<Self, RecordError> {
+        Err(RecordError::new("record shape requires borrowed bytes"))
+    }
+    fn decoded_hash(&self, raw_hash: [u8; 32], _volatile: &[&str]) -> [u8; 32] {
+        raw_hash
+    }
     fn decode(raw: &'a [u8]) -> Result<Self, RecordError>;
 
     /// BLAKE3 of the record as read, without the parser's declared volatile
@@ -61,6 +69,24 @@ impl<'a> RecordShape<'a> for &'a [u8] {
 
 /// A JSON object record: a row from a database, an item from an API.
 impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
+    const STREAMING: bool = true;
+    fn decode_reader(reader: &mut dyn std::io::Read) -> Result<Self, RecordError> {
+        serde_json::from_reader(reader)
+            .map_err(|error| RecordError::new(format!("record is not a JSON object: {error}")))
+    }
+    fn decoded_hash(&self, raw_hash: [u8; 32], volatile: &[&str]) -> [u8; 32] {
+        if volatile.is_empty() {
+            return raw_hash;
+        }
+        let fields: std::collections::BTreeMap<_, _> = self
+            .iter()
+            .filter(|(name, _)| !volatile.contains(&name.as_str()))
+            .collect();
+        let mut hash = blake3::Hasher::new();
+        serde_json::to_writer(&mut hash, &fields).expect("JSON objects serialize");
+        *hash.finalize().as_bytes()
+    }
+
     fn decode(raw: &'a [u8]) -> Result<Self, RecordError> {
         serde_json::from_slice(raw)
             .map_err(|e| RecordError::new(format!("record is not a JSON object: {e}")))
@@ -103,6 +129,23 @@ pub trait Parser: Send + Sync + 'static {
     /// whose payload depends on its file path includes that context too.
     fn record_hash(&self, raw: &[u8], _context: &RecordContext<'_>) -> [u8; 32] {
         <Self::Record<'_> as RecordShape>::hash(raw, Self::VOLATILE)
+    }
+
+    /// Hash an owned streamed record. Parsers with custom record identity override this with the same rule.
+    fn streamed_record_hash(
+        &self,
+        record: &Self::Record<'_>,
+        raw_hash: [u8; 32],
+        _context: &RecordContext<'_>,
+    ) -> [u8; 32] {
+        record.decoded_hash(raw_hash, Self::VOLATILE)
+    }
+
+    /// State after a record could not be read. Parsers tracking continuity
+    /// invalidate that evidence; other parsers retain their carried context.
+    /// This state commits only with the record failure and its cursor.
+    fn failed_record(&self, carry: &Self::Carry) -> Self::Carry {
+        carry.clone()
     }
 
     /// Map one framed record to its events. `context` is the record's

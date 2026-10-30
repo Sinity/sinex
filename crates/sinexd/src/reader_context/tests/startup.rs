@@ -34,6 +34,7 @@ async fn state(conn: &mut PgConnection) -> (Vec<String>, Vec<Value>) {
 }
 
 async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
+    let configuration = sinex_derivations::Configuration::default();
     let url = db.url(None);
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
@@ -42,7 +43,16 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
     let before = state(&mut conn).await;
     let store = tempfile::tempdir().unwrap();
     let error = if derive {
-        match crate::local_runner(&url, "startup-fixture", Some(store.path())).await {
+        match crate::local_runner(
+            &url,
+            "startup-fixture",
+            Some(store.path()),
+            &configuration,
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        )
+        .await
+        {
             Err(error) => Some(error),
             Ok((runner, task)) => {
                 drop(runner);
@@ -51,7 +61,14 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
             }
         }
     } else {
-        match ReaderContext::open(&url, store.path()).await {
+        match ReaderContext::open(
+            &url,
+            store.path(),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        )
+        .await
+        {
             Err(error) => Some(error),
             Ok(ctx) => {
                 ctx.close().await.unwrap();
@@ -86,13 +103,21 @@ async fn derivation_refuses_another_schema_version_without_changing_it(
 
 #[devkit::test]
 async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::TestDatabase) {
+    let configuration = sinex_derivations::Configuration::default();
     let url = db.url(None);
     let mut competing = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
-    let (runner, task) = crate::local_runner(&url, "startup-fixture", None)
-        .await
-        .unwrap();
+    let (runner, task) = crate::local_runner(
+        &url,
+        "startup-fixture",
+        None,
+        &configuration,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(sinex_schema::WRITER_LOCK)
         .fetch_one(&mut competing)
@@ -112,7 +137,14 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
         "the derivation writer must keep its advisory claim"
     );
     let competing = writer::claim(competing).await.unwrap();
-    let startup = crate::local_runner(&url, "startup-fixture", None);
+    let startup = crate::local_runner(
+        &url,
+        "startup-fixture",
+        None,
+        &configuration,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
     tokio::pin!(startup);
     tokio::select! {
         result = &mut startup => {
@@ -134,13 +166,25 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
 async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
     db: devkit::pg::TestDatabase,
 ) {
+    let configuration = sinex_derivations::Configuration::default();
     let url = db.url(None);
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
         .unwrap();
-    conn.execute("DROP SCHEMA sinex_schema,core,audit,raw,registry,derivation,privacy,telemetry,event_types CASCADE").await.unwrap();
+    conn.execute(
+        "DROP SCHEMA sinex_schema,core,audit,raw,registry,derivation,privacy,event_types CASCADE",
+    )
+    .await
+    .unwrap();
     let store = tempfile::tempdir().unwrap();
-    let refused = match ReaderContext::open(&url, store.path()).await {
+    let refused = match ReaderContext::open(
+        &url,
+        store.path(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    {
         Err(_) => true,
         Ok(ctx) => {
             ctx.close().await.unwrap();
@@ -152,9 +196,16 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
         "ordinary startup must not initialize an empty database"
     );
     assert!(
-        crate::local_runner(&url, "startup-fixture", None)
-            .await
-            .is_err()
+        crate::local_runner(
+            &url,
+            "startup-fixture",
+            None,
+            &configuration,
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting")
+        )
+        .await
+        .is_err()
     );
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='sinex_schema')",
@@ -169,6 +220,13 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
             version: sinex_schema::VERSION
         }
     );
-    let ctx = ReaderContext::open(&url, store.path()).await.unwrap();
+    let ctx = ReaderContext::open(
+        &url,
+        store.path(),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     ctx.close().await.unwrap();
 }

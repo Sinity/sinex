@@ -583,7 +583,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#aadab2c13ca70638c8e433274d2d01298e1f0069"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
 dependencies = [
  "blake3",
  "clap",
@@ -601,7 +601,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#aadab2c13ca70638c8e433274d2d01298e1f0069"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -731,6 +731,12 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
 ]
+
+[[package]]
+name = "fastrand"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fiat-crypto"
@@ -1035,13 +1041,14 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#aadab2c13ca70638c8e433274d2d01298e1f0069"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
 dependencies = [
  "blake3",
  "chacha20poly1305",
  "hkdf",
  "libc",
  "sha2 0.10.9",
+ "tempfile",
  "zstd",
 ]
 
@@ -1495,6 +1502,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "linux-raw-sys"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
 name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1894,6 +1907,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "query-language"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+dependencies = [
+ "blake3",
+ "jiff",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2123,6 +2148,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
+]
+
+[[package]]
+name = "rustix"
+version = "1.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
+dependencies = [
+ "bitflags 2.13.2",
+ "errno",
+ "libc",
+ "linux-raw-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2378,6 +2416,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "signals"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+dependencies = [
+ "blake3",
+ "jiff",
+ "query-language",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2418,10 +2469,12 @@ dependencies = [
  "blake3",
  "caseless",
  "jiff",
+ "query-language",
  "schemars",
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "signals",
  "sinex-macros",
  "thiserror 2.0.21",
  "time",
@@ -2434,8 +2487,11 @@ dependencies = [
 name = "sinex-protocol"
 version = "0.1.0"
 dependencies = [
+ "query-language",
+ "schemars",
  "serde",
  "serde_json",
+ "signals",
  "sinex-model",
 ]
 
@@ -2478,10 +2534,12 @@ dependencies = [
  "getrandom 0.3.4",
  "hashed-blobs",
  "jiff",
+ "query-language",
  "regex",
  "sea-query",
  "serde",
  "serde_json",
+ "signals",
  "sinex-model",
  "sinex-schema",
  "sinex-sealing",
@@ -2792,6 +2850,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3205,7 +3276,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

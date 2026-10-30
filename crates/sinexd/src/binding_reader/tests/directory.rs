@@ -26,7 +26,14 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     for (name, bytes) in [("a.md", ""), ("b.md", ""), ("c.md", "gamma")] {
         std::fs::write(root.join(name), bytes).unwrap();
     }
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let name = binding.name.clone();
@@ -38,7 +45,6 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut bindings,
         stop.clone(),
@@ -74,7 +80,6 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &sink,
         &mut bindings,
         stop,

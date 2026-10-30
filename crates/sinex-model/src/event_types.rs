@@ -4,13 +4,17 @@
 use crate::EventPayload;
 
 pub mod account;
+pub mod activity;
+pub mod analysis;
 pub mod browser;
 pub mod capture;
 pub mod code;
 pub mod communication;
+pub mod coverage;
 pub mod derived;
 pub mod desktop;
 pub mod documents;
+pub mod embedding;
 pub mod environment;
 pub mod finance;
 pub mod forecast;
@@ -22,19 +26,25 @@ pub mod input;
 pub mod library;
 pub mod machine;
 pub mod media;
+pub mod model_call;
 pub mod operator;
 pub mod peripheral;
+pub mod portfolio;
 pub mod query;
 pub mod records;
 pub mod router;
 pub mod session;
 pub mod shell;
+pub mod signal;
 pub mod social;
 pub mod system;
 pub mod telemetry;
 pub mod work;
 
-pub use derived::{FigureValue, HealthFigure, MetricFigure, StateInterval};
+pub use activity::{ActivitySession, ActivitySpan, ActivityWindow};
+pub use derived::{
+    ConversationDay, FigureValue, HealthFigure, MetricFigure, StateInterval, TagApplied,
+};
 pub use fused::CommandFused;
 use serde_json::Value;
 pub use shell::{CommandExecuted, CommandImported, ShellSession};
@@ -57,6 +67,8 @@ pub struct RegisteredEventType {
     /// NATS ingress: the payload is decoded into the Rust type first, so the
     /// type's time and removal rules apply exactly as for in-process sources.
     pub build: Build,
+    /// Validate and normalize the payload without minting event metadata or an order.
+    pub normalize: fn(&Value) -> Result<Value, crate::BuildError>,
 }
 
 /// See [`RegisteredEventType::build`].
@@ -79,6 +91,7 @@ const fn info<P: EventPayload>() -> RegisteredEventType {
         declaration: P::declaration,
         json_schema: P::payload_schema,
         build: build_from_json::<P>,
+        normalize: normalize_from_json::<P>,
     }
 }
 
@@ -90,6 +103,18 @@ fn build_from_json<P: EventPayload>(
     record_hash: [u8; 32],
     class: crate::Class,
 ) -> Result<crate::Event, crate::BuildError> {
+    let typed = decode_payload::<P>(payload)?;
+    crate::Event::build(&typed, source, origin, reading_order, record_hash, class)
+}
+fn normalize_from_json<P: EventPayload>(payload: &Value) -> Result<Value, crate::BuildError> {
+    let value = serde_json::to_value(decode_payload::<P>(payload)?)
+        .map_err(|_| crate::BuildError::NotAnObject(P::EVENT_TYPE.into()))?;
+    if !value.is_object() {
+        return Err(crate::BuildError::NotAnObject(P::EVENT_TYPE.into()));
+    }
+    Ok(value)
+}
+fn decode_payload<P: EventPayload>(payload: &Value) -> Result<P, crate::BuildError> {
     use serde::de::IntoDeserializer;
     let typed: P =
         serde_path_to_error::deserialize(payload.clone().into_deserializer()).map_err(|error| {
@@ -115,7 +140,7 @@ fn build_from_json<P: EventPayload>(
             }
             crate::BuildError::Payload(P::EVENT_TYPE.into(), format!("{keyword} at /{pointer}"))
         })?;
-    crate::Event::build(&typed, source, origin, reading_order, record_hash, class)
+    Ok(typed)
 }
 
 /// Bundled metadata is immutable for this executable. Admission compares a
@@ -128,6 +153,22 @@ pub fn declarations() -> &'static [crate::KindDeclaration] {
 
 /// Every bundled payload validator. Outside kinds are stored declarations.
 pub const ALL: &[RegisteredEventType] = &[
+    info::<signal::RuleWritten>(),
+    info::<signal::CheckpointRecorded>(),
+    info::<signal::EvaluationRecorded>(),
+    info::<signal::IntentRecorded>(),
+    info::<signal::EmergencyCompleted>(),
+    info::<signal::DeliveryRecorded>(),
+    info::<signal::HandoffRecorded>(),
+    info::<signal::ReceivedRecorded>(),
+    info::<signal::ReceiptRecorded>(),
+    info::<signal::DesktopReceiptRecorded>(),
+    info::<analysis::AnalysisRequest>(),
+    info::<analysis::AnalysisPanel>(),
+    info::<analysis::RecipeAnswer>(),
+    info::<analysis::Finding>(),
+    info::<coverage::SourceCoverage>(),
+    info::<work::ProjectSpan>(),
     info::<query::Mark>(),
     info::<query::Saved>(),
     info::<documents::DocumentCaptured>(),
@@ -219,6 +260,8 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<telemetry::HardwareState>(),
     // Code and the development tools observed
     info::<code::GitCommit>(),
+    // Sinex's own state
+    info::<telemetry::SinexTelemetry>(),
     info::<code::GitRefUpdated>(),
     info::<code::GithubPullRequest>(),
     info::<code::GithubReview>(),
@@ -234,12 +277,32 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<fused::ClipboardFused>(),
     info::<fused::NotificationFused>(),
     info::<fused::MailFused>(),
+    info::<fused::RestFused>(),
     info::<fused::PostFused>(),
     info::<fused::ConversationFused>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),
     info::<HealthFigure>(),
+    info::<ActivitySpan>(),
+    info::<ActivityWindow>(),
+    info::<ActivitySession>(),
+    info::<activity::InputCoverageInterval>(),
+    info::<portfolio::InputBout>(),
+    info::<portfolio::InputWorkload>(),
+    info::<portfolio::RhythmDeviation>(),
+    info::<portfolio::MarkLink>(),
+    info::<work::WorkAct>(),
+    info::<work::WorkCoverage>(),
+    info::<embedding::SuppliedEmbedding>(),
+    info::<embedding::TextEmbedding>(),
+    info::<work::WorkEpisode>(),
+    info::<work::WorkSuspension>(),
+    info::<work::WorkResumption>(),
+    info::<work::ContextPack>(),
+    info::<work::ActivityDay>(),
+    info::<TagApplied>(),
+    info::<ConversationDay>(),
     // Browsing, listening, reading, notes, communication
     info::<browser::BrowserVisit>(),
     info::<browser::BrowserUrl>(),
@@ -277,7 +340,12 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<operator::LogEntry>(),
     info::<operator::SteeringRow>(),
     // Library
+    info::<model_call::ModelPolicy>(),
+    info::<model_call::ModelRequest>(),
+    info::<model_call::RecordedResponse>(),
+    info::<model_call::ModelReceipt>(),
     info::<library::FileCopy>(),
+    info::<library::DocumentText>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
     info::<library::Preview>(),
@@ -294,6 +362,11 @@ pub const ALL: &[RegisteredEventType] = &[
 /// read from the database and needs the static one.
 pub fn find(event_type: &str) -> Option<&'static RegisteredEventType> {
     ALL.iter().find(|k| k.event_type == event_type)
+}
+
+/// Whether an event records Sinex's own sampled state.
+pub fn is_telemetry(event_type: &str) -> bool {
+    telemetry::TYPES.contains(&event_type)
 }
 
 #[cfg(test)]

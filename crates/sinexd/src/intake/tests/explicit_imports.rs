@@ -2,7 +2,7 @@
 use serde_json::Value;
 
 async fn live(conn: &mut sqlx::PgConnection) -> Vec<(String, String, Value)> {
-    sqlx::query_as("SELECT e.event_type, e.class::text, e.payload FROM (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id ORDER BY e.event_type,e.payload::text")
+    sqlx::query_as("SELECT e.event_type, e.class::text, e.payload FROM (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id WHERE e.event_type IN ('transaction.posted','journal.directive','command.imported') ORDER BY e.event_type,e.payload::text")
         .fetch_all(conn).await.unwrap()
 }
 
@@ -30,6 +30,8 @@ async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
             format!("text-history={}", history.display()),
         ],
         zone: Some("Europe/Warsaw".into()),
+        time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
         options: vec![],
         host: "example-host".into(),
         json: true,
@@ -39,11 +41,25 @@ async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
     crate::backfill::run(options()).await.unwrap();
     std::fs::remove_file(&journal).unwrap();
     std::fs::remove_file(&history).unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), &store)
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let before = live(&mut ctx.read_conn).await;
     assert_eq!(before.len(), 6);
+    let coverage: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='source.coverage'")
+            .fetch_one(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        coverage, 4,
+        "both source reads retain an observation on each import attempt"
+    );
     assert!(before.iter().all(|(_, class, _)| class == "guarded"));
     let transactions = before
         .iter()
@@ -106,15 +122,22 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
         store: store.clone(),
         reads: vec![format!("hledger={}", parent.display())],
         zone: Some("Europe/Warsaw".into()),
+        time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
         options: vec![],
         host: "example-host".into(),
         json: true,
         identity_file: None,
     };
     crate::backfill::run(options()).await.unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), &store)
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let transactions: Vec<Value> = sqlx::query_scalar("SELECT payload FROM core.events WHERE event_type='transaction.posted' ORDER BY payload::text").fetch_all(&mut ctx.read_conn).await.unwrap();
     assert_eq!(transactions.len(), 2);
     assert!(
@@ -149,9 +172,14 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     crate::backfill::run(options()).await.unwrap();
     std::fs::remove_file(&child).unwrap();
     std::fs::remove_file(&parent).unwrap();
-    let mut ctx = crate::reader_context::ReaderContext::open(&db.url(None), &store)
-        .await
-        .unwrap();
+    let mut ctx = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        &store,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let changed: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='transaction.posted' AND payload->>'resolved_date'='2032-03-01'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(changed, 2);
     let inherited: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='transaction.posted' AND payload->>'resolved_date'='2036-03-01'")

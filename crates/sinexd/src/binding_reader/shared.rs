@@ -2,6 +2,7 @@
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
 use super::{BindingReader, Reading};
+mod acquisition;
 use crate::backfill::Totals;
 use crate::material_access::Access;
 use crate::writer::WriterHandle;
@@ -65,7 +66,7 @@ pub(super) async fn read_shared(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
-    run: RunId,
+    runs: &[Result<RunId, String>],
     readers: &mut [BindingReader],
     pass: &SharedFileRead,
     mut stop: watch::Receiver<bool>,
@@ -111,6 +112,26 @@ pub(super) async fn read_shared(
     }
     let Reading::Shared(shared) = &readers[pass.indices[slots[0]]].reading else {
         unreachable!("only bindings read in a shared pass are grouped")
+    };
+    let native = shared.acquisition().cloned();
+    let acquisition_material = match native {
+        Some(native) => Some(
+            acquisition::retain(
+                conn,
+                blobs,
+                writer,
+                *runs[pass.indices[slots[0]]]
+                    .as_ref()
+                    .map_err(Clone::clone)?,
+                &readers[pass.indices[slots[0]]],
+                pass.class,
+                access,
+                native,
+                totals[slots[0]].as_mut().map_err(|error| error.clone())?,
+            )
+            .await?,
+        ),
+        None => None,
     };
     let path = shared.path().to_owned();
     let facts = pass.facts.clone();
@@ -195,6 +216,14 @@ pub(super) async fn read_shared(
         let b = &mut readers[index];
         let result = async {
             let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
+            if let (Some(native), Some(material)) =
+                (acquisition_material, acquired.material.as_mut())
+            {
+                material
+                    .manifest
+                    .details
+                    .insert("acquisition_material".into(), serde_json::json!(native));
+            }
             material.check()?;
             let (cursor, carry) = positions::load(conn, &b.binding.name)
                 .await
@@ -207,8 +236,9 @@ pub(super) async fn read_shared(
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
             let checked_stop = stop.clone();
             crate::intake::Intake {
+                host: Some(&b.binding.settings.host),
                 writer,
-                run,
+                run: *runs[pass.indices[slot]].as_ref().map_err(Clone::clone)?,
                 source: b.source.clone(),
                 binding: &b.binding.name,
                 material: material.clone(),

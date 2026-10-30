@@ -273,6 +273,8 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
     let source = || Batch {
         run: RunId::new(),
         kind: BatchKind::Source(Box::new(sinex_model::SourceProgress {
+            source: None,
+            host: None,
             binding: "synthetic".into(),
             data_keys: Vec::new(),
             input: sinex_model::InputRef {
@@ -322,6 +324,8 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     let blob = blobs.put(bytes).unwrap();
     let material = MaterialId::new();
     let progress = SourceProgress {
+        source: None,
+        host: None,
         binding: "synthetic-refusal".into(),
         data_keys: vec![],
         input: InputRef {
@@ -615,7 +619,25 @@ async fn reconnect_reclaims_and_reloads_privacy(db: devkit::pg::TestDatabase) {
         .fetch_one(&mut changes)
         .await
         .unwrap();
-    assert_eq!(class, "guarded");
+    assert_eq!(class, "open", "source originals retain their offered class");
+    let projected: String = sqlx::query_scalar("SELECT class FROM privacy.event_outputs WHERE event_id=$1 AND epoch=(SELECT desired_epoch FROM privacy.policy_state WHERE id)")
+        .bind(outcome.admitted_ids[0].0).fetch_one(&mut changes).await.unwrap();
+    assert_eq!(
+        projected, "guarded",
+        "reconnected writer loads the current source floor"
+    );
+    sinex_store::privacy::projection::ensure_current(&mut changes)
+        .await
+        .unwrap();
+    sinex_store::query::set_grants(&mut changes, "guarded")
+        .await
+        .unwrap();
+    let visible: String = sqlx::query_scalar("SELECT class FROM core.visible_events WHERE id=$1")
+        .bind(outcome.admitted_ids[0].0)
+        .fetch_one(&mut changes)
+        .await
+        .unwrap();
+    assert_eq!(visible, "guarded");
     assert!(outcome.timings.contains_key("queue"));
     assert!(outcome.timings.contains_key("commit"));
     drop(handle);

@@ -14,6 +14,7 @@ sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
     pub enum LakeEvent {
         Observation(LakeObservation),
+        Gap(sinex_model::event_types::capture::Gap),
         Link(LinkFollowed),
         Reading(ReadingStackChanged),
         Display(DisplaySampled),

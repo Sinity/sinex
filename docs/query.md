@@ -42,6 +42,13 @@ through its registered bindings. The field list will be rendered into
 | `queries` | one saved query definition |
 | `result:<id>` | a kept result, read as a relation |
 
+Archived visibility is a relation and read-context choice: `events` excludes
+readings archived at the selected position; `archive` exposes archive history.
+`as of POSITION` selects historical visibility at that exact commit. It does
+not make every archived reading part of ordinary `events`, and current privacy
+and tombstone policy still applies. There is no separate `archived` table name
+or global include-archived switch.
+
 ```sh
 sinexctl 'gaps where binding = desktop.clipboard sort from'
 sinexctl 'shapes where source = health.samsung'
@@ -56,6 +63,10 @@ Aliases are payload projections over registered, produced event types: `commands
 [higher-layer](higher-layer.md) kind once its producer exists. An alias exists only with
 its producer, so an alias never answers from nothing. Every duration projection states
 its unit. `kinds [KIND]` lists which aliases expand to which event types.
+
+### Supplied-vector ranking
+
+Use `similar:sinex:ev/<embedding-id>` with a stored `text.embedding` reference. It ranks the filtered event relation in that exact vector space and retains rows without a vector at unknown rank. It is a positive ranking directive in the root AND conditions; OR, NOT and conflicting references are explicit refusals. The reference obeys grants and the selected read position. This supplied-vector path enables no model provider.
 
 ### Typed payload fields
 
@@ -72,9 +83,16 @@ sinexctl 'events where event_type = command.executed sum(payload.duration_ns)'
   the query.
 - `sum` and `avg` need numbers; `min` and `max` need ordered scalar values. Numeric
   payload fields sort numerically.
-- Text, boolean, numeric and timestamp comparisons keep their declared types. A
-  comparison on a text list matches any member; `!=` excludes every matching member.
+- Text, boolean, numeric and timestamp comparisons keep their declared types. Quoting
+  changes token boundaries, not value types: text such as `001` retains its spelling.
+  Numeric literals retain exact decimal spelling through SQL binding.
+  Grouped columns and expanded saved queries retain the shared binder's output types.
+  A comparison on a text list matches any member; `!=` excludes every matching member.
   An empty list has no matching member.
+- `source` and `event_type` accept `*` identifier patterns with either quoted or unquoted
+  spelling. Payload equality treats `*` literally; `~` and `^` take literal operands.
+  A dynamic JSON field keeps the original scalar until execution knows the current
+  projected value's type; incompatible and absent values stay unknown.
 - An unknown value stays unknown (null), and an unknown list stays unknown.
 - Completion offers field names with their types at each position.
 
@@ -140,6 +158,15 @@ sinexctl 'commands where when in last 7d group by day(when), cwd count fill wher
 - Sequences (`seq`), `exists` subqueries, attached child relations and `distinct` over
   declared identity behave as the shared crate's laws state.
 
+SQL date functions use intervals produced by the same shared `DaySetting` as
+recall and stored day products. The trusted compiler prepares calendar boundaries
+in an operation-local temporary relation under the input snapshot, streaming
+unbounded operands in batches. Grouped time fields are prepared from their
+preceding relation. Boundaries retain nanoseconds, including seconds in the day
+start; folds use the first shared boundary and gaps use the shared transition.
+The temporary relation holds calendar boundaries and is cleared before the next
+outer read snapshot. `hour()` continues to name the local clock hour.
+
 ## Read context, paging and budgets
 
 - **An answer resolves once:** `now`, the zone, the day start, the query text and its
@@ -150,6 +177,15 @@ sinexctl 'commands where when in last 7d group by day(when), cwd count fill wher
 - Continuations are sealed to the question and the caller-visible context. A changed
   definition, grant or incompatible change refuses with `stale_cursor` and says how to
   restart. Totals count rows after semantic stages.
+- SQL continuations seek after the last row's typed sort values and stable identity;
+  grouped results retain their complete group identity even when fields hide a key.
+  The seal key belongs to the database and is unavailable through public read-only SQL.
+  Paging Open records works while sealed payload classes are locked.
+- Event continuations retain their selected commit position, declarations and current
+  privacy/excision versions. Mutable metadata also carries an atomic metadata epoch;
+  a run finishing invalidates its old metadata view without scanning prior result rows.
+  Stored recall continuations cite one immutable pack and a row coordinate in that pack.
+
 - **Four budgets stay apart:**
 
 | Budget | Belongs to | Changes the answer |
@@ -306,3 +342,6 @@ that route ([cross-system queries](https://github.com/Sinity/polylogue/blob/mast
   that context or is refused; it is never silently run at the outer context.
 - **sql-under-output-rules**: `sql` returns the same rule effects as every other surface
   and cannot read a withheld field or key.
+
+
+A scalar's quotes preserve its spelling, not a second comparison mode. Source and event-type identifier patterns use their declared wildcard semantics with either spelling; payload equality compares literal values, including a literal `*`. Contains and prefix operators take literal text. Declared scalar types govern conversion. A schemaless JSON field instead uses the scalar type of each current projected value: numeric rows compare numerically, strings preserve exact spelling such as `001`, and boolean equality uses canonical `true` or `false`. Missing, non-scalar or incompatible values produce unknown truth, including beneath `NOT`; no comparison reads the private original in place of a current projection.

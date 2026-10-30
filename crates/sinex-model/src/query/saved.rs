@@ -1,6 +1,6 @@
-//! Saved queries bind scalar parameters as tokens before the ordinary type check.
-use super::lex::{Kind, Token, tokens};
+//! Saved definitions expand scalar nodes of the shared syntax tree.
 use super::*;
+use query_language::ast as syntax;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -67,91 +67,88 @@ pub fn parameter(text: &str) -> Result<Parameter, QueryError> {
     })
 }
 
-fn check_value(token: &Token, ty: ParameterType) -> Result<(), QueryError> {
-    let value = &token.text;
+fn check_value(value: &syntax::Value, ty: ParameterType) -> Result<(), QueryError> {
+    if matches!(value, syntax::Value::Parameter { .. }) {
+        return Ok(());
+    }
+    let raw = value
+        .text()
+        .ok_or_else(|| QueryError::new("parameter needs one scalar value"))?;
     let valid = match ty {
         ParameterType::Text => true,
-        ParameterType::Integer => value.parse::<i64>().is_ok(),
-        ParameterType::Number => value.parse::<f64>().is_ok_and(f64::is_finite),
-        ParameterType::Bool => matches!(value.as_str(), "true" | "false"),
-        ParameterType::Time => value.parse::<jiff::Timestamp>().is_ok(),
-        ParameterType::Duration => time::duration(value).is_some(),
+        ParameterType::Integer => query_language::number::is_integer(raw),
+        ParameterType::Number => query_language::number::is_decimal(raw),
+        ParameterType::Bool => matches!(raw, "true" | "false"),
+        ParameterType::Time => raw.parse::<jiff::Timestamp>().is_ok(),
+        ParameterType::Duration => time::duration(raw).is_some(),
     };
     if valid {
         Ok(())
     } else {
-        Err(QueryError::at(
-            token.at,
-            format!("parameter must be {}", format!("{ty:?}").to_lowercase()),
-        ))
+        Err(QueryError::new(format!("parameter must be {ty:?}")))
     }
 }
-
+fn sample(p: &Parameter) -> syntax::Value {
+    match p.field_type {
+        ParameterType::Text => syntax::Value::Parameter {
+            name: p.name.clone(),
+        },
+        ParameterType::Integer | ParameterType::Number => syntax::Value::scalar("1"),
+        ParameterType::Bool => syntax::Value::scalar("true"),
+        ParameterType::Time => syntax::Value::scalar("2000-01-01T00:00:00Z"),
+        ParameterType::Duration => syntax::Value::scalar("1h"),
+    }
+}
 impl SavedQuery {
     pub fn validate(&self, ctx: &Context) -> Result<(), QueryError> {
         self.validate_with(ctx, &BTreeMap::new())
     }
-
-    /// Validate the expanded question with typed values before it is stored.
     pub fn validate_with(
         &self,
         ctx: &Context,
         definitions: &BTreeMap<String, SavedQuery>,
     ) -> Result<(), QueryError> {
-        let input = self.validation_tokens()?;
-        expand(input, ctx, definitions, self.query.len(), true).map(|_| ())
+        let input = self.validation_ast(ctx)?;
+        let input = expand(
+            input,
+            ctx,
+            definitions,
+            &mut BTreeSet::new(),
+            &mut false,
+            true,
+        )?;
+        super::parse::validate_syntax(input, ctx).map(|_| ())
     }
-
-    /// Check declarations and scalar parameter positions without reading other definitions.
     pub fn validate_parameters(&self) -> Result<(), QueryError> {
-        self.validation_tokens().map(|_| ())
+        // Syntax validation has no time interpretation. A context supplies only
+        // the same bundled field catalog used by public query discovery.
+        let ctx = Context::utc(jiff::Timestamp::UNIX_EPOCH);
+        self.validation_ast(&ctx).map(|_| ())
     }
-
-    fn validation_tokens(&self) -> Result<Vec<Token>, QueryError> {
+    fn validation_ast(&self, ctx: &Context) -> Result<syntax::Query, QueryError> {
         if !valid_name(&self.name) {
             return Err(QueryError::new(
                 "saved query name uses letters, numbers, _ or -",
             ));
         }
-        let mut names = BTreeSet::new();
-        let mut arguments = BTreeMap::new();
+        let mut args = BTreeMap::new();
         for p in &self.parameters {
-            if !valid_name(&p.name) || !names.insert(&p.name) {
+            if !valid_name(&p.name) || args.insert(p.name.clone(), sample(p)).is_some() {
                 return Err(QueryError::new(
                     "parameter names must be valid and distinct",
                 ));
             }
-            let text = match p.field_type {
-                ParameterType::Text => "/synthetic",
-                ParameterType::Integer | ParameterType::Number => "1",
-                ParameterType::Bool => "true",
-                ParameterType::Time => "0001-01-01T00:00:00Z",
-                ParameterType::Duration => "1h",
-            };
-            arguments.insert(
-                p.name.clone(),
-                Token {
-                    kind: if p.field_type == ParameterType::Text {
-                        Kind::Quoted
-                    } else {
-                        Kind::Word
-                    },
-                    text: text.into(),
-                    at: 0,
-                    placeholder: true,
-                },
-            );
         }
-        substitute(self, &arguments, true)
+        substitute(self, &args, ctx, true)
     }
 }
-
 fn substitute(
     saved: &SavedQuery,
-    arguments: &BTreeMap<String, Token>,
+    args: &BTreeMap<String, syntax::Value>,
+    ctx: &Context,
     validating: bool,
-) -> Result<Vec<Token>, QueryError> {
-    for name in arguments.keys() {
+) -> Result<syntax::Query, QueryError> {
+    for name in args.keys() {
         if !saved.parameters.iter().any(|p| p.name == *name) {
             return Err(QueryError::new(format!(
                 "query:{} has no parameter {name}",
@@ -159,173 +156,163 @@ fn substitute(
             )));
         }
     }
+    let mut arguments = BTreeMap::new();
     for p in &saved.parameters {
-        let token = arguments.get(&p.name).ok_or_else(|| {
+        let value = args.get(&p.name).ok_or_else(|| {
             QueryError::new(format!("query:{} needs parameter {}", saved.name, p.name))
         })?;
-        check_value(token, p.field_type)?;
+        check_value(value, p.field_type)?;
+        let mut value = value.clone();
+        if let syntax::Value::Scalar { quoted, .. } = &mut value {
+            *quoted = p.field_type == ParameterType::Text;
+        }
+        arguments.insert(p.name.clone(), value);
     }
-    let mut input = tokens(&saved.query)?;
+    let parsed = super::syntax::parse(&saved.query, ctx)?;
+    let mut wire = serde_json::to_value(parsed).map_err(|e| QueryError::new(e.to_string()))?;
     let mut used = BTreeSet::new();
-    let mut list_depth = 0_usize;
-    for i in 0..input.len() {
-        if input[i].is_symbol("[") {
-            list_depth += 1;
-        }
-        if input[i].is_symbol("]") {
-            list_depth = list_depth.saturating_sub(1);
-        }
-        if input[i].kind != Kind::Word {
-            continue;
-        }
-        if let Some(name) = input[i].text.strip_prefix('$') {
-            let name = name.to_owned();
-            if i == 2 && input[0].is_word("query") && input[1].is_symbol(":") {
-                return Err(QueryError::at(
-                    input[i].at,
-                    "parameters stand only in scalar value positions",
-                ));
-            }
-            let preceding = i.checked_sub(1).and_then(|j| input.get(j));
-            if !preceding.is_some_and(|t| {
-                ["=", "!=", "<", "<=", ">", ">=", "~", "^", ":", "["]
-                    .iter()
-                    .any(|s| t.is_symbol(s))
-                    || (list_depth > 0 && t.is_symbol(","))
-                    || [
-                        "since", "until", "within", "limit", "of", "seq", "recall", "overlaps",
-                        "..",
-                    ]
-                    .iter()
-                    .any(|s| t.is_word(s))
-            }) {
-                return Err(QueryError::at(
-                    input[i].at,
-                    "parameters stand only in scalar value positions",
-                ));
-            }
-            let mut value = arguments
-                .get(&name)
-                .ok_or_else(|| QueryError::new(format!("undeclared parameter {name}")))?
-                .clone();
-            value.at = input[i].at;
-            let field_type = saved
-                .parameters
-                .iter()
-                .find(|p| p.name == name)
-                .expect("declared parameter")
-                .field_type;
-            value.kind = if field_type == ParameterType::Text {
-                Kind::Quoted
-            } else {
-                Kind::Word
-            };
-            if validating && value.placeholder && field_type == ParameterType::Time {
-                value.text = if preceding.is_some_and(|t| {
-                    t.is_word("until") || t.is_word("..") || t.is_symbol("<") || t.is_symbol("<=")
-                }) {
-                    "9999-12-30T00:00:00Z"
-                } else {
-                    "0001-01-01T00:00:00Z"
-                }
-                .into();
-            }
-            input[i] = value;
-            used.insert(name);
-        }
-    }
+    replace_parameters(&mut wire, &arguments, &mut used, validating, false)?;
     for p in &saved.parameters {
         if !used.contains(&p.name) {
             return Err(QueryError::new(format!("parameter {} is unused", p.name)));
         }
     }
-    Ok(input)
+    serde_json::from_value(wire).map_err(|e| QueryError::new(e.to_string()))
 }
-
-/// The named query at the start of this text, using the ordinary lexer.
+fn replace_parameters(
+    value: &mut serde_json::Value,
+    args: &BTreeMap<String, syntax::Value>,
+    used: &mut BTreeSet<String>,
+    validating: bool,
+    upper: bool,
+) -> Result<(), QueryError> {
+    if value.get("kind").and_then(serde_json::Value::as_str) == Some("parameter") {
+        let name = value["name"]
+            .as_str()
+            .ok_or_else(|| QueryError::new("invalid scalar parameter"))?
+            .to_owned();
+        let replacement = args
+            .get(&name)
+            .ok_or_else(|| QueryError::new(format!("undeclared parameter {name}")))?;
+        used.insert(name);
+        let mut replacement = replacement.clone();
+        if validating
+            && upper
+            && matches!(&replacement,syntax::Value::Scalar{text,..} if text=="2000-01-01T00:00:00Z")
+        {
+            replacement = syntax::Value::scalar("2000-01-02T00:00:00Z");
+        }
+        *value = serde_json::to_value(replacement).map_err(|e| QueryError::new(e.to_string()))?;
+        return Ok(());
+    }
+    match value {
+        serde_json::Value::Array(values) => {
+            for v in values {
+                replace_parameters(v, args, used, validating, upper)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            let upper = upper
+                || matches!(
+                    fields.get("op").and_then(serde_json::Value::as_str),
+                    Some("lt" | "le")
+                );
+            for (name, v) in fields {
+                replace_parameters(v, args, used, validating, upper || name == "to")?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
 pub fn reference_name(text: &str) -> Option<String> {
-    let input = tokens(text).ok()?;
-    if input.first().is_some_and(|t| t.is_word("query"))
-        && input.get(1).is_some_and(|t| t.is_symbol(":"))
-    {
-        input.get(2).map(|t| t.text.clone())
-    } else {
-        None
+    let ctx = Context::utc(jiff::Timestamp::UNIX_EPOCH);
+    match super::syntax::parse(text, &ctx).ok()?.source {
+        syntax::Source::Saved { name, .. } => Some(name),
+        _ => None,
     }
 }
-
-/// `query:name(root="/src/tide", days=7d)` reads a saved question. Later
-/// clauses operate on its result, including grouped result columns.
 pub fn bind_saved(
     text: &str,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
 ) -> Result<Query, QueryError> {
-    expand(tokens(text)?, ctx, saved, text.len(), false)
+    let input = super::syntax::parse(text, ctx)?;
+    let mut expanded_definition = false;
+    let result = expand(
+        input,
+        ctx,
+        saved,
+        &mut BTreeSet::new(),
+        &mut expanded_definition,
+        false,
+    )
+    .and_then(|expanded| super::parse::bind_syntax(expanded, ctx));
+    result.map_err(|mut error| {
+        // Definition spans belong to the stored question, not its invocation.
+        if expanded_definition {
+            error.at = None;
+        }
+        error
+    })
 }
-
 fn expand(
-    mut input: Vec<Token>,
+    mut input: syntax::Query,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
-    end: usize,
+    seen: &mut BTreeSet<String>,
+    expanded_definition: &mut bool,
     validating: bool,
-) -> Result<Query, QueryError> {
-    let mut seen = BTreeSet::new();
-    while input.first().is_some_and(|t| t.is_word("query"))
-        && input.get(1).is_some_and(|t| t.is_symbol(":"))
+) -> Result<syntax::Query, QueryError> {
+    if let syntax::Source::Saved {
+        name,
+        arguments,
+        condition,
+        ..
+    } = input.source.clone()
     {
-        let name = input
-            .get(2)
-            .ok_or_else(|| QueryError::new("query: needs a saved query name"))?
-            .text
-            .clone();
+        *expanded_definition = true;
         if !seen.insert(name.clone()) {
             return Err(QueryError::new(format!("saved query cycle at {name}")));
         }
         let definition = saved
             .get(&name)
             .ok_or_else(|| QueryError::new(format!("no saved query named {name}")))?;
-        let mut at = 3;
-        let mut arguments = BTreeMap::new();
-        if input.get(at).is_some_and(|t| t.is_symbol("(")) {
-            at += 1;
-            while !input.get(at).is_some_and(|t| t.is_symbol(")")) {
-                let name = input
-                    .get(at)
-                    .filter(|t| t.kind == Kind::Word)
-                    .ok_or_else(|| QueryError::new("expected parameter name"))?
-                    .text
-                    .clone();
-                if !input.get(at + 1).is_some_and(|t| t.is_symbol("=")) {
-                    return Err(QueryError::new("parameter argument: name=value"));
-                }
-                let value = input
-                    .get(at + 2)
-                    .filter(|t| t.kind != Kind::Symbol)
-                    .ok_or_else(|| QueryError::new("parameter needs one scalar value"))?
-                    .clone();
-                if arguments.insert(name.clone(), value).is_some() {
-                    return Err(QueryError::new(format!("parameter {name} was given twice")));
-                }
-                at += 3;
-                if input.get(at).is_some_and(|t| t.is_symbol(",")) {
-                    at += 1;
-                } else if !input.get(at).is_some_and(|t| t.is_symbol(")")) {
-                    return Err(QueryError::new("expected , or ) after parameter"));
-                }
+        let mut args = BTreeMap::new();
+        for a in &arguments {
+            if args.insert(a.parameter.clone(), a.value.clone()).is_some() {
+                return Err(QueryError::new(format!(
+                    "parameter {} was given twice",
+                    a.parameter
+                )));
             }
-            at += 1;
         }
-        let mut bound = substitute(definition, &arguments, validating)?;
-        bound.extend(input.into_iter().skip(at));
-        input = bound;
+        let mut expanded = substitute(definition, &args, ctx, validating)?;
+        if let Some(condition) = condition {
+            expanded.stages.push(syntax::Stage {
+                span: condition.span,
+                kind: syntax::StageKind::Where { condition },
+            });
+        }
+        expanded.stages.append(&mut input.stages);
+        expanded.attach.append(&mut input.attach);
+        let out = expand(expanded, ctx, saved, seen, expanded_definition, validating);
+        seen.remove(&name);
+        return out;
     }
-    super::parse::bind_tokens(input, ctx, end).map_err(|mut error| {
-        // Expanded tokens name positions in several texts, not the invocation.
-        if !seen.is_empty() {
-            error.at = None;
+    for stage in &mut input.stages {
+        if let syntax::StageKind::Temporal { query, .. }
+        | syntax::StageKind::Combine { query, .. } = &mut stage.kind
+        {
+            **query = expand(
+                (**query).clone(),
+                ctx,
+                saved,
+                seen,
+                expanded_definition,
+                validating,
+            )?;
         }
-        error
-    })
+    }
+    Ok(input)
 }

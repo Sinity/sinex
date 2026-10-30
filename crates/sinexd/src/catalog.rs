@@ -3,21 +3,51 @@
 //! `nix/catalog.json`, so adding a source to the registry adds its option; a
 //! test keeps the file current.
 use serde_json::{Value, json};
+use sinex_derivations::AnyPerEvent;
+use sqlx::{Connection, PgConnection};
+
+/// Install only the build's trusted native catalog while the owner holds the
+/// writer claim. Request payloads cannot register their own source authority.
+pub(crate) async fn install_native_sources(conn: &mut PgConnection) -> Result<(), String> {
+    let mut tx = conn
+        .begin()
+        .await
+        .map_err(|error| format!("starting source catalog install: {error}"))?;
+    sinex_store::registry::write_sources(&mut tx, &registry_sources())
+        .await
+        .map_err(|error| format!("writing the source registry: {error}"))?;
+    sinex_store::source_declarations::register(&mut tx, &source_declarations())
+        .await
+        .map_err(|error| format!("registering native sources: {error}"))?;
+    tx.commit()
+        .await
+        .map_err(|error| format!("committing source catalog: {error}"))
+}
 
 pub(crate) fn catalog() -> Value {
     let sources: Vec<Value> = sources().into_iter().map(|s| s.to_json()).collect();
-    let keyed = sinex_derivations::keyed().into_iter().map(|d| {
+    let keyed = crate::analysis::keyed().into_iter().map(|d| {
         json!({
             "name": d.name(),
+            "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "keyed",
+            "history": d.history_policy(),
             "inputs": d.inputs_types(),
             "outputs": d.output_types(),
         })
     });
-    let per_event = sinex_derivations::per_event().into_iter().map(|d| {
+    let mut per_event = sinex_derivations::per_event();
+    per_event.push(
+        Box::new(crate::document_text::DocumentText { pdf_reader: None }) as Box<dyn AnyPerEvent>,
+    );
+    per_event
+        .push(Box::new(crate::screen_text::ScreenText { engine: None }) as Box<dyn AnyPerEvent>);
+    let per_event = per_event.into_iter().map(|d| {
         json!({
             "name": d.name(),
+            "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "per-event",
+            "history": d.history_policy(),
             "inputs": d.inputs_types(),
             "outputs": d.output_types(),
         })
@@ -136,3 +166,46 @@ pub(crate) fn render() -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// Every actual native declaration version, without collapsing older formats
+/// into the newest parser selected by the current-source projection.
+pub(crate) fn source_declarations() -> Vec<sinex_model::SourceDeclaration> {
+    let kinds = sinex_model::event_types::declarations();
+    let mut declarations: std::collections::BTreeMap<
+        (String, u32),
+        sinex_model::SourceDeclaration,
+    > = std::collections::BTreeMap::new();
+    for format in sinex_sources::sources::formats() {
+        for spec in (format.specs)() {
+            let declaration = declarations
+                .entry((spec.name.into(), spec.parser_version))
+                .or_insert_with(|| sinex_model::SourceDeclaration {
+                    source: sinex_model::SourceRef {
+                        name: spec.name.into(),
+                        version: spec.parser_version,
+                    },
+                    family: "sinex".into(),
+                    kinds: Vec::new(),
+                });
+            for emitted in spec.event_types {
+                let kind = kinds
+                    .iter()
+                    .find(|kind| kind.kind.name == *emitted)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "native source {} emits unregistered kind {}",
+                            spec.name, emitted
+                        )
+                    });
+                if !declaration
+                    .kinds
+                    .iter()
+                    .any(|known| known.kind == kind.kind)
+                {
+                    declaration.kinds.push(kind.clone());
+                }
+            }
+        }
+    }
+    declarations.into_values().collect()
+}

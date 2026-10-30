@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sinex_model::kinds::{KeyRule, Normalization, RemovedRule, TimeRule};
 use sinex_model::{DbCheck, KindDeclaration, KindRef};
 use sqlx::PgConnection;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Debug)]
@@ -31,10 +31,13 @@ pub async fn load(
     if refs.is_empty() {
         return Ok(BTreeMap::new());
     }
+    // A caller may name the same kind once per event. SQL joins and immutable
+    // definition validation operate on exact kind identities, once each.
+    let refs = refs.iter().collect::<BTreeSet<_>>();
     let names: Vec<_> = refs.iter().map(|r| r.name.clone()).collect();
     let versions: Vec<_> = refs
         .iter()
-        .map(KindRef::database_version)
+        .map(|reference| reference.database_version())
         .collect::<Result<_, _>>()
         .map_err(invalid)?;
     let rows: Vec<Value> = sqlx::query_scalar(
@@ -271,7 +274,7 @@ pub async fn upgrade_historical(conn: &mut PgConnection, owners: &Owners) -> Res
     if !exists {
         return Ok(());
     }
-    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM registry.unversioned_event_types UNION SELECT event_type FROM core.events UNION SELECT event_type FROM telemetry.events").fetch_all(&mut *conn).await?;
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM registry.unversioned_event_types UNION SELECT event_type FROM core.events").fetch_all(&mut *conn).await?;
     let mut grouped: BTreeMap<String, Vec<KindDeclaration>> = BTreeMap::new();
     for name in names {
         let mut d = KindDeclaration::historical(name);
@@ -372,6 +375,14 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
             return Err("time rule needs fields and quality".into());
         }
         fields.extend(times.iter().map(String::as_str));
+    }
+    if let Some(TimeRule::InstantEvidence {
+        field,
+        evidence_field,
+    }) = &d.time_rule
+    {
+        fields.push(field);
+        fields.push(evidence_field);
     }
     if let Some(RemovedRule::WhenPresent { field }) = &d.removed_rule {
         fields.push(field);
@@ -513,3 +524,6 @@ pub async fn require_bundled(conn: &mut PgConnection) -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+pub(crate) mod version_tests;

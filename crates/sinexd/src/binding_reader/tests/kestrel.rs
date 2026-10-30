@@ -24,7 +24,6 @@ async fn ingest(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &Sink(ctx.blobs.clone()),
         readers,
         stop,
@@ -77,9 +76,14 @@ async fn replay(ctx: &mut ReaderContext) -> crate::replay::Report {
 #[devkit::test]
 async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let shell = dir.path().join("atuin.db");
     let history = dir.path().join("zsh_history");
     let books = dir.path().join("goodreads.csv");
@@ -128,19 +132,19 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
     );
     let failed = ask(
         &mut ctx,
-        "events where event_type = command.executed and payload.exit_code = 101",
+        "events where event_type = command.executed AND payload.exit_code = 101",
     )
     .await;
     assert_eq!(failed.total, 1);
     let deleted = ask(
         &mut ctx,
-        "events where event_type = command.executed and state = removed and payload.command = \"rm notes-old.txt\"",
+        "events where event_type = command.executed AND state = removed AND payload.command = \"rm notes-old.txt\"",
     )
     .await;
     assert_eq!(deleted.total, 1);
     let present = ask(
         &mut ctx,
-        "events where event_type = command.executed and state = present and payload.command = \"rm notes-old.txt\"",
+        "events where event_type = command.executed AND state = present AND payload.command = \"rm notes-old.txt\"",
     ).await;
     assert_eq!(present.total, 0);
     let books_before = ask(&mut ctx, "events where event_type = book.status sort when").await;
@@ -190,7 +194,7 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
     );
     let archived = ask(
         &mut ctx,
-        "archive where event_type = command.imported and reason = replay",
+        "archive where event_type = command.imported AND reason = replay",
     )
     .await;
     assert_eq!(archived.total, 5);
@@ -232,9 +236,14 @@ async fn kestrel_presence_updates_replace_readings_and_replay_keeps_the_latest(
     sqlite.execute_batch("CREATE TABLE buckets(id INTEGER PRIMARY KEY, name TEXT, type TEXT);
         INSERT INTO buckets VALUES (1,'aw-watcher-afk_kestrel','afkstatus');
         CREATE TABLE events(id INTEGER PRIMARY KEY, bucketrow INTEGER, starttime TEXT, endtime TEXT, data TEXT);").unwrap();
-    let mut ctx = ReaderContext::open(&db.url(None), &dir.path().join("store"))
-        .await
-        .unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let mut readers = [binding(&activitywatch::FORMAT, &activitywatch::SPEC, &path)];
     activity_rows(&sqlite, "2026-09-14T08-00-00Z.json");
     ingest(&mut ctx, &mut readers).await;
@@ -243,7 +252,7 @@ async fn kestrel_presence_updates_replace_readings_and_replay_keeps_the_latest(
         .unwrap();
     let first = ask(
         &mut ctx,
-        "events where event_type = presence.span and payload.status = afk",
+        "events where event_type = presence.span AND payload.status = afk",
     )
     .await;
     assert_eq!(first.total, 1);
@@ -253,7 +262,7 @@ async fn kestrel_presence_updates_replace_readings_and_replay_keeps_the_latest(
     ingest(&mut ctx, &mut readers).await;
     let extended = ask(
         &mut ctx,
-        "events where event_type = presence.span and payload.status = afk",
+        "events where event_type = presence.span AND payload.status = afk",
     )
     .await;
     assert_eq!(extended.total, 1);
@@ -275,7 +284,7 @@ async fn kestrel_presence_updates_replace_readings_and_replay_keeps_the_latest(
     let latest_ids: Vec<_> = latest.rows.iter().map(|r| r["id"].clone()).collect();
     let archived = ask(
         &mut ctx,
-        "archive where event_type = presence.span and reason = newer_reading",
+        "archive where event_type = presence.span AND reason = newer_reading",
     )
     .await;
     assert_eq!(archived.total, 2);

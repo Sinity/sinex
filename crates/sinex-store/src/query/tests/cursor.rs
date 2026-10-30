@@ -1,7 +1,7 @@
 use super::*;
 
 async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) -> Result<Answer> {
-    let fixed = context_for_page(ctx, &page)?;
+    let fixed = context_for_page(conn, ctx, &page, text).await?;
     let bound = bind(text, &fixed).unwrap();
     run(conn, text, Some(&bound), &fixed, &page).await
 }
@@ -92,7 +92,11 @@ async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast(
             jiff::civil::Time::constant(6, 0, 0, 0),
         ),
     ] {
-        assert!(context_for_page(&changed, &page).is_err());
+        assert!(
+            context_for_page(&mut conn, &changed, &page, text)
+                .await
+                .is_err()
+        );
     }
     let mut changed = bind(text, &ctx).unwrap();
     changed.stages.push(Stage::Limit(1));
@@ -217,10 +221,9 @@ async fn walk_pages_use_the_same_question_and_visible_result_checks(db: devkit::
 }
 
 #[devkit::test]
-async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion(
+async fn cursor_authentication_and_page_sizes_are_checked_before_integer_conversion(
     db: devkit::pg::TestDatabase,
 ) {
-    use sinex_model::query::cursor as encoding;
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -237,11 +240,10 @@ async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion(
     .await
     .unwrap();
     let raw = first.page.cursor.unwrap();
-    let value: Json = encoding::decode(&raw).unwrap();
-    for bad in [0, u64::MAX] {
-        let mut changed = value.clone();
-        changed["offset"] = json!(bad);
-        let raw = encoding::encode(&changed).unwrap();
+    for index in [0, raw.len() / 2, raw.len() - 1] {
+        let mut bytes = raw.as_bytes().to_vec();
+        bytes[index] = if bytes[index] == b'0' { b'1' } else { b'0' };
+        let token = String::from_utf8(bytes).unwrap();
         assert!(
             ask_at(
                 &mut conn,
@@ -249,7 +251,7 @@ async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion(
                 &ctx(),
                 Page {
                     size: Some(1),
-                    cursor: Some(raw)
+                    cursor: Some(token)
                 }
             )
             .await
@@ -373,10 +375,12 @@ async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::
     assert!(error.to_string().contains("do not support query stages"));
 }
 
-/// A continuation checks only the rows already handed out: a change to a row
-/// not yet handed out shows on its page instead of refusing the question.
+/// Mutable metadata changes invalidate its captured epoch even when the changed
+/// row was not on the first page. A fresh question observes the new status.
 #[devkit::test]
-async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg::TestDatabase) {
+async fn a_metadata_change_invalidates_the_cursor_and_a_fresh_question_observes_it(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -398,7 +402,7 @@ async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg
     let mut tx = conn.begin().await.unwrap();
     crate::runs::end(&mut tx, ids[1]).await.unwrap();
     tx.commit().await.unwrap();
-    let next = ask_at(
+    let error = ask_at(
         &mut conn,
         text,
         &ctx(),
@@ -408,9 +412,107 @@ async fn a_change_after_the_rows_handed_out_shows_on_a_later_page(db: devkit::pg
         },
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    assert!(matches!(error, Error::StaleCursor), "{error}");
+    let next = ask_at(&mut conn, text, &ctx(), Page::default())
+        .await
+        .unwrap();
     assert_eq!(next.total, 2);
-    assert_eq!(next.rows[0]["id"], json!(ids[1].0.to_string()));
-    assert_ne!(next.rows[0]["status"], json!("running"));
+    assert_eq!(next.rows[0]["id"], json!(ids[0].0.to_string()));
+    assert_eq!(next.rows[1]["id"], json!(ids[1].0.to_string()));
+    assert_ne!(next.rows[1]["status"], json!("running"));
     assert!(next.page.cursor.is_none());
+}
+
+#[devkit::test]
+async fn cursor_secret_is_not_public_sql_and_open_paging_needs_no_unlock(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    world(&mut conn).await;
+    assert!(
+        read_sql::run(&mut conn, "SELECT secret FROM core.query_cursor_key")
+            .await
+            .is_err()
+    );
+    let first = ask_at(
+        &mut conn,
+        "commands sort exit_code desc fields command",
+        &ctx(),
+        Page {
+            size: Some(2),
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    let next = ask_at(
+        &mut conn,
+        "commands sort exit_code desc fields command",
+        &ctx(),
+        Page {
+            size: Some(3),
+            cursor: first.page.cursor,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.rows.len() + next.rows.len(), 5);
+    assert_eq!(first.total, next.total);
+}
+#[devkit::test]
+async fn canonical_equivalent_questions_keep_one_keyset(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    world(&mut conn).await;
+    let a = "commands where exit_code >= 0 AND cwd exists sort when fields command";
+    let b = "commands where cwd exists AND exit_code >= 0 sort when fields command";
+    let first = ask_at(
+        &mut conn,
+        a,
+        &ctx(),
+        Page {
+            size: Some(1),
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    let next = ask_at(
+        &mut conn,
+        b,
+        &ctx(),
+        Page {
+            size: Some(50),
+            cursor: first.page.cursor,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.total, next.total);
+    assert_eq!(first.rows.len() + next.rows.len(), first.total as usize);
+}
+
+#[devkit::test]
+async fn sql_matches_shared_unknown_and_wildcard_predicates(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    world(&mut conn).await;
+    for (text, total) in [
+        ("commands where exit_code:unknown", 1),
+        ("commands where exit_code:*", 5),
+        ("commands where exit_code = unknown", 0),
+        ("commands where NOT exit_code = unknown", 0),
+        ("commands where exit_code = [unknown,0]", 2),
+        ("commands where exit_code != [unknown,0]", 0),
+    ] {
+        let answer = ask_at(&mut conn, text, &ctx(), Page::default())
+            .await
+            .unwrap();
+        assert_eq!(answer.total, total, "{text}");
+    }
 }

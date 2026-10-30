@@ -7,7 +7,7 @@ impl Api {
     /// rendered from their slots, so every surface reads the same text.
     pub(super) async fn analysis(&self, caller: &Caller, request: Request) -> Reply {
         use crate::analysis::{self, Recipe};
-        use sinex_derivations::figures::{Law, METRICS};
+        use sinex_derivations::figures::{Calculation, METRICS};
         if let Request::AnalysisCatalog = request {
             let metrics: Vec<Value> = METRICS
                 .iter()
@@ -24,13 +24,13 @@ impl Api {
                             json!({"event_type": k.event_type, "only": only})
                         })
                         .collect();
-                    let law = match m.law {
-                        Law::Count => "count",
-                        Law::Seconds { .. } => "seconds",
-                        Law::Ratio { .. } => "ratio",
+                    let calculation = match m.calculation {
+                        Calculation::Count => "count",
+                        Calculation::Seconds { .. } => "seconds",
+                        Calculation::Ratio { .. } => "ratio",
                     };
                     json!({"id": m.name, "description": m.description, "counts": counts,
-                           "law": law, "sources": m.sources, "dimensions": m.dimensions,
+                           "calculation": calculation, "sources": m.sources, "dimensions": m.dimensions,
                            "tracked": m.tracked})
                 })
                 .collect();
@@ -41,8 +41,13 @@ impl Api {
             let recipes: Vec<&str> = Recipe::ALL.iter().map(|r| r.id()).collect();
             return data(json!({"metrics": metrics, "methods": methods, "recipes": recipes}));
         }
-        let settings = analysis::Settings::operator_default();
         let ctx = self.context();
+        let time_settings =
+            sinex_model::time_settings::TimeSettings::from_parts(ctx.zone.clone(), ctx.day_start);
+        let settings = analysis::Settings {
+            label: time_settings.label(),
+            time_settings,
+        };
         let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
@@ -68,6 +73,11 @@ impl Api {
                         min_observed_fraction,
                         admit_recorded: false,
                     };
+                    let question = analysis::question(&mut conn, &ctx, &settings, "recipe", Some(recipe.id()),
+                        &METRICS.iter().filter(|m| m.tracked).collect::<Vec<_>>(),
+                        analysis::parse_day(&from)?, analysis::parse_day(&to)?, eligibility).await?;
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                        question, caller.actor, &self.host).await?;
                     let run = analysis::run(
                         &mut conn,
                         &ctx,
@@ -80,7 +90,7 @@ impl Api {
                     .await?;
                     Ok(json!({
                         "recipe": recipe.id(), "as_of": run.as_of, "day_setting": settings.label,
-                        "tables": run.tables,
+                        "tables": run.tables, "definition": run.definition, "producer_versions": run.producer_versions, "citation": run.citation,
                         "findings": run.findings.iter().map(|f| json!({"text": f.markdown(), "finding": f})).collect::<Vec<_>>(),
                     }))
                 }
@@ -91,6 +101,10 @@ impl Api {
                     by,
                 } => {
                     let metrics = metrics(&metric.unwrap_or_default())?;
+                    let question = analysis::question(&mut conn, &ctx, &settings, "panel", None, &metrics,
+                        analysis::parse_day(&from)?, analysis::parse_day(&to)?, Default::default()).await?;
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                        question, caller.actor, &self.host).await?;
                     let p = analysis::panel(
                         &mut conn,
                         &ctx,
@@ -103,11 +117,26 @@ impl Api {
                     Ok(json!({
                         "text": analysis::table(&p, &metrics, by.as_deref()),
                         "as_of": p.as_of, "day_setting": settings.label,
-                        "coverage": p.coverage, "cells": p.cells,
+                        "coverage": p.coverage, "coverage_evidence": p.evidence, "cells": p.cells, "producer_versions": p.producer_versions, "citation": p.citation,
                     }))
+                }
+                Request::Gaps { from, to, source } => {
+                    let gaps = analysis::gaps(
+                        &mut conn,
+                        &settings,
+                        source.as_deref(),
+                        analysis::parse_day(&from)?,
+                        analysis::parse_day(&to)?,
+                    )
+                    .await?;
+                    Ok(json!({ "day_setting": settings.label, "gaps": gaps }))
                 }
                 Request::AnalysisWhy { metric, day } => {
                     let metric = metrics(&[metric])?[0];
+                    let question = analysis::question(&mut conn, &ctx, &settings, "panel", None, &[metric],
+                        analysis::parse_day(&day)?, analysis::parse_day(&day)?, Default::default()).await?;
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                        question, caller.actor, &self.host).await?;
                     let text = analysis::why_not(
                         &mut conn,
                         &ctx,
@@ -119,13 +148,25 @@ impl Api {
                     Ok(json!({ "text": text }))
                 }
                 Request::Brief { day, budget } => {
+                    let budget = budget.map_or(4000, |b| usize::try_from(b).unwrap_or(usize::MAX));
+                    if let Some(reference) = day.as_deref().filter(|value| value.starts_with("sinex:ev/") || value.starts_with("query:")) {
+                        let (p, citation) = analysis::render_pack(&mut conn, reference, budget).await?;
+                        let machine = json!({"context_pack": citation, "read_as": p.context.as_of, "sections": p.sections.iter().filter(|section| section.title == "Machine").collect::<Vec<_>>()});
+                        return Ok(json!({"text": p.markdown, "presentation": p, "context_pack": citation, "machine": machine}));
+                    }
                     let day = match day {
                         Some(d) => analysis::parse_day(&d)?,
-                        None => settings.today()?,
+                        None => ctx.logical_date(ctx.now),
                     };
-                    let budget = budget.map_or(4000, |b| usize::try_from(b).unwrap_or(usize::MAX));
-                    let p = analysis::brief(&mut conn, &ctx, &settings, day, budget).await?;
-                    Ok(json!({"text": p.markdown, "presentation": p}))
+                    let from = day.checked_sub(jiff::Span::new().days(56)).map_err(|e| e.to_string())?;
+                    let all_metrics: Vec<_> = METRICS.iter().collect();
+                    let question = analysis::question(&mut conn, &ctx, &settings, "brief", None, &all_metrics,
+                        from, day, Default::default()).await?;
+                    let pack_request = analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                        question, caller.actor, &self.host).await?;
+                    let (p, citation) = analysis::render_pack(&mut conn, &format!("query:{pack_request}"), budget).await?;
+                    let machine = json!({"context_pack": citation, "read_as": p.context.as_of, "sections": p.sections.iter().filter(|section| section.title == "Machine").collect::<Vec<_>>()});
+                    Ok(json!({"text": p.markdown, "presentation": p, "context_pack": citation, "machine": machine}))
                 }
                 _ => Err("not an analysis call".into()),
             }

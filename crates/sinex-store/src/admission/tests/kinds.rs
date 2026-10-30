@@ -24,6 +24,117 @@ fn declared(name: &str, version: u64) -> KindDeclaration {
 }
 
 #[devkit::test]
+async fn duplicate_kind_references_keep_exact_versions_missing_and_invalid_identity(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ninth = declared("example.reading", 9);
+    let mut tenth = declared("example.reading", 10);
+    tenth.search = sinex_model::kinds::Search::None;
+    let mut tx = conn.begin().await.unwrap();
+    sinex_schema::kinds::register(&mut tx, "example", &[ninth.clone(), tenth.clone()])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let missing = KindRef {
+        name: "example.missing".into(),
+        version: 9,
+    };
+    let references = [
+        tenth.kind.clone(),
+        ninth.kind.clone(),
+        missing.clone(),
+        ninth.kind.clone(),
+        tenth.kind.clone(),
+        missing.clone(),
+    ];
+    let loaded = sinex_schema::kinds::load(&mut conn, &references)
+        .await
+        .unwrap();
+    assert_eq!(loaded.len(), 2);
+    assert_eq!(loaded.get(&ninth.kind), Some(&ninth));
+    assert_eq!(loaded.get(&tenth.kind), Some(&tenth));
+    assert!(!loaded.contains_key(&missing));
+    let invalid = KindRef {
+        name: ninth.kind.name.clone(),
+        version: u64::MAX,
+    };
+    assert!(
+        sinex_schema::kinds::load(&mut conn, &[ninth.kind, invalid.clone(), invalid])
+            .await
+            .is_err(),
+        "deduplication never hides an invalid full reference"
+    );
+}
+
+#[devkit::test]
+async fn repeated_native_kinds_still_check_each_event_source_and_membership(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let source = sinex_model::SourceRef {
+        name: "synthetic.native".into(),
+        version: 1,
+    };
+    let declaration = sinex_model::SourceDeclaration {
+        source: source.clone(),
+        family: "sinex".into(),
+        kinds: vec![CommandExecuted::declaration()],
+    };
+    crate::source_declarations::register(&mut conn, std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
+    let mut offered = batch(vec![
+        keyed(&source.name, 0, 1, 1),
+        keyed(&source.name, 1, 1, 1),
+    ]);
+    offered.kind = BatchKind::Replay {
+        operation: OperationId::new(),
+        source: Some(source.clone()),
+        host: Some("synthetic".into()),
+    };
+    let provenance = register::provenance(&mut conn, &offered, None)
+        .await
+        .unwrap();
+    assert_eq!(provenance.family.as_deref(), Some("sinex"));
+    assert_eq!(provenance.source_version, Some(1));
+    assert_eq!(
+        provenance.source_fingerprint,
+        Some(declaration.fingerprint())
+    );
+    let mut wrong_source = offered.clone();
+    if let RecordOutcome::Events { events, .. } = &mut wrong_source.records[0] {
+        events[1].source = "synthetic.foreign".into();
+    }
+    let error = register::provenance(&mut conn, &wrong_source, None)
+        .await
+        .err()
+        .expect("a later event cannot borrow the first event's source");
+    assert!(
+        error
+            .to_string()
+            .contains("outside its exact native source declaration")
+    );
+    for version in [CommandImported::VERSION, 9_999] {
+        let mut wrong_kind = offered.clone();
+        if let RecordOutcome::Events { events, .. } = &mut wrong_kind.records[0] {
+            events[1].event_type = CommandImported::EVENT_TYPE.into();
+            events[1].kind_version = version;
+        }
+        assert!(
+            register::provenance(&mut conn, &wrong_kind, None)
+                .await
+                .is_err(),
+            "a registered foreign kind or unavailable exact version cannot join a permitted batch"
+        );
+    }
+}
+
+#[devkit::test]
 async fn immutable_registration_checks_the_whole_frame_and_exact_versions(
     db: devkit::pg::TestDatabase,
 ) {
@@ -104,6 +215,8 @@ async fn external_validation_and_rules_apply_on_every_writer_route(db: devkit::p
         },
         BatchKind::Replay {
             operation: OperationId::new(),
+            source: None,
+            host: None,
         },
         BatchKind::Derived {
             derivation: "test".into(),
@@ -169,18 +282,48 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
         .unwrap();
     let schema_before = crate::test_schema::catalog(&mut *conn).await;
     admit_one(&mut conn, &batch(vec![keyed("example", 1, 1, 1)])).await;
-    conn.execute("INSERT INTO telemetry.events (id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class,kind_version,validation) SELECT id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class,kind_version,validation FROM core.events")
-        .await
-        .unwrap();
-    let before:Vec<(uuid::Uuid,Value,Vec<u8>)>=sqlx::query_as("SELECT id,payload,record_hash FROM core.events UNION ALL SELECT id,payload,record_hash FROM telemetry.events ORDER BY id").fetch_all(&mut *conn).await.unwrap();
+    let sample = Event::build(
+        &sinex_model::event_types::telemetry::SinexTelemetry {
+            component: "writer".into(),
+            name: String::new(),
+            sampled_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+            measures: [("events".into(), 1.0)].into(),
+        },
+        "sinex.telemetry",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(1),
+        [7; 32],
+        Class::Open,
+    )
+    .unwrap();
+    admit_one(&mut conn, &batch(vec![sample])).await;
+    let before: Vec<(uuid::Uuid, Value, Vec<u8>)> =
+        sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        before.len(),
+        2,
+        "ordinary telemetry and source readings have distinct retained IDs"
+    );
     crate::test_schema::downgrade(&mut *conn).await;
     conn.execute("INSERT INTO registry.event_types (name,payload_schema,key_fields,replace_rule) VALUES ('historic..reading','{}',ARRAY[]::text[],'suppress_repeat')").await.unwrap();
     conn.execute("UPDATE sinex_schema.applied SET version=3")
         .await
         .unwrap();
-    conn.execute("SELECT compress_chunk(format('%I.%I',chunk_schema,chunk_name)::regclass) FROM timescaledb_information.chunks WHERE hypertable_schema IN ('core','telemetry') AND hypertable_name='events'").await.unwrap();
+    conn.execute("SELECT compress_chunk(format('%I.%I',chunk_schema,chunk_name)::regclass) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events'").await.unwrap();
     let compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut *conn).await.unwrap();
-    assert_eq!(compressed, 2);
+    assert_eq!(
+        compressed, 1,
+        "both ordinary event types share the core event chunk"
+    );
     assert_eq!(
         sinex_schema::apply(&mut *conn).await.unwrap(),
         sinex_schema::Applied::Upgraded {
@@ -191,19 +334,34 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
     assert_eq!(crate::test_schema::catalog(&mut *conn).await, schema_before);
     let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(still_compressed, compressed);
-    let after:Vec<(uuid::Uuid,Value,Vec<u8>)>=sqlx::query_as("SELECT id,payload,record_hash FROM core.events UNION ALL SELECT id,payload,record_hash FROM telemetry.events ORDER BY id").fetch_all(&mut *conn).await.unwrap();
+    let after: Vec<(uuid::Uuid, Value, Vec<u8>)> =
+        sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
     assert_eq!(after, before);
-    let metadata:Vec<(i64,String)>=sqlx::query_as("SELECT kind_version,validation FROM core.events UNION ALL SELECT kind_version,validation FROM telemetry.events").fetch_all(&mut *conn).await.unwrap();
+    let metadata: Vec<(i64, String)> =
+        sqlx::query_as("SELECT kind_version,validation FROM core.events ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
     assert_eq!(metadata, vec![(1, "unvalidated".into()); 2]);
     let historical = sinex_schema::kinds::load(
         &mut *conn,
-        &[KindRef {
-            name: "command.executed".into(),
-            version: 1,
-        }],
+        &[
+            KindRef {
+                name: "command.executed".into(),
+                version: 1,
+            },
+            KindRef {
+                name: "sinex.telemetry".into(),
+                version: 1,
+            },
+        ],
     )
     .await
     .unwrap();
+    assert_eq!(historical.len(), 2);
     assert!(
         historical
             .values()

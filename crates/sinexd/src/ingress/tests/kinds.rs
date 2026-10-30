@@ -4,7 +4,7 @@ use sinex_protocol::{
     DeclarationHash, ProducerReplay, ReplayBatch, ReplayScopeQuery, ReplaySelection,
 };
 
-fn declaration(name: &str) -> KindDeclaration {
+pub(super) fn declaration(name: &str) -> KindDeclaration {
     let mut d = KindDeclaration::schemaless(
         KindRef {
             name: name.into(),
@@ -31,7 +31,7 @@ fn event(d: &KindDeclaration, material: MaterialId, text: &str, order: i64) -> P
         }),
         output_index: 0,
         parents: vec![],
-        reading_order: order,
+        reading_order: Some(order),
         class: sinex_model::Class::Open,
     }
 }
@@ -45,28 +45,33 @@ async fn scope_for(
     material: MaterialId,
     event_types: Option<Vec<String>>,
 ) -> ReplaySelection {
-    let body = serde_json::to_vec(&ReplayScopeQuery {
-        materials: vec![material],
-        event_types,
-        from: None,
-        until: None,
+    let body = serde_json::to_vec(&sinex_protocol::ReplayQuery::Materials {
+        query: ReplayScopeQuery {
+            after: None,
+            materials: vec![material],
+            event_types,
+            from: None,
+            until: None,
+        },
     })
     .unwrap();
-    let answer = h
-        .client
-        .request(h.subjects.replay_scope("example"), body.into())
+    let answer = rpc(&h.client, h.subjects.replay_scope("example"), body.into())
         .await
         .unwrap();
-    let selections: Vec<ReplaySelection> = serde_json::from_slice(&answer.payload).unwrap();
-    selections.into_iter().next().unwrap()
+    let sinex_protocol::ReplayReply::Materials { page } =
+        serde_json::from_slice::<sinex_protocol::ReplayReply>(&answer.payload).unwrap()
+    else {
+        panic!("raw materials replay")
+    };
+    page.sequences.into_iter().next().unwrap()
 }
 
 #[devkit::test]
 async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
     db: devkit::pg::TestDatabase,
 ) {
-    let h = Harness::start(db).await;
     let d = declaration("example.reading");
+    let h = Harness::start_with_source(db, "example", vec![d.clone()]).await;
     let frame = Ingress::RegisterKinds {
         frame: "declarations".into(),
         declarations: vec![d.clone()],
@@ -118,7 +123,13 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             },
         )
         .await;
-    assert!(refused.refusal.unwrap().contains("definition_conflict"));
+    assert_eq!(refused.refusal_kind(), Some(FrameRefusal::Configuration));
+    assert!(
+        refused
+            .refusal
+            .unwrap()
+            .contains("outside the configured logical family")
+    );
     assert_eq!(
         h.count(
             "SELECT count(*) FROM registry.event_types WHERE name='example.reading' AND version=10"
@@ -139,7 +150,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         .await
         .refusal
         .unwrap()
-        .contains("namespace_refused")
+        .contains("outside the configured logical family")
     );
     for name in ["example..reading", "example.reading.", "example."] {
         let mut invalid = d.clone();
@@ -153,9 +164,22 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
                 },
             )
             .await;
-        assert!(refused.refusal.unwrap().contains("invalid kind name"));
+        assert_eq!(refused.refusal_kind(), Some(FrameRefusal::Configuration));
+        assert!(
+            refused
+                .refusal
+                .unwrap()
+                .contains("outside the configured logical family")
+        );
+        assert_eq!(
+            h.count(&format!(
+                "SELECT count(*) FROM registry.event_types WHERE name='{name}'"
+            ))
+            .await,
+            0
+        );
     }
-    let (material, frame) = h.material_frame("bytes", b"one\n");
+    let (material, frame) = h.material_for("example", "bytes", b"one\n");
     assert_eq!(h.send("example", &frame).await.refusal, None);
     let mut unknown = event(&d, material, "one", 1);
     unknown.kind.version = 10;
@@ -163,6 +187,8 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         h.send(
             "example",
             &Ingress::Events {
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "unknown-version".into(),
                 events: vec![unknown],
                 failures: vec![]
@@ -178,6 +204,8 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         .send(
             "example",
             &Ingress::Events {
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "invalid".into(),
                 events: vec![invalid],
                 failures: vec![],
@@ -197,8 +225,12 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
 async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_batches(
     db: devkit::pg::TestDatabase,
 ) {
-    let h = Harness::start(db).await;
     let d = declaration("example.reading");
+    let mut next = d.clone();
+    next.kind.version = 10;
+    next.payload_schema.as_mut().unwrap()["properties"]["count"] = json!({"type":"integer"});
+    next.payload_schema.as_mut().unwrap()["required"] = json!(["id", "text", "count"]);
+    let h = Harness::start_with_source(db, "example", vec![d.clone(), next.clone()]).await;
     assert_eq!(
         h.send(
             "example",
@@ -211,12 +243,14 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
         .refusal,
         None
     );
-    let (material, bytes) = h.material_frame("bytes", b"one\n");
+    let (material, bytes) = h.material_for("example", "bytes", b"one\n");
     assert_eq!(h.send("example", &bytes).await.refusal, None);
     assert_eq!(
         h.send(
             "example",
             &Ingress::Events {
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "first".into(),
                 events: vec![event(&d, material, "old", 10)],
                 failures: vec![]
@@ -228,6 +262,7 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
     );
     let selection = scope(&h, material).await;
     let sequence = ProducerReplay {
+        source: test_source("example"),
         operation: sinex_model::OperationId::new(),
         root: selection.root,
         materials: selection.materials,
@@ -316,10 +351,6 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
             .contains("replay_build_changed")
     );
 
-    let mut next = d.clone();
-    next.kind.version = 10;
-    next.payload_schema.as_mut().unwrap()["properties"]["count"] = json!({"type":"integer"});
-    next.payload_schema.as_mut().unwrap()["required"] = json!(["id", "text", "count"]);
     assert_eq!(
         h.send(
             "example",
@@ -336,6 +367,7 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
     let mut replacement = event(&next, material, "version-ten", 0);
     replacement.payload["count"] = json!(3);
     let sequence = ProducerReplay {
+        source: test_source("example"),
         operation: sinex_model::OperationId::new(),
         root: selected.root,
         materials: selected.materials,
@@ -372,7 +404,6 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
 async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hidden(
     db: devkit::pg::TestDatabase,
 ) {
-    let h = Harness::start(db).await;
     let declarations: Vec<_> = [
         "delivery",
         "delivery_outcome",
@@ -389,6 +420,7 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
         d
     })
     .collect();
+    let h = Harness::start_with_source(db, "polylogue", declarations.clone()).await;
     assert_eq!(
         h.send(
             "polylogue",
@@ -401,7 +433,7 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
         .refusal,
         None
     );
-    let (material, bytes) = h.material_frame("bytes", b"requests\n");
+    let (material, bytes) = h.material_for("polylogue", "bytes", b"requests\n");
     assert_eq!(h.send("polylogue", &bytes).await.refusal, None);
     let events = |text: &str, order| {
         declarations
@@ -413,6 +445,8 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
         .send(
             "polylogue",
             &Ingress::Events {
+                source: Some(test_source("polylogue")),
+                coverage: None,
                 frame: "first".into(),
                 events: events("old", 10),
                 failures: vec![],
@@ -439,21 +473,27 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
         .unwrap();
     for (round, order) in [0, 0, 20].into_iter().enumerate() {
         let replacement = format!("replacement-{round}");
-        let body = serde_json::to_vec(&ReplayScopeQuery {
-            materials: vec![material],
-            event_types: None,
-            from: None,
-            until: None,
+        let body = serde_json::to_vec(&sinex_protocol::ReplayQuery::Materials {
+            query: ReplayScopeQuery {
+                after: None,
+                materials: vec![material],
+                event_types: None,
+                from: None,
+                until: None,
+            },
         })
         .unwrap();
-        let answer = h
-            .client
-            .request(h.subjects.replay_scope("polylogue"), body.into())
+        let answer = rpc(&h.client, h.subjects.replay_scope("polylogue"), body.into())
             .await
             .unwrap();
-        let selected: Vec<ReplaySelection> = serde_json::from_slice(&answer.payload).unwrap();
-        let selected = &selected[0];
+        let sinex_protocol::ReplayReply::Materials { page } =
+            serde_json::from_slice::<sinex_protocol::ReplayReply>(&answer.payload).unwrap()
+        else {
+            panic!("raw materials replay")
+        };
+        let selected = &page.sequences[0];
         let sequence = ProducerReplay {
+            source: test_source("polylogue"),
             operation: sinex_model::OperationId::new(),
             root: selected.root,
             materials: selected.materials.clone(),
@@ -489,9 +529,9 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
 
 #[devkit::test]
 async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestDatabase) {
-    let h = Harness::start(db).await;
     let mut d = declaration("example.concurrent");
     d.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
+    let h = Harness::start_with_source(db, "example", vec![d.clone()]).await;
     assert_eq!(
         h.send(
             "example",
@@ -504,11 +544,13 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
         .refusal,
         None
     );
-    let (material, bytes) = h.material_frame("bytes", b"request\n");
+    let (material, bytes) = h.material_for("example", "bytes", b"request\n");
     assert_eq!(h.send("example", &bytes).await.refusal, None);
     h.send(
         "example",
         &Ingress::Events {
+            source: Some(test_source("example")),
+            coverage: None,
             frame: "first".into(),
             events: vec![event(&d, material, "first", 1)],
             failures: vec![],
@@ -520,6 +562,8 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
         .send(
             "example",
             &Ingress::Events {
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "arrived".into(),
                 events: vec![event(&d, material, "arrived", 2)],
                 failures: vec![],
@@ -528,6 +572,7 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
         .await;
     assert_eq!(newer.admitted.len(), 1);
     let sequence = ProducerReplay {
+        source: test_source("example"),
         operation: sinex_model::OperationId::new(),
         root: selected.root,
         materials: selected.materials,
@@ -561,9 +606,14 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
 
 #[devkit::test]
 async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit::pg::TestDatabase) {
-    let h = Harness::start(db).await;
     let selected_kind = declaration("example.selected");
     let other_kind = declaration("example.other");
+    let h = Harness::start_with_source(
+        db,
+        "example",
+        vec![selected_kind.clone(), other_kind.clone()],
+    )
+    .await;
     assert_eq!(
         h.send(
             "example",
@@ -576,12 +626,14 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
         .refusal,
         None
     );
-    let (material, bytes) = h.material_frame("bytes", b"one\n");
+    let (material, bytes) = h.material_for("example", "bytes", b"one\n");
     assert_eq!(h.send("example", &bytes).await.refusal, None);
     assert_eq!(
         h.send(
             "example",
             &Ingress::Events {
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "old".into(),
                 events: vec![event(&selected_kind, material, "old", 1)],
                 failures: vec![]
@@ -597,6 +649,8 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
         h.send(
             "example",
             &Ingress::Events {
+                source: Some(test_source("example")),
+                coverage: None,
                 frame: "outside".into(),
                 events: vec![event(&other_kind, material, "outside", 2)],
                 failures: vec![]
@@ -607,6 +661,7 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
         None
     );
     let sequence = ProducerReplay {
+        source: test_source("example"),
         operation: sinex_model::OperationId::new(),
         root: selected.root,
         materials: selected.materials,
@@ -637,4 +692,56 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
     assert_eq!(ack.refusal, None, "{ack:?}");
     assert_eq!(ack.admitted.len(), 1);
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE payload->>'text'='outside' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
+}
+
+#[devkit::test]
+async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut d = declaration("example.assigned");
+    d.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
+    let h = Harness::start_with_source(db, "example", vec![d.clone()]).await;
+    assert_eq!(
+        h.send(
+            "example",
+            &Ingress::RegisterKinds {
+                frame: "assigned-kind".into(),
+                declarations: vec![d.clone()]
+            }
+        )
+        .await
+        .refusal,
+        None
+    );
+    let (material, frame) = h.material_for("example", "assigned-material", b"synthetic source\n");
+    assert_eq!(h.send("example", &frame).await.refusal, None);
+    for (ordinal, text) in ["A", "B", "A"].into_iter().enumerate() {
+        let mut offered = event(&d, material, text, 0);
+        offered.reading_order = None;
+        let frame = Ingress::Events {
+            source: Some(test_source("example")),
+            coverage: None,
+            frame: format!("assigned-{ordinal}"),
+            events: vec![offered],
+            failures: vec![],
+        };
+        let first = h.send("example", &frame).await;
+        assert_eq!(first.refusal, None, "{first:?}");
+        assert_eq!(first.admitted.len(), 1);
+        let again = h.send("example", &frame).await;
+        assert_eq!(again.admitted, first.admitted);
+        assert_eq!(again.commit_seq, first.commit_seq);
+    }
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE event_type='example.assigned' ORDER BY commit_seq").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(orders, vec![0, 1, 2]);
+    let live=sqlx::query_scalar!("SELECT payload->>'text' FROM core.events e WHERE event_type='example.assigned' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(live.as_deref(), Some("A"));
+    let counter = sqlx::query_scalar!(
+        "SELECT reading_order FROM core.producer_orders WHERE event_type='example.assigned'"
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(counter, 2);
 }

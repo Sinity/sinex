@@ -117,6 +117,18 @@ impl Target {
         finish(&mut self.sinexd(&all))
     }
 
+    /// A query through the public command, its text last (it takes the rest
+    /// of the line).
+    fn query(&self, text: &str) -> serde_json::Value {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
+        c.args(["admin", "query", "--database", &self.url, "--store"])
+            .arg(&self.store)
+            .args(["--page", "1000", text])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        serde_json::from_str(&finish(&mut c)).unwrap()
+    }
+
     async fn connect(&self) -> PgConnection {
         PgConnection::connect(&self.url).await.unwrap()
     }
@@ -156,7 +168,7 @@ async fn live(conn: &mut PgConnection) -> BTreeMap<String, Reading> {
         r#"SELECT e.id, e.source || ' ' || e.event_type || ' ' || coalesce(e.equivalence_key, e.material_id::text || '@' || e.anchor || '#' || e.output_index) AS k,
                   e.payload::text AS p, e.ts_orig::text AS t, encode(e.record_hash, 'hex') AS h
            FROM core.events e
-           WHERE e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)"#,
+           WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)"#,
     )
     .fetch_all(&mut *conn)
     .await
@@ -290,7 +302,7 @@ async fn replay_keeps_occurrences_and_one_live_reading() {
         &mut c,
         &format!(
             "SELECT count(*) FROM (SELECT source, event_type, coalesce(equivalence_key, material_id::text || anchor || '#' || output_index) k, count(*) n
-             FROM core.events GROUP BY 1, 2, 3) g WHERE n <> {}",
+             FROM core.events WHERE event_type <> 'source.coverage' GROUP BY 1, 2, 3) g WHERE n <> {}",
             N + 1
         ),
     )
@@ -353,10 +365,10 @@ async fn delivering_everything_twice_changes_nothing() {
     consistent(&mut c).await;
 }
 
-/// Re-staging the same export, and the same bytes under a new name, registers
-/// new material but admits nothing new.
+/// Rereading one native input suppresses repeats. A separate input copy keeps
+/// independent reading identity while sharing identical physical blob bytes.
 #[devkit::test]
-async fn restaging_the_same_bytes_admits_nothing_new() {
+async fn rereading_one_native_input_repeats_but_a_separate_copy_keeps_its_identity() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = small_zsh();
@@ -366,28 +378,64 @@ async fn restaging_the_same_bytes_admits_nothing_new() {
     t.backfill(Some(&dir.file("a/zsh", text.as_bytes())), Some(&atuin));
     let mut c = t.connect().await;
     let before = live(&mut c).await;
-    let materials = scalar(&mut c, "SELECT count(*) FROM raw.materials").await;
+    sqlx::query("DELETE FROM raw.positions")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    t.backfill(Some(&dir.0.join("a/zsh")), Some(&atuin));
+    assert_eq!(
+        live(&mut c).await,
+        before,
+        "the same input and bytes keep exact reading IDs and keys"
+    );
+    let materials = scalar(
+        &mut c,
+        "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .await;
 
     let atuin2 = dir.0.join("b/history.db");
     std::fs::create_dir_all(atuin2.parent().unwrap()).unwrap();
     std::fs::copy(&atuin, &atuin2).unwrap();
     t.backfill(Some(&dir.file("b/zsh", text.as_bytes())), Some(&atuin2));
     assert!(
-        scalar(&mut c, "SELECT count(*) FROM raw.materials").await > materials,
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'"
+        )
+        .await
+            > materials,
         "identical bytes under a new name are new material"
     );
     let after = live(&mut c).await;
-    let new: Vec<_> = after
-        .keys()
-        .filter(|k| !before.contains_key(*k))
-        .take(3)
-        .collect();
-    assert!(
-        after.len() == before.len() && new.is_empty(),
-        "re-staged records were admitted again: {} live before, {} after; e.g. {new:?}",
-        before.len(),
-        after.len()
+    assert_eq!(
+        after.len(),
+        2 * before.len(),
+        "a distinct input copy has independent native keys"
     );
+    for (key, reading) in &before {
+        assert_eq!(
+            after.get(key),
+            Some(reading),
+            "a copied input cannot replace the original reading"
+        );
+    }
+    let copies: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding LIKE 'terminal.zsh-history:%' ORDER BY m.input_id"
+    ).fetch_all(&mut c).await.unwrap();
+    assert_eq!(
+        copies.len(),
+        2,
+        "each zsh path has its own retained logical input"
+    );
+    assert_ne!(copies[0].0, copies[1].0);
+    assert_eq!(
+        copies[0].1, copies[1].1,
+        "equal raw bytes share the physical hash without merging inputs"
+    );
+    let blobs = sinex_store::Blobs::open(&t.store).unwrap();
+    blobs.load(&mut c).await.unwrap();
+    assert_eq!(blobs.read(&copies[0].1).unwrap(), text.as_bytes());
     consistent(&mut c).await;
 }
 
@@ -399,6 +447,7 @@ async fn stated_times_are_kept_whatever_their_value() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = [
+        zsh_line(-2_177_452_800, "in 1901"),
         zsh_line(86_400, "in 1970"),
         zsh_line(1_700_000_000, "in 2023"),
         zsh_line(7_258_118_400, "in 2200"),
@@ -410,7 +459,7 @@ async fn stated_times_are_kept_whatever_their_value() {
     let rows = sqlx::query(
         "SELECT payload->>'command' AS c, extract(epoch from ts_orig)::bigint AS t, ts_quality AS q,
                 ts_coided = uuid_extract_timestamp(id) AS minted, ts_coided >= $1::timestamptz AS fresh
-         FROM core.events ORDER BY ts_orig",
+         FROM core.events WHERE event_type = 'command.imported' ORDER BY ts_orig",
     )
     .bind(&started)
     .fetch_all(&mut c)
@@ -431,6 +480,13 @@ async fn stated_times_are_kept_whatever_their_value() {
     assert_eq!(
         got,
         vec![
+            (
+                "in 1901".into(),
+                -2_177_452_800,
+                "intrinsic".into(),
+                true,
+                true
+            ),
             ("in 1970".into(), 86_400, "intrinsic".into(), true, true),
             (
                 "in 2023".into(),
@@ -469,10 +525,18 @@ async fn a_long_history_is_a_few_materials() {
     t.backfill(Some(&dir.file("zsh", text.as_bytes())), None);
     let mut c = t.connect().await;
     assert_eq!(
-        scalar(&mut c, "SELECT count(*) FROM core.events").await,
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM core.events WHERE event_type = 'command.imported'"
+        )
+        .await,
         20_000
     );
-    let materials = scalar(&mut c, "SELECT count(*) FROM raw.materials").await;
+    let materials = scalar(
+        &mut c,
+        "SELECT count(*) FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .await;
     assert!(
         materials <= 4,
         "{materials} materials for one 20,000-line file"
@@ -559,7 +623,7 @@ async fn a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
     t.backfill(Some(&dir.file("zsh", &bytes)), None);
     let mut c = t.connect().await;
     let commands: Vec<String> =
-        sqlx::query_scalar("SELECT payload->>'command' FROM core.events ORDER BY ts_orig")
+        sqlx::query_scalar("SELECT payload->>'command' FROM core.events WHERE event_type = 'command.imported' ORDER BY ts_orig")
             .fetch_all(&mut c)
             .await
             .unwrap();
@@ -590,10 +654,10 @@ async fn repeated_commands_are_kept() {
     );
 }
 
-/// A hidden record stays hidden across replay and re-import, and comes back
-/// once unhidden and read again.
+/// A hidden record stays hidden across replay and reread of its native input.
+/// An independent copy remains visible; unhide restores only the original input.
 #[devkit::test]
-async fn hidden_stays_hidden_across_replay_and_reimport() {
+async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let path = dir.0.join("a/history.db");
@@ -607,32 +671,136 @@ async fn hidden_stays_hidden_across_replay_and_reimport() {
     .fetch_one(&mut c)
     .await
     .unwrap();
+    let initial_markers = support::marker_count(&mut c).await;
     t.admin(&["hide", &id.to_string()]);
-    assert_eq!(visible_a3(&mut c).await, 0);
+    assert_eq!(
+        support::marker_count(&mut c).await,
+        initial_markers + 1,
+        "hide has one lifecycle position"
+    );
+    assert_eq!(visible_a3(&mut c, &path).await, 0);
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
-    assert_eq!(visible_a3(&mut c).await, 0, "replay brought it back");
+    assert_eq!(
+        support::marker_count(&mut c).await,
+        initial_markers + 2,
+        "the first replay reads one retained root sequence"
+    );
+    assert_eq!(visible_a3(&mut c, &path).await, 0, "replay brought it back");
+    sqlx::query("DELETE FROM raw.positions")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    t.backfill(None, Some(&path));
+    assert_eq!(
+        visible_a3(&mut c, &path).await,
+        0,
+        "rereading the same native input cannot lift its hidden key"
+    );
     let copy = dir.0.join("b/history.db");
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
     std::fs::copy(&path, &copy).unwrap();
     t.backfill(None, Some(&copy));
-    assert_eq!(visible_a3(&mut c).await, 0, "re-import brought it back");
-    t.admin(&["unhide", &id.to_string()]);
-    t.admin(&["replay", "--binding", &atuin_binding(&path)]);
-    assert_eq!(visible_a3(&mut c).await, 1);
+    assert_eq!(
+        visible_a3(&mut c, &path).await,
+        0,
+        "copying another input cannot lift the original hidden key"
+    );
+    assert_eq!(
+        visible_a3(&mut c, &copy).await,
+        1,
+        "hide authority does not cross native input scope"
+    );
+    let retained: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=ANY($1) ORDER BY m.input_id"
+    ).bind(vec![atuin_binding(&path), atuin_binding(&copy)]).fetch_all(&mut c).await.unwrap();
+    assert_eq!(retained.len(), 2);
+    assert_ne!(retained[0].0, retained[1].0);
+    assert_eq!(
+        retained[0].1, retained[1].1,
+        "independent inputs retain byte-identical row materials"
+    );
     assert_eq!(
         support::marker_count(&mut c).await,
-        4,
-        "hide, replay, unhide and replay each have a position"
+        initial_markers + 2,
+        "rereading and copying inputs allocate no lifecycle markers"
+    );
+    let roots: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1 AND m.previous_part_id IS NULL ORDER BY m.id"
+    ).bind(atuin_binding(&path)).fetch_all(&mut c).await.unwrap();
+    assert_eq!(
+        roots.len(),
+        2,
+        "the forced reread retains a second independent root sequence for the same native input"
+    );
+    t.admin(&["unhide", &id.to_string()]);
+    let before_replay = support::marker_count(&mut c).await;
+    assert_eq!(
+        before_replay,
+        initial_markers + 3,
+        "unhide has one lifecycle position"
+    );
+    t.admin(&["replay", "--binding", &atuin_binding(&path)]);
+    assert_eq!(visible_a3(&mut c, &path).await, 1);
+    assert_eq!(visible_a3(&mut c, &copy).await, 1);
+    let journals: Vec<(uuid::Uuid, i64)> = sqlx::query_as(
+        "SELECT s.operation_id,count(*) FROM core.replayed_sequences s JOIN core.operations o ON o.id=s.operation_id WHERE o.kind='replay' GROUP BY s.operation_id ORDER BY count(*),s.operation_id"
+    ).fetch_all(&mut c).await.unwrap();
+    assert_eq!(
+        journals.len(),
+        2,
+        "both explicit replay operations are retained"
+    );
+    assert_eq!(
+        journals.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+        vec![1, 2],
+        "replay journals one root initially and both retained roots after rereading"
+    );
+    let replayed_roots: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT first_part FROM core.replayed_sequences WHERE operation_id=$1 ORDER BY first_part",
+    )
+    .bind(journals[1].0)
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
+    assert_eq!(
+        replayed_roots, roots,
+        "the last replay journal covers the exact original-input roots, never the independent copy"
+    );
+    assert_eq!(
+        support::marker_count(&mut c).await - before_replay,
+        journals[1].1,
+        "each replay root, including an empty live scope, has one lifecycle position"
+    );
+    let reasons: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT reason,count(DISTINCT commit_seq) FROM audit.archive_changes WHERE reason IN ('hide','replay','unhide') GROUP BY reason ORDER BY reason"
+    ).fetch_all(&mut c).await.unwrap();
+    assert_eq!(
+        reasons,
+        vec![
+            ("hide".into(), 1),
+            ("replay".into(), 2),
+            ("unhide".into(), 1)
+        ],
+        "typed history identifies hide, both nonempty replay scopes and unhide; the last replay's empty second scope still retains its marker"
+    );
+    assert_eq!(
+        support::marker_count(&mut c).await - initial_markers,
+        2 + journals.iter().map(|(_, count)| *count).sum::<i64>(),
+        "markers cover hide/unhide and every journaled replay sequence"
     );
     consistent(&mut c).await;
 }
 
-async fn visible_a3(c: &mut PgConnection) -> i64 {
-    scalar(
-        c,
-        "SELECT count(*) FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id WHERE e.payload->>'native_id' = 'a000003'",
+async fn visible_a3(c: &mut PgConnection, path: &Path) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
+         JOIN raw.materials m ON m.id=e.material_id JOIN raw.inputs i ON i.id=m.input_id
+         WHERE e.payload->>'native_id'='a000003' AND i.binding=$1",
     )
+    .bind(atuin_binding(path))
+    .fetch_one(c)
     .await
+    .unwrap()
 }
 
 /// A clipboard spool holding one copy of each of `texts`: a source whose
@@ -668,10 +836,12 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
         );
     }
     let mut c = t.connect().await;
-    let shared: Vec<String> = sqlx::query_scalar("SELECT DISTINCT blob FROM raw.materials")
-        .fetch_all(&mut c)
-        .await
-        .unwrap();
+    let shared: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT blob FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
     assert_eq!(shared.len(), 1, "both spools stored the same bytes once");
     let before = live(&mut c).await;
     let events = scalar(&mut c, "SELECT count(*) FROM core.events").await;
@@ -681,7 +851,7 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     .fetch_one(&mut c)
     .await
     .unwrap();
-    t.admin(&["excise", &victim.to_string(), "--dry-run"]);
+    let planned = t.admin(&["excise", &victim.to_string(), "--dry-run"]);
     assert_eq!(
         live(&mut c).await,
         before,
@@ -692,7 +862,17 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
         events
     );
 
-    t.admin(&["excise", &victim.to_string()]);
+    let done = t.admin(&["excise", &victim.to_string()]);
+    let said = |text: &str, field: &str| -> String {
+        let reply: serde_json::Value = serde_json::from_str(text).unwrap();
+        reply[field].as_str().unwrap().to_owned()
+    };
+    let (planned, done) = (said(&planned, "would_excise"), said(&done, "excised"));
+    assert!(
+        done.strip_prefix("excised ")
+            .is_some_and(|counts| counts.starts_with(&format!("{planned} |"))),
+        "the dry run's counts are the run's: {planned} / {done}"
+    );
     let still: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE blob = $1")
         .bind(&shared[0])
         .fetch_one(&mut c)
@@ -702,13 +882,12 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
         still, 1,
         "the other spool's material keeps the shared bytes"
     );
-    let hex = shared[0].trim_start_matches("blake3:");
-    let file = t
-        .store
-        .join("blobs")
-        .join(&hex[..2])
-        .join(format!("{hex}.zst"));
-    assert!(file.exists(), "bytes still referenced were deleted");
+    let bytes = sinex_store::Blobs::open(&t.store).unwrap();
+    bytes.load(&mut c).await.unwrap();
+    assert_eq!(
+        bytes.verify(&shared[0]).unwrap(),
+        sinex_store::Verified::Intact
+    );
     assert_eq!(
         scalar(&mut c, "SELECT count(*) FROM core.events").await,
         events - 1
@@ -976,15 +1155,28 @@ async fn derived_results_do_not_depend_on_arrival_order() {
 
 /// Provenance is complete: every derived event's parents resolve, live or
 /// archived, down to material events, and every parent committed before its
-/// child.
+/// child. A derived event's time comes from its inputs, not from when the
+/// derivation ran.
 #[devkit::test]
 async fn every_parent_resolves_and_committed_first() {
     let dir = Dir::new();
     let (zsh, atuin) = derivation_inputs(&dir);
     let t = Target::new(&dir);
     t.backfill(Some(&zsh), Some(&atuin));
+    let started = chrono_now(&mut t.connect().await).await;
     t.derive();
     let mut c = t.connect().await;
+    let run_time: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE parents IS NOT NULL AND ts_orig >= $1::timestamptz",
+    )
+    .bind(&started)
+    .fetch_one(&mut c)
+    .await
+    .unwrap();
+    assert_eq!(
+        run_time, 0,
+        "a derived time comes from its inputs, never the run"
+    );
     let derived_n = scalar(
         &mut c,
         "SELECT count(*) FROM core.events WHERE parents IS NOT NULL",
@@ -1019,6 +1211,198 @@ fn atuin_binding(path: &Path) -> String {
     format!("terminal.atuin-history:{}@{HOST}", path.display())
 }
 
+/// Revisions read back: after a history file grows, is rewritten and grows
+/// again, and an Atuin database's rows change, every material ever stored
+/// still reads back to the bytes its name hashes, at its recorded length.
+#[devkit::test]
+async fn every_revision_reads_back_after_later_ones() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let atuin = dir.0.join("history.db");
+    let mut rows: Vec<AtuinRow> = (0..30).map(atuin_row).collect();
+    atuin_db(&atuin, &rows);
+    let mut text = small_zsh();
+    let zsh = dir.file("zsh", text.as_bytes());
+    t.backfill(Some(&zsh), Some(&atuin));
+    // Appended.
+    text.push_str(&zsh_line(1_600_001_000, "appended"));
+    std::fs::write(&zsh, &text).unwrap();
+    rows[3].3 = 9;
+    atuin_db(&atuin, &rows);
+    t.backfill(Some(&zsh), Some(&atuin));
+    // Rewritten: an exiting shell wrote the history again, older lines gone.
+    let rewritten: String = text.lines().skip(10).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&zsh, &rewritten).unwrap();
+    t.backfill(Some(&zsh), None);
+    // Appended again.
+    std::fs::write(
+        &zsh,
+        format!(
+            "{rewritten}{}",
+            zsh_line(1_600_002_000, "after the rewrite")
+        ),
+    )
+    .unwrap();
+    t.backfill(Some(&zsh), None);
+
+    let mut c = t.connect().await;
+    let materials: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT blob, length FROM raw.materials WHERE parser <> 'source-observation'",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
+    assert!(materials.len() >= 5, "{} materials", materials.len());
+    let bytes = sinex_store::Blobs::open(&t.store).unwrap();
+    bytes.load(&mut c).await.unwrap();
+    for (blob, length) in materials {
+        let decoded = bytes.read(&blob).unwrap();
+        assert_eq!(format!("blake3:{}", blake3::hash(&decoded).to_hex()), blob);
+        assert_eq!(i64::try_from(decoded.len()).unwrap(), length);
+    }
+}
+
+/// Samples share ordinary event admission, commit positions and replay.
+/// Activity derivations select their own inputs and never count telemetry.
+#[devkit::test]
+async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
+    use sinex_source_core::drivers::live_stream;
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let zsh = dir.file("zsh", small_zsh().as_bytes());
+    t.backfill(Some(&zsh), None);
+    let mut spooled = Vec::new();
+    let sampled_start = sinex_model::Timestamp::now().unix_ns() - 3_000_000_000;
+    for (i, component) in ["writer", "publisher", "search index"].iter().enumerate() {
+        let line =
+            serde_json::json!({"component": component, "name": "", "measures": {"behind": i}});
+        let at = sinex_model::Timestamp::from_unix_ns(sampled_start + i as i128 * 1_000_000_000)
+            .unwrap();
+        spooled.extend(live_stream::frame(at, line.to_string().as_bytes()));
+    }
+    // The same sample can be sent twice in one part, with two locations.
+    let first_line = spooled[..spooled.iter().position(|b| *b == b'\n').unwrap() + 1].to_vec();
+    spooled.extend(first_line);
+    let spool = dir.file("telemetry/000000000000.ndjson", &spooled);
+    let spool = spool.parent().unwrap().to_path_buf();
+    let read = |t: &Target| {
+        finish(
+            t.sinexd(&["backfill", "--host", HOST])
+                .arg("--read")
+                .arg(format!("sinex-telemetry={}", spool.display())),
+        )
+    };
+    read(&t);
+    t.derive();
+    let mut c = t.connect().await;
+    let samples = "SELECT count(*) FROM core.events e WHERE event_type = 'sinex.telemetry'
+        AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)";
+    let sample_readings = "SELECT count(*) FROM core.events WHERE event_type = 'sinex.telemetry'";
+    assert_eq!(scalar(&mut c, samples).await, 3);
+    assert_eq!(scalar(&mut c, sample_readings).await, 3);
+    let committed = "SELECT count(*) FROM core.commit_log c JOIN core.events e ON e.id = c.event_id WHERE e.event_type = 'sinex.telemetry'";
+    assert_eq!(scalar(&mut c, committed).await, 3);
+
+    // A reread repeats the samples; replay replaces their readings.
+    sqlx::query("DELETE FROM raw.positions WHERE binding LIKE 'sinex.telemetry:%'")
+        .execute(&mut c)
+        .await
+        .unwrap();
+    read(&t);
+    assert_eq!(scalar(&mut c, sample_readings).await, 3);
+    t.admin(&[
+        "replay",
+        "--binding",
+        &format!("sinex.telemetry:{}@{HOST}", spool.display()),
+    ]);
+    t.derive();
+    assert_eq!(scalar(&mut c, samples).await, 3);
+    assert_eq!(scalar(&mut c, sample_readings).await, 6);
+    assert_eq!(scalar(&mut c, committed).await, 6);
+    let activity = "SELECT count(*) FROM core.events e WHERE e.event_type IN ('activity.window','activity.session','activity.span')
+        AND EXISTS (SELECT 1 FROM core.events t WHERE t.event_type = 'sinex.telemetry' AND t.id = ANY(e.parents))";
+    assert_eq!(scalar(&mut c, activity).await, 0);
+    consistent(&mut c).await;
+
+    let answer = t.query("telemetry where payload.component = publisher");
+    assert_eq!(answer["total"], 1, "{answer}");
+    let ordinary =
+        t.query("events where event_type = sinex.telemetry AND payload.component = publisher");
+    assert_eq!(ordinary["total"], 1, "{ordinary}");
+    let mut command = t.sinexd(&["admin", "status"]);
+    command.env("SINEX_PRIVATE_MODE", dir.0.join("private-mode"));
+    let status: serde_json::Value = serde_json::from_str(&finish(&mut command)).unwrap();
+    let latest = status["telemetry"].as_array().unwrap();
+    assert_eq!(latest.len(), 3, "{status}");
+    let publisher = latest
+        .iter()
+        .find(|sample| sample["component"] == "publisher")
+        .unwrap();
+    assert_eq!(
+        publisher["measures"]["behind"].as_f64(),
+        Some(1.0),
+        "{status}"
+    );
+}
+
+/// The live commands and their times (Unix seconds), through the public
+/// query.
+fn zsh_facts(t: &Target) -> Vec<(i64, String)> {
+    let answer = t.query("events where source = terminal.zsh-history sort when");
+    answer["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"))
+        .iter()
+        .map(|r| {
+            let when = time::OffsetDateTime::parse(
+                r["when"].as_str().unwrap(),
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap();
+            (
+                when.unix_timestamp(),
+                r["payload"]["command"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// A closed zsh history replayed after its file is gone gives exactly the
+/// facts written down here: repeats stay separate, a multi-line command is
+/// one, metafied bytes decode, a malformed record is a failure.
+#[devkit::test]
+async fn replay_after_the_history_file_is_gone_gives_the_same_facts() {
+    let dir = Dir::new();
+    let t = Target::new(&dir);
+    let mut history = Vec::new();
+    history.extend_from_slice(b": 1700000000:0;git status\n");
+    history.extend_from_slice(b": 1700000060:0;git status\n");
+    history.extend_from_slice(b": 1700000120:0;for f in *; do\\\necho $f\\\ndone\n");
+    history.extend_from_slice(b": 1700000180:0;echo za\xc5\x83\xbb\xc3\xb3\xc5\x82\xc4\x87\n");
+    history.extend_from_slice(b": notanumber:0;weird\n");
+    let zsh = dir.file("zsh", &history);
+    t.backfill(Some(&zsh), None);
+    let expected = vec![
+        (1_700_000_000, "git status".to_owned()),
+        (1_700_000_060, "git status".to_owned()),
+        (1_700_000_120, "for f in *; do\necho $f\ndone".to_owned()),
+        (1_700_000_180, "echo zaśółć".to_owned()),
+    ];
+    assert_eq!(zsh_facts(&t), expected);
+    let mut c = t.connect().await;
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+
+    std::fs::remove_file(&zsh).unwrap();
+    t.admin(&["replay", "--binding", &zsh_binding(&zsh)]);
+    assert_eq!(
+        zsh_facts(&t),
+        expected,
+        "replayed from the stored bytes alone"
+    );
+    assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
+    consistent(&mut c).await;
+}
+
 /// One `sinnix-capture-v1` clipboard record.
 fn lake_line(seq: i64, payload: &str) -> String {
     format!(
@@ -1050,7 +1434,7 @@ async fn every_lake_line_is_read_once() {
     backfill();
     let mut c = t.connect().await;
     let accounted = "SELECT count(*) FROM (
-        SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL
+        SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL AND event_type <> 'source.coverage'
         UNION SELECT material_id, anchor FROM raw.failures) a";
     assert_eq!(
         scalar(
@@ -1368,4 +1752,179 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
         3
     );
     consistent(&mut connection).await;
+}
+
+#[devkit::test]
+async fn outlook_conversion_uses_owned_scratch_and_stores_each_exports_exact_bytes() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let first_mbox = b"From sender@example.test Tue Sep 15 10:00:00 2026\nMessage-ID: <first@example.test>\nFrom: sender@example.test\nDate: Tue, 15 Sep 2026 10:00:00 +0000\nSubject: first synthetic export\n\nfirst original bytes\n\n";
+    let second_mbox = b"From sender@example.test Tue Sep 15 10:00:00 2026\nMessage-ID: <second@example.test>\nFrom: sender@example.test\nDate: Tue, 15 Sep 2026 10:00:00 +0000\nSubject: second synthetic export\n\nsecond original bytes\n\n";
+    let first = [
+        b"synthetic native PST first\n".as_slice(),
+        first_mbox.as_slice(),
+    ]
+    .concat();
+    let second = [
+        b"synthetic native PST second\n".as_slice(),
+        second_mbox.as_slice(),
+    ]
+    .concat();
+    let a = dir.file("inputs/a/archive.pst", &first);
+    let b = dir.file("inputs/b/archive.pst", &second);
+    let converter = dir.file(
+        "bin/readpst",
+        br##"#!/bin/sh
+if [ "$1" = "-V" ]; then printf 'synthetic-readpst 1\n'; exit 0; fi
+while [ "$1" != "-o" ]; do shift; done
+mkdir -p "$2/Inbox"
+sed '1d' "$3" > "$2/Inbox/mbox"
+"##,
+    );
+    std::fs::set_permissions(&converter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let scratch = dir.0.join("managed-scratch");
+    std::fs::create_dir(&scratch).unwrap();
+    let mut path = vec![converter.parent().unwrap().to_owned()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    finish(
+        target
+            .sinexd(&["backfill", "--host", HOST])
+            .arg("--read")
+            .arg(format!("outlook={}", dir.0.join("inputs").display()))
+            .env("PATH", std::env::join_paths(path).unwrap())
+            .env("TMPDIR", &scratch),
+    );
+    assert_eq!(std::fs::read(&a).unwrap(), first);
+    assert_eq!(std::fs::read(&b).unwrap(), second);
+    assert_eq!(
+        std::fs::read_dir(scratch).unwrap().count(),
+        0,
+        "all conversion lifetimes have ended"
+    );
+    let answer = target.query("events where event_type = mail.message");
+    assert_eq!(answer["total"], 2, "{answer}");
+    let facts_query =
+        "events where event_type = mail.message fields payload.subject sort payload.subject";
+    let facts = target.query(facts_query);
+    let mut conn = target.connect().await;
+    let blobs = sinex_store::Blobs::open(&target.store).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT blob FROM raw.materials WHERE parser='rfc5322-mail'")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    let acquisitions: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT manifest FROM raw.materials WHERE manifest ? 'acquisition'")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(acquisitions.len(), 2);
+    for acquisition in acquisitions {
+        assert_eq!(acquisition["role"], "original-archive");
+        assert_eq!(acquisition["acquisition"]["tool"], "readpst");
+        assert_eq!(acquisition["acquisition"]["version"], "synthetic-readpst 1");
+    }
+    let linked: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials m JOIN raw.materials native ON native.id=(m.manifest->>'acquisition_material')::uuid WHERE native.manifest ? 'acquisition'").fetch_one(&mut conn).await.unwrap();
+    assert!(
+        linked >= 4,
+        "converted originals and record parts cite their retained native acquisition"
+    );
+    for expected in [
+        first.as_slice(),
+        second.as_slice(),
+        first_mbox.as_slice(),
+        second_mbox.as_slice(),
+    ] {
+        let name = format!("blake3:{}", blake3::hash(expected).to_hex());
+        assert!(
+            names.contains(&name),
+            "each imported folder's exact bytes have stored custody"
+        );
+        assert_eq!(blobs.read(&name).unwrap(), expected);
+    }
+    let bindings: Vec<String> = sqlx::query_scalar(
+        "SELECT binding FROM raw.bindings WHERE source='communication.outlook' ORDER BY binding",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(bindings.len(), 2);
+    std::fs::remove_file(a).unwrap();
+    std::fs::remove_file(b).unwrap();
+    for binding in bindings {
+        target.admin(&["replay", "--binding", &binding]);
+    }
+    assert_eq!(
+        target.query(facts_query)["rows"],
+        facts["rows"],
+        "replay reads stored native/converted evidence after originals and staging are gone"
+    );
+}
+
+#[devkit::test]
+async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head() {
+    let dir = Dir::new();
+    let target = Target::new(&dir);
+    let day = "lake/activity/desktop/clipboard/clipboard-20251009.jsonl";
+    let mut text = lake_line(1, &copied("one")) + &lake_line(3, &copied("three"));
+    let path = dir.file(day, text.as_bytes());
+    let input = format!("sinnix-lake={}", dir.0.join("lake").display());
+    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &input]));
+    backfill();
+    let query =
+        "events where event_type = capture.gap AND payload.reason = sequence fields payload";
+    let first = target.query(query);
+    assert_eq!(first["total"], 1, "{first}");
+    assert_eq!(
+        first["rows"][0]["payload"]["sequence"]["first_missing"], 2,
+        "{first}"
+    );
+    assert_eq!(
+        first["rows"][0]["payload"]["sequence"]["last_missing"], 2,
+        "{first}"
+    );
+    text += &lake_line(6, &copied("six"));
+    std::fs::write(&path, &text).unwrap();
+    backfill();
+    let after = target.query(query);
+    assert_eq!(after["total"], 2, "{after}");
+    let mut ranges: Vec<_> = after["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["payload"]["sequence"]["first_missing"]
+                    .as_u64()
+                    .unwrap(),
+                row["payload"]["sequence"]["last_missing"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    ranges.sort();
+    assert_eq!(ranges, [(2, 2), (4, 5)]);
+    backfill();
+    assert_eq!(
+        target.query(query)["total"],
+        2,
+        "unchanged re-read adds no duplicate gap"
+    );
+    let mut conn = target.connect().await;
+    let rows: Vec<(String,i64)> = sqlx::query_as("SELECT m.blob,e.anchor FROM core.events e JOIN raw.materials m ON m.id=e.material_id WHERE e.event_type='capture.gap' ORDER BY e.commit_seq").fetch_all(&mut conn).await.unwrap();
+    let blobs = sinex_store::Blobs::open(&target.store).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    for ((blob, anchor), expected) in rows.iter().zip([3, 6]) {
+        let bytes = blobs.read(blob).unwrap();
+        let line = bytes[*anchor as usize..]
+            .split(|byte| *byte == b'\n')
+            .next()
+            .unwrap();
+        let record: serde_json::Value = serde_json::from_slice(line).unwrap();
+        assert_eq!(
+            record["seq"], expected,
+            "gap citation names the actual later source record"
+        );
+    }
 }

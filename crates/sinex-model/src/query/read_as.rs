@@ -140,6 +140,10 @@ fn reference_text(r: &Reference) -> String {
 
 fn expr(e: &Expr) -> String {
     match e {
+        Expr::Truth {
+            value,
+            operand: field,
+        } => format!("{} matches {value:?}", operand(field)),
         Expr::And(a, b) => format!("{} and {}", grouped(a, true), grouped(b, true)),
         Expr::Or(a, b) => format!("{} or {}", grouped(a, false), grouped(b, false)),
         Expr::Not(inner) => format!("not ({})", expr(inner)),
@@ -162,7 +166,7 @@ fn expr(e: &Expr) -> String {
                 Op::Contains => "contains",
                 Op::Prefix => "starts with",
             };
-            format!("{} {verb} {}", operand(lhs), value(rhs))
+            format!("{} {verb} {}", operand(lhs), comparison_value(rhs, lhs))
         }
         Expr::Exists(o) => format!("{} is known", operand(o)),
         Expr::Words(w) => {
@@ -177,6 +181,7 @@ fn expr(e: &Expr) -> String {
         Expr::Within { lhs, from, to } => {
             format!("{} is from {} until {}", operand(lhs), time(from), time(to))
         }
+        Expr::Similar { reference } => format!("ranked by supplied vector sinex:ev/{reference}"),
         Expr::Overlaps { from, to } => match to {
             Some(to) => format!("its span overlaps {from} until {to}"),
             None => format!("its span contains {from}"),
@@ -219,8 +224,39 @@ fn field_phrase(f: &FieldRef) -> String {
     }
 }
 
+fn comparison_value(v: &Value, lhs: &Operand) -> String {
+    let ty = match lhs {
+        Operand::Field(FieldRef::Field(field)) => Some(field.ty),
+        Operand::Field(FieldRef::TypedPayload { ty, .. }) => Some(*ty),
+        Operand::Field(FieldRef::TypedGroup(column)) => column.field_type(),
+        Operand::TimeFn(TimeFn::Hour, _) => Some(super::FieldType::Integer),
+        _ => None,
+    };
+    if matches!(
+        ty,
+        Some(super::FieldType::Integer | super::FieldType::Number)
+    ) {
+        match v {
+            Value::Text(raw) => return raw.clone(),
+            Value::List(items) => {
+                return format!(
+                    "[{}]",
+                    items
+                        .iter()
+                        .map(|value| comparison_value(value, lhs))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            _ => {}
+        }
+    }
+    value(v)
+}
+
 fn value(v: &Value) -> String {
     match v {
+        Value::Unknown => "unknown".into(),
         Value::Text(s) | Value::PlaceholderText(s) => format!("\"{s}\""),
         Value::Glob(s) => format!("\"{s}\""),
         Value::Integer(i) => i.to_string(),

@@ -1,350 +1,849 @@
-//! Parsing and binding: one pass that reads the tokens, checks every field
-//! against its table, and resolves every time against the context. A
-//! query that cannot mean what it says is refused with the reason; nothing
-//! falls back silently.
-use super::QueryError;
-use super::ast::*;
-use super::lex::{Kind, Token, tokens};
-use super::tables::{Alias, COMMAND_WORDS, FieldType, Table, table_like_words, tables_accepting};
-use super::text::words;
-use super::time::{self, Context};
+//! Lower shared syntax into Sinex's checked SQL execution plan.
+//! All tokenization, grammar and time expressions belong to query-language.
+use super::*;
 use jiff::{SignedDuration, Timestamp};
-use uuid::Uuid;
+use query_language::ast as syntax;
+use query_language::scope::{FieldInfo, NodePath, Origin, Scope, Typing};
 
-mod clause;
-mod filter;
-mod reference;
-mod suggest;
-mod times;
-
-pub use reference::parse_reference;
-use suggest::typo;
-
-/// Words that end a filter and start a clause.
-const CLAUSE_WORDS: &[&str] = &[
-    "where",
-    "near",
-    "before",
-    "after",
-    "during",
-    "containing",
-    "as",
-    "group",
-    "count",
-    "sum",
-    "min",
-    "max",
-    "avg",
-    "count_distinct",
-    "sort",
-    "limit",
-    "fields",
-    "fill",
-];
-
-/// Words with meaning in the language; unquoted they are never search words.
-const RESERVED: &[&str] = &[
-    "and",
-    "or",
-    "not",
-    "where",
-    "since",
-    "until",
-    "in",
-    "near",
-    "before",
-    "after",
-    "during",
-    "containing",
-    "within",
-    "as",
-    "of",
-    "group",
-    "by",
-    "count",
-    "sum",
-    "min",
-    "max",
-    "avg",
-    "count_distinct",
-    "sort",
-    "limit",
-    "fields",
-    "fill",
-    "exists",
-    "desc",
-    "asc",
-    "at",
-];
-
-/// Parse and bind `text` against `ctx`.
 pub fn bind(text: &str, ctx: &Context) -> Result<Query, QueryError> {
-    bind_tokens(tokens(text)?, ctx, text.len())
+    bind_syntax(super::syntax::parse(text, ctx)?, ctx)
 }
-
-pub(super) fn bind_tokens(
-    toks: Vec<Token>,
-    ctx: &Context,
-    end: usize,
-) -> Result<Query, QueryError> {
-    let mut query = parse_tokens(toks, ctx, end)?;
-    super::typed::check(&mut query, ctx)?;
-    super::fill::bind(&mut query, ctx)?;
-    Ok(query)
-}
-
-/// Parse before the stored declaration catalog is selected.
 pub fn parse(text: &str, ctx: &Context) -> Result<Query, QueryError> {
-    parse_tokens(tokens(text)?, ctx, text.len())
-}
-
-fn parse_tokens(toks: Vec<Token>, ctx: &Context, end: usize) -> Result<Query, QueryError> {
-    if toks.is_empty() {
-        return Err(QueryError::new("empty query"));
-    }
-    let mut p = Parser {
-        toks,
-        at: 0,
+    lower(
+        shared_bound(super::syntax::parse(text, ctx)?, ctx)?,
         ctx,
-        end,
-    };
-    let query = p.query(false)?;
-    if let Some(t) = p.peek() {
-        return Err(QueryError::at(
-            t.at,
-            format!("unexpected `{}`; expected a clause or the end", t.text),
-        ));
+        false,
+    )
+}
+fn shared_bound(
+    input: syntax::Query,
+    ctx: &Context,
+) -> Result<query_language::bind::BoundQuery, QueryError> {
+    query_language::bind::bind(&input, &super::syntax::catalog(ctx)).map_err(super::syntax::error)
+}
+pub(super) fn bind_syntax(input: syntax::Query, ctx: &Context) -> Result<Query, QueryError> {
+    let mut q = lower(shared_bound(input, ctx)?, ctx, false)?;
+    super::typed::check(&mut q, ctx)?;
+    super::fill::bind(&mut q, ctx)?;
+    Ok(q)
+}
+pub(super) fn validate_syntax(input: syntax::Query, ctx: &Context) -> Result<Query, QueryError> {
+    let mut q = lower(shared_bound(input, ctx)?, ctx, true)?;
+    super::typed::check(&mut q, ctx)?;
+    super::fill::bind(&mut q, ctx)?;
+    Ok(q)
+}
+fn lower(
+    bound: query_language::bind::BoundQuery,
+    ctx: &Context,
+    validating: bool,
+) -> Result<Query, QueryError> {
+    ctx.clock()?;
+    let (input, typing) = bound.into_parts();
+    Binder {
+        ctx,
+        validating,
+        typing: &typing,
     }
-    Ok(query)
+    .query(input, &NodePath::default())
 }
-
-/// What field names resolve to at a point in the query.
-#[derive(Clone)]
-enum Scope {
-    Rows {
-        table: Table,
-        alias: Option<&'static Alias>,
-        /// Columns time joins add: `near`, `offset`, `during`, `containing`.
-        columns: Vec<String>,
-    },
-    /// After a grouping: the group's key and aggregate columns.
-    Grouped(Vec<String>),
-}
-
-impl Scope {
-    fn rows(table: Table, alias: Option<&'static Alias>) -> Scope {
-        Scope::Rows {
-            table,
-            alias,
-            columns: Vec::new(),
-        }
-    }
-}
-
-struct Parser<'a> {
-    toks: Vec<Token>,
-    at: usize,
+struct Binder<'a> {
     ctx: &'a Context,
-    end: usize,
+    validating: bool,
+    typing: &'a Typing,
 }
-
-impl Parser<'_> {
-    fn peek(&self) -> Option<&Token> {
-        self.toks.get(self.at)
-    }
-
-    fn peek_at(&self, offset: usize) -> Option<&Token> {
-        self.toks.get(self.at + offset)
-    }
-
-    fn next(&mut self) -> Option<Token> {
-        let t = self.toks.get(self.at).cloned();
-        if t.is_some() {
-            self.at += 1;
-        }
-        t
-    }
-
-    fn pos(&self) -> usize {
-        self.peek().map_or(self.end, |t| t.at)
-    }
-
-    fn is_word(&self, word: &str) -> bool {
-        self.peek().is_some_and(|t| t.is_word(word))
-    }
-
-    fn is_symbol(&self, symbol: &str) -> bool {
-        self.peek().is_some_and(|t| t.is_symbol(symbol))
-    }
-
-    fn take_word(&mut self, word: &str) -> bool {
-        if self.is_word(word) {
-            self.at += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn take_symbol(&mut self, symbol: &str) -> bool {
-        if self.is_symbol(symbol) {
-            self.at += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn expect_word(&mut self, word: &str) -> Result<(), QueryError> {
-        if self.take_word(word) {
-            Ok(())
-        } else {
-            Err(QueryError::at(self.pos(), format!("expected `{word}`")))
-        }
-    }
-
-    fn expect_symbol(&mut self, symbol: &str) -> Result<(), QueryError> {
-        if self.take_symbol(symbol) {
-            Ok(())
-        } else {
-            Err(QueryError::at(self.pos(), format!("expected `{symbol}`")))
-        }
-    }
-
-    /// The next token's text, which must be a value.
-    fn value_token(&mut self) -> Result<Token, QueryError> {
-        match self.next() {
-            Some(t) if t.kind != Kind::Symbol => Ok(t),
-            Some(t) => Err(QueryError::at(
-                t.at,
-                format!("expected a value, found `{}`", t.text),
-            )),
-            None => Err(QueryError::at(self.end, "expected a value")),
-        }
-    }
-
-    fn at_clause(&self) -> bool {
-        self.peek()
-            .is_some_and(|t| CLAUSE_WORDS.iter().any(|w| t.is_word(w)))
-    }
-
-    fn at_end_of_query(&self, nested: bool) -> bool {
-        match self.peek() {
-            None => true,
-            Some(t) => nested && t.is_symbol(")"),
-        }
-    }
-
-    fn query(&mut self, nested: bool) -> Result<Query, QueryError> {
-        let first = self
-            .peek()
-            .cloned()
-            .ok_or_else(|| QueryError::at(self.end, "expected a query"))?;
-        let mut ranked = false;
-        let (source, filter) = if first.kind == Kind::Word {
-            let word = first.text.to_ascii_lowercase();
-            if let Some(walk) = match word.as_str() {
-                "trace" => Some(Walk::Trace),
-                "descendants" => Some(Walk::Descendants),
-                "parents" => Some(Walk::Parents),
-                _ => None,
-            } {
-                self.at += 1;
-                let reference = self.reference()?;
-                (Source::Walk { walk, reference }, None)
-            } else if word == "recall" {
-                self.at += 1;
-                (self.recall()?, None)
-            } else if COMMAND_WORDS.contains(&word.as_str()) {
-                return Err(QueryError::not_built(
-                    first.at,
-                    format!(
-                        "`{word}` is a command that is not built yet; quote it to search for the word"
-                    ),
+impl Binder<'_> {
+    fn resolve_info(&self, info: &FieldInfo, at: usize) -> Result<FieldRef, QueryError> {
+        if let Origin::Catalog { unit, field } = &info.origin {
+            let alias = Alias::from_name(unit);
+            let table = Table::from_name(unit)
+                .or(alias.map(|_| Table::Events))
+                .ok_or_else(|| {
+                    QueryError::at(at, format!("unsupported bound row domain {unit}"))
+                })?;
+            if let Some(path) = field.strip_prefix("payload.") {
+                if !table.is_events() {
+                    return Err(QueryError::at(at, "bound relation has no payload"));
+                }
+                return Ok(FieldRef::Payload(
+                    path.split('.').map(str::to_owned).collect(),
                 ));
-            } else if let Some(table) = Table::from_name(&word) {
-                self.at += 1;
-                let filter = self.table_filter(&Scope::rows(table, None))?;
-                (Source::Table { table, alias: None }, filter)
-            } else if let Some(alias) = Alias::from_name(&word) {
-                self.at += 1;
-                let scope = Scope::rows(Table::Events, Some(alias));
-                let filter = self.table_filter(&scope)?;
-                (
-                    Source::Table {
-                        table: Table::Events,
-                        alias: Some(alias),
-                    },
-                    filter,
+            }
+            return alias
+                .and_then(|alias| alias.field(field))
+                .or_else(|| table.field(field))
+                .map(FieldRef::Field)
+                .ok_or_else(|| {
+                    QueryError::at(
+                        at,
+                        format!("bound catalog field {unit}.{field} has no execution adapter"),
+                    )
+                });
+        }
+        Ok(FieldRef::TypedGroup(BoundColumn::new(info.clone())))
+    }
+    pub(super) fn resolve(
+        &self,
+        name: &str,
+        scope: &Scope,
+        at: usize,
+    ) -> Result<FieldRef, QueryError> {
+        let info = scope
+            .field(name)
+            .ok_or_else(|| QueryError::at(at, format!("{name} is absent from its bound scope")))?;
+        self.resolve_info(info, at)
+    }
+
+    pub(super) fn time_field(
+        &self,
+        field: &FieldRef,
+        scope: &Scope,
+        at: usize,
+    ) -> Result<(), QueryError> {
+        match field {
+            FieldRef::Field(f) if f.ty == FieldType::Time => Ok(()),
+            FieldRef::TypedGroup(column)
+                if scope.field(column.name()).is_some_and(|field| {
+                    matches!(
+                        field.field.kind,
+                        query_language::catalog::FieldKind::Time
+                            | query_language::catalog::FieldKind::Json
+                    )
+                }) =>
+            {
+                Ok(())
+            }
+            FieldRef::Payload(path) if self.payload_time(path) => Ok(()),
+            _ => Err(QueryError::at(
+                at,
+                format!("`{}` is not a time", field.name()),
+            )),
+        }
+    }
+
+    fn payload_time(&self, path: &[String]) -> bool {
+        self.ctx
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.field(path))
+            .is_none_or(|field| {
+                matches!(
+                    field.ty,
+                    super::catalog::DataType::Time | super::catalog::DataType::Json
                 )
-            } else {
-                if let Some(suggestion) = typo(&word) {
+            })
+    }
+
+    pub(super) fn time_fn_value(
+        &mut self,
+        func: TimeFn,
+        raw: &str,
+        at: usize,
+    ) -> Result<Value, QueryError> {
+        time_fn_value(self.ctx, func, raw, at)
+    }
+
+    fn instant(&self, value: &syntax::Value, at: usize) -> Result<Timestamp, QueryError> {
+        Ok(
+            query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
+                .map_err(super::syntax::error)?
+                .value
+                .start(),
+        )
+    }
+    fn scalar<'a>(&self, value: &'a syntax::Value, at: usize) -> Result<&'a str, QueryError> {
+        value
+            .text()
+            .ok_or_else(|| QueryError::at(at, "expected one scalar value"))
+    }
+    fn seconds(&self, value: &syntax::Value, at: usize) -> Result<f64, QueryError> {
+        time::duration(self.scalar(value, at)?)
+            .filter(|s| *s > 0.0)
+            .ok_or_else(|| QueryError::at(at, "expected a positive duration"))
+    }
+    fn operand(
+        &self,
+        value: &syntax::Operand,
+        scope: &Scope,
+        at: usize,
+    ) -> Result<Operand, QueryError> {
+        match value {
+            syntax::Operand::Field { name } => Ok(Operand::Field(self.resolve(name, scope, at)?)),
+            syntax::Operand::Function { name, arguments } => {
+                let func = TimeFn::from_name(name)
+                    .ok_or_else(|| QueryError::not_built(at, format!("{name}() is not built")))?;
+                let [syntax::Operand::Field { name }] = arguments.as_slice() else {
+                    return Err(QueryError::at(at, "time functions take one time field"));
+                };
+                let field = self.resolve(name, scope, at)?;
+                self.time_field(&field, scope, at)?;
+                Ok(Operand::TimeFn(func, field))
+            }
+        }
+    }
+    fn value(
+        &mut self,
+        lhs: &Operand,
+        op: Op,
+        value: &syntax::Value,
+        at: usize,
+    ) -> Result<Value, QueryError> {
+        if matches!(value, syntax::Value::Unknown) {
+            return Ok(Value::Unknown);
+        }
+        if matches!(value, syntax::Value::Any) {
+            return Err(QueryError::not_built(
+                at,
+                "wildcard comparison requires the field:* match form",
+            ));
+        }
+        if let syntax::Value::Set { values } = value {
+            if !matches!(op, Op::Eq | Op::Ne) {
+                return Err(QueryError::at(at, "a list compares with = or !="));
+            }
+            return values
+                .iter()
+                .map(|v| self.value(lhs, op, v, at))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::List);
+        }
+        if self.validating && matches!(value, syntax::Value::Parameter { .. }) {
+            return match lhs {
+                Operand::TimeFn(func, _) => self.time_fn_value(
+                    *func,
+                    match func {
+                        TimeFn::Day | TimeFn::Week => "2000-01-01",
+                        TimeFn::Hour => "1",
+                        TimeFn::Weekday => "mon",
+                        TimeFn::Month => "2000-01",
+                        TimeFn::MonthDay => "01-01",
+                    },
+                    at,
+                ),
+                Operand::Field(FieldRef::Field(f)) => Ok(match f.ty {
+                    FieldType::Id | FieldType::IdList => Value::Id(uuid::Uuid::nil()),
+                    FieldType::Enum(values) => Value::Text(values[0].into()),
+                    FieldType::Integer | FieldType::Number | FieldType::Bool | FieldType::Time => {
+                        return Err(QueryError::at(
+                            at,
+                            "a text parameter does not have this field type",
+                        ));
+                    }
+                    _ if f.name == "event_type" => Value::PlaceholderText("/synthetic".into()),
+                    _ => Value::Text("/synthetic".into()),
+                }),
+                _ => Ok(Value::PlaceholderText("/synthetic".into())),
+            };
+        }
+        let raw = self.scalar(value, at)?;
+        if matches!(value, syntax::Value::Parameter { .. }) {
+            return Err(QueryError::at(at, "unbound saved query parameter"));
+        }
+        match lhs {
+            Operand::TimeFn(func, _) => {
+                if matches!(op, Op::Contains | Op::Prefix) {
                     return Err(QueryError::at(
-                        first.at,
-                        format!(
-                            "`{word}` looks like a misspelled `{suggestion}`; correct it, or quote it to search for the word"
-                        ),
+                        at,
+                        "time functions compare with = != < <= > >=",
                     ));
                 }
-                // Bare words: a full-text search over events.
-                let scope = Scope::rows(Table::Events, None);
-                let filter = self.filter(&scope)?;
-                (
-                    Source::Table {
-                        table: Table::Events,
-                        alias: None,
+                self.time_fn_value(*func, raw, at)
+            }
+            // The typed pass knows the selected payload kinds and output columns.
+            // Keep the scalar spelling until that declaration chooses its type.
+            Operand::Field(
+                FieldRef::Group(_)
+                | FieldRef::TypedGroup(_)
+                | FieldRef::Payload(_)
+                | FieldRef::TypedPayload { .. },
+            ) => Ok(Value::Text(raw.to_owned())),
+            Operand::Field(FieldRef::Field(f)) => {
+                let text_like = matches!(
+                    f.ty,
+                    FieldType::Text | FieldType::TextList | FieldType::Path | FieldType::PathList
+                );
+                if matches!(op, Op::Contains | Op::Prefix) && !text_like {
+                    return Err(QueryError::at(at, format!("{} is not text", f.name)));
+                }
+                if op.ordering()
+                    && matches!(
+                        f.ty,
+                        FieldType::Id
+                            | FieldType::IdList
+                            | FieldType::PathList
+                            | FieldType::TextList
+                            | FieldType::Bool
+                            | FieldType::Enum(_)
+                            | FieldType::Json
+                    )
+                {
+                    return Err(QueryError::at(at, format!("{} cannot be ordered", f.name)));
+                }
+                Ok(match f.ty {
+                    FieldType::Time => Value::Time(self.instant(value, at)?),
+                    FieldType::Integer | FieldType::Number => Value::Text(raw.to_owned()),
+                    FieldType::Bool => Value::Bool(
+                        raw.parse()
+                            .map_err(|_| QueryError::at(at, "expected true or false"))?,
+                    ),
+                    FieldType::Id | FieldType::IdList => Value::Id(
+                        super::reference::parse_id(raw)
+                            .ok_or_else(|| QueryError::at(at, "expected an event ID"))?,
+                    ),
+                    FieldType::Enum(values) => {
+                        if !values.contains(&raw) {
+                            return Err(QueryError::at(
+                                at,
+                                format!("{} is one of {}", f.name, values.join(", ")),
+                            ));
+                        }
+                        Value::Text(raw.into())
+                    }
+                    FieldType::Json => {
+                        return Err(QueryError::at(at, "compare payload by its field path"));
+                    }
+                    _ => {
+                        if f.ty == FieldType::PathList
+                            && !matches!(op, Op::Eq | Op::Ne | Op::Prefix)
+                        {
+                            return Err(QueryError::at(at, "path lists compare with = != or ^"));
+                        }
+                        if matches!(f.ty, FieldType::Path | FieldType::PathList)
+                            && op == Op::Prefix
+                            && !raw.starts_with('/')
+                        {
+                            return Err(QueryError::at(at, "path prefix must be absolute"));
+                        }
+                        if matches!(f.name, "source" | "event_type")
+                            && raw.contains('*')
+                            && matches!(op, Op::Eq | Op::Ne)
+                        {
+                            Value::Glob(raw.into())
+                        } else {
+                            Value::Text(raw.into())
+                        }
+                    }
+                })
+            }
+        }
+    }
+    fn comparison(
+        &mut self,
+        lhs: Operand,
+        op: Op,
+        value: &syntax::Value,
+        at: usize,
+    ) -> Result<Expr, QueryError> {
+        let rhs = self.value(&lhs, op, value, at)?;
+        Ok(Expr::Compare { lhs, op, rhs })
+    }
+    fn condition(&mut self, c: &syntax::Condition, scope: &Scope) -> Result<Expr, QueryError> {
+        use syntax::ConditionKind as C;
+        let at = c.span.start;
+        Ok(match &c.kind {
+            C::And { conditions } | C::Or { conditions } => {
+                let mut iter = conditions.iter();
+                let mut out = self.condition(
+                    iter.next()
+                        .ok_or_else(|| QueryError::at(at, "empty condition"))?,
+                    scope,
+                )?;
+                for c2 in iter {
+                    let rhs = self.condition(c2, scope)?;
+                    out = if matches!(c.kind, C::And { .. }) {
+                        Expr::And(Box::new(out), Box::new(rhs))
+                    } else {
+                        Expr::Or(Box::new(out), Box::new(rhs))
+                    };
+                }
+                out
+            }
+            C::Not { condition } => Expr::Not(Box::new(self.condition(condition, scope)?)),
+            C::Match { field, value } => {
+                let lhs = Operand::Field(self.resolve(field, scope, at)?);
+                match value {
+                    syntax::Value::Any => Expr::Truth {
+                        value: query_language::semantics::Truth::True,
+                        operand: lhs,
                     },
-                    Some(filter),
-                )
+                    syntax::Value::Unknown => Expr::Not(Box::new(Expr::Exists(lhs))),
+                    _ => self.comparison(lhs, Op::Eq, value, at)?,
+                }
             }
-        } else if first.kind == Kind::Quoted {
-            let scope = Scope::rows(Table::Events, None);
-            let filter = self.filter(&scope)?;
-            (
-                Source::Table {
-                    table: Table::Events,
-                    alias: None,
+            C::Compare { operand, op, value } => {
+                let lhs = self.operand(operand, scope, at)?;
+                self.comparison(lhs, *op, value, at)?
+            }
+            C::Since { operand, value } | C::Until { operand, value } => {
+                let lhs = self.operand(operand, scope, at)?;
+                let resolved =
+                    query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
+                        .map_err(super::syntax::error)?;
+                let until = matches!(c.kind, C::Until { .. });
+                let bound = if until {
+                    resolved.value.until_bound()
+                } else {
+                    resolved.value.start()
+                };
+                Expr::Compare {
+                    lhs,
+                    op: if until { Op::Lt } else { Op::Ge },
+                    rhs: Value::Time(bound),
+                }
+            }
+            C::Similar { value } => {
+                let raw = self.scalar(value, at)?;
+                let reference=super::reference::parse_id(raw).ok_or_else(||QueryError::not_built(at,"similar requires a supplied text.embedding event reference; no embedding provider is configured for text"))?;
+                Expr::Similar { reference }
+            }
+            C::FieldExists { operand } => Expr::Exists(self.operand(operand, scope, at)?),
+            C::Text { text, mode } => {
+                if *mode == syntax::TextMode::Approximate {
+                    return Err(QueryError::not_built(at, "approximate search is not built"));
+                }
+                let words = text::words(text);
+                if words.is_empty() {
+                    return Err(QueryError::at(at, "search contains no words"));
+                }
+                Expr::Words(Words {
+                    phrase: *mode == syntax::TextMode::Phrase || words.len() > 1,
+                    prefix: *mode == syntax::TextMode::Prefix,
+                    words,
+                })
+            }
+            C::TimeRange { operand, value } => {
+                let lhs = self.operand(operand, scope, at)?;
+                let field = match &lhs {
+                    Operand::Field(f) | Operand::TimeFn(_, f) => f,
+                };
+                self.time_field(field, scope, at)?;
+                let r = query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
+                    .map_err(super::syntax::error)?
+                    .value
+                    .range()
+                    .ok_or_else(|| QueryError::at(at, "expected a time range"))?;
+                Expr::Within {
+                    lhs,
+                    from: r.start,
+                    to: r.end,
+                }
+            }
+            C::Between { operand, from, to } => {
+                let lhs = self.operand(operand, scope, at)?;
+                let a = self.comparison(lhs.clone(), Op::Ge, from, at)?;
+                let b = self.comparison(lhs, Op::Le, to, at)?;
+                Expr::And(Box::new(a), Box::new(b))
+            }
+            C::Overlaps { from, to } => {
+                let from = self.instant(from, at)?;
+                let to = to.as_ref().map(|v| self.instant(v, at)).transpose()?;
+                if to.is_some_and(|to| to <= from) {
+                    return Err(QueryError::at(at, "overlap end must follow its start"));
+                }
+                Expr::Overlaps { from, to }
+            }
+            C::TimeDifference {
+                left,
+                right,
+                op,
+                value,
+            } => {
+                let Operand::Field(a) = self.operand(left, scope, at)? else {
+                    return Err(QueryError::at(at, "time difference needs fields"));
+                };
+                let Operand::Field(b) = self.operand(right, scope, at)? else {
+                    return Err(QueryError::at(at, "time difference needs fields"));
+                };
+                self.time_field(&a, scope, at)?;
+                self.time_field(&b, scope, at)?;
+                Expr::TimeDiff {
+                    a,
+                    b,
+                    op: *op,
+                    seconds: self.seconds(value, at)?,
+                }
+            }
+            _ => {
+                return Err(QueryError::not_built(
+                    at,
+                    "this query operator has no Sinex execution adapter",
+                ));
+            }
+        })
+    }
+
+    fn query(&mut self, input: syntax::Query, path: &NodePath) -> Result<Query, QueryError> {
+        let typing = self
+            .typing
+            .query(path)
+            .cloned()
+            .ok_or_else(|| QueryError::new("bound query scope is missing"))?;
+        if !input.attach.is_empty() {
+            return Err(QueryError::not_built(0, "attached relations are not built"));
+        }
+        let (source, filter) = match input.source {
+            syntax::Source::Unit {
+                unit, condition, ..
+            } => {
+                let alias = Alias::from_name(&unit);
+                let table = Table::from_name(&unit)
+                    .or(alias.map(|_| Table::Events))
+                    .ok_or_else(|| QueryError::new(format!("unknown table {unit}")))?;
+                let filter = condition
+                    .as_ref()
+                    .map(|c| self.condition(c, &typing.source))
+                    .transpose()?;
+                (Source::Table { table, alias }, filter)
+            }
+            syntax::Source::Walk {
+                direction,
+                reference,
+            } => (
+                Source::Walk {
+                    walk: match direction {
+                        syntax::WalkDirection::Trace => Walk::Trace,
+                        syntax::WalkDirection::Parents => Walk::Parents,
+                        syntax::WalkDirection::Descendants => Walk::Descendants,
+                    },
+                    reference: super::reference::parse_reference(&reference)?,
                 },
-                Some(filter),
-            )
-        } else {
-            return Err(QueryError::at(
-                first.at,
-                format!("a query starts with a table or words, not `{}`", first.text),
-            ));
-        };
-        if filter.as_ref().is_some_and(has_words) {
-            ranked = true;
-        }
-        let mut scope = Scope::rows(source.table(), source.alias());
-        let mut stages = Vec::new();
-        while !self.at_end_of_query(nested) {
-            let stage = self.clause(&mut scope)?;
-            if let Stage::Where(e) = &stage
-                && has_words(e)
-            {
-                ranked = true;
+                None,
+            ),
+            syntax::Source::RecallLast { unit, condition } => {
+                Alias::from_name(&unit)
+                    .ok_or_else(|| QueryError::new("missing recorded session relation"))?;
+                let filter = condition
+                    .as_ref()
+                    .map(|c| self.condition(c, &typing.source))
+                    .transpose()?;
+                (Source::RecallLast { filter }, None)
             }
-            stages.push(stage);
+            syntax::Source::RecallMark { number, window } => (
+                Source::RecallMark {
+                    number,
+                    window: window
+                        .as_ref()
+                        .map(|v| self.seconds(v, 0))
+                        .transpose()?
+                        .unwrap_or(1800.0),
+                },
+                None,
+            ),
+            syntax::Source::Recall { time, window } => {
+                let r = if let Some(syntax::Value::Scalar { text, .. }) = &time
+                    && text.starts_with("sinex:window/")
+                {
+                    match super::reference::parse_reference(text)? {
+                        Reference::Window { from, to } => (from, to),
+                        _ => unreachable!(),
+                    }
+                } else {
+                    let resolved = time
+                        .as_ref()
+                        .map(|v| {
+                            query_language::time::resolve(self.scalar(v, 0)?, &self.ctx.clock()?)
+                                .map_err(super::syntax::error)
+                        })
+                        .transpose()?;
+                    if window.is_none()
+                        && let Some(r) = resolved.as_ref().and_then(|r| r.value.range())
+                    {
+                        (r.start, r.end)
+                    } else {
+                        let centre = resolved.map_or(self.ctx.now, |r| r.value.start());
+                        let w = SignedDuration::from_secs_f64(
+                            window
+                                .as_ref()
+                                .map(|v| self.seconds(v, 0))
+                                .transpose()?
+                                .unwrap_or(1800.0),
+                        );
+                        (
+                            centre
+                                .checked_sub(w)
+                                .map_err(|e| QueryError::new(e.to_string()))?,
+                            centre
+                                .checked_add(w)
+                                .map_err(|e| QueryError::new(e.to_string()))?,
+                        )
+                    }
+                };
+                (Source::Recall { from: r.0, to: r.1 }, None)
+            }
+            _ => {
+                return Err(QueryError::not_built(
+                    0,
+                    "saved queries must be resolved before binding",
+                ));
+            }
+        };
+        let mut stages = Vec::new();
+        for (index, stage) in input.stages.into_iter().enumerate() {
+            let stage_path = path.field("stages").index(index).field("kind");
+            let scope = typing
+                .stages
+                .get(index)
+                .map(|stage| &stage.before)
+                .ok_or_else(|| QueryError::new("bound stage scope is missing"))?;
+            use syntax::StageKind as S;
+            let at = stage.span.start;
+            match stage.kind {
+                S::Where { condition } => {
+                    stages.push(Stage::Where(self.condition(&condition, scope)?))
+                }
+                S::AsOf { value, sequence } => stages.push(Stage::AsOf(if sequence {
+                    AsOf::Seq(
+                        self.scalar(&value, at)?
+                            .parse()
+                            .map_err(|_| QueryError::at(at, "invalid commit position"))?,
+                    )
+                } else {
+                    AsOf::Time(self.instant(&value, at)?)
+                })),
+                S::Group { keys } => {
+                    let keys = keys
+                        .iter()
+                        .map(|k| self.operand(k, scope, at))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let group = Group {
+                        keys,
+                        aggregates: vec![],
+                        fill: None,
+                    };
+                    stages.push(Stage::Group(group));
+                }
+                S::Aggregate { aggregates } => {
+                    // Aggregate fields refer to the relation entering a group.
+                    let aggregates = aggregates
+                        .into_iter()
+                        .enumerate()
+                        .map(|(aggregate_index, a)| {
+                            let function = match a.function {
+                                syntax::AggregateFunction::Count => AggFn::Count,
+                                syntax::AggregateFunction::Sum => AggFn::Sum,
+                                syntax::AggregateFunction::Avg => AggFn::Avg,
+                                syntax::AggregateFunction::Min => AggFn::Min,
+                                syntax::AggregateFunction::Max => AggFn::Max,
+                                syntax::AggregateFunction::CountDistinct => AggFn::CountDistinct,
+                                _ => {
+                                    return Err(QueryError::not_built(
+                                        at,
+                                        "aggregate is not built",
+                                    ));
+                                }
+                            };
+                            if a.fields.len() > 1 {
+                                return Err(QueryError::at(at, "aggregate takes one field"));
+                            }
+                            let field =
+                                a.fields
+                                    .first()
+                                    .map(|_| {
+                                        let operand_path = stage_path
+                                            .field("aggregates")
+                                            .index(aggregate_index)
+                                            .field("fields")
+                                            .index(0);
+                                        let info = self.typing.operand(&operand_path).ok_or_else(
+                                            || QueryError::new("bound aggregate input is missing"),
+                                        )?;
+                                        self.resolve_info(&info.result, at)
+                                    })
+                                    .transpose()?;
+                            if matches!(function, AggFn::Sum | AggFn::Avg)
+                                && let Some(FieldRef::Field(f)) = &field
+                                && !matches!(f.ty, FieldType::Integer | FieldType::Number)
+                            {
+                                return Err(QueryError::at(at, "aggregate needs a number"));
+                            }
+                            Ok(Aggregate { function, field })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if let Some(Stage::Group(g)) = stages.last_mut()
+                        && g.aggregates.is_empty()
+                    {
+                        g.aggregates = aggregates;
+                    } else {
+                        let g = Group {
+                            keys: vec![],
+                            aggregates,
+                            fill: None,
+                        };
+                        stages.push(Stage::Group(g));
+                    }
+                }
+                S::Fill => {
+                    let Some(Stage::Group(g)) = stages.last_mut() else {
+                        return Err(QueryError::at(at, "fill follows a grouped relation"));
+                    };
+                    g.fill = Some(Fill {
+                        from: self.ctx.now,
+                        to: self.ctx.now,
+                    });
+                }
+                S::Sort { keys } => {
+                    let keys=keys.into_iter().map(|k| {
+                    let key=if matches!(&k.operand,syntax::Operand::Field{name} if name=="rank") {SortBy::Rank} else {SortBy::Operand(self.operand(&k.operand,scope,at)?)};
+                    Ok(SortKey{key,descending:k.descending})
+                }).collect::<Result<Vec<_>,QueryError>>()?;
+                    stages.push(Stage::Sort(keys));
+                }
+                S::Limit { count } => {
+                    if count == 0 {
+                        return Err(QueryError::at(at, "limit takes a positive integer"));
+                    }
+                    stages.push(Stage::Limit(count));
+                }
+                S::Fields { fields } => stages.push(Stage::Fields(
+                    fields
+                        .iter()
+                        .map(|f| self.resolve(f, scope, at))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )),
+                S::Temporal {
+                    relation,
+                    query,
+                    at: point,
+                    within,
+                    all,
+                } => {
+                    if all {
+                        return Err(QueryError::not_built(
+                            at,
+                            "all temporal matches are not built",
+                        ));
+                    }
+                    let inner_path = stage_path.field("query");
+                    let inner = self.query(*query, &inner_path)?;
+                    if !matches!(inner.source, Source::Table { .. })
+                        || inner.stages.iter().any(|s| matches!(s, Stage::Group(_)))
+                    {
+                        return Err(QueryError::at(at, "time join must select rows of a table"));
+                    }
+                    let kind = match relation {
+                        syntax::TemporalRelation::Near => JoinKind::Near,
+                        syntax::TemporalRelation::Before => JoinKind::Before,
+                        syntax::TemporalRelation::After => JoinKind::After,
+                        syntax::TemporalRelation::During => JoinKind::During,
+                        syntax::TemporalRelation::Containing => JoinKind::Containing,
+                    };
+                    let within_secs = within.as_ref().map(|v| self.seconds(v, at)).transpose()?;
+                    if matches!(kind, JoinKind::Near | JoinKind::Before | JoinKind::After)
+                        && within_secs.is_none()
+                    {
+                        return Err(QueryError::at(at, "time join needs within duration"));
+                    }
+                    stages.push(Stage::Join(Join {
+                        kind,
+                        inner: Box::new(inner),
+                        at: match point {
+                            syntax::TimePoint::When => TimePoint::When,
+                            syntax::TimePoint::Start => TimePoint::Start,
+                            syntax::TimePoint::End => TimePoint::End,
+                        },
+                        within_secs,
+                    }));
+                }
+                _ => {
+                    return Err(QueryError::not_built(
+                        at,
+                        "this stage has no Sinex execution adapter",
+                    ));
+                }
+            }
         }
-        Ok(Query {
+        for stage in &mut stages {
+            if let Stage::Group(g) = stage
+                && g.aggregates.is_empty()
+            {
+                g.aggregates.push(Aggregate {
+                    function: AggFn::Count,
+                    field: None,
+                });
+            }
+        }
+        let ranked = filter.as_ref().is_some_and(has_words)
+            || stages
+                .iter()
+                .any(|s| matches!(s,Stage::Where(e) if has_words(e)));
+        let mut q = Query {
             source,
             filter,
             stages,
             ranked,
-        })
+        };
+        q.ranked |= q.similar_reference()?.is_some();
+        Ok(q)
     }
 }
-
 fn has_words(e: &Expr) -> bool {
     match e {
         Expr::Words(_) => true,
         Expr::And(a, b) | Expr::Or(a, b) => has_words(a) || has_words(b),
-        Expr::Not(_)
-        | Expr::Compare { .. }
-        | Expr::Exists(_)
-        | Expr::Within { .. }
-        | Expr::TimeDiff { .. }
-        | Expr::Overlaps { .. } => false,
+        _ => false,
     }
+}
+
+pub(super) fn time_fn_value(
+    ctx: &Context,
+    func: TimeFn,
+    raw: &str,
+    at: usize,
+) -> Result<Value, QueryError> {
+    let today = ctx.today();
+    let date_word = |w: &str| -> Option<jiff::civil::Date> {
+        match w {
+            "today" => Some(today),
+            "yesterday" => today.yesterday().ok(),
+            _ => time::date(w),
+        }
+    };
+    let bad = |what: &str| QueryError::at(at, format!("{}() takes {what}", func.name()));
+    Ok(match func {
+        TimeFn::Day => Value::Text(date_word(raw).ok_or_else(|| bad("a date"))?.to_string()),
+        TimeFn::Week => {
+            let d = date_word(raw).ok_or_else(|| bad("a date"))?;
+            let monday = d
+                .checked_sub(jiff::Span::new().days(d.weekday().to_monday_zero_offset() as i64))
+                .map_err(|_| bad("a date in range"))?;
+            Value::Text(monday.to_string())
+        }
+        TimeFn::Hour => {
+            let h: i64 = raw.parse().map_err(|_| bad("an hour, 0 to 23"))?;
+            if !(0..=23).contains(&h) {
+                return Err(bad("an hour, 0 to 23"));
+            }
+            Value::Integer(h)
+        }
+        TimeFn::Weekday => {
+            const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+            let short: String = raw.to_ascii_lowercase().chars().take(3).collect();
+            if !DAYS.contains(&short.as_str()) {
+                return Err(bad("a weekday: mon, tue, wed, thu, fri, sat, sun"));
+            }
+            Value::Text(short)
+        }
+        TimeFn::Month => {
+            if raw == "today" || raw == "now" {
+                Value::Text(format!("{:04}-{:02}", today.year(), today.month()))
+            } else {
+                let (y, m) = time::month(raw).ok_or_else(|| bad("a month: 2026-08"))?;
+                Value::Text(format!("{y:04}-{m:02}"))
+            }
+        }
+        TimeFn::MonthDay => {
+            if let Some(d) = date_word(raw) {
+                Value::Text(format!("{:02}-{:02}", d.month(), d.day()))
+            } else {
+                let ok = raw.len() == 5
+                    && raw.as_bytes()[2] == b'-'
+                    && raw[..2].parse::<u8>().is_ok_and(|m| (1..=12).contains(&m))
+                    && raw[3..].parse::<u8>().is_ok_and(|d| (1..=31).contains(&d));
+                if !ok {
+                    return Err(bad("a calendar day: 09-14, or a date"));
+                }
+                Value::Text(raw.to_string())
+            }
+        }
+    })
 }

@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+signals.workspace = true
 sinex-source-core.workspace = true
 sinex-model.workspace = true
 sinex-protocol.workspace = true
@@ -38,6 +39,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = { version = "1", optional = true }
 
 [dev-dependencies]
+sinex-transport.workspace = true
 tar = "0.4"
 flate2 = "1"
 async-nats.workspace = true

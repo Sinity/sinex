@@ -32,7 +32,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Window titles are free text that can contain anything.
     class: Class::Guarded,
     parser: "hyprland-socket2",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &[
         "window.focused",
         "window.opened",
@@ -107,6 +107,10 @@ impl Parser for HyprlandParser {
         let flush = |out: &mut Vec<Desktop>, pending: &Option<Pending>| {
             if let Some(p) = pending {
                 out.push(Desktop::Focused(WindowFocused {
+                    host: _context.manifest.detail("host").as_str().map(str::to_owned),
+                    scope: _context.manifest.detail("host").as_str().map(|host| {
+                        serde_json::json!([host, _context.manifest.detail("session")]).to_string()
+                    }),
                     received_at: pending_time(p).unwrap_or(received_at),
                     window: None,
                     class: nonempty(&p.class),
@@ -146,6 +150,10 @@ impl Parser for HyprlandParser {
                     None => (None, None, received_at),
                 };
                 out.push(Desktop::Focused(WindowFocused {
+                    host: _context.manifest.detail("host").as_str().map(str::to_owned),
+                    scope: _context.manifest.detail("host").as_str().map(|host| {
+                        serde_json::json!([host, _context.manifest.detail("session")]).to_string()
+                    }),
                     received_at: at,
                     window: nonempty(data.trim()),
                     class,
@@ -198,6 +206,10 @@ impl Parser for HyprlandParser {
             "workspacev2" => {
                 let (id, name) = data.split_once(',').unwrap_or((data, ""));
                 Desktop::Workspace(WorkspaceSwitched {
+                    host: _context.manifest.detail("host").as_str().map(str::to_owned),
+                    scope: _context.manifest.detail("host").as_str().map(|host| {
+                        serde_json::json!([host, _context.manifest.detail("session")]).to_string()
+                    }),
                     received_at,
                     workspace_id: id.trim().parse().ok(),
                     workspace_name: nonempty(name),
@@ -260,17 +272,9 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// Capture the socket into `spool` until the socket closes (Hyprland exited).
-/// Returns the number of lines captured.
-pub fn capture(socket: &Path, spool: &Path) -> std::io::Result<u64> {
-    capture_until(
-        socket,
-        spool,
-        &sinex_source_core::capture::CaptureStop::new(None),
-    )
-}
-
-fn capture_until(
+/// Capture the socket into `spool` until the socket closes (Hyprland exited)
+/// or `stop`. Returns the number of lines captured.
+fn capture(
     socket: &Path,
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
@@ -314,7 +318,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             let socket = socket_path().ok_or(
             "no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)",
         )?;
-            capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
+            capture(&socket, &b.input, stop).map_err(|e| e.to_string())
         }),
     };
 

@@ -33,7 +33,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Paths, command lines and terminal output.
     class: Class::Guarded,
     parser: "session-socket",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &[
         "editor.reported",
         "terminal.reported",
@@ -333,6 +333,7 @@ fn scrollback(
         continues: from_line > 0,
         new_lines: text.len() as u64,
         text: text.join("\n"),
+        extra: m,
     })
 }
 

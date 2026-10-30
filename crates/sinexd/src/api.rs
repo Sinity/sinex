@@ -2,7 +2,6 @@
 //! endpoint takes every request of the command table; `follow` streams new
 //! matching events as server-sent events. Three fixed tokens grant read, agent
 //! and operator access.
-mod mask;
 mod methods;
 
 pub(crate) use methods::Api;
@@ -233,7 +232,7 @@ struct FollowParams {
 }
 
 /// New events matching a query, as they are committed: each row once, in
-/// commit order, masked, as `data:` lines.
+/// commit order, as `data:` lines.
 async fn follow(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -251,7 +250,7 @@ async fn follow(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(Reply::Refused {
-                    reason: mask::mask_str(&e.render(&params.query)),
+                    reason: e.render(&params.query),
                     not_built: e.not_built,
                 }),
             )
@@ -336,27 +335,12 @@ async fn follow(
                         Ok(a) => a,
                         Err(e) => {
                             let _ = tx
-                                .send(Ok(Event::default()
-                                    .event("error")
-                                    .data(mask::mask_str(&e.to_string()))))
+                                .send(Ok(Event::default().event("error").data(e.to_string())))
                                 .await;
                             return;
                         }
                     };
-                let rows = match answer
-                    .rows
-                    .into_iter()
-                    .map(mask::mask_json)
-                    .collect::<Result<Vec<_>, _>>()
-                {
-                    Ok(rows) => rows,
-                    Err(reason) => {
-                        let _ = tx
-                            .send(Ok(Event::default().event("error").data(reason)))
-                            .await;
-                        return;
-                    }
-                };
+                let rows = answer.rows;
                 for row in rows {
                     if tx
                         .send(Ok(Event::default().data(row.to_string())))

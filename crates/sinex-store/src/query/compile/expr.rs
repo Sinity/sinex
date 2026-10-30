@@ -26,10 +26,22 @@ impl Compiler<'_> {
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
             ))),
-            // A group column, or a column a time join added.
-            (Cols::Named { r, .. }, FieldRef::Group(name)) => Ok((
-                SqlFragment::text(format!("{r}.{}", quote(name))),
-                Kind::Untyped,
+            (Cols::Base { .. }, FieldRef::TypedGroup(column)) => Err(invalid(format!(
+                "`{}` names a group column outside a grouping",
+                column.name()
+            ))),
+            (Cols::Named { .. }, FieldRef::Group(name)) => {
+                Err(invalid(format!("`{name}` has no bound output column type")))
+            }
+            // Shared binding supplies column lineage; the product resolves its
+            // physical scalar type against the current declaration snapshot.
+            (Cols::Named { r, .. }, FieldRef::TypedGroup(column)) => Ok((
+                SqlFragment::text(format!("{r}.{}", quote(column.name()))),
+                Kind::Typed(
+                    column
+                        .field_type()
+                        .ok_or_else(|| invalid("bound output column type is unavailable"))?,
+                ),
             )),
             (Cols::Named { r, .. }, FieldRef::Field(field)) => Ok((
                 SqlFragment::text(format!("{r}.{}", quote(field.name))),
@@ -58,12 +70,6 @@ impl Compiler<'_> {
                 .push(")) END)");
             return out;
         }
-        if ty == FieldType::Time {
-            out.push("core.payload_time(")
-                .append(raw)
-                .push(" #>> '{}')");
-            return out;
-        }
         let (kind, cast) = match ty {
             FieldType::Integer => ("number", "numeric"),
             FieldType::Number => ("number", "numeric"),
@@ -84,49 +90,39 @@ impl Compiler<'_> {
         out
     }
 
-    pub(super) fn time_fn(&self, func: TimeFn, t: SqlFragment) -> SqlFragment {
-        let mut local = SqlFragment::text("(");
-        local
-            .append(t)
-            .push(" AT TIME ZONE ")
-            .param(V::String(Some(self.ctx.zone_name())))
-            .push(")");
-        let mut shifted = SqlFragment::text("(");
-        shifted
-            .append(local.clone())
-            .push(" - ")
-            .param(V::String(Some(format!(
-                "{} hours {} minutes",
-                self.ctx.day_start.hour(),
-                self.ctx.day_start.minute()
-            ))))
-            .push("::interval)");
-        let mut out = SqlFragment::new();
-        match func {
-            TimeFn::Hour => {
-                out.push("extract(hour from ")
-                    .append(local)
-                    .push(")::bigint");
-            }
-            TimeFn::Day => {
-                out.push("to_char(").append(shifted).push(", 'YYYY-MM-DD')");
-            }
-            TimeFn::Week => {
-                out.push("to_char(date_trunc('week', ")
-                    .append(shifted)
-                    .push("), 'YYYY-MM-DD')");
-            }
-            TimeFn::Weekday => {
-                out.push("lower(to_char(").append(shifted).push(", 'Dy'))");
-            }
-            TimeFn::Month => {
-                out.push("to_char(").append(shifted).push(", 'YYYY-MM')");
-            }
-            TimeFn::MonthDay => {
-                out.push("to_char(").append(shifted).push(", 'MM-DD')");
-            }
+    pub(super) fn time_fn(&self, func: TimeFn, t: SqlFragment) -> Result<SqlFragment> {
+        if func == TimeFn::Hour {
+            let mut out = SqlFragment::text("extract(hour from (");
+            out.append(t)
+                .push(" AT TIME ZONE ")
+                .param(V::String(Some(self.ctx.zone_name())))
+                .push("))::bigint");
+            return Ok(out);
         }
-        out
+        let setting = self
+            .calendar
+            .as_ref()
+            .ok_or_else(|| invalid("logical-day SQL requires shared boundary preparation"))?;
+        let column = match func {
+            TimeFn::Day => "day",
+            TimeFn::Week => "week",
+            TimeFn::Weekday => "weekday",
+            TimeFn::Month => "month",
+            TimeFn::MonthDay => "month_day",
+            TimeFn::Hour => unreachable!(),
+        };
+        let mut ns = SqlFragment::text("(extract(epoch from ");
+        ns.append(t).push(")*1000000000)");
+        let mut out = SqlFragment::text(format!(
+            "(SELECT d.{column} FROM pg_temp.sinex_query_days d WHERE d.setting="
+        ));
+        out.param(V::String(Some(setting.clone())))
+            .push(" AND d.from_ns<=")
+            .append(ns.clone())
+            .push(" AND ")
+            .append(ns)
+            .push("<d.until_ns ORDER BY d.from_ns DESC LIMIT 1)");
+        Ok(out)
     }
 
     pub(super) fn operand(&self, cols: &Cols, o: &Operand) -> Result<(SqlFragment, Kind)> {
@@ -139,7 +135,7 @@ impl Compiler<'_> {
                 } else {
                     t
                 };
-                Ok((self.time_fn(*func, t), Kind::Derived))
+                Ok((self.time_fn(*func, t)?, Kind::Derived))
             }
         }
     }
@@ -154,6 +150,52 @@ impl Compiler<'_> {
         Self::typed_json(raw, ty)
     }
 
+    /// A schemaless comparison gets its scalar type from the current projected
+    /// JSON value. The query spelling remains exact until that row is known.
+    fn compare_json_scalar(&self, lhs: SqlFragment, op: Op, raw: &str) -> Result<SqlFragment> {
+        let string = self.compare(
+            Self::typed_json(lhs.clone(), FieldType::Text),
+            Kind::Typed(FieldType::Text),
+            op,
+            &Value::Text(raw.into()),
+        )?;
+        let mut number = Self::typed_json(lhs.clone(), FieldType::Number);
+        number.push(" ").push(op_sql(op)).push(" (CASE WHEN ")
+            .param(V::String(Some(raw.into())))
+            .push(" ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$' AND pg_input_is_valid(")
+            .param(V::String(Some(raw.into()))).push(", 'numeric') THEN ")
+            .param(V::String(Some(raw.into()))).push("::numeric END)");
+        let boolean = if matches!(op, Op::Eq | Op::Ne) {
+            match raw {
+                "true" => self.compare(
+                    Self::typed_json(lhs.clone(), FieldType::Bool),
+                    Kind::Typed(FieldType::Bool),
+                    op,
+                    &Value::Bool(true),
+                )?,
+                "false" => self.compare(
+                    Self::typed_json(lhs.clone(), FieldType::Bool),
+                    Kind::Typed(FieldType::Bool),
+                    op,
+                    &Value::Bool(false),
+                )?,
+                _ => SqlFragment::text("NULL::boolean"),
+            }
+        } else {
+            SqlFragment::text("NULL::boolean")
+        };
+        let mut out = SqlFragment::text("(CASE jsonb_typeof(");
+        out.append(lhs)
+            .push(") WHEN 'string' THEN ")
+            .append(string)
+            .push(" WHEN 'number' THEN ")
+            .append(number)
+            .push(" WHEN 'boolean' THEN ")
+            .append(boolean)
+            .push(" ELSE NULL::boolean END)");
+        Ok(out)
+    }
+
     pub(super) fn compare(
         &self,
         lhs: SqlFragment,
@@ -161,6 +203,9 @@ impl Compiler<'_> {
         op: Op,
         v: &Value,
     ) -> Result<SqlFragment> {
+        if matches!(v, Value::Unknown) {
+            return Ok(SqlFragment::text("NULL::boolean"));
+        }
         if let Value::List(items) = v {
             let parts = items
                 .iter()
@@ -197,6 +242,27 @@ impl Compiler<'_> {
                 .push(") AS member(value) WHERE ")
                 .append(comparison)
                 .push(") END)");
+            return Ok(out);
+        }
+        if kind == Kind::Typed(FieldType::Json)
+            && !matches!(op, Op::Contains | Op::Prefix)
+            && let Value::Text(raw) = v
+        {
+            return self.compare_json_scalar(lhs, op, raw);
+        }
+        if matches!(kind, Kind::Typed(FieldType::Integer | FieldType::Number))
+            && let Value::Text(raw) = v
+        {
+            if matches!(op, Op::Contains | Op::Prefix) {
+                return Err(invalid("~ and ^ require text"));
+            }
+            let mut out = SqlFragment::text("(");
+            out.append(lhs)
+                .push(" ")
+                .push(op_sql(op))
+                .push(" ")
+                .param(V::String(Some(raw.clone())))
+                .push("::numeric)");
             return Ok(out);
         }
         let l = if kind == Kind::Typed(FieldType::Json) {
@@ -346,6 +412,14 @@ impl Compiler<'_> {
                 f.append(self.expr(cols, a)?).push(")");
                 f
             }
+            Expr::Truth { value, operand } => {
+                self.operand(cols, operand)?;
+                SqlFragment::text(match value {
+                    query_language::semantics::Truth::True => "true",
+                    query_language::semantics::Truth::False => "false",
+                    query_language::semantics::Truth::Unknown => "NULL::boolean",
+                })
+            }
             Expr::Compare { lhs, op, rhs } => {
                 let (l, kind) = self.operand(cols, lhs)?;
                 self.compare(l, kind, *op, rhs)?
@@ -382,6 +456,9 @@ impl Compiler<'_> {
                     .param(time_value(*to)?)
                     .push(")");
                 f
+            }
+            Expr::Similar { .. } => {
+                return Err(invalid("rank directive reached predicate compiler"));
             }
             Expr::Overlaps { from, to } => self.overlaps(cols, *from, *to)?,
             Expr::TimeDiff { a, b, op, seconds } => {

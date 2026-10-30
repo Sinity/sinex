@@ -26,13 +26,18 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
     let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&base.join("store")).unwrap();
     let (handle, queues) = writer::channels();
-    let connection = writer::claim(connection).await.unwrap();
+    let mut connection = writer::claim(connection).await.unwrap();
+    crate::catalog::install_native_sources(&mut connection)
+        .await
+        .unwrap();
     tokio::spawn(writer::run(
         url.clone(),
         connection,
         queues,
         Arc::new(crate::dirty_keys::Registered::new(
             sinex_derivations::keyed(),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
         )),
         Some(blobs.clone()),
     ));
@@ -60,6 +65,8 @@ impl World {
             &self.blobs,
             "h",
             &[],
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
             request,
             "operator",
         )
@@ -516,6 +523,8 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         blobs: &w.blobs,
         host: "h",
         roots: &[],
+        time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     };
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
@@ -649,6 +658,8 @@ async fn hiding_scans_recomputes_items_and_preview_renditions(db: devkit::pg::Te
         vec![Box::new(sinex_derivations::library::LibraryItems)],
         vec![],
         "h",
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -853,6 +864,8 @@ async fn hiding_the_latest_change_falls_back_to_the_previous_copy(db: devkit::pg
         vec![Box::new(sinex_derivations::library::LibraryItems)],
         vec![],
         "h",
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     )
     .await
     .unwrap();
@@ -1018,6 +1031,8 @@ async fn selections_inside_a_configured_root_use_one_item_and_preserve_other_pat
         &w.blobs,
         "h",
         &roots,
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
         Request::LibraryAdd {
             path: selected.display().to_string(),
             reference: None,

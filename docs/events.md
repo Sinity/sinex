@@ -9,6 +9,8 @@ An event is a **reading**: one interpretation of a **record** in a material, or 
 - **At most one reading of each record is live.** A new live reading of a record archives the previous one; the others are kept as archived readings ([the lifecycle](lifecycle.md)). Ruling, 2026-10-27: "there cant be two distinct 'live' events for the same underlying" (cc-queued:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f@2026-10-27T23:04Z).
 - **History is implicit.** A record's history is its live and archived readings, grouped by record. There is no supersession pointer and no replacement table. Ruling, 2026-05-24: "you could take archived events and live core events as one table effectively, and group by the position within source material and source material id itself" (codex:019e309f-7614-7381-a8ac-f9080f304ee6@2026-05-24T17:18Z).
 
+Output indices are zero-based unsigned 64-bit integers on public interfaces. Stored coordinates use nonnegative SQL `bigint`; admission and citation lookup check that boundary without wrapping. Widening the representation preserves existing coordinate values and decimal citation suffixes.
+
 ## The event
 
 | Field | Meaning |

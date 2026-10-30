@@ -82,6 +82,18 @@ Attribution is an ordered ladder of exact keys, highest first:
 4. **Window to terminal to session**: a window and terminal identity adapter maps a focused window to a terminal, and the agent session's terminal identity recorded by the session-start hook (parent PID and the terminal's own identifier) completes an exact map from a focused window to cwd and session. Each compositor and terminal is one adapter implementation; Hyprland window addresses and Kitty window IDs are the first. AI terminal windows inherit a project only through this join.
 5. **Browser**: a forge or pull-request URL of a registered repository; a task or job page whose URL form is declared as data.
 
+The exact attribution registry is deployment data under
+`project_attribution.projects`: each entry has `project` and optional
+`repositories`, `common_dirs`, `root_commits`, and `roots`. A root entry has
+`path`, required `from`, and optional exclusive `until`. These are captured
+identities and effective-dated facts; derivation never opens a repository.
+Structured session `objectives` contain `kind` (`task` or `pull_request`),
+`reference` and `repository`. At the highest present tier, competing exact
+references remain unresolved. Work acts retain optional native terminal and git
+identity, and checks retain `revision`, `check_name` and `check_passed`.
+A passing check resolves an earlier failure only for the same repository,
+revision and check name. Missing fields keep the failure open.
+
 **Inferred tiers** are qualified proposals that never displace an exact owner:
 
 - normalised title tokens matched against the project registry;
@@ -140,6 +152,10 @@ The resume card is an activity trail: a stored [`context.pack`](#context-packs-a
 
 Asked with no argument, the answer is the top three candidate episodes, ranked by most recent operator act, then open failures and waits, then interruptions from an agent or an external source; one line each, with the full card for the first. Asked with a project, task, session, episode or time, it returns that episode's card.
 
+Polylogue supplies work as an atomic `polylogue.work_snapshot` (kind version 4, reducer version 2), keyed by logical session and reducer version. WorkActs reads only this complete set of typed human message metadata, calls and turns. Tool-call entry IDs identify individual source definitions independently of reused native or display call references. Ambiguous outcomes remain unknown, with partial coverage, and never become a negative failure result. The highest explicit reducer controls a session; older retained reducers stay citable, while an unsupported newer reducer prevents fallback. Each act cites the exact snapshot as its sole parent. Replacing a snapshot archives its previous derived chain before recomputation; an empty replacement retires omitted calls, turns and episodes. The adapter does not combine old per-entry work records with the snapshot.
+
+`work.coverage` records complete, partial or unavailable interpretation, with eligible, timed and untimed entry counts and reason codes. Snapshot positions are commit positions, never wall times. Entries without a recorded start remain readable in the snapshot and contribute an explicit unknown-time count. Unsupported reducers produce unavailable coverage and no fallback to an older reducer's acts. Source time quality, precision and bounds stay explicit. A period's start does not become an action instant; selected sparse source copies keep coverage partial. A retired snapshot contains no session metadata or entries and withdraws the preceding chain with complete zero-entry retirement coverage.
+
 Cards are recomputed on suspension and on new evidence. The session-start hook reads a prepared card; a stale or missing card returns the episode's reference and age, never a synchronous rebuild or a model call (deadline and request shape: [agent arrival](recall.md#agent-arrival)). Polylogue's session-start brief embeds the card by reference with its budget share; Sinex owns presence, agency, attribution, episodes and the machine-side trail, and Polylogue owns its own half ([Polylogue agents](https://github.com/Sinity/polylogue/blob/master/docs/agents.md)).
 
 ## Figures
@@ -156,7 +172,7 @@ Cards are recomputed on suspension and on new evidence. The session-start hook r
 - Reusing an answer requires the same normalized question, method, grant-sensitive selection and evidence snapshot. Changed evidence marks it dirty, and an exact historical answer stays readable. A computation racing a change either produces a correctly bound historical answer or leaves the key dirty.
 - **A finding** declares its evidence class (authorship class, epistemic role, claim status), period, unit, denominator, method and settings, estimability, estimate and uncertainty, caveats, and supporting and contradicting references. Association is never presented as causation.
 - **Methods** (correlation, trend, change-point with false-discovery control, effective sample size and refusals) are pure code in `sinex-analysis`; their results are stored events.
-- **`rhythm.deviation`** is a stored event per day and measure, computed from a prior-only window (default 28 calendar days with at least 14 observed days, in settings). Too little evidence is not estimable, never a zero deviation. Retrospective baselines are not stored.
+- **`rhythm.deviation`** is a stored event per day and measure, computed from a prior-only window (default 28 calendar days with at least 14 observed days, in settings). Too little evidence is not estimable, never a zero deviation. Retrospective baselines are not stored. Rhythm's default input measures are daily physical key presses and typing seconds from `input.workload`; only days with complete recorded input coverage enter the baseline, and fewer than 200 presses leaves typing seconds not estimable. `rhythm.window_days` and `rhythm.minimum_days` configure the window and required sample.
 - **`pattern.match`** finds configured sequences: kinds, ordered predicates, maximum gap and scope. It stores the template version, ordered parents and actual gaps, labelled as co-occurrence. Build, fix and test cycles, AI work followed by file overlap and a commit, and deep work followed by a commit are templates. Every valid match is stored; a top N is presentation.
 - **Relationships are typed reference events and joins**, not a stored graph: mention, about, same resource, explicit task or commit closure, membership; each endpoint is checked at admission. Time, project and containment relations are ordinary joins. Corroboration lists its sources, never a weighted score.
 - Agent annotations keep author, session, target, rubric and check state; an unchecked claim is never promoted into a measured fact.
@@ -167,6 +183,12 @@ Cards are recomputed on suspension and on new evidence. The session-start hook r
 - **`forecast.resolved`** records the outcome (`true`, `false` or `unknown`), the live evidence that resolves it, and when the outcome happened; without that time, it stays unknown.
 - **Scoring is a stored `recipe.answer`**: the Brier score over known outcomes and calibration in ten bins. Two conflicting known resolutions of one forecast make the score not estimable until one is archived; an archived forecast leaves the score.
 - **An experiment** is a set of authored records: protocol, assignment, exposure and outcomes. A causal estimand is reported only when assignment was recorded; otherwise results are associations. Planning and running benchmarks belong to the devkit; Sinex analyses their manifests.
+
+An **estimand** is the quantity the experiment asks to estimate, fixed by its
+protocol: the target population, intervention and comparison, outcome, and time
+horizon. It is distinct from the estimator used to calculate a value. A reported
+association is not a causal estimand merely because its inputs share a time
+window; missing assignment leaves causal interpretation unavailable.
 
 ## Context packs and narratives
 

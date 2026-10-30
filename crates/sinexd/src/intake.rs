@@ -2,7 +2,7 @@
 use crate::backfill::Totals;
 use crate::writer::{AdmissionCheck, Priority, WriterHandle};
 use serde_json::Value;
-use sinex_model::{Class, MaterialId, RecordOutcome, RunId};
+use sinex_model::{Class, EventPayload, MaterialId, RecordOutcome, RunId};
 use sinex_source_core::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
@@ -18,6 +18,7 @@ pub(crate) struct Intake<'a> {
     pub writer: &'a WriterHandle,
     pub source: Arc<dyn Source>,
     pub binding: &'a str,
+    pub host: Option<&'a str>,
     pub run: RunId,
     pub material: crate::material_access::MaterialAccess,
     pub check: AdmissionCheck,
@@ -48,6 +49,46 @@ impl Intake<'_> {
         .await
     }
 
+    pub(crate) async fn submit_checkpoint(
+        &self,
+        acquired: drivers::Acquired,
+        checkpoint: sinex_store::signals::Commit,
+    ) -> Result<Submission, String> {
+        let mut checkpoint = Some(checkpoint);
+        self.submit_using(
+            acquired,
+            Value::Null,
+            &mut Totals::default(),
+            |batch, check| {
+                let checkpoint = checkpoint.take();
+                async move {
+                    check()?;
+                    let mut checkpoint =
+                        checkpoint.ok_or("signal transition spans multiple admission batches")?;
+                    for decision in &mut checkpoint.decisions {
+                        let id = decision.payload["delivery_id"].as_str();
+                        let handoff = batch
+                            .events()
+                            .find(|event| {
+                                event.event_type
+                                    == sinex_model::event_types::signal::HandoffRecorded::EVENT_TYPE
+                                    && event.payload["delivery_id"].as_str() == id
+                            })
+                            .ok_or("signal decision lacks its physical handoff record")?;
+                        if let sinex_model::Origin::Derived { parents } = &mut decision.origin {
+                            parents.push(handoff.id);
+                        }
+                    }
+                    self.writer
+                        .submit_signals(batch, checkpoint)
+                        .await
+                        .map_err(|error| error.to_string())
+                }
+            },
+        )
+        .await
+    }
+
     async fn submit_using<F, A>(
         &self,
         acquired: drivers::Acquired,
@@ -65,6 +106,7 @@ impl Intake<'_> {
         let work = Preparation {
             source: self.source.clone(),
             binding: self.binding.to_owned(),
+            host: self.host.map(str::to_owned),
             run: self.run,
             material: self.material.clone(),
             atomic: self.atomic,
@@ -135,41 +177,117 @@ pub(crate) async fn request(
     blobs: &Blobs,
     source: Arc<dyn Source>,
     binding: &str,
+    host: &str,
     acquired: drivers::Acquired,
 ) -> Result<Submission, String> {
-    if let Some(reason) = &acquired.observation.unavailable {
-        return Err(format!("request records are unavailable: {reason}"));
-    }
-    bindings::save(
+    request_inner(conn, writer, blobs, source, binding, host, acquired, None).await
+}
+
+pub(crate) async fn request_checkpoint(
+    conn: &mut PgConnection,
+    writer: &WriterHandle,
+    blobs: &Blobs,
+    source: Arc<dyn Source>,
+    binding: &str,
+    host: &str,
+    acquired: drivers::Acquired,
+    checkpoint: sinex_store::signals::Commit,
+) -> Result<Submission, String> {
+    request_inner(
         conn,
-        &bindings::Stored {
-            binding: binding.to_owned(),
-            source: source.spec().name.into(),
-            input: acquired.input.locator.clone(),
-            settings: serde_json::json!({"host": acquired.input.host}),
-        },
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    let class = request_class(conn, source.as_ref()).await?;
-    let material = crate::material_access::MaterialAccess::new(
-        blobs.clone(),
-        class,
-        crate::material_access::Access::default(),
-    )?;
-    Intake {
         writer,
+        blobs,
         source,
         binding,
-        run: RunId::new(),
-        material,
-        check: Arc::new(|| Ok(())),
-        priority: Priority::Live,
-        atomic: true,
-        registered: None,
-    }
-    .submit(acquired, Value::Null, &mut Totals::default())
+        host,
+        acquired,
+        Some(checkpoint),
+    )
     .await
+}
+
+async fn request_inner(
+    conn: &mut PgConnection,
+    writer: &WriterHandle,
+    blobs: &Blobs,
+    source: Arc<dyn Source>,
+    binding: &str,
+    host: &str,
+    acquired: drivers::Acquired,
+    checkpoint: Option<sinex_store::signals::Commit>,
+) -> Result<Submission, String> {
+    let spec = source.spec();
+    let version = spec.parser_version.to_string();
+    let run = sinex_store::runs::start(
+        conn,
+        &sinex_store::runs::Manifest {
+            name: spec.name,
+            kind: "source",
+            version: &version,
+            build: crate::build_identity::current()?,
+            emits: spec.event_types,
+        },
+        host,
+    )
+    .await
+    .map_err(|error| format!("starting request run: {error}"))?;
+    let result = async {
+        if let Some(reason) = &acquired.observation.unavailable {
+            return Err(format!("request records are unavailable: {reason}"));
+        }
+        bindings::save(
+            conn,
+            &bindings::Stored {
+                binding: binding.to_owned(),
+                source: source.spec().name.into(),
+                input: acquired.input.locator.clone(),
+                settings: serde_json::json!({"host": host}),
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let class = request_class(conn, source.as_ref()).await?.max(
+            checkpoint
+                .as_ref()
+                .map_or(Class::Open, |commit| commit.class),
+        );
+        let material = crate::material_access::MaterialAccess::new(
+            blobs.clone(),
+            class,
+            crate::material_access::Access::default(),
+        )?;
+        let intake = Intake {
+            writer,
+            source,
+            binding,
+            host: Some(host),
+            run,
+            material,
+            check: Arc::new(|| Ok(())),
+            priority: Priority::Live,
+            atomic: true,
+            registered: None,
+        };
+        match checkpoint {
+            Some(checkpoint) => intake.submit_checkpoint(acquired, checkpoint).await,
+            None => {
+                intake
+                    .submit(acquired, Value::Null, &mut Totals::default())
+                    .await
+            }
+        }
+    }
+    .await;
+    let ended = sinex_store::runs::end(conn, run)
+        .await
+        .map_err(|error| format!("ending request run {run}: {error}"));
+    match (result, ended) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => Err(format!(
+            "request records committed for run {run}, but finalization failed: {error}"
+        )),
+        (Err(error), Err(ending)) => Err(format!("{error}; {ending}")),
+    }
 }
 
 /// API requests refuse sealed storage.
@@ -194,6 +312,7 @@ pub(crate) async fn request_class(
 struct Preparation {
     source: Arc<dyn Source>,
     binding: String,
+    host: Option<String>,
     run: RunId,
     material: crate::material_access::MaterialAccess,
     atomic: bool,
@@ -226,7 +345,8 @@ impl Preparation {
                 Limits::default()
             },
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .with_host(self.host.clone());
         let mut material_length = Some(prepared.material_len());
         let mut batches = prepared.batches().map_err(|e| e.to_string())?;
         let mut setup = started.elapsed();

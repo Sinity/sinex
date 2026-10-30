@@ -9,7 +9,79 @@ use std::sync::Arc;
 
 /// A daemon slice for tests: NATS, a database, the writer, the ingress task
 /// and a content store.
+fn encoded_fixture(bytes: &[u8]) -> (hashed_blobs::EncodedBlob, Vec<u8>) {
+    use std::io::Read;
+    let directory = tempfile::tempdir().unwrap();
+    let prepared = hashed_blobs::Preparation::new(directory.path())
+        .unwrap()
+        .plain(bytes, 3)
+        .unwrap();
+    let descriptor = prepared.descriptor();
+    let mut encoded = Vec::new();
+    prepared.into_file().read_to_end(&mut encoded).unwrap();
+    (descriptor, encoded)
+}
+struct TestReply {
+    payload: Vec<u8>,
+}
+async fn rpc(
+    client: &async_nats::Client,
+    subject: String,
+    payload: Vec<u8>,
+) -> Result<TestReply, sinex_transport::replies::ReplyError> {
+    let producer = subject.rsplit_once('.').expect("producer subject").1;
+    let value: Value = sinex_transport::replies::request_bytes(
+        client,
+        subject.clone(),
+        producer,
+        payload,
+        Duration::from_secs(20),
+    )
+    .await?;
+    Ok(TestReply {
+        payload: serde_json::to_vec(&value).expect("reply JSON"),
+    })
+}
+
+fn test_source(producer: &str) -> sinex_model::SourceRef {
+    sinex_model::SourceRef {
+        name: producer.into(),
+        version: 1,
+    }
+}
+fn test_write(
+    producer: &str,
+    kinds: Vec<sinex_model::KindDeclaration>,
+) -> crate::ingress::authority::WriteGrant {
+    let mut prefixes = kinds
+        .iter()
+        .map(|kind| kind.kind.name.split('.').next().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    prefixes.extend([producer.to_owned(), "not".into()]);
+    prefixes.sort();
+    prefixes.dedup();
+    crate::ingress::authority::WriteGrant {
+        family: producer.into(),
+        host: Some("test-host".into()),
+        source_prefixes: vec![producer.into()],
+        source_declarations: vec![sinex_model::SourceDeclaration {
+            source: test_source(producer),
+            family: producer.into(),
+            kinds,
+        }],
+        canonical_kinds: vec![],
+        forward_signals: false,
+        author_attestation: None,
+        emergency_sinex_blocked_host: None,
+        emergency_lease_seconds: None,
+        kind_prefixes: prefixes,
+        classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
+        canonical_prefixes: vec![],
+    }
+}
+
 struct Harness {
+    requests: Requests,
     writer: WriterHandle,
     reads: sqlx::PgPool,
     nats: devkit::nats::TestNats,
@@ -24,6 +96,70 @@ struct Harness {
 
 impl Harness {
     async fn start(db: devkit::pg::TestDatabase) -> Self {
+        Self::start_with_grants(db, Default::default()).await
+    }
+    async fn start_with_source(
+        db: devkit::pg::TestDatabase,
+        producer: &str,
+        kinds: Vec<sinex_model::KindDeclaration>,
+    ) -> Self {
+        Self::start_with_grants(
+            db,
+            std::collections::BTreeMap::from([(
+                producer.into(),
+                crate::ingress::fetch::Grants {
+                    write: Some(test_write(producer, kinds)),
+                    ..Default::default()
+                },
+            )]),
+        )
+        .await
+    }
+    async fn start_with_grants(
+        db: devkit::pg::TestDatabase,
+        grants: crate::ingress::fetch::ProducerGrants,
+    ) -> Self {
+        Self::start_with_policy(db, grants, None).await
+    }
+    async fn start_with_policy(
+        db: devkit::pg::TestDatabase,
+        mut grants: crate::ingress::fetch::ProducerGrants,
+        policy: Option<crate::public_context::Provider>,
+    ) -> Self {
+        let configured_sources: std::collections::BTreeSet<_> = grants
+            .values()
+            .filter_map(|grant| grant.write.as_ref())
+            .flat_map(|write| {
+                write
+                    .source_declarations
+                    .iter()
+                    .map(|declaration| declaration.source.clone())
+            })
+            .collect();
+        for producer in [
+            "kitty",
+            "phone",
+            "polylogue",
+            "example",
+            "session",
+            "node",
+            "other-node",
+            "unknown-node",
+        ] {
+            // Explicit immutable artifacts own their source identity; a generic
+            // fixture producer must not invent a second definition of it.
+            if configured_sources.contains(&test_source(producer)) {
+                continue;
+            }
+            grants
+                .entry(producer.into())
+                .or_default()
+                .write
+                .get_or_insert_with(|| {
+                    test_write(producer, sinex_model::event_types::declarations().to_vec())
+                });
+        }
+        let grants = Arc::new(grants);
         let nats = devkit::nats::test_nats().unwrap();
         let subjects = Subjects::new(nats.prefix());
         let client = async_nats::connect(nats.url()).await.unwrap();
@@ -31,6 +167,21 @@ impl Harness {
         let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
             .await
             .unwrap();
+        let mut catalog_conn = PgConnection::connect(&url).await.unwrap();
+        sinex_store::source_declarations::register(
+            &mut catalog_conn,
+            &crate::catalog::source_declarations(),
+        )
+        .await
+        .unwrap();
+        for write in grants.values().filter_map(|grant| grant.write.as_ref()) {
+            sinex_store::source_declarations::register(
+                &mut catalog_conn,
+                &write.source_declarations,
+            )
+            .await
+            .unwrap();
+        }
         let store_dir = std::env::temp_dir().join(format!("sinex-ingress-{}", Uuid::now_v7()));
         let blobs = Blobs::open(&store_dir).unwrap();
         let (handle, queues) = writer::channels();
@@ -49,6 +200,22 @@ impl Harness {
             .await
             .unwrap();
         let requests = Requests {
+            public_context: policy.unwrap_or_else(|| {
+                crate::public_context::Provider::new(
+                    query_language::time::DaySetting::new(
+                        jiff::tz::TimeZone::get("UTC").unwrap(),
+                        jiff::civil::Time::constant(4, 0, 0, 0),
+                    )
+                    .unwrap()
+                    .wire(),
+                    "test-host".into(),
+                    None,
+                )
+                .unwrap()
+            }),
+            client: client.clone(),
+            consumer_admin: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            read_grants: grants.clone(),
             subjects: subjects.clone(),
             writer: handle.clone(),
             reads: reads.clone(),
@@ -60,12 +227,23 @@ impl Harness {
             PgConnection::connect(&url).await.unwrap(),
             blobs.clone(),
             "test-host".into(),
+            grants,
         )
         .unwrap();
         let (stop, stopped) = watch::channel(false);
+        let observed_requests = requests.clone();
+        let (ready, responders_ready) = tokio::sync::oneshot::channel();
         let task_client = client.clone();
-        tokio::spawn(async move { run(task_client, ingest, requests, stopped).await.unwrap() });
+        tokio::spawn(async move {
+            run(task_client, ingest, requests, stopped, ready)
+                .await
+                .unwrap()
+        });
+        responders_ready
+            .await
+            .expect("producer request subscriptions become ready");
         let harness = Self {
+            requests: observed_requests,
             writer: handle,
             reads,
             nats,
@@ -147,55 +325,95 @@ impl Harness {
     }
 
     async fn send_raw(&self, producer: &str, body: Vec<u8>) -> Acknowledgment {
+        let expected = serde_json::from_slice::<Ingress>(&body)
+            .ok()
+            .map(|frame| frame.frame().to_owned())
+            .filter(|name| !name.is_empty() && !name.contains('\0'))
+            .unwrap_or_else(|| format!("malformed/{}", blake3::hash(&body).to_hex()));
+        let expected_hash = blake3::hash(expected.as_bytes()).to_hex().to_string();
         let mut acks = self
             .client
             .subscribe(self.subjects.ack(producer))
             .await
             .unwrap();
         self.client.flush().await.unwrap();
-        let js = jetstream::new(self.client.clone());
-        js.publish(self.subjects.ingress(producer), body.into())
+        jetstream::new(self.client.clone())
+            .publish(self.subjects.ingress(producer), body.into())
             .await
             .unwrap()
             .await
             .unwrap();
-        let message = tokio::time::timeout(Duration::from_secs(20), acks.next())
-            .await
-            .expect("an acknowledgment")
-            .unwrap();
-        serde_json::from_slice(&message.payload).unwrap()
+        let hint = loop {
+            let message = tokio::time::timeout(Duration::from_secs(20), acks.next())
+                .await
+                .expect("receipt hint")
+                .unwrap();
+            let hint: sinex_protocol::ReceiptHint =
+                serde_json::from_slice(&message.payload).unwrap();
+            if hint.frame_hash == expected_hash {
+                break hint;
+            }
+        };
+        let page: sinex_protocol::RecordedPage = sinex_transport::replies::request_json(
+            &self.client,
+            self.subjects.recorded(producer),
+            producer,
+            &RecordedQuery {
+                numbers: vec![hint.number],
+                ..Default::default()
+            },
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        page.acknowledgments
+            .into_iter()
+            .find(|ack| ack.number == Some(hint.number))
+            .expect("complete owned receipt")
     }
 
     async fn recorded(&self, producer: &str, frames: &[&str]) -> Vec<Acknowledgment> {
-        let request = RecordedQuery {
-            frames: frames.iter().map(|s| s.to_string()).collect(),
-        };
-        let reply = self
-            .client
-            .request(
+        let mut after = 0;
+        let mut all = Vec::new();
+        loop {
+            let page: sinex_protocol::RecordedPage = sinex_transport::replies::request_json(
+                &self.client,
                 self.subjects.recorded(producer),
-                serde_json::to_vec(&request).unwrap().into(),
+                producer,
+                &RecordedQuery {
+                    frames: frames.iter().map(|frame| (*frame).into()).collect(),
+                    after,
+                    ..Default::default()
+                },
+                Duration::from_secs(20),
             )
             .await
             .unwrap();
-        serde_json::from_slice(&reply.payload).unwrap()
+            all.extend(page.acknowledgments);
+            match page.next {
+                Some(next) => after = next,
+                None => return all,
+            }
+        }
     }
 
     async fn materials(&self, producer: &str, after: i64, limit: u32) -> Vec<ProducerMaterial> {
-        let reply = self
-            .client
-            .request(
-                self.subjects.materials(producer),
-                serde_json::to_vec(&Materials { after, limit })
-                    .unwrap()
-                    .into(),
-            )
-            .await
-            .unwrap();
-        serde_json::from_slice(&reply.payload).unwrap()
+        let page: sinex_protocol::MaterialsPage = sinex_transport::replies::request_json(
+            &self.client,
+            self.subjects.materials(producer),
+            producer,
+            &Materials { after, limit },
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        page.materials
     }
 
     fn material_frame(&self, frame: &str, bytes: &[u8]) -> (MaterialId, Ingress) {
+        self.material_for("kitty", frame, bytes)
+    }
+    fn material_for(&self, producer: &str, frame: &str, bytes: &[u8]) -> (MaterialId, Ingress) {
         let blob = self.fixture_blob(bytes);
         let id = MaterialId::new();
         (
@@ -203,6 +421,7 @@ impl Harness {
             Ingress::Material {
                 frame: frame.into(),
                 material: Box::new(MaterialFrame {
+                    source: test_source(producer),
                     id,
                     input: InputRef {
                         kind: "file".into(),
@@ -251,7 +470,7 @@ fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
         location: Some(RecordLocation { material, anchor }),
         output_index: 0,
         parents: vec![],
-        reading_order: 0,
+        reading_order: Some(0),
         class: sinex_model::Class::Open,
     }
 }
@@ -266,6 +485,8 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
     assert_eq!(ack.material, Some(material));
 
     let events = Ingress::Events {
+        source: Some(test_source("kitty")),
+        coverage: None,
         frame: "e1".into(),
         events: vec![imported(material, 0, "ls"), imported(material, 18, "pwd")],
         failures: vec![],
@@ -286,6 +507,8 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
     );
     // The same events in a new frame are repeats.
     let resent = Ingress::Events {
+        source: Some(test_source("kitty")),
+        coverage: None,
         frame: "e2".into(),
         events: vec![imported(material, 0, "ls")],
         failures: vec![],
@@ -309,7 +532,6 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
 /// materials request lists the file, as Polylogue reads it to rebuild.
 #[devkit::test]
 async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDatabase) {
-    let h = Harness::start(db).await;
     let declarations: Vec<_> = [
         ("session", "session", "started", false),
         ("message", "message", "at", true),
@@ -325,6 +547,16 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             },
             "polylogue".into(),
         );
+        if name == "session" {
+            // The public query resolves payload paths from this source's
+            // registered schema, independently of its payload values.
+            d.payload_schema = Some(json!({
+                "type":"object",
+                "properties":{"session":{"type":"string"},"origin":{"type":"string"},"started":{"type":"string","format":"date-time"}},
+                "required":["session","origin","started"],
+                "additionalProperties":true
+            }));
+        }
         d.key_rule = Some(sinex_model::kinds::KeyRule::Fields {
             fields: vec![key.into()],
         });
@@ -342,6 +574,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
         d
     })
     .collect();
+    let h = Harness::start_with_source(db, "polylogue", declarations.clone()).await;
     assert_eq!(
         h.send(
             "polylogue",
@@ -365,6 +598,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     let frame = Ingress::Material {
         frame: "input:s1".into(),
         material: Box::new(MaterialFrame {
+            source: test_source("polylogue"),
             id: material,
             input: InputRef {
                 kind: "claude-code".into(),
@@ -393,7 +627,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             location: at(anchor),
             output_index: 0,
             parents: vec![],
-            reading_order: order,
+            reading_order: Some(order),
             class: sinex_model::Class::Open,
         };
     let session = json!({
@@ -424,6 +658,8 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
         "output_tokens": null, "cost_nusd": null, "abandoned": false
     });
     let events = |text: &str, order: i64, name: &str| Ingress::Events {
+        source: Some(test_source("polylogue")),
+        coverage: None,
         frame: name.into(),
         events: vec![
             event("polylogue.session", session.clone(), 0, order),
@@ -466,10 +702,10 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     );
 
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    let text = "events where event_type = polylogue.session and payload.origin = claude-code";
+    let text = "events where event_type = polylogue.session AND payload.origin = claude-code";
     let mut ctx = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
-        jiff::tz::TimeZone::UTC,
+        jiff::tz::TimeZone::get("UTC").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(declarations));
@@ -509,7 +745,7 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     h.send("kitty", &frame).await;
 
     let mut wrong_type = imported(material, 0, "ls");
-    wrong_type.kind.name = "no.such.type".into();
+    wrong_type.kind.name = "not.declared".into();
     let mut missing_field = imported(material, 0, "ls");
     missing_field.payload = json!({"command": "ls"});
     let mut no_origin = imported(material, 0, "ls");
@@ -526,6 +762,8 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
             .send(
                 "kitty",
                 &Ingress::Events {
+                    source: Some(test_source("kitty")),
+                    coverage: None,
                     frame: name.into(),
                     events: vec![event],
                     failures: vec![],
@@ -563,34 +801,78 @@ async fn producers_are_limited_to_their_own_subjects() {
     let config = subjects.authorization(
         ("daemon", &hash("dpw")),
         &[("kitty", &hash("kpw")), ("phone", &hash("ppw"))],
+        &[("kitty", "kitty-scope".into())],
     );
     assert!(!config.contains("dpw") && !config.contains("kpw"));
+    let api_subjects = [
+        "$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign",
+        "$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-old-scope",
+        "$JS.API.STREAM.MSG.GET.SX_CONFIRMED",
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope",
+    ];
+    let (publish, _) = subjects.producer_permissions("kitty", Some("kitty-scope"));
+    assert!(publish.iter().any(|subject| subject == api_subjects[5]));
+    for denied in &api_subjects[..5] {
+        assert!(!publish.iter().any(|subject| subject == denied));
+    }
     let server = devkit::nats::Server::start_with(&devkit::nats::Options { config }).unwrap();
     let address = server.url().trim_start_matches("nats://").to_owned();
+    let daemon_events = Arc::new(acl_diagnostics::Events::default());
+    let kitty_events = Arc::new(acl_diagnostics::Events::default());
     let connect = |user: &str, password: &str| {
+        let events = if user == "kitty" {
+            &kitty_events
+        } else {
+            &daemon_events
+        }
+        .clone();
         async_nats::ConnectOptions::with_user_and_password(user.into(), password.into())
+            .custom_inbox_prefix(subjects.inbox_prefix(user))
+            .event_callback(move |event| {
+                events.record(event);
+                std::future::ready(())
+            })
             .connect(address.clone())
     };
     assert!(connect("daemon", "wrong").await.is_err());
     let daemon = connect("daemon", "dpw").await.unwrap();
-    let mut seen = daemon.subscribe("sx.ingress.*").await.unwrap();
-    daemon.flush().await.unwrap();
-
-    let kitty = connect("kitty", "kpw").await.unwrap();
-    kitty
-        .publish("sx.ingress.phone", "forged".into())
-        .await
-        .unwrap();
-    kitty
-        .publish("sx.ingress.kitty", "mine".into())
-        .await
-        .unwrap();
-    kitty.flush().await.unwrap();
-
-    let first = tokio::time::timeout(Duration::from_secs(5), seen.next())
-        .await
-        .unwrap()
-        .unwrap();
+    let mut kitty = None;
+    let initial = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut seen = daemon
+            .subscribe("sx.ingress.*")
+            .await
+            .map_err(|_| "subscribe")?;
+        daemon.flush().await.map_err(|_| "flush")?;
+        acl_diagnostics::ready(&daemon).await?;
+        kitty = Some(connect("kitty", "kpw").await.map_err(|_| "connect")?);
+        let kitty = kitty.as_ref().unwrap();
+        kitty
+            .publish("sx.ingress.phone", "forged".into())
+            .await
+            .map_err(|_| "publish")?;
+        kitty
+            .publish("sx.ingress.kitty", "mine".into())
+            .await
+            .map_err(|_| "publish")?;
+        kitty.flush().await.map_err(|_| "flush")?;
+        let first = seen.next().await.ok_or("subscriber_closed")?;
+        Ok::<_, &'static str>((seen, first))
+    })
+    .await;
+    acl_diagnostics::report(
+        "ingress",
+        &initial,
+        &server,
+        [Some(&daemon), kitty.as_ref()],
+        [&daemon_events, &kitty_events],
+        &api_subjects,
+    );
+    let (mut seen, first) = initial
+        .expect("ingress exchange within five seconds")
+        .expect("ingress setup and delivery");
+    let kitty = kitty.unwrap();
     assert_eq!(first.subject.as_str(), "sx.ingress.kitty");
     assert_eq!(&first.payload[..], b"mine");
     assert!(
@@ -598,6 +880,98 @@ async fn producers_are_limited_to_their_own_subjects() {
             .await
             .is_err(),
         "the forged message on another producer's subject was not delivered"
+    );
+    let api_exchange = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut api = daemon
+            .subscribe("$JS.API.>")
+            .await
+            .map_err(|_| "subscribe")?;
+        daemon.flush().await.map_err(|_| "flush")?;
+        acl_diagnostics::ready(&daemon).await?;
+        for subject in api_subjects {
+            kitty
+                .publish(subject, "{}".into())
+                .await
+                .map_err(|_| "publish")?;
+        }
+        kitty.flush().await.map_err(|_| "flush")?;
+        let allowed = api.next().await.ok_or("subscriber_closed")?;
+        Ok::<_, &'static str>((api, allowed))
+    })
+    .await;
+    acl_diagnostics::report(
+        "api",
+        &api_exchange,
+        &server,
+        [Some(&daemon), Some(&kitty)],
+        [&daemon_events, &kitty_events],
+        &api_subjects,
+    );
+    let (mut api, allowed) = api_exchange
+        .expect("API exchange within five seconds")
+        .expect("API setup and delivery");
+    assert_eq!(
+        allowed.subject.as_str(),
+        "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-scope"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), api.next())
+            .await
+            .is_err(),
+        "foreign/admin/raw-message API requests must not reach the daemon"
+    );
+    let mut foreign_flow = daemon
+        .subscribe("_INBOX.phone.synthetic.flow")
+        .await
+        .unwrap();
+    daemon.flush().await.unwrap();
+    kitty
+        .publish(
+            "_INBOX.phone.synthetic.flow",
+            serde_json::to_vec(&sinex_protocol::replies::FlowAck::Accepted {
+                stream: "forged".into(),
+                sequence: 0,
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .unwrap();
+    kitty.flush().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), foreign_flow.next())
+            .await
+            .is_err(),
+        "a foreign credential cannot acknowledge another principal's flow"
+    );
+    let mut foreign_inbox = kitty.subscribe("_INBOX.phone.>").await.unwrap();
+    kitty.flush().await.unwrap();
+    daemon
+        .publish("_INBOX.phone.synthetic", "private response".into())
+        .await
+        .unwrap();
+    daemon.flush().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), foreign_inbox.next())
+            .await
+            .map_or(true, |message| message.is_none()),
+        "producer must not eavesdrop another identity's RPC reply inbox"
+    );
+    let mut foreign_inline = kitty.subscribe("sx.confirmed.>").await.unwrap();
+    kitty.flush().await.unwrap();
+    daemon
+        .publish(
+            "sx.confirmed.event.open.foreign.kind",
+            "private inline payload".into(),
+        )
+        .await
+        .unwrap();
+    daemon.flush().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), foreign_inline.next())
+            .await
+            .map_or(true, |message| message.is_none()),
+        "producer cannot bypass its scoped consumer with a raw stream subscription"
     );
     // Nor can a producer read another producer's acknowledgments.
     assert!(kitty.subscribe("sx.ack.phone").await.is_ok());
@@ -620,15 +994,18 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
     let h = Harness::start(db).await;
     let (material, frame) = h.material_frame("m1", b"ls\n");
     h.send("kitty", &frame).await;
-    h.send(
-        "kitty",
-        &Ingress::Events {
-            frame: "e1".into(),
-            events: vec![imported(material, 0, "ls")],
-            failures: vec![],
-        },
-    )
-    .await;
+    let receipt = h
+        .send(
+            "kitty",
+            &Ingress::Events {
+                source: Some(test_source("kitty")),
+                coverage: None,
+                frame: "e1".into(),
+                events: vec![imported(material, 0, "ls")],
+                failures: vec![],
+            },
+        )
+        .await;
     let js = jetstream::new(h.client.clone());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     crate::publisher::ensure_stream(&js, &h.subjects)
@@ -639,15 +1016,20 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         .unwrap();
     let stream = js.get_stream(h.subjects.confirmed_stream()).await.unwrap();
     let message = stream
-        .get_last_raw_message_by_subject(&h.subjects.confirmed_event("command.imported"))
+        .get_last_raw_message_by_subject(&h.subjects.confirmed_event("open", "command.imported"))
         .await
         .unwrap();
     let confirmed: Confirmed = serde_json::from_slice(&message.payload).unwrap();
-    let Confirmed::Event(event) = confirmed else {
-        panic!("event")
-    };
-    assert_eq!(event.source, "kitty");
-    assert_eq!(event.payload.unwrap()["command"], "ls");
+    assert_eq!(
+        confirmed,
+        Confirmed::EventReference {
+            commit_seq: receipt.commit_seq.unwrap(),
+            event: receipt.admitted[0]
+        }
+    );
+    let wire: Value = serde_json::from_slice(&message.payload).unwrap();
+    assert!(wire.get("payload").is_none());
+    assert_eq!(wire.as_object().unwrap().len(), 3);
     let _ = &h.nats;
 }
 
@@ -662,24 +1044,27 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
     let blob = format!("blake3:{}", blake3::hash(&bytes).to_hex());
     let total = bytes.len() as u64;
     let id = MaterialId::new();
-    let mut frame = h.material_frame("m-up", b"unused").1;
+    let mut frame = h.material_for("node", "m-up", b"unused").1;
     if let Ingress::Material { material, .. } = &mut frame {
         material.id = id;
         material.blob = blob.clone();
         material.length = total;
     }
+    let (descriptor, encoded) = encoded_fixture(&bytes);
+    let middle = encoded.len() / 2;
     let chunk = |attempt: &str, offset: usize, end: usize| Ingress::Chunk {
+        descriptor: descriptor.encode(),
         for_frame: "m-up".into(),
         frame: format!("{blob}/{attempt}/{offset}"),
         blob: blob.clone(),
         offset: offset as u64,
-        total,
-        data: base64::engine::general_purpose::STANDARD.encode(&bytes[offset..end]),
+        total: descriptor.stored_len,
+        data: base64::engine::general_purpose::STANDARD.encode(&encoded[offset..end]),
     };
     // Out of order is refused and recorded; in order is accepted.
-    let ack = h.send("node", &chunk("a", 1_000, bytes.len())).await;
+    let ack = h.send("node", &chunk("a", middle, encoded.len())).await;
     assert!(ack.refusal.unwrap().contains("ordered prefix"));
-    for (offset, end) in [(0, 1_000), (1_000, bytes.len())] {
+    for (offset, end) in [(0, middle), (middle, encoded.len())] {
         let ack = h.send("node", &chunk("b", offset, end)).await;
         assert_eq!(ack.refusal, None, "{ack:?}");
     }
@@ -700,6 +1085,8 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
         .send(
             "node",
             &Ingress::Events {
+                source: Some(test_source("node")),
+                coverage: None,
                 frame: "e-up".into(),
                 events: vec![imported(id, 0, "ls")],
                 failures: vec![ProducerFailure {
@@ -727,6 +1114,8 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     let (material, frame) = h.material_frame("m1", b"ls\n");
     h.send("kitty", &frame).await;
     let inner = Ingress::Events {
+        source: Some(test_source("kitty")),
+        coverage: None,
         frame: "e-big".into(),
         events: vec![imported(material, 0, "ls")],
         failures: vec![],
@@ -763,14 +1152,13 @@ impl Harness {
         let request = Excise {
             materials: materials.to_vec(),
         };
-        let reply = self
-            .client
-            .request(
-                self.subjects.excise(producer),
-                serde_json::to_vec(&request).unwrap().into(),
-            )
-            .await
-            .unwrap();
+        let reply = rpc(
+            &self.client,
+            self.subjects.excise(producer),
+            serde_json::to_vec(&request).unwrap().into(),
+        )
+        .await
+        .unwrap();
         serde_json::from_slice(&reply.payload).unwrap()
     }
 
@@ -794,10 +1182,12 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
     let h = Harness::start(db).await;
     let (mine, mine_frame) = h.material_frame("m1", b": 1760788800:0;ls\n");
     assert_eq!(h.send("kitty", &mine_frame).await.refusal, None);
-    let (other, frame) = h.material_frame("m2", b": 1760788801:0;pwd\n");
+    let (other, frame) = h.material_for("phone", "m2", b": 1760788801:0;pwd\n");
     assert_eq!(h.send("phone", &frame).await.refusal, None);
     for (producer, material) in [("kitty", mine), ("phone", other)] {
         let events = Ingress::Events {
+            source: Some(test_source(producer)),
+            coverage: None,
             frame: format!("e-{producer}"),
             events: vec![imported(material, 0, "ls")],
             failures: vec![],
@@ -839,7 +1229,7 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
         0
     );
     assert_eq!(
-        h.count("SELECT count(*) FROM raw.inputs WHERE binding = 'ingress:kitty'")
+        h.count("SELECT count(*) FROM raw.inputs WHERE binding LIKE 'ingress:kitty:%'")
             .await,
         0,
         "no excised path stays"
@@ -847,7 +1237,7 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
     assert_eq!(
         h.count("SELECT count(*) FROM core.ingress_frames WHERE producer = 'kitty'")
             .await,
-        0
+        2
     );
     assert!(
         h.materials("kitty", 0, 10).await.is_empty(),
@@ -865,11 +1255,9 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
         1
     );
     let again = h.send("kitty", &mine_frame).await;
-    assert!(
-        again
-            .refusal
-            .as_deref()
-            .is_some_and(|r| r.contains("an excision removed")),
+    assert_eq!(
+        again.refusal_kind(),
+        Some(FrameRefusal::Excised),
         "{again:?}"
     );
 }
@@ -886,9 +1274,10 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     let request = tokio::spawn(async move {
         let body = serde_json::to_vec(&RecordedQuery {
             frames: vec!["m1".into()],
+            ..Default::default()
         })
         .unwrap();
-        client.request(subject, body.into()).await.unwrap()
+        rpc(&client, subject, body).await.unwrap()
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(
@@ -897,18 +1286,31 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     );
 
     let (_, frame) = h.material_frame("m1", b"ls\n");
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    let mut hints = h.client.subscribe(h.subjects.ack("kitty")).await.unwrap();
+    h.client.flush().await.unwrap();
+    let sending = h.send("kitty", &frame);
+    tokio::pin!(sending);
+    let hint = tokio::select! {
+        hint = tokio::time::timeout(Duration::from_secs(10), hints.next()) => hint.unwrap().unwrap(),
+        receipt = &mut sending => panic!("full receipt resolved while its read connection was held: {receipt:?}"),
+    };
+    let hint: sinex_protocol::ReceiptHint = serde_json::from_slice(&hint.payload).unwrap();
+    assert_eq!(hint.frame_hash, blake3::hash(b"m1").to_hex().to_string());
     assert!(!request.is_finished());
 
     drop(read_permit);
+    assert_eq!(sending.await.refusal, None);
     let reply = tokio::time::timeout(Duration::from_secs(10), request)
         .await
         .unwrap()
         .unwrap();
-    let acks: Vec<Acknowledgment> = serde_json::from_slice(&reply.payload).unwrap();
+    let page: sinex_protocol::RecordedPage = serde_json::from_slice(&reply.payload).unwrap();
+    let acks = page.acknowledgments;
     assert_eq!(acks.len(), 1);
     assert_eq!(acks[0].frame, "m1");
 }
+
+mod nothing_lost;
 
 mod kinds;
 
@@ -919,17 +1321,30 @@ async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
     let (writer, _queues) = writer::channels();
-    let ingest = Ingest::new(
+    let write = test_write("node", sinex_model::event_types::declarations().to_vec());
+    let mut catalog = PgConnection::connect(&db.url(None)).await.unwrap();
+    sinex_store::source_declarations::register(&mut catalog, &write.source_declarations)
+        .await
+        .unwrap();
+    let mut ingest = Ingest::new(
         Subjects::sinex(),
         writer,
         PgConnection::connect(&db.url(None)).await.unwrap(),
         blobs,
         "synthetic".into(),
+        Arc::new(std::collections::BTreeMap::from([(
+            "node".into(),
+            fetch::Grants {
+                write: Some(write),
+                ..Default::default()
+            },
+        )])),
     )
     .unwrap();
     let bytes = b"synthetic";
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
     let material = MaterialFrame {
+        source: test_source("node"),
         id: MaterialId::new(),
         input: InputRef {
             kind: "file".into(),
@@ -975,13 +1390,15 @@ async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(
     // A content store fault must not be recorded as a permanent refusal.
     std::fs::remove_dir_all(root.path().join("incoming")).unwrap();
     std::fs::write(root.path().join("incoming"), b"blocked directory").unwrap();
+    let (descriptor, encoded) = encoded_fixture(bytes);
     let mut chunk = Ingress::Chunk {
+        descriptor: descriptor.encode(),
         frame: "chunk".into(),
         for_frame: "material".into(),
         blob,
         offset: 0,
-        total: bytes.len() as u64,
-        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        total: descriptor.stored_len,
+        data: base64::engine::general_purpose::STANDARD.encode(&encoded),
     };
     assert!(matches!(
         ingest.receive_chunk("node", &chunk).await,
@@ -1021,8 +1438,7 @@ async fn a_recorded_refusal_keeps_the_frame_bytes_on_redelivery(db: devkit::pg::
             .await;
         assert!(ack.refusal.is_some());
         assert!(
-            frame_bytes::snapshot(&h.store_dir, "node", "invalid", &blob, bytes.len() as u64)
-                .is_ok()
+            frame_bytes::reader(&h.store_dir, "node", "invalid", &blob, bytes.len() as u64).is_ok()
         );
     }
     assert_eq!(h.recorded("node", &["invalid"]).await.len(), 1);
@@ -1039,7 +1455,7 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
         ": 1760788802:0;third\n",
     ];
     let bytes = lines.concat();
-    let (material, frame) = h.material_frame("material", bytes.as_bytes());
+    let (material, frame) = h.material_for("session", "material", bytes.as_bytes());
     assert!(h.send("session", &frame).await.refusal.is_none());
     let mut offset = 0;
     for (index, command) in ["first", "second", "third"].iter().enumerate() {
@@ -1048,6 +1464,8 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
             event.kind.name = "not.declared".into();
         }
         let frame = Ingress::Events {
+            source: Some(test_source("session")),
+            coverage: None,
             frame: format!("events-{index}"),
             events: vec![event],
             failures: vec![],
@@ -1074,7 +1492,7 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let context = sinex_model::query::Context::new(
         jiff::Timestamp::now(),
-        jiff::tz::TimeZone::UTC,
+        jiff::tz::TimeZone::get("UTC").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
     let bound = sinex_model::query::bind("failures", &context).unwrap();
@@ -1148,9 +1566,10 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
     db: devkit::pg::TestDatabase,
 ) {
     let h = Harness::start(db).await;
-    let (first, frame) = h.material_frame("a/material/first", b": 1760788800:0;first\n");
+    let (first, frame) = h.material_for("session", "a/material/first", b": 1760788800:0;first\n");
     assert!(h.send("session", &frame).await.refusal.is_none());
-    let (second, frame) = h.material_frame("b/material/second", b": 1760788801:0;second\n");
+    let (second, frame) =
+        h.material_for("session", "b/material/second", b": 1760788801:0;second\n");
     assert!(h.send("session", &frame).await.refusal.is_none());
     let mut nul_type = imported(first, 0, "synthetic");
     nul_type.kind.name = "not.\0declared".into();
@@ -1173,6 +1592,8 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             .send(
                 "session",
                 &Ingress::Events {
+                    source: Some(test_source("session")),
+                    coverage: None,
                     frame: format!("a/events/{first}/{name}"),
                     events: vec![event],
                     failures: vec![],
@@ -1182,6 +1603,20 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
         assert_eq!(ack.refusal_kind(), Some(expected), "{ack:?}");
         if name == "nul-type" {
             assert_eq!(ack.outcome["event_types"], json!(["not.\\0declared"]));
+            let mut repeated = imported(first, 0, "synthetic");
+            repeated.kind.name = "not.\0declared".into();
+            let retry = Ingress::Events {
+                source: Some(test_source("session")),
+                coverage: None,
+                frame: format!("a/events/{first}/{name}"),
+                events: vec![repeated],
+                failures: vec![],
+            };
+            assert_eq!(
+                h.send("session", &retry).await,
+                ack,
+                "durable malformed-content retry"
+            );
         }
         assert_eq!(
             ack.outcome["failures"],
@@ -1209,6 +1644,21 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
         0
     );
     assert_eq!(h.count("SELECT count(*) FROM core.events").await, 0);
+    let accepted = h
+        .send(
+            "session",
+            &Ingress::Events {
+                source: Some(test_source("session")),
+                coverage: None,
+                frame: "valid-after-malformed-content".into(),
+                events: vec![imported(second, 0, "valid registered content")],
+                failures: vec![],
+            },
+        )
+        .await;
+    assert_eq!(accepted.refusal, None, "{accepted:?}");
+    assert_eq!(accepted.admitted.len(), 1);
+    assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 4);
 }
 
 #[devkit::test]
@@ -1226,7 +1676,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     )
     .await
     .unwrap();
-    let (_, frame) = h.material_frame("first", b"first\n");
+    let (_, frame) = h.material_for("session", "first", b"first\n");
     assert!(h.send("session", &frame).await.refusal.is_none());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     sinex_store::privacy::set_source_class(
@@ -1237,7 +1687,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     )
     .await
     .unwrap();
-    let (_, frame) = h.material_frame("changed", b"changed\n");
+    let (_, frame) = h.material_for("session", "changed", b"changed\n");
     let ack = h.send("session", &frame).await;
     assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
     let Ingress::Material { material, .. } = &frame else {
@@ -1254,7 +1704,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     )
     .await
     .unwrap();
-    let (_, frame) = h.material_frame("checked", b"checked\n");
+    let (_, frame) = h.material_for("session", "checked", b"checked\n");
     assert!(h.send("session", &frame).await.refusal.is_none());
     sinex_store::privacy::set_source_class(
         &mut conn,
@@ -1264,7 +1714,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     )
     .await
     .unwrap();
-    let (_, frame) = h.material_frame("sealed", b"sealed\n");
+    let (_, frame) = h.material_for("session", "sealed", b"sealed\n");
     let ack = h.send("session", &frame).await;
     assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
     let Ingress::Material { material, .. } = &frame else {
@@ -1370,7 +1820,7 @@ async fn malformed_large_frames_are_errors_and_byte_refusals_remove_transfer_byt
             .await;
         assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Malformed));
     }
-    let (_, material) = h.material_frame("damaged", b"synthetic");
+    let (_, material) = h.material_for("session", "damaged", b"synthetic");
     let Ingress::Material { material: m, .. } = &material else {
         unreachable!()
     };
@@ -1398,7 +1848,8 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     db: devkit::pg::TestDatabase,
 ) {
     let h = Harness::start(db).await;
-    let (material, frame) = h.material_frame(
+    let (material, frame) = h.material_for(
+        "node",
         "a:/spool/capture@host/material/first",
         b": 1760788800:0;synthetic\n",
     );
@@ -1406,6 +1857,8 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     let mut event = imported(material, 0, "synthetic");
     event.kind.name = "not.declared".into();
     let content = Ingress::Events {
+        source: Some(test_source("node")),
+        coverage: None,
         frame: format!("a:/spool/capture@host/events/{material}/content"),
         events: vec![event.clone(), event],
         failures: vec![],
@@ -1417,6 +1870,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         );
     }
     let bad_bytes = Ingress::Chunk {
+        descriptor: vec![],
         frame: "bad-bytes".into(),
         for_frame: "b/material/bytes".into(),
         blob: "not-a-blob".into(),
@@ -1429,6 +1883,8 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         Some(FrameRefusal::Bytes)
     );
     let malformed = Ingress::Events {
+        source: Some(test_source("other-node")),
+        coverage: None,
         frame: "c/events/invalid".into(),
         events: vec![ProducerEvent {
             location: None,
@@ -1444,7 +1900,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     sinex_store::privacy::set_source_class(&mut conn, "node", sinex_model::Class::Sealed, "test")
         .await
         .unwrap();
-    let (_, frame) = h.material_frame("d/material/sealed", b"unregistered\n");
+    let (_, frame) = h.material_for("node", "d/material/sealed", b"unregistered\n");
     assert_eq!(
         h.send("node", &frame).await.refusal_kind(),
         Some(FrameRefusal::Configuration)
@@ -1455,34 +1911,38 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
             .refusal_kind(),
         Some(FrameRefusal::Malformed)
     );
+    sinex_store::privacy::projection::ensure_current(&mut conn)
+        .await
+        .unwrap();
     let api = crate::api::Api {
+        derivations: Default::default(),
         source_config: Default::default(),
         library_roots: Vec::new(),
         reads: h.reads.clone(),
         writer: Some(h.writer.clone()),
         blobs: h.blobs.clone(),
-        zone: jiff::tz::TimeZone::UTC,
+        zone: jiff::tz::TimeZone::get("UTC").unwrap(),
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         agent_grants: vec![],
         unlock: Default::default(),
         host: "test".into(),
     };
-    let sinex_protocol::Reply::Ok { result } = api
+    let status = api
         .call(
             sinex_protocol::Request::Status,
             sinex_protocol::Access::Read,
         )
-        .await
-    else {
-        panic!("status refused")
+        .await;
+    let sinex_protocol::Reply::Ok { result } = status else {
+        panic!("status refused: {status:?}")
     };
     assert_eq!(
         result["ingress_refusals_24h"],
         json!([
-            {"producer":"node","source":"a","event_type":"not.declared","refusal_kind":"content","frames":1},
-            {"producer":"node","source":"b","event_type":null,"refusal_kind":"bytes","frames":1},
-            {"producer":"node","source":"d","event_type":null,"refusal_kind":"configuration","frames":1},
-            {"producer":"other-node","source":"c","event_type":"command.imported","refusal_kind":"malformed","frames":1},
+            {"producer":"node","source":"node","event_type":"not.declared","refusal_kind":"content","frames":1},
+            {"producer":"node","source":"node","event_type":null,"refusal_kind":"configuration","frames":1},
+            {"producer":"node","source":null,"event_type":null,"refusal_kind":"bytes","frames":1},
+            {"producer":"other-node","source":"other-node","event_type":"command.imported","refusal_kind":"malformed","frames":1},
             {"producer":"unknown-node","source":null,"event_type":null,"refusal_kind":"malformed","frames":1},
         ])
     );
@@ -1514,16 +1974,18 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
     let h = Harness::start(db).await;
     let bytes = b"synthetic bytes";
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+    let (descriptor, encoded) = encoded_fixture(bytes);
     let chunk = |name: &str, offset, data: &[u8]| Ingress::Chunk {
+        descriptor: descriptor.encode(),
         frame: name.into(),
         for_frame: "pending-material".into(),
         blob: blob.clone(),
         offset,
-        total: bytes.len() as u64,
+        total: descriptor.stored_len,
         data: base64::engine::general_purpose::STANDARD.encode(data),
     };
     assert!(
-        h.send("node", &chunk("prefix", 0, &bytes[..3]))
+        h.send("node", &chunk("prefix", 0, &encoded[..3]))
             .await
             .refusal
             .is_none()
@@ -1534,8 +1996,25 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
     sinex_store::privacy::set_source_class(&mut conn, "node", sinex_model::Class::Sealed, "test")
         .await
         .unwrap();
-    let ack = h.send("node", &chunk("remaining", 3, &bytes[3..])).await;
+    let ack = h.send("node", &chunk("remaining", 3, &encoded[3..])).await;
     assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
     assert!(!directory.exists());
     assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 0);
 }
+
+mod fetch_reads;
+mod public_context;
+
+mod consumer_reads;
+
+mod families;
+
+mod replies;
+
+mod receipts;
+
+mod coverage;
+
+mod recorded_continuations;
+
+mod acl_diagnostics;

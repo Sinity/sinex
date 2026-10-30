@@ -1,15 +1,15 @@
 //! Text read from screen segments (`screen.text`): a per-event derivation over
 //! `media.segment` events that reads each screen still's stored bytes with a
-//! local OCR engine (Tesseract). It runs in the derivation runner like any
+//! local OCR engine (Tesseract), at idle priority. It runs in the derivation runner like any
 //! other derivation; it lives here rather than in `sinex-derivations` because it
 //! runs a local tool. Without the engine it is not registered, and the daemon
 //! says so once.
 //!
 //! Speech from audio segments needs a local speech-to-text engine; audio
 //! segments produce nothing here.
-use sinex_derivations::{Env, Input, PerEvent};
+use sinex_derivations::{Env, Input, PerEvent, Reads};
 use sinex_model::event_types::session::ScreenText as ScreenTextPayload;
-use sinex_model::{Class, Event, Origin, ReadingOrder, Timestamp};
+use sinex_model::{Class, Event, Origin, ReadingOrder};
 use std::process::{Command, Stdio};
 
 const LANGUAGES: &str = "eng+pol";
@@ -20,6 +20,9 @@ pub(crate) fn engine() -> Result<String, String> {
         .arg("--version")
         .output()
         .map_err(|e| format!("tesseract is not available: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("tesseract --version exited with {}", out.status));
+    }
     let text =
         String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
     Ok(text.lines().next().unwrap_or("tesseract").trim().to_owned())
@@ -27,8 +30,20 @@ pub(crate) fn engine() -> Result<String, String> {
 
 fn ocr(image: &[u8]) -> Result<String, String> {
     use std::io::Write;
-    let mut child = Command::new("tesseract")
-        .args(["stdin", "stdout", "-l", LANGUAGES, "--psm", "3"])
+    // At idle priority: reading text off stills is background work and must
+    // not take the machine from the operator.
+    let mut child = Command::new("nice")
+        .args([
+            "-n",
+            "19",
+            "tesseract",
+            "stdin",
+            "stdout",
+            "-l",
+            LANGUAGES,
+            "--psm",
+            "3",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -44,42 +59,88 @@ fn ocr(image: &[u8]) -> Result<String, String> {
     if !out.status.success() {
         return Err(format!("tesseract exited with {}", out.status));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    String::from_utf8(out.stdout)
+        .map(|text| text.trim().to_owned())
+        .map_err(|_| "tesseract returned text that is not UTF-8".into())
+}
+
+fn text_for(
+    segment: &sinex_model::event_types::session::MediaSegment,
+    engine: Option<&str>,
+    read_image: impl FnOnce() -> Result<String, String>,
+) -> Result<(String, String), String> {
+    if let Some(text) = &segment.accessibility_text {
+        return Ok(("accessibility".into(), text.clone()));
+    }
+    let engine = engine.ok_or("accessibility unavailable and no local OCR engine")?;
+    Ok((engine.into(), read_image()?))
 }
 
 /// Screen text, bound to the engine found at start.
 pub(crate) struct ScreenText {
-    pub engine: String,
+    pub engine: Option<String>,
 }
 
 impl PerEvent for ScreenText {
     const NAME: &'static str = "screen-text";
     /// Bump when the reading of a segment changes (engine, languages, options).
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 4;
     const INPUTS: &'static [&'static str] = &["media.segment"];
     const OUTPUTS: &'static [&'static str] = &["screen.text"];
-    const READS_MATERIAL: bool = true;
+    const READS: Reads = Reads::Material;
+
+    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
+        let kind = sinex_model::KindRef {
+            name: "media.segment".into(),
+            version: 2,
+        };
+        let baseline = sinex_model::InputRequirement::new(kind.clone(), ["/kind"]);
+        let mut screen =
+            sinex_model::InputRequirement::new(kind, ["/started_at", "/accessibility_text"]);
+        screen
+            .when
+            .push(("/kind".into(), serde_json::json!("screen")));
+        Some(vec![baseline, screen])
+    }
+    fn version(&self) -> u32 {
+        let definition = format!("{}:{}:{:?}", Self::NAME, Self::VERSION, self.engine);
+        let hash = blake3::hash(definition.as_bytes());
+        (u32::from_le_bytes(hash.as_bytes()[..4].try_into().expect("four bytes")) >> 2) + 1
+    }
+
+    fn reads_for(&self, event: &Event) -> Reads {
+        if event.payload.get("kind").and_then(|v| v.as_str()) == Some("screen")
+            && event
+                .payload
+                .get("accessibility_text")
+                .and_then(|text| text.as_str())
+                .is_none()
+            && self.engine.is_some()
+        {
+            Self::READS
+        } else {
+            Reads::Nothing
+        }
+    }
 
     fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
         let segment = input.event;
         if segment.payload.get("kind").and_then(|k| k.as_str()) != Some("screen") {
             return Ok(Vec::new());
         }
-        let image = input
-            .material
-            .ok_or("the screen still's bytes were not read")?;
-        let text = ocr(image)?;
-        let started_at = segment
-            .payload
-            .get("started_at")
-            .cloned()
-            .and_then(|v| serde_json::from_value::<Timestamp>(v).ok())
-            .or(segment.ts_orig.at)
-            .unwrap_or_else(Timestamp::now);
+        let metadata = segment
+            .payload_as::<sinex_model::event_types::session::MediaSegment>()
+            .ok_or("not a valid media segment")?;
+        let (engine, text) = text_for(&metadata, self.engine.as_deref(), || {
+            ocr(input
+                .bytes
+                .ok_or("the screen still's bytes were not read")?)
+        })?;
+        let started_at = metadata.started_at;
         let payload = ScreenTextPayload {
             segment: segment.id.to_string(),
             started_at,
-            engine: self.engine.clone(),
+            engine,
             text,
         };
         let mut hasher = blake3::Hasher::new();
@@ -100,9 +161,12 @@ impl PerEvent for ScreenText {
             ReadingOrder(0),
             *hasher.finalize().as_bytes(),
             // A segment's text is as private as the segment.
-            Class::Guarded,
+            segment.class.max(Class::Guarded),
         )
         .map_err(|e| e.to_string())?;
         Ok(vec![event])
     }
 }
+
+#[cfg(test)]
+mod tests;

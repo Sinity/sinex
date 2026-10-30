@@ -92,6 +92,9 @@ async fn every_saved_bundled_rule_matches_the_typed_constructor(db: devkit::pg::
             if kind.event_type == "steering.row" && optional {
                 payload["values"]["created_at"] = payload["at"].clone();
             }
+            if kind.event_type == "signal.evaluation" {
+                payload["day_setting"] = json!({"zone":"UTC","start":"04:00:00"});
+            }
             let event = (kind.build)(
                 &payload,
                 "example",
@@ -145,4 +148,32 @@ fn field_hints_need_distinct_valid_pointers() {
         .field_hints
         .push(declaration.field_hints[0].clone());
     assert!(crate::kinds::check(&declaration).is_err());
+}
+
+#[test]
+fn source_instant_evidence_rule_checks_both_declared_fields() {
+    let mut declaration = sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef {
+            name: "fixture.time".into(),
+            version: 2,
+        },
+        "fixture".into(),
+    );
+    declaration.payload_schema = Some(
+        serde_json::json!({"type":"object","properties":{"at":{"type":"string"},"stamp":{"type":"object"}}}),
+    );
+    declaration.time_rule = Some(sinex_model::kinds::TimeRule::InstantEvidence {
+        field: "at".into(),
+        evidence_field: "stamp".into(),
+    });
+    assert!(crate::kinds::check(&declaration).is_ok());
+    declaration.time_rule = Some(sinex_model::kinds::TimeRule::InstantEvidence {
+        field: "at".into(),
+        evidence_field: "absent".into(),
+    });
+    assert!(
+        crate::kinds::check(&declaration)
+            .unwrap_err()
+            .contains("absent")
+    );
 }

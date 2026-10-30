@@ -24,7 +24,14 @@ async fn sqlite_rows_keep_failed_and_partial_snapshots_until_writer_commits(
     let sqlite = rusqlite::Connection::open(&path).unwrap();
     sqlite.execute_batch("CREATE TABLE history(id TEXT, timestamp INTEGER, duration INTEGER, exit INTEGER, command TEXT, cwd TEXT, session TEXT, hostname TEXT);
         INSERT INTO history VALUES ('a',1,-1,-1,'first','/synthetic','s','h'), ('b',2,-1,-1,'second','/synthetic','s','h');").unwrap();
-    let mut ctx = ReaderContext::open(&url, &dir.join("store")).await.unwrap();
+    let mut ctx = ReaderContext::open(
+        &url,
+        &dir.join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
     let sink = Sink(ctx.blobs.clone());
     let source = atuin::source();
     let mut reader = binding::rows(atuin::driver(path, "synthetic".into()))
