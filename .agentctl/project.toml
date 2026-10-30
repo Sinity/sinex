@@ -44,7 +44,8 @@ description = "All Rust tests on the master-baseline checkout; the host queues i
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 pool = "bulk"
 result = "exit"
-timeout_seconds = 900
+# The same full suite as test needs the same cold-build and runtime budget.
+timeout_seconds = 1800
 scratch = "tmpfs"
 cache = "none"
 cap = "cargo"
