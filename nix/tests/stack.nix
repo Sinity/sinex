@@ -37,6 +37,11 @@ self: {
         writeKindPrefixes = [ "file.changed" ];
         writeClasses = [ "guarded" ];
       };
+      # This headless fixture exercises only file-watch session capture.
+      # Its login bus still makes these unrelated session sources available.
+      exclude."desktop.notifications".reason = "The stack fixture tests file changes, not desktop notifications.";
+      exclude."media.mpris".reason = "The stack fixture tests file changes, not media players.";
+      exclude."session.integrations".reason = "The stack fixture tests file changes, not editor and terminal integrations.";
       readAnyFile = true;
       sources."terminal.zsh-history" = {
         paths = [ "/home/alice/.zsh_history" ];
