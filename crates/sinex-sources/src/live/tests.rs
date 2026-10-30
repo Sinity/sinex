@@ -1297,11 +1297,18 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
     .await;
     std::fs::write(spool.join("finished"), b"").unwrap();
     wait_for_owner(&mut running, &mut ingress, || spool.join("paused").exists()).await;
-    let captured = std::fs::read_to_string(spool.join("000000000000.ndjson"))
-        .unwrap()
-        .lines()
-        .count();
+    let segment = spool.join("000000000000.ndjson");
+    let captured = std::fs::read_to_string(&segment).unwrap().lines().count();
+    let captured_bytes = std::fs::metadata(&segment).unwrap().len();
     assert!(captured > 0);
+    // A zero health sample can predate capture. First require the durable
+    // reading cursor to cover the exact end of the paused source segment.
+    wait_for_owner(&mut running, &mut ingress, || {
+        let cursor = Position::load(&positions, &binding.name).unwrap().cursor;
+        cursor["segment"].as_u64() == Some(0)
+            && cursor.pointer("/inner/offset").and_then(Value::as_u64) == Some(captured_bytes)
+    })
+    .await;
     let report = dir.path().join("health.json");
     wait_for_owner(&mut running, &mut ingress, || {
         std::fs::read(&report)
