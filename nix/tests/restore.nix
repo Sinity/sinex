@@ -44,6 +44,10 @@ self: {
     machine.succeed(f"{sinex} sinexd backfill --database '{url}' --store /var/lib/sinex/store --read zsh=/var/lib/sinex/zsh_history")
     machine.succeed("systemctl start sinexd.service")
     machine.wait_for_unit("sinexd.service")
+    # This cold restore drill copies one stopped-writer boundary. The two
+    # Borg jobs do not establish the planned online backup hold.
+    machine.succeed("systemctl stop sinexd.service")
+    machine.fail("systemctl is-active --quiet sinexd.service")
     before = state()
     before_files = machine.succeed("cd /var/lib/sinex/store && find . -type f | sort | xargs -r sha256sum").strip()
     assert not before[0].startswith("0|"), before

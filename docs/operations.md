@@ -100,6 +100,8 @@ The stores are the backup unit, and the deployment chooses the backup tool; Sine
 
 Worktrees, caches and scratch are outside backups. NATS state is not backed up: committed changes are republished from PostgreSQL with the same commit positions, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md)).
 
+The current NixOS Borg jobs run their dump hooks without establishing the online hold described below. A consistent cold backup keeps `sinexd` and other content-store writers stopped from before the main and key dumps until both Borg jobs finish. The cold restore VM exercises that boundary. The automatic schedules alone do not provide a consistent online backup boundary.
+
 ### Holds and the boundary
 
 A backup records its boundary: the dump's commit position and schema version, the segment extents it covers, the producer spool positions, and the backup archive's identity. The key dump and the main dump share the boundary.
