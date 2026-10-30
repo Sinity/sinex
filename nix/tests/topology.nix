@@ -18,7 +18,14 @@ self: {
         nats = {
           address = "0.0.0.0";
           daemonPasswordFile = "/etc/sinex-test/nats-daemon";
-          producers.capture-satellite.passwordFile = "/etc/sinex-test/nats-satellite";
+          producers.capture-satellite = {
+            passwordFile = "/etc/sinex-test/nats-satellite";
+            writeFamily = "sinex";
+            attestedHost = "satellite";
+            writeSourcePrefixes = [ "machine.file-watch" ];
+            writeKindPrefixes = [ "file.changed" ];
+            writeClasses = [ "guarded" ];
+          };
         };
       };
       # The satellite writes into the store through this group over NFS, so

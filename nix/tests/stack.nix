@@ -29,6 +29,14 @@ self: {
       enable = true;
       database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
+      nats.producers.session-machine = {
+        passwordFile = "/etc/sinex-test/nats-session";
+        writeFamily = "sinex";
+        attestedHost = "machine";
+        writeSourcePrefixes = [ "machine.file-watch" ];
+        writeKindPrefixes = [ "file.changed" ];
+        writeClasses = [ "guarded" ];
+      };
       readAnyFile = true;
       sources."terminal.zsh-history" = {
         paths = [ "/home/alice/.zsh_history" ];

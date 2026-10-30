@@ -69,6 +69,8 @@ Reaching Sinex from a phone or another machine (a tailnet address, a reverse pro
 
 Clients find the daemon through `SINEX_ENDPOINT` (the socket or HTTP address) and `SINEX_TOKEN_FILE`, which the modules set for login shells. Integrations in other languages (Kitty, Neovim) read the one variable the deployment sets for them. Which callers hold which powers is [interfaces.md](interfaces.md).
 
+A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#explicit-write-families). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write authority by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed native family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its actual host. Other capture sources require their own explicit namespace and class coverage. Read and canonical-publisher grants remain separate.
+
 ## Logical day
 
 One configurable day boundary per deployment, used by every day- and hour-grain value Sinex produces: queries, derivations, analysis, recall and briefs. Ruling, 2026-10-11: "yes it should be configurable, and default should be sth like 4AM maybe … need to design the system so that this works reliably, there are no unexpected exceptions" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).

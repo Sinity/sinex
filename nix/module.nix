@@ -33,7 +33,8 @@ let
   # service on this host.
   producers = cfg.nats.producers
     // lib.optionalAttrs (cfg.session.user != "") {
-      ${cfg.session.producer} = { passwordFile = cfg.session.passwordFile; };
+      ${cfg.session.producer} = (cfg.nats.producers.${cfg.session.producer} or { })
+        // { passwordFile = cfg.session.passwordFile; };
     };
 
   # The NATS server and user, and the file the password is read from: a
