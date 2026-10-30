@@ -346,18 +346,15 @@ fn api_options(
     zone: Option<String>,
     day_start: &str,
 ) -> Result<daemon::ApiOptions, String> {
-    let zone = match zone {
-        Some(name) => jiff::tz::TimeZone::get(&name).map_err(|e| format!("zone {name}: {e}"))?,
-        None => jiff::tz::TimeZone::system(),
-    };
-    let day_start = sinex_model::query::time::clock(day_start)
-        .ok_or_else(|| format!("day start `{day_start}` is not a clock time like 04:00"))?;
+    let day = effective_time_settings(zone.as_deref(), day_start)?
+        .day_setting()
+        .map_err(|error| error.to_string())?;
     Ok(daemon::ApiOptions {
         socket: socket.unwrap_or_else(default_socket),
         listen,
         tokens,
-        zone,
-        day_start,
+        zone: day.zone().clone(),
+        day_start: day.start(),
     })
 }
 

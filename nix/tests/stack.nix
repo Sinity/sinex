@@ -7,6 +7,7 @@ self: {
   nodes.machine = { pkgs, ... }: {
     imports = [ self.nixosModules.default ];
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
+    time.timeZone = "Etc/UTC";
     environment.etc."sinex-test/nats-daemon".text = "daemon secret: with @ and /";
     environment.etc."sinex-test/nats-session".text = "session-secret";
     environment.systemPackages = [ pkgs.curl ];
@@ -28,6 +29,19 @@ self: {
       enable = true;
       database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
+      nats.producers.session-machine = {
+        passwordFile = "/etc/sinex-test/nats-session";
+        writeFamily = "sinex";
+        attestedHost = "machine";
+        writeSourcePrefixes = [ "machine.file-watch" ];
+        writeKindPrefixes = [ "file.changed" ];
+        writeClasses = [ "guarded" ];
+      };
+      # This headless fixture exercises only file-watch session capture.
+      # Its login bus still makes these unrelated session sources available.
+      exclude."desktop.notifications".reason = "The stack fixture tests file changes, not desktop notifications.";
+      exclude."media.mpris".reason = "The stack fixture tests file changes, not media players.";
+      exclude."session.integrations".reason = "The stack fixture tests file changes, not editor and terminal integrations.";
       readAnyFile = true;
       sources."terminal.zsh-history" = {
         paths = [ "/home/alice/.zsh_history" ];

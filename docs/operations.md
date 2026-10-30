@@ -69,6 +69,8 @@ Reaching Sinex from a phone or another machine (a tailnet address, a reverse pro
 
 Clients find the daemon through `SINEX_ENDPOINT` (the socket or HTTP address) and `SINEX_TOKEN_FILE`, which the modules set for login shells. Integrations in other languages (Kitty, Neovim) read the one variable the deployment sets for them. Which callers hold which powers is [interfaces.md](interfaces.md).
 
+A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#explicit-write-families). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write authority by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed native family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its actual host. Discovery also selects other session sources whose bus or runtime inputs are available. Cover those sources explicitly in the grant, or configure reasoned `services.sinex.exclude.<source>.reason` entries for a deliberately narrower capture plan. Read and canonical-publisher grants remain separate.
+
 ## Logical day
 
 One configurable day boundary per deployment, used by every day- and hour-grain value Sinex produces: queries, derivations, analysis, recall and briefs. Ruling, 2026-10-11: "yes it should be configurable, and default should be sth like 4AM maybe … need to design the system so that this works reliably, there are no unexpected exceptions" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
@@ -78,7 +80,8 @@ One configurable day boundary per deployment, used by every day- and hour-grain 
 | `services.sinex.zone` | the named IANA zone days are cut in | the host's configured zone, resolved to its IANA name at start |
 | `services.sinex.dayStart` | when a logical day starts, as `HH:MM` | `04:00` |
 
-- **Validated at start.** A zone that does not resolve to a named zone stops the daemon with a clear error; there is no fallback to UTC.
+- **Validated at start.** A zone that does not resolve to a named zone stops the daemon before connecting to the database, with a clear error; there is no fallback to UTC.
+- **NixOS host zone.** An explicit `services.sinex.zone` takes precedence over `time.timeZone`. When only the host zone is configured, the module passes that name to the daemon and declared backfills. When both are null, startup must resolve the actual system zone to an IANA name. NixOS's UTC display default without a configured named zone does not supply that evidence; configure `time.timeZone` or `services.sinex.zone` for such a deployment.
 - **One home.** Sinex's configuration holds the setting. Polylogue running on Sinex reads the day from Sinex at connect and on each change notice and has no value of its own; standalone Polylogue keeps its own ([Polylogue operations](https://github.com/Sinity/polylogue/blob/master/docs/operations.md)).
 - **Changing it** is a version change of every day-grain derivation, which re-derives them by the ordinary mechanism ([derivations.md](derivations.md)); every day- and hour-grain value records the boundary and zone it was cut with.
 - A wake-to-wake view is a separate derived kind shown beside the logical day, never a second definition of it ([higher-layer.md](higher-layer.md)). A coarse source time stays in the calendar the source meant ([events.md](events.md#time)).
@@ -96,6 +99,8 @@ The stores are the backup unit, and the deployment chooses the backup tool; Sine
 - producer spools not yet acknowledged.
 
 Worktrees, caches and scratch are outside backups. NATS state is not backed up: committed changes are republished from PostgreSQL with the same commit positions, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md)).
+
+The current NixOS Borg jobs run their dump hooks without establishing the online hold described below. A consistent cold backup keeps `sinexd` and other content-store writers stopped from before the main and key dumps until both Borg jobs finish. The cold restore VM exercises that boundary. The automatic schedules alone do not provide a consistent online backup boundary.
 
 ### Holds and the boundary
 

@@ -77,6 +77,10 @@ enum ReplyBody {
     Welcome(sinex_protocol::ProducerWelcome),
     Recorded(sinex_protocol::RecordedPage),
 }
+struct EventReceiptGate {
+    open: tokio::sync::watch::Receiver<bool>,
+    waiting: Arc<std::sync::atomic::AtomicBool>,
+}
 struct ReplyWork {
     inbox: String,
     body: ReplyBody,
@@ -122,7 +126,7 @@ async fn fake_ingress_with_configuration(
     timeout: Arc<tokio::sync::Notify>,
     connections: Option<Arc<std::sync::atomic::AtomicUsize>>,
 ) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
-    fake_ingress_controlled(url, subjects, available, timeout, connections, None).await
+    fake_ingress_controlled(url, subjects, available, timeout, connections, None, None).await
 }
 
 async fn fake_ingress_controlled(
@@ -132,6 +136,7 @@ async fn fake_ingress_controlled(
     timeout: Arc<tokio::sync::Notify>,
     connections: Option<Arc<std::sync::atomic::AtomicUsize>>,
     mut controls: Option<tokio::sync::mpsc::Receiver<ReplyControl>>,
+    mut event_receipts: Option<EventReceiptGate>,
 ) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
     let client = async_nats::connect(url).await.unwrap();
     let mut declarations = client
@@ -274,6 +279,9 @@ async fn fake_ingress_controlled(
                         }
                     }
                 }
+                changed = async { event_receipts.as_mut().expect("enabled event gate").open.changed().await }, if event_receipts.is_some() => {
+                    if changed.is_err() { break; }
+                }
                 changed = available.changed() => {
                     if changed.is_err() { break; }
                 }
@@ -282,7 +290,22 @@ async fn fake_ingress_controlled(
             // Ingress messages stay queued while the receiver is unavailable.
             let receiving = *available.borrow();
             if receiving {
-                for (frame, message) in pending.drain(..) {
+                let mut ready = Vec::new();
+                let mut held = Vec::new();
+                for pair in pending.drain(..) {
+                    if matches!(&pair.0, Ingress::Events { .. })
+                        && let Some(gate) = &event_receipts
+                        && !*gate.open.borrow()
+                    {
+                        gate.waiting
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        held.push(pair);
+                    } else {
+                        ready.push(pair);
+                    }
+                }
+                pending = held;
+                for (frame, message) in ready {
                     let id = frame.frame().to_string();
                     let next_number = recorded.len() as i64 + 1;
                     let ack = recorded
@@ -874,6 +897,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
                 Arc::default(),
                 None,
                 commands.take(),
+                None,
             )
             .await,
         );
@@ -1013,6 +1037,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
                 Arc::default(),
                 None,
                 commands.take(),
+                None,
             )
             .await
         }
@@ -1112,7 +1137,7 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
     client.flush().await.unwrap();
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let received = count.clone();
-    let responder = tokio::spawn(async move {
+    let mut responder = tokio::spawn(async move {
         while let Some(message) = declarations.next().await {
             received.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             sinex_transport::replies::publish_json(
@@ -1122,7 +1147,7 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
                     refusal: Some("producer bytes cannot be stored sealed".into()),
                     ..Default::default()
                 },
-                std::time::Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             .unwrap();
@@ -1133,26 +1158,55 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
     let spool = dir.path().join("spool");
     let (_, binding) = super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let store = Store::open(&dir.path().join("store")).unwrap();
-
-    run_bindings(
-        Connection {
-            url: nats.url().into(),
-            password_file: None,
-            subjects,
-            producer: "synthetic".into(),
-            upload: false,
-        },
-        &store,
-        &positions,
-        vec![(&SYNTHETIC, binding)],
-        Duration::from_millis(50),
-        Some(Instant::now() + Duration::from_secs(3)),
-    )
-    .await
-    .unwrap();
+    let task_positions = positions.clone();
+    let url = nats.url().to_owned();
+    let mut running = Running(tokio::spawn(async move {
+        run_bindings(
+            Connection {
+                url,
+                password_file: None,
+                subjects,
+                producer: "synthetic".into(),
+                upload: false,
+            },
+            &store,
+            &task_positions,
+            vec![(&SYNTHETIC, binding)],
+            Duration::from_millis(50),
+            None,
+        )
+        .await
+    }));
+    let report = dir.path().join("health.json");
+    wait_for_owner(&mut running, &mut responder, || {
+        std::fs::read(&report)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|health| {
+                health["spools"][0]["state"] == "error: producer bytes cannot be stored sealed"
+                    && health["spools"][0]["unpublished"]["records"]
+                        .as_u64()
+                        .is_some_and(|records| records >= 10)
+            })
+    })
+    .await;
+    std::fs::write(spool.join("finished"), b"").unwrap();
+    wait_for_owner(&mut running, &mut responder, || {
+        spool.join("paused").exists()
+    })
+    .await;
+    let segment = spool.join("000000000000.ndjson");
+    let captured = std::fs::read_to_string(&segment).unwrap().lines().count() as u64;
+    let bytes = std::fs::metadata(&segment).unwrap().len();
+    assert!(captured >= 10);
+    wait_for_owner(&mut running, &mut responder, || {
+        let health: Value = serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+        health["spools"][0]["unpublished"]["records"] == captured
+            && health["spools"][0]["unpublished"]["bytes"] == bytes
+    })
+    .await;
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
-    let report: Value =
-        serde_json::from_slice(&std::fs::read(dir.path().join("health.json")).unwrap()).unwrap();
+    let report: Value = serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
     assert_eq!(
         report["spools"][0]["state"],
         "error: producer bytes cannot be stored sealed"
@@ -1163,7 +1217,10 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
             .unwrap()
             >= 10
     );
+    running.0.abort();
+    assert!((&mut running.0).await.unwrap_err().is_cancelled());
     responder.abort();
+    assert!(responder.await.unwrap_err().is_cancelled());
 }
 
 #[devkit::test(multi_thread)]
@@ -1172,12 +1229,19 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
     let subjects = Subjects::new(nats.prefix());
     let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (_available, receiving) = tokio::sync::watch::channel(true);
-    let (_, order, ingress) = fake_ingress_with_configuration(
+    let (release_events, open) = tokio::sync::watch::channel(false);
+    let waiting = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (_, order, mut ingress) = fake_ingress_controlled(
         nats.url(),
         &subjects,
         receiving,
         Arc::new(tokio::sync::Notify::new()),
         Some(connections.clone()),
+        None,
+        Some(EventReceiptGate {
+            open,
+            waiting: waiting.clone(),
+        }),
     )
     .await;
     let dir = tempfile::tempdir().unwrap();
@@ -1185,22 +1249,77 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
     let spool = dir.path().join("spool");
     let (_, binding) = super::binding("hyprland", &spool, "synthetic", Value::Null).unwrap();
     let store = Store::open(&dir.path().join("store")).unwrap();
-    run_bindings(
-        Connection {
-            url: nats.url().into(),
-            password_file: None,
-            subjects,
-            producer: "synthetic".into(),
-            upload: false,
-        },
-        &store,
-        &positions,
-        vec![(&SYNTHETIC, binding.clone())],
-        Duration::from_millis(50),
-        Some(Instant::now() + Duration::from_secs(4)),
-    )
-    .await
-    .unwrap();
+    let task_positions = positions.clone();
+    let url = nats.url().to_owned();
+    let task_binding = binding.clone();
+    let mut running = Running(tokio::spawn(async move {
+        run_bindings(
+            Connection {
+                url,
+                password_file: None,
+                subjects,
+                producer: "synthetic".into(),
+                upload: false,
+            },
+            &store,
+            &task_positions,
+            vec![(&SYNTHETIC, task_binding)],
+            Duration::from_millis(50),
+            None,
+        )
+        .await
+    }));
+    wait_for_owner(&mut running, &mut ingress, || {
+        waiting.load(std::sync::atomic::Ordering::Acquire)
+    })
+    .await;
+    assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(
+        Position::load(&positions, &binding.name)
+            .unwrap()
+            .cursor
+            .is_null()
+    );
+    assert!(
+        !order
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| matches!(frame, Ingress::Events { .. }))
+    );
+    release_events.send(true).unwrap();
+    wait_for_owner(&mut running, &mut ingress, || {
+        !Position::load(&positions, &binding.name)
+            .unwrap()
+            .cursor
+            .is_null()
+    })
+    .await;
+    std::fs::write(spool.join("finished"), b"").unwrap();
+    wait_for_owner(&mut running, &mut ingress, || spool.join("paused").exists()).await;
+    let segment = spool.join("000000000000.ndjson");
+    let captured = std::fs::read_to_string(&segment).unwrap().lines().count();
+    let captured_bytes = std::fs::metadata(&segment).unwrap().len();
+    assert!(captured > 0);
+    // A zero health sample can predate capture. First require the durable
+    // reading cursor to cover the exact end of the paused source segment.
+    wait_for_owner(&mut running, &mut ingress, || {
+        let cursor = Position::load(&positions, &binding.name).unwrap().cursor;
+        cursor["segment"].as_u64() == Some(0)
+            && cursor.pointer("/inner/offset").and_then(Value::as_u64) == Some(captured_bytes)
+    })
+    .await;
+    let report = dir.path().join("health.json");
+    wait_for_owner(&mut running, &mut ingress, || {
+        std::fs::read(&report)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|health| {
+                health["spools"][0]["unpublished"]["records"] == 0
+                    && health["spools"][0]["unpublished"]["frames"] == 0
+            })
+    })
+    .await;
     assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert!(
         !Position::load(&positions, &binding.name)
@@ -1208,14 +1327,36 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
             .cursor
             .is_null()
     );
-    let frames = order.lock().unwrap();
-    assert!(frames.iter().any(|frame| frame.frame().contains("/retry/")));
-    assert!(
-        frames
+    {
+        let frames = order.lock().unwrap();
+        assert!(frames.iter().any(|frame| frame.frame().contains("/retry/")));
+        assert!(
+            frames
+                .iter()
+                .any(|frame| matches!(frame, Ingress::Events { events, .. } if !events.is_empty()))
+        );
+        let events: Vec<_> = frames
             .iter()
-            .any(|frame| matches!(frame, Ingress::Events { events, .. } if !events.is_empty()))
-    );
+            .filter_map(|frame| match frame {
+                Ingress::Events { events, .. } => Some(events),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(events.len(), captured);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.payload.to_string())
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            captured
+        );
+    }
+    running.0.abort();
+    assert!((&mut running.0).await.unwrap_err().is_cancelled());
     ingress.abort();
+    assert!(ingress.await.unwrap_err().is_cancelled());
 }
 
 async fn run_bindings(

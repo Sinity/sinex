@@ -33,8 +33,48 @@ let
   };
   plan = builtins.fromJSON config.environment.etc."sinex/sources.json".text;
   fails = extra: !(builtins.tryEval (evaluate extra).system.build.toplevel.drvPath).success;
+  zoneScripts = extra:
+    let checked = evaluate (lib.recursiveUpdate {
+      services.sinex.backfills.zone = [ "zsh=/synthetic/history" ];
+    } extra);
+    in [ checked.systemd.services.sinexd.script checked.systemd.services.sinex-backfill-zone.script ];
+  producerGrants = extra: builtins.fromJSON (evaluate extra).environment.etc."sinex/producer-grants.json".text;
+  configuredSessionGrant = (producerGrants {
+    services.sinex = {
+      host = "fixture";
+      session.producer = "session-fixture";
+      nats.producers.session-fixture = {
+        passwordFile = "/run/fixture-session";
+        writeFamily = "sinex";
+        attestedHost = "fixture";
+        writeSourcePrefixes = [ "machine.file-watch" ];
+        writeKindPrefixes = [ "file.changed" ];
+        writeClasses = [ "guarded" ];
+      };
+    };
+  }).session-fixture;
+  defaultSessionGrant = (producerGrants {
+    services.sinex.session.producer = "session-fixture";
+  }).session-fixture;
   tests = [
     (builtins.tryEval (evaluate { }).system.build.toplevel.drvPath).success
+    (defaultSessionGrant.write == null)
+    (defaultSessionGrant.kind_prefixes == [ ] && defaultSessionGrant.classes == [ ])
+    (configuredSessionGrant.write.family == "sinex")
+    (configuredSessionGrant.write.host == "fixture")
+    (configuredSessionGrant.write.source_prefixes == [ "machine.file-watch" ])
+    (configuredSessionGrant.write.kind_prefixes == [ "file.changed" ])
+    (configuredSessionGrant.write.classes == [ "guarded" ])
+    (configuredSessionGrant.write.canonical_prefixes == [ ])
+    (configuredSessionGrant.kind_prefixes == [ ] && configuredSessionGrant.classes == [ ])
+    (lib.all (lib.hasInfix "--zone Europe/Warsaw") (zoneScripts {
+      time.timeZone = "Europe/Warsaw";
+    }))
+    (lib.all (lib.hasInfix "--zone America/New_York") (zoneScripts {
+      time.timeZone = "Europe/Warsaw";
+      services.sinex.zone = "America/New_York";
+    }))
+    (lib.all (script: !(lib.hasInfix "--zone " script)) (zoneScripts { }))
     (plan.exclude."desktop.clipboard".reason == "Synthetic operator exclusion")
     (plan.exclude."terminal.atuin-history" == null)
     (!(plan.sources."terminal.atuin-history" ? enable))

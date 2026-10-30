@@ -7,6 +7,7 @@ self: {
     server = { ... }: {
       imports = [ self.nixosModules.default ];
       virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
+      time.timeZone = "Etc/UTC";
       networking.firewall.enable = false;
       environment.etc."sinex-test/nats-daemon".text = "daemon-secret";
       environment.etc."sinex-test/nats-satellite".text = "satellite-secret";
@@ -17,7 +18,14 @@ self: {
         nats = {
           address = "0.0.0.0";
           daemonPasswordFile = "/etc/sinex-test/nats-daemon";
-          producers.capture-satellite.passwordFile = "/etc/sinex-test/nats-satellite";
+          producers.capture-satellite = {
+            passwordFile = "/etc/sinex-test/nats-satellite";
+            writeFamily = "sinex";
+            attestedHost = "satellite";
+            writeSourcePrefixes = [ "machine.file-watch" ];
+            writeKindPrefixes = [ "file.changed" ];
+            writeClasses = [ "guarded" ];
+          };
         };
       };
       # The satellite writes into the store through this group over NFS, so
@@ -42,6 +50,7 @@ self: {
       systemd.tmpfiles.rules = [ "d /srv/watched 0755 root root -" ];
       users.groups.sinex.gid = 2900;
       services.sinex.exclude."machine.journald".reason = "The satellite fixture tests only file changes.";
+      services.sinex.exclude."machine.udev".reason = "The satellite fixture tests only file changes.";
       services.sinex.captureNode = {
         enable = true;
         nats = "server:4222";
