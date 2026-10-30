@@ -96,9 +96,10 @@ Code is shared only where the mechanics are identical.
 ## Building, testing and measuring
 
 Enter the development shell with `nix develop`. It carries the Rust
-toolchain pinned in `rust-toolchain.toml`, nextest, PostgreSQL with
-TimescaleDB, `nats-server` and the mold linker. Point git at the repository's
-hooks once with `git config core.hooksPath .githooks`.
+toolchain read from `rust-toolchain.toml`, nextest, PostgreSQL with
+TimescaleDB, `nats-server` and the mold linker. It installs the repository's
+hooks when no hooks path is set. [Development](docs/development.md) owns
+local overrides and plain commands.
 
 | Command | Does |
 |---|---|
