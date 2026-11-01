@@ -46,11 +46,18 @@ async fn sources_discover_dry_run_lists_states_reasons_and_the_census(
     let (status, body) = call(&world, Some(READ), json!({"method":"sources-discover"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let inputs = body["result"]["inputs"].as_array().unwrap();
-    assert!(inputs.iter().any(|input| input["source"] == "desktop.clipboard"
-        && input["availability"] == "excluded"
-        && input["reason"] == "synthetic operator choice"));
-    assert!(inputs.iter().any(
-        |input| input["source"] == "forecast.request" && input["availability"] == "on_demand"
-    ));
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input["source"] == "desktop.clipboard"
+                && input["availability"] == "excluded"
+                && input["reason"] == "synthetic operator choice")
+    );
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input["source"] == "forecast.request"
+                && input["availability"] == "on_demand")
+    );
     assert!(body["result"]["unimplemented"].is_array());
 }
