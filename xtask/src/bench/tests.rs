@@ -192,3 +192,24 @@ fn disposable_postgres_stops_after_measurement_and_startup_errors() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[devkit::test]
+fn stored_bytes_count_chunks_as_events_and_skip_indexes_already_in_tables() {
+    let relation = |schema: &str, name: &str, relkind: &str, total: u64| json!({"schema": schema, "name": name, "relkind": relkind, "bytes": 0, "total_bytes": total});
+    let before = json!({"relations": [
+        relation("core", "events", "r", 0),
+        relation("core", "live_locations", "r", 1000),
+    ]});
+    let after = json!({"relations": [
+        relation("core", "events", "r", 0),
+        relation("_timescaledb_internal", "_hyper_1_1_chunk", "r", 3000),
+        relation("_timescaledb_internal", "_hyper_1_2_chunk", "r", 1000),
+        relation("core", "live_locations", "r", 2000),
+        relation("core", "live_locations_pkey", "i", 500),
+    ]});
+    let stored = measurements::stored_bytes(&before, &after, 10);
+    assert_eq!(stored["bytes"], 5000);
+    assert_eq!(stored["per_event"], 500.0);
+    assert_eq!(stored["tables"]["core.events"]["bytes"], 4000);
+    assert_eq!(stored["tables"]["core.live_locations"]["per_event"], 100.0);
+}

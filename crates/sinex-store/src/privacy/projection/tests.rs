@@ -73,7 +73,6 @@ async fn retained(conn: &mut PgConnection, events: &[Event], position: i64) {
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES($1,NULL,NULL) ON CONFLICT DO NOTHING").bind(position).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
 }
 

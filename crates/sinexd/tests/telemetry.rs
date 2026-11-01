@@ -98,10 +98,10 @@ async fn daemon_samples_admission_and_failures_through_public_commands() {
         .find(|sample| sample["component"] == "source" && sample["name"] == "terminal.zsh-history")
         .unwrap();
     assert_eq!(source["measures"]["events"], 1.0, "{status}");
-    let broken: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e LEFT JOIN raw.materials m ON m.id=e.material_id LEFT JOIN core.commit_log c ON c.event_id=e.id WHERE e.event_type='sinex.telemetry' AND (m.id IS NULL OR c.event_id IS NULL)").fetch_one(&mut conn).await.unwrap();
+    let broken: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e LEFT JOIN raw.materials m ON m.id=e.material_id WHERE e.event_type='sinex.telemetry' AND (m.id IS NULL OR e.commit_seq < 1)").fetch_one(&mut conn).await.unwrap();
     assert_eq!(
         broken, 0,
-        "every daemon sample has ordinary material and commit-log custody"
+        "every daemon sample has ordinary material and a commit position"
     );
     let activity: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e WHERE e.parents && ARRAY(SELECT id FROM core.events WHERE event_type='sinex.telemetry')").fetch_one(&mut conn).await.unwrap();
     assert_eq!(

@@ -750,7 +750,6 @@ backfill_steps! { Inputs::first_transaction();
     backfill_killed_staging: None, lock("core.admission_stage");
     backfill_killed_allocating_commit_seq: None, lock("core.counters");
     backfill_killed_inserting_events: None, lock("core.events");
-    backfill_killed_writing_the_commit_log: None, lock("core.commit_log");
     backfill_killed_writing_live_keys: None, lock("core.live_equivalence");
     backfill_killed_writing_live_locations: None, lock("core.live_locations");
     backfill_killed_marking_dirty_keys: None, lock("derivation.dirty");
@@ -1094,9 +1093,9 @@ async fn publisher_survives(between_pages: bool) {
     daemon.wait().unwrap();
     consistent(&target).await;
 
-    let committed = scalar(&mut c, "SELECT count(*) FROM core.commit_log").await;
+    let committed = scalar(&mut c, "SELECT count(*) FROM core.events").await;
     let expected: std::collections::BTreeMap<sinex_model::EventId, i64> =
-        sqlx::query_as::<_, (uuid::Uuid, i64)>("SELECT event_id,commit_seq FROM core.commit_log")
+        sqlx::query_as::<_, (uuid::Uuid, i64)>("SELECT id,commit_seq FROM core.events")
             .fetch_all(&mut c)
             .await
             .unwrap()

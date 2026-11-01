@@ -80,6 +80,8 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
                 "SELECT to_jsonb(t)-'family'-'write_kind_prefixes'-'source_name'-'source_version'-'source_fingerprint'-'producer_host' FROM {name} t ORDER BY 1"
             ),
             "published" => format!("SELECT to_jsonb(t)-'stream_instance' FROM {name} t ORDER BY 1"),
+            // Positions are kept; an event's moves from its commit-log row to its own row.
+            "commit_log" => "SELECT to_jsonb(p) FROM (SELECT commit_seq FROM core.commit_log UNION SELECT commit_seq FROM core.events) p ORDER BY 1".into(),
             "comparisons" => format!("SELECT to_jsonb(t)-'context' FROM {name} t ORDER BY 1"),
             _ => format!("SELECT to_jsonb(t) FROM {name} t ORDER BY 1"),
         };

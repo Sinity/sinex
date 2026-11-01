@@ -51,10 +51,11 @@ async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::Tes
         .execute(&mut conn)
         .await
         .unwrap();
-    let before: i64 = sqlx::query_scalar("SELECT max(commit_seq) FROM core.commit_log")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
+    let before: i64 =
+        sqlx::query_scalar("SELECT value FROM core.counters WHERE name = 'commit_seq'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
 
     // A newer reading of k3 replaces the compressed one.
     let newer = admit_one(&mut conn, &batch(vec![keyed("s", 3, 2, 2)])).await;
