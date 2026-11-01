@@ -428,6 +428,10 @@ async fn admit(
             &mut errors,
         )
         .await;
+    let errors: Vec<_> = errors
+        .into_iter()
+        .filter_map(|(source, result)| result.err().map(|error| format!("{source}: {error}")))
+        .collect();
     assert!(errors.is_empty(), "{errors:?}");
     sqlx::query_as(
         "SELECT e.payload->>'binding', e.payload->>'state' FROM core.events e
