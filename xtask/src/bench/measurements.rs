@@ -598,7 +598,7 @@ pub(super) fn with_consumers(
         })
         .collect();
     let mut discovered: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
-    for input in &inputs {
+    for input in inputs.iter() {
         discovered
             .entry(input.format)
             .or_default()
