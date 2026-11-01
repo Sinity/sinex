@@ -513,7 +513,10 @@ fn synthetic(
     let input = out.join("zsh_history");
     fs::write(&input, &history).map_err(|e| format!("{}: {e}", input.display()))?;
     drop(history);
+    let build_started = std::time::Instant::now();
     let binary = sinexd_binary()?;
+    let build_s = build_started.elapsed().as_secs_f64();
+    let setup_started = std::time::Instant::now();
     let load = LoadMonitor::start()?;
     let cluster = Cluster::start(&out.join("pg"), storage == "disk", settings)?;
     let url = cluster.url();
@@ -521,6 +524,8 @@ fn synthetic(
     cluster
         .psql("CREATE EXTENSION pg_stat_statements")
         .ok_or("pg_stat_statements is not available")?;
+    let effective_settings = cluster.psql("SELECT json_object_agg(name, setting) FROM pg_settings");
+    let setup_s = setup_started.elapsed().as_secs_f64();
     let store_dir = out.join("store");
     let read = format!("zsh={}", input.display());
     let result = sinexd(
@@ -548,10 +553,19 @@ fn synthetic(
     drop(cluster);
     let load = load.finish()?;
     let result = result?;
+    fs::write(out.join("backfill.json"), serde_json::to_vec_pretty(&result).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let totals = &result["sources"]["terminal.zsh-history"];
     let complete = totals["admitted"].as_u64() == Some(events);
     let metrics = json!({
         "complete": complete,
+        "build_s": build_s,
+        "setup_s": setup_s,
+        "parse_s": totals["parse_s"],
+        "poll_s": totals["poll_s"],
+        "queue_s": totals["queue_s"],
+        "service_s": totals["service_s"],
+        "output": out,
+        "effective_settings": effective_settings.and_then(|s| serde_json::from_str::<Value>(&s).ok()),
         "events": events,
         "admitted": totals["admitted"],
         "batches": totals["batches"],

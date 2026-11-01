@@ -40,6 +40,7 @@ impl Intake<'_> {
     ) -> Result<Submission, String> {
         (self.check)()?;
         let material = acquired.material.as_ref().map(|m| m.id);
+        let setup_started = Instant::now();
         let prepared = drivers::prepare(
             self.source,
             self.binding,
@@ -60,7 +61,10 @@ impl Intake<'_> {
         totals.poll(prepared.material_len());
         let mut batches = prepared.batches().map_err(|e| e.to_string())?;
         let mut outcome = Outcome::default();
-        while let Some(batch) = batches.next() {
+        let mut setup = setup_started.elapsed();
+        loop {
+            let parse_started = Instant::now();
+            let Some(batch) = batches.next() else { break; };
             let mut batch = batch.map_err(|e| e.to_string())?;
             if self.atomic {
                 if batches.next().is_some() {
@@ -89,6 +93,7 @@ impl Intake<'_> {
                     progress.data_keys.clear();
                 }
             }
+            totals.parse(parse_started.elapsed() + std::mem::take(&mut setup));
             let check = self.check.clone();
             let unlock = self.unlock.cloned();
             let check: AdmissionCheck = Arc::new(move || {
@@ -101,12 +106,21 @@ impl Intake<'_> {
             check()?;
             let events = batch.event_count();
             let started = Instant::now();
+            let service_started = Arc::new(std::sync::Mutex::new(None));
+            let service_clock = service_started.clone();
+            let writer_check: AdmissionCheck = Arc::new(move || {
+                service_clock.lock().map_err(|e| e.to_string())?.get_or_insert_with(Instant::now);
+                check()
+            });
             let admitted = self
                 .writer
-                .submit_checked(self.priority, batch, check)
+                .submit_checked(self.priority, batch, writer_check)
                 .await
                 .map_err(|e| e.to_string())?;
-            totals.batch(events, started.elapsed());
+            let elapsed = started.elapsed();
+            let queue = service_started.lock().map_err(|e| e.to_string())?.map_or(elapsed, |service| service.duration_since(started));
+            totals.writer(queue, elapsed.saturating_sub(queue));
+            totals.batch(events, elapsed);
             totals.add_outcome(&admitted);
             outcome.admitted += admitted.admitted;
             outcome.repeats += admitted.repeats;
