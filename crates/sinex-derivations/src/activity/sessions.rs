@@ -39,13 +39,13 @@ pub struct ActivitySessions(pub ActivityProfile);
 
 impl Keyed for ActivitySessions {
     const NAME: &'static str = "activity.sessions";
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[
         "activity.window",
         "activity.span",
         "state.interval",
-        "rest.fused",
+        "health.record",
         "journal.entry",
     ];
     const OUTPUTS: &'static [&'static str] = &["activity.session"];
@@ -87,7 +87,10 @@ impl Keyed for ActivitySessions {
         )
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<crate::AffectedRange> {
-        if !relevant(input.event_type, input.payload) {
+        // Sessions read absence, not focus.
+        if !relevant(input.event_type, input.payload)
+            || FOCUS.admits(input.event_type, input.payload)
+        {
             return vec![];
         }
         input
@@ -116,6 +119,13 @@ impl Keyed for ActivitySessions {
         let mut selected = crate::Kind::all("activity.window");
         selected.equal.push(("scope".into(), scope.clone()));
         let mut query = InputQuery::all(kinds(Self::INPUTS));
+        query.kinds.retain(|kind| {
+            !(kind.event_type == "state.interval"
+                && kind
+                    .equal
+                    .iter()
+                    .any(|(_, state)| *state == "desktop.focus"))
+        });
         for kind in &mut query.kinds {
             if kind.event_type == "activity.window" {
                 kind.equal.push(("scope".into(), scope.clone()));

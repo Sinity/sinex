@@ -310,15 +310,4 @@ async fn fresh_signal_evidence_requires_native_lineage_not_equal_words(
         .unwrap(),
         "reading IDs and parent order change without inventing a new native occurrence"
     );
-    sqlx::query("DELETE FROM privacy.original_events WHERE event_id=$1")
-        .bind(first_id.0)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    assert!(
-        !same_input_lineage(&mut conn, &[first_id], &[reread_id])
-            .await
-            .unwrap(),
-        "unknown original lineage cannot be proved by equal current words"
-    );
 }

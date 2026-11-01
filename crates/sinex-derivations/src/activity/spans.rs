@@ -6,7 +6,7 @@ pub struct ActivitySpans;
 
 impl Keyed for ActivitySpans {
     const NAME: &'static str = "activity.spans";
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 6;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUTS;
     const OUTPUTS: &'static [&'static str] = &["activity.span"];
@@ -79,9 +79,9 @@ impl Keyed for ActivitySpans {
                 let exact_absence = has(Signal::Absent);
                 let physical_coverage = has(Signal::Coverage);
                 let no_input = has(Signal::NoInput) && !operator;
-                let absent_claim = active.iter().any(|piece| {
-                    piece.signal == Signal::Claim && piece.event.payload["status"] == "afk"
-                });
+                let absent_claim = active
+                    .iter()
+                    .any(|piece| piece.signal == Signal::Claim && piece.payload["status"] == "afk");
                 let absent =
                     exact_absence || no_input || (!physical_coverage && !operator && absent_claim);
                 let agency = if operator && exact_absence {
@@ -133,7 +133,6 @@ impl Keyed for ActivitySpans {
                         .filter(|piece| piece.signal == signal)
                         .filter_map(|piece| {
                             piece
-                                .event
                                 .payload
                                 .get(field)
                                 .and_then(Value::as_str)
@@ -233,7 +232,7 @@ impl Keyed for ActivitySpans {
                     continuation_after: active.iter().any(|piece| piece.end > until),
                     provisional: active
                         .iter()
-                        .any(|piece| piece.event.payload.get("ended_at") == Some(&Value::Null)),
+                        .any(|piece| piece.payload.get("ended_at") == Some(&Value::Null)),
                 };
                 outputs.push(derived(&span, Self::NAME, parents));
             }

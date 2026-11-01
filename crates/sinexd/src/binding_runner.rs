@@ -49,12 +49,6 @@ fn note(failures: &ReadFailures, binding: &str, error: Option<&str>) {
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct ModelAccountingConfig {
-    pub actual_receipts: bool,
-}
-
-#[derive(Clone, Debug, Default, serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
     pub sources: BTreeMap<String, SourceConfig>,
     pub exclude: BTreeMap<String, Option<sinex_sources::discovery::Exclusion>>,
@@ -66,7 +60,6 @@ pub(crate) struct Config {
     pub project_attribution: sinex_derivations::attribution::AttributionProfile,
     pub rhythm: sinex_derivations::portfolio::rhythm::RhythmProfile,
     pub signals: Option<crate::signals::Config>,
-    pub model_accounting: ModelAccountingConfig,
 }
 impl Config {
     pub(crate) fn load(path: &std::path::Path) -> Result<Self, String> {

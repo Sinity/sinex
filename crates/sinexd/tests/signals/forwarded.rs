@@ -169,9 +169,8 @@ pub(super) async fn capture_signal_snapshot(
          'channel',e.payload->'delivery'->'channel','downgrade',e.payload->'delivery'->'downgrade',
          'trigger',e.payload->'delivery'->'trigger','handed_at',e.payload->'handed_at',
          'recorded_at',e.payload->'recorded_at','route',e.payload->'route','receipt',e.payload->'receipt',
-         'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id),
-         'projection',o.state,'projection_epoch',o.epoch,'projection_changed',o.changed)
-         FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id
+         'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id))
+         FROM core.events e
          WHERE e.event_type IN ('signal.delivery','signal.handoff','signal.receipt','signal.desktop_receipt')
          ORDER BY e.commit_seq,e.id"
     ).fetch_all(&mut *tx).await;
@@ -193,7 +192,7 @@ pub(super) async fn capture_signal_snapshot(
                 .ok_or("host checkpoint is missing".into())
         });
     report["checkpoint"] = serde_json::to_value(observation(saved)).unwrap();
-    let policy: Result<Value,_> = sqlx::query_scalar("SELECT jsonb_build_object('desired_epoch',desired_epoch,'active_epoch',active_epoch,'commit_seq',(SELECT value FROM core.counters WHERE name='commit_seq')) FROM privacy.policy_state WHERE id")
+    let policy: Result<Value,_> = sqlx::query_scalar("SELECT jsonb_build_object('rules',(SELECT coalesce(max(seq),0) FROM privacy.rules),'commit_seq',(SELECT value FROM core.counters WHERE name='commit_seq'))")
         .fetch_one(&mut *tx).await;
     report["policy"] = serde_json::to_value(observation(policy)).unwrap();
     tx.rollback().await.map_err(|e| e.to_string())
@@ -380,7 +379,7 @@ async fn wait_deliveries(conn: &mut PgConnection, process: &mut daemon::Process,
             return;
         }
         if Instant::now() >= deadline {
-            let evaluations:Value=sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('event',e.id,'payload',e.payload,'projection',o.state,'archived',a.event_id IS NOT NULL) ORDER BY e.commit_seq),'[]'::jsonb) FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id LEFT JOIN audit.archived a ON a.event_id=e.id WHERE e.event_type='signal.evaluation'").fetch_one(&mut *conn).await.unwrap();
+            let evaluations:Value=sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('event',e.id,'payload',e.payload,'archived',a.event_id IS NOT NULL) ORDER BY e.commit_seq),'[]'::jsonb) FROM core.events e LEFT JOIN audit.archived a ON a.event_id=e.id WHERE e.event_type='signal.evaluation'").fetch_one(&mut *conn).await.unwrap();
             let checkpoints: Value = sqlx::query_scalar(
                 "SELECT coalesce(jsonb_agg(state),'[]'::jsonb) FROM core.signal_checkpoints",
             )

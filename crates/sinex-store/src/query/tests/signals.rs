@@ -223,7 +223,7 @@ fn observation(identity: String, reference: String, at: i64) -> ::signals::Row {
     }
 }
 #[devkit::test]
-async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
+async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -296,9 +296,6 @@ async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
     )
     .await
     .unwrap();
-    crate::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
     let protected = standing_query(&mut conn, question, &ctx(), seq)
         .await
         .unwrap();

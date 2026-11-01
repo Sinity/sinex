@@ -249,20 +249,6 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
         inputs, 2,
         "identical raw input claims remain distinct per attested producer"
     );
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let fused:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='notification.fused' AND payload::text LIKE '%native-source-fixture%' AND payload->'observed_by' @> '[\"desktop.notifications\"]'::jsonb AND cardinality(parents)>0").fetch_one(&mut conn).await.unwrap();
-        if fused > 0 {
-            break;
-        }
-        server.running();
-        assert!(
-            Instant::now() < deadline,
-            "native source was not selected for notification fusion: {}",
-            server.log()
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
     // An otherwise real client cannot mint authority with its producer name.
     let denied = root.join("denied");
     std::fs::create_dir_all(denied.join("watched")).unwrap();

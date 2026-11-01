@@ -88,6 +88,13 @@ Aliases are payload projections over registered, produced event types: `commands
 its producer, so an alias never answers from nothing. Every duration projection states
 its unit. `kinds [KIND]` lists which aliases expand to which event types.
 
+`commands` reads a [fusion family](derivations.md#fusion): its fused commands plus the
+shell records no fused command joins, so each command is one row and `observed_by`
+names the shells that saw it. `focus` (compositor focus intervals and ActivityWatch
+window spans), `visits` (browser history, history exports and followed links) and
+`plays` (streaming history and the player's reports while playing) have no fusion:
+each source's records are rows of their own, so counts across sources are per source.
+
 ### Supplied-vector ranking
 
 Use `similar:sinex:ev/<embedding-id>` with a stored `text.embedding` reference. It ranks the filtered event relation in that exact vector space and retains rows without a vector at unknown rank. It is a positive ranking directive in the root AND conditions; OR, NOT and conflicting references are explicit refusals. The reference obeys grants and the selected read position. This supplied-vector path enables no model provider.
@@ -207,7 +214,7 @@ outer read snapshot. `hour()` continues to name the local clock hour.
   The seal key belongs to the database and is unavailable through public read-only SQL.
   Paging Open records works while sealed payload classes are locked.
 - Event continuations retain their selected commit position, declarations and current
-  privacy and tombstone versions. Mutable metadata also carries an atomic metadata epoch;
+  tombstone count. Mutable metadata also carries an atomic metadata epoch;
   a run finishing invalidates its old metadata view without scanning prior result rows.
   Stored recall continuations cite one immutable pack and a row coordinate in that pack.
 
@@ -374,4 +381,4 @@ that route ([cross-system queries](https://github.com/Sinity/polylogue/blob/mast
   and cannot read a withheld field or key.
 
 
-A scalar's quotes preserve its spelling, not a second comparison mode. Source and event-type identifier patterns use their declared wildcard semantics with either spelling; payload equality compares literal values, including a literal `*`. Contains and prefix operators take literal text. Declared scalar types govern conversion. A schemaless JSON field instead uses the scalar type of each current projected value: numeric rows compare numerically, strings preserve exact spelling such as `001`, and boolean equality uses canonical `true` or `false`. Missing, non-scalar or incompatible values produce unknown truth, including beneath `NOT`; no comparison reads the private original in place of a current projection.
+A scalar's quotes preserve its spelling, not a second comparison mode. Source and event-type identifier patterns use their declared wildcard semantics with either spelling; payload equality compares literal values, including a literal `*`. Contains and prefix operators take literal text. Declared scalar types govern conversion. A schemaless JSON field instead uses the scalar type of each value: numeric rows compare numerically, strings preserve exact spelling such as `001`, and boolean equality uses canonical `true` or `false`. Missing, non-scalar or incompatible values produce unknown truth, including beneath `NOT`.

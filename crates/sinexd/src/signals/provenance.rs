@@ -81,7 +81,7 @@ pub(super) async fn refresh(
         else {
             continue;
         };
-        if parents == basis.parents && read.policy_epoch == basis.read.policy_epoch {
+        if parents == basis.parents {
             continue;
         }
         state.match_basis.insert(

@@ -17,7 +17,6 @@ pub mod diagnostics;
 pub mod lifecycle;
 pub mod live;
 pub mod material_bytes;
-pub mod model_calls;
 pub mod owner_protocol;
 pub mod payloads;
 pub mod positions;

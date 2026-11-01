@@ -10,7 +10,6 @@ pub(crate) const CURRENT_VERSION_TWO: &[&str] = &[
     "input.coverage",
     "tag.applied",
     "conversation.day",
-    "rest.fused",
     "work.act",
     "work.episode",
     "work.suspension",

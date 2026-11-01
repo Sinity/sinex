@@ -2,8 +2,7 @@
 //! (`messages` and `threads` tables), on `SqliteRows`. Unlike the GDPR export
 //! it keeps Facebook's own IDs: each message has its ID, its thread's ID and
 //! its author's numeric account ID, but no names. The same message in a GDPR
-//! export is the same text at the same millisecond, which is how
-//! `conversation.fusion` joins the two.
+//! export is a separate record with the same text at the same millisecond.
 use super::fields;
 use serde_json::{Map, Value};
 use sinex_model::Class;

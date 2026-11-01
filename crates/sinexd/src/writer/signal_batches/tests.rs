@@ -7,7 +7,7 @@ use sinex_model::event_types::{
 use sinex_model::{
     Class, Event, EventPayload, MaterialId, ReadingOrder, RecordLocation, RunId, Timestamp,
 };
-use sinex_store::{AdmissionContext, NoDerivations, privacy};
+use sinex_store::{AdmissionContext, NoDerivations};
 
 fn batch(events: Vec<Event>) -> Batch {
     Batch {
@@ -308,68 +308,7 @@ async fn uncertified_completion_cannot_borrow_another_deliverys_current_material
         .unwrap();
     assert!(
         !copied,
-        "the shared material's valid epoch cannot certify this completion"
-    );
-}
-#[devkit::test]
-async fn copied_delivery_follows_input_policy_while_physical_handoff_remains(
-    db: devkit::pg::TestDatabase,
-) {
-    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
-    let (offered, _, handoff, decision) = fixture(&mut conn).await;
-    assert_eq!(write(&mut conn, &offered).await.admitted, 2);
-    assert_eq!(
-        visible(&mut conn, decision).await["delivery"]["basis"][0]["evidence"]["text"],
-        "synthetic copied detail"
-    );
-    privacy::add_rule(
-        &mut conn,
-        &privacy::NewRule {
-            name: "synthetic masking".into(),
-            source: "synthetic.input".into(),
-            event_type: Some("operator_log.entry".into()),
-            field: Some("/text".into()),
-            matcher: "pattern".into(),
-            matcher_arg: Some("synthetic copied detail".into()),
-            class: Class::Open,
-            action: privacy::Action::Mask,
-            author: "synthetic".into(),
-        },
-    )
-    .await
-    .unwrap();
-    privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(
-        visible(&mut conn, decision).await["unavailable"],
-        "unavailable_dependency"
-    );
-    let (state, changed, payload): (String, bool, serde_json::Value) =
-        sqlx::query_as("SELECT state,changed,payload FROM privacy.event_outputs WHERE event_id=$1")
-            .bind(decision.0)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-    assert_eq!(state, "unavailable_dependency");
-    assert!(changed);
-    assert_eq!(payload, json!({"unavailable":"privacy_dependency_changed"}));
-    let actual = visible(&mut conn, handoff).await;
-    assert_eq!(
-        actual.as_object().unwrap().len(),
-        3,
-        "physical fact contains only ID, channel and time"
-    );
-    assert!(actual.get("basis").is_none());
-    let outcome = write(&mut conn, &offered).await;
-    assert_eq!(outcome.admitted, 0);
-    assert_eq!(
-        outcome.superseded_input, 1,
-        "old copied bytes never acquire a fresh policy mark on reread"
-    );
-    assert_eq!(
-        visible(&mut conn, decision).await["unavailable"],
-        "unavailable_dependency"
+        "another delivery's valid mark on the shared material cannot certify this completion"
     );
 }
 #[devkit::test]

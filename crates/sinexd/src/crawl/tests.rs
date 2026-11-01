@@ -43,10 +43,10 @@ async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::Te
             .bind(input).bind(name).execute(&mut ctx.read_conn).await.unwrap();
         sqlx::query("INSERT INTO raw.materials(id,input_id,blob,length,manifest,parser,parser_version) VALUES ($1,$2,$3,$4,'{}','synthetic',1)")
             .bind(material.0).bind(input).bind(blob).bind(url.len() as i64).execute(&mut ctx.read_conn).await.unwrap();
-        sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class) VALUES ($1,'visit.fused','synthetic.visits',$2,$3,0,'unknown',$4,$5,$6,0,decode(repeat('00',32),'hex'),'guarded')")
+        sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class) VALUES ($1,'browser.history_entry','synthetic.visits',$2,$3,0,'unknown',$4,$5,$6,0,decode(repeat('00',32),'hex'),'guarded')")
             .bind(id).bind(run).bind(material.0).bind(sequence).bind(serde_json::json!({"url":url})).bind(name)
             .execute(&mut ctx.read_conn).await.unwrap();
-        sqlx::query("INSERT INTO core.live_equivalence(source,event_type,equivalence_key,event_id,reading_order,record_hash) VALUES ('synthetic.visits','visit.fused',core.encode_equivalence_key($1),$2,0,decode(repeat('00',32),'hex'))")
+        sqlx::query("INSERT INTO core.live_equivalence(source,event_type,equivalence_key,event_id,reading_order,record_hash) VALUES ('synthetic.visits','browser.history_entry',core.encode_equivalence_key($1),$2,0,decode(repeat('00',32),'hex'))")
             .bind(name).bind(id).execute(&mut ctx.read_conn).await.unwrap();
         visits.push((EventId(id), material, url));
     }

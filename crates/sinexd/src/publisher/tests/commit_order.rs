@@ -325,9 +325,7 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::p
 }
 
 #[devkit::test]
-async fn references_expose_no_source_key_and_route_by_current_policy_class(
-    db: devkit::pg::TestDatabase,
-) {
+async fn references_expose_no_source_key_and_route_by_stored_class(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -354,22 +352,6 @@ async fn references_expose_no_source_key_and_route_by_current_policy_class(
     let original_key = event.equivalence_key.clone().unwrap().0;
     let id = event.id;
     admit(&mut conn, batch(vec![event])).await;
-    assert!(
-        publish_pending(&mut conn, &js, &subjects)
-            .await
-            .unwrap_err()
-            .contains("privacy_projection_stale")
-    );
-    assert_eq!(
-        commit_log::consumer_position(&mut conn, &consumer_for(&instance(&js, &subjects).await))
-            .await
-            .unwrap()
-            .0,
-        0
-    );
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
     let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
     let raw = stream.get_raw_message(1).await.unwrap();
@@ -393,20 +375,21 @@ async fn references_expose_no_source_key_and_route_by_current_policy_class(
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-    let original: serde_json::Value =
+    let stored: serde_json::Value =
         sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
             .bind(id.0)
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-    assert_eq!(
-        original["native_id"], "route-secret",
-        "the exact original remains private"
+    assert_ne!(
+        stored["native_id"], "route-secret",
+        "admission applied the rule to the stored payload"
     );
-    assert_eq!(
+    assert_ne!(
         key, original_key,
-        "output policy preserves exact source identity"
+        "a changed payload keeps no key built from the matched value"
     );
+    assert!(!key.contains("route-secret"));
 }
 
 #[devkit::test]

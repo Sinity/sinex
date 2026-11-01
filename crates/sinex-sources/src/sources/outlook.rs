@@ -12,8 +12,8 @@
 //!
 //! The CSV export carries no message ID and no date, only the people, subject,
 //! body and a few Outlook fields. Each row is identified by its record
-//! location; the same message in the PST is a separate record,
-//! combined by fusion if at all.
+//! location; the same message in the PST is a separate record, and with no
+//! Message-ID mail fusion never joins the two.
 use crate::sources::{fields, mail};
 use sinex_model::Class;
 use sinex_model::event_types::communication::MailMessage;
