@@ -12,6 +12,7 @@ pub const ROLES: &[&str] = &["sinex_writer", "sinex_reader"];
 /// configured the same way by Sinnix.
 pub fn cluster_options() -> ClusterOptions {
     ClusterOptions {
+        required_extensions: vec!["timescaledb".into(), "vector".into()],
         preload: vec!["timescaledb".into()],
         settings: vec![
             ("timescaledb.telemetry_level".into(), "off".into()),

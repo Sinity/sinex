@@ -1,4 +1,7 @@
-use super::rules::{CLIPBOARD, COMMANDS, CONVERSATIONS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, POSTS, REST, RULES, VISITS};
+use super::rules::{
+    CLIPBOARD, COMMANDS, CONVERSATIONS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, POSTS, REST, RULES,
+    VISITS,
+};
 use super::*;
 use sinex_model::event_types::browser::LinkFollowed;
 use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
@@ -73,6 +76,7 @@ pub(crate) fn zsh(command: &str, secs: f64) -> Event {
 /// A compositor focus interval, as the interval derivation writes it.
 fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> Event {
     let payload = StateInterval {
+        fenced_at: None,
         interval_id: format!("desktop.focus:{class}:{from}"),
         state_kind: "desktop.focus".into(),
         subject_id: Some(class.into()),
@@ -92,6 +96,8 @@ fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> Event {
 fn activitywatch(app: &str, title: &str, from: f64, to: f64) -> Event {
     captured(
         &WindowSpan {
+            scope: None,
+            host: None,
             bucket: "aw-watcher-window_box".into(),
             span_id: from as i64,
             started_at: at(from),
@@ -266,7 +272,7 @@ fn notification(summary: &str, secs: f64) -> Event {
 /// what its query admits. Outputs sorted by start, then record.
 fn fuse_events(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Event> {
     let fusion = Fusion(rule);
-    let env = Env::at(Timestamp::from_unix_secs(2_000_000_000).unwrap());
+    let env = Env::at(Timestamp::from_unix_secs(2_000_000_000).unwrap(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let mut keys: Vec<Value> = Vec::new();
     for e in inputs {
         let view = KeyView {

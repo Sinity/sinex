@@ -25,3 +25,14 @@ impl InputRequirement {
         Self{kind,paths:paths.into_iter().map(Into::into).collect(),when:vec![]}
     }
 }
+
+/// Immutable event references used only to find invalidated computation keys.
+/// Current projection and selector coverage still decide computational access.
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceInput {
+    pub owner_kind:KindRef,
+    pub target_kind:KindRef,
+    pub key_field:String,
+    pub selector:Vec<InputRequirement>,
+}

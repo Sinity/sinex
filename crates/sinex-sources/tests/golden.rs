@@ -224,7 +224,7 @@ fn anchors_read_back(parser: &str, dir: &Path) -> Result<(), String> {
     let events = |outcome: &RecordOutcome| match outcome {
         RecordOutcome::Events { events, .. } => events
             .iter()
-            .map(|e| (e.event_type, e.payload.clone()))
+            .map(|e| (e.event_type.clone(), e.payload.clone()))
             .collect(),
         RecordOutcome::Failure { .. } => Vec::new(),
     };

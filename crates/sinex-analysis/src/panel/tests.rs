@@ -183,3 +183,14 @@ fn logical_days_follow_the_day_setting() {
     assert_eq!(days[0].span.len(), 25 * 3600 * MICROS_PER_SECOND);
     assert_eq!(days[1].span.len(), DAY);
 }
+
+#[devkit::test]
+fn a_small_unobserved_gap_stays_partial_and_does_not_cross_an_eligibility_threshold() {
+    let units=day_units(1);
+    let coverage=[covered("terminal.atuin-history",0,DAY-1)];
+    let result=cells(metric("shell.commands").unwrap(),&units,&[],&coverage);
+    let Cell::Partial {value,observed_fraction}=&result[0].cell else {panic!("a gap cannot be called fully observed")};
+    assert_eq!(*value,0.0);
+    assert!(*observed_fraction<1.0);
+    assert!(result[0].cell.eligible(crate::Eligibility {min_observed_fraction:Some(1.0),admit_recorded:false}).is_err());
+}

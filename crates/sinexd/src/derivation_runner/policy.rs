@@ -18,7 +18,7 @@ impl DerivationRunner {
                         next.input_after=inputs.last().expect("nonempty").commit_seq;
                         let mut seen=HashSet::new();
                         for input in inputs {
-                            let view=KeyView{event_type:&input.event.event_type,ts_orig:input.event.ts_orig.at,payload:&input.event.payload};
+                            let view=KeyView{event_id:input.event.id,event_type:&input.event.event_type,ts_orig:input.event.ts_orig.at,payload:&input.event.payload};
                             for key in self.keyed[index].keys_for(&view,env){if seen.insert(key.clone()){keys.push(key)}}
                         }
                     }

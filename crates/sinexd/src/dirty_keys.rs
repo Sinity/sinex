@@ -21,6 +21,10 @@ impl Registered {
 }
 
 impl DirtyKeys for Registered {
+    fn reference_consumers(&self) -> Vec<(String,sinex_model::ReferenceInput)> {
+        self.derivations.iter().flat_map(|d|d.reference_inputs().into_iter().map(move |reference|(d.name().to_owned(),reference))).collect()
+    }
+
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)> {
         let view = KeyView {
             event_id: event.event_id,
@@ -35,7 +39,7 @@ impl DirtyKeys for Registered {
         };
         self.derivations
             .iter()
-            .filter(|d| d.inputs_types().contains(&event.event_type))
+            .filter(|d| d.reads_type(event.event_type))
             .flat_map(|d| {
                 d.keys_for(&view, &env)
                     .into_iter()
@@ -57,7 +61,7 @@ impl DirtyKeys for Registered {
         };
         self.derivations
             .iter()
-            .filter(|d| d.inputs_types().contains(&event.event_type))
+            .filter(|d| d.reads_type(event.event_type))
             .flat_map(|d| {
                 d.affected_ranges(&view, &env)
                     .into_iter()
@@ -88,7 +92,7 @@ impl DirtyKeys for Registered {
         };
         self.derivations
             .iter()
-            .filter(|d| d.inputs_types().contains(&event.event_type))
+            .filter(|d| d.reads_type(event.event_type))
             .filter_map(|d| d.nearby_inputs(&view, &env))
             .map(|query| crate::derivation_runner::to_window(&query, env.now))
             .collect()

@@ -224,17 +224,8 @@ pub struct FrameCaptured {
     pub extra: Map<String, Value>,
 }
 
-/// Text read from a screen segment by a local OCR engine. Derived from the
-/// segment's event; recomputed when the engine version changes.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "screen.text", key = ["segment"], replace = newer, time = started_at, quality = captured)]
-pub struct ScreenText {
-    /// The `media.segment` event this text was read from.
-    pub segment: String,
-    pub started_at: Timestamp,
-    pub engine: String,
-    pub text: String,
-}
+mod media_text;
+pub use media_text::{ScreenText, SpeechSpan, TimedSpeechCue};
 
 /// A page from browser history, fetched by the forward crawl. The stored
 /// material is the response body; a later fetch of the same URL is a newer

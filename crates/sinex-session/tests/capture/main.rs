@@ -189,6 +189,8 @@ exec sleep 30
                 nats.prefix(),
                 "--producer",
                 "fixture",
+                "--host",
+                "synthetic-session-host",
                 "--every",
                 "1",
             ])

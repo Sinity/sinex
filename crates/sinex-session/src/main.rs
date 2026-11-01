@@ -59,8 +59,9 @@ struct Run {
     /// Where spools and positions live.
     #[arg(long)]
     state: PathBuf,
-    #[arg(long, default_value = "localhost")]
-    host: String,
+    /// Producer host identity; overrides discovery.host in the sources file.
+    #[arg(long)]
+    host: Option<String>,
     /// Host inputs, settings and source exclusions.
     #[arg(long)]
     sources: Option<PathBuf>,
@@ -162,19 +163,26 @@ fn capture_source(
     (format.capture.expect("live formats capture"))(&binding, stop)
 }
 
-fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String> {
-    use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
+fn discovery_context(run: &Run) -> Result<sinex_sources::discovery::DiscoveryContext, String> {
+    use sinex_sources::discovery::{self, Configuration, DiscoveryContext};
     let configuration = run
         .sources
         .as_deref()
         .map(Configuration::load)
         .transpose()?
         .unwrap_or_default();
-    let mut context = DiscoveryContext::for_process(&run.host, run.state.join("spool"));
-    context.sources = configuration.sources;
-    context.exclude = configuration.exclude;
-    context.watch = run.watch.clone();
-    context.watch.extend(configuration.discovery.watch);
+    let host=run.host.as_deref().unwrap_or(&configuration.discovery.host);
+    if host.trim().is_empty(){return Err("session capture requires --host or configured discovery.host".into())}
+    let mut process = DiscoveryContext::for_process(host, run.state.join("spool"));
+    process.watch = run.watch.clone();
+    let context = configuration.resolve_context(process);
+    discovery::validate(&context)?;
+    Ok(context)
+}
+
+fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String> {
+    use sinex_sources::discovery::{self, Owner};
+    let context = discovery_context(run)?;
     if run.drain {
         return Ok(discovery::CapturePlan {
             bindings: discovery::spools(&context, Owner::Session)?,
@@ -183,6 +191,9 @@ fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String>
     }
     discovery::captures(&context, Owner::Session)
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Capture threads write spools; the shared loop produces what they wrote.
 async fn produce(run: Run) -> Result<(), String> {

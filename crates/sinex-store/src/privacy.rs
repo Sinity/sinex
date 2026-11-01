@@ -484,28 +484,7 @@ pub async fn load<'a>(
     let seq = sqlx::query_scalar!(r#"SELECT coalesce(max(seq), 0) AS "seq!" FROM privacy.rules"#)
         .fetch_one(&mut *conn)
         .await?;
-    let rows = sqlx::query!(
-        r#"SELECT DISTINCT ON (name) id, name, source, event_type, field, matcher, matcher_arg,
-                  class, action, ended
-           FROM privacy.rules WHERE source = ANY($1)
-           ORDER BY name, seq DESC"#,
-        &sources
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut rules = Vec::new();
-    for r in rows.into_iter().filter(|r| !r.ended) {
-        rules.push(Rule {
-            id: r.id,
-            name: r.name,
-            source: r.source,
-            event_type: r.event_type,
-            field: r.field,
-            matcher: Matcher::parse(&r.matcher, r.matcher_arg.as_deref())?,
-            class: parse_class(&r.class)?,
-            action: Action::parse(&r.action)?,
-        });
-    }
+    let rules=active_rules(conn,&sources).await?;
     let floors = sqlx::query!(
         r#"SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
            WHERE source = ANY($1) ORDER BY source, seq DESC"#,
@@ -522,6 +501,34 @@ pub async fn load<'a>(
         floors,
         hash_key: hash_key(conn).await?,
     })
+}
+
+/// Effective rules for an output authorization snapshot. This read path does
+/// not initialize signing/hash material or require a writable transaction.
+pub(crate) async fn active_rules(conn:&mut PgConnection,sources:&[String])->Result<Vec<Rule>> {
+    let rows = sqlx::query!(
+        r#"SELECT DISTINCT ON (name) id, name, source, event_type, field, matcher, matcher_arg,
+                  class, action, ended
+           FROM privacy.rules WHERE source = ANY($1)
+           ORDER BY name, seq DESC"#,
+        sources
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut rules = Vec::new();
+    for r in rows.into_iter().filter(|r| !r.ended) {
+        rules.push(Rule {
+            id: r.id,
+            name: r.name,
+            source: r.source,
+            event_type: r.event_type,
+            field: r.field,
+            matcher: Matcher::parse(&r.matcher, r.matcher_arg.as_deref())?,
+            class: parse_class(&r.class)?,
+            action: Action::parse(&r.action)?,
+        });
+    }
+    Ok(rules)
 }
 
 /// Compiled rules belong to one validated writer session. The complete set

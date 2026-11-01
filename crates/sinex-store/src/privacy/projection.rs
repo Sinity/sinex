@@ -83,11 +83,17 @@ pub(crate) async fn admitted(conn:&mut PgConnection,ids:&[Uuid],rules:&privacy::
 /// output used transformed inputs. Suppression alone is insufficient: the
 /// complete offered payload/hash/kind/source/parents must equal the retained
 /// original before a repeated identity can receive the new basis epoch.
-pub(crate) async fn certify_basis(conn:&mut PgConnection,batch:&sinex_model::Batch,events:&[Event],resolved:&[Option<Uuid>],rules:&privacy::RuleSet)->Result<Vec<Uuid>> {
-    let sinex_model::BatchKind::Derived{scope,derivation}=&batch.kind else{return Ok(vec![])};
-    let scope:crate::DerivedScope=serde_json::from_value(scope.clone()).map_err(|error|Error::Invalid(format!("derived batch scope: {error}")))?;
-    let read=match scope{crate::DerivedScope::Keys{read,..}|crate::DerivedScope::Position{read,..}=>read,_=>return Ok(vec![])};
-    let Some(basis)=read.policy_epoch else{return Ok(vec![])};
+pub(crate) async fn certify_basis(conn:&mut PgConnection,batch:&sinex_model::Batch,events:&[Event],resolved:&[Option<Uuid>],rules:&privacy::RuleSet,validated_ingress_epoch:Option<i64>)->Result<Vec<Uuid>> {
+    let (basis,derivation)=match &batch.kind {
+        sinex_model::BatchKind::Derived{scope,derivation}=>{
+            let scope:crate::DerivedScope=serde_json::from_value(scope.clone()).map_err(|error|Error::Invalid(format!("derived batch scope: {error}")))?;
+            let read=match scope{crate::DerivedScope::Keys{read,..}|crate::DerivedScope::Position{read,..}=>read,_=>return Ok(vec![])};
+            (read.policy_epoch,derivation.as_str())
+        }
+        sinex_model::BatchKind::Ingress(_)=>(validated_ingress_epoch,""),
+        _=>return Ok(vec![]),
+    };
+    let Some(basis)=basis else{return Ok(vec![])};
     let policy=epoch(conn).await?;
     if !policy.ready()||policy.active!=basis{return Err(Error::Invalid("derivation_policy_epoch_changed".into()))}
     let mut restored=Vec::new();let mut restored_types=std::collections::BTreeSet::new();

@@ -152,6 +152,7 @@ Every interval in which a stream may have missed data is one `capture.gap` event
 | `sequence` | a gap in the source's own sequence numbers |
 
 - Sequence numbers are assigned before enqueueing, so omissions stay countable. `bus.connection` events hold connection start and end only.
+- Numbered lake envelopes compare valid records of the same host, lane and declared boot or session generation. A proven gap is an ordinary `capture.gap` event with reason `sequence`, anchored at the later source record. `sequence.first_missing` and `sequence.last_missing` are inclusive; their difference plus one is the missing count. A parse failure makes the interval through the next valid record unknown. An unqualified decrease leaves the generation unknown; an explicit generation change starts a new baseline. Committed parser carry preserves comparisons across restarts of the binding. A new rotated binding begins with unknown continuity rather than inferring loss before its first record.
 - **A gap is recorded, never filled by invention.** Where a provider signals lost history (an expired Gmail history ID, an expired Health Connect token, an IMAP UIDVALIDITY reset, an inotify overflow), one full read of that input runs and its result is a newer reading; it cannot reconstruct the lost intermediate changes.
 - **Continuity per interval.** Each source over each interval is complete, known gap, unknown or estimated. An empty result over an unknown interval is never "nothing happened".
 
@@ -178,7 +179,7 @@ A registered command or a live process does not establish capture; only admitted
 
 **Redundancy is by design.** The same fact seen by several sources stays several records; [fusion](derivations.md#fusion) relates them where a family is defined. Only double import of the same content is prevented. Ruling, 2025-06-12: "no deduplication pls. just ensuring no double import … redundancy is fine." (cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae).
 
-**Sinex observes itself as a source.** Its own telemetry is captured as events backed by materials, in a self-observation store kept apart from the operator's data ([storage](admission.md#storage-representation)). One snapshot of several gauges is one record. The write rate is bounded by declared sampling of current gauges, and nothing Sinex logs about its own capture is captured back into a loop.
+**Sinex observes itself as a source.** Its own telemetry is captured as ordinary `sinex.telemetry` events backed by materials, through the same admission, commit log, visibility, replay and query path as every source ([storage](admission.md#storage-representation)). Activity derivations select their declared kinds and never treat these samples as operator activity. One snapshot of several gauges is one record. The write rate is bounded by declared sampling of current gauges, and nothing Sinex logs about its own capture is captured back into a loop.
 
 ## Common record rules
 
@@ -238,3 +239,10 @@ Every implemented source passes the common checks: acquire two records including
 - **no-retention**: no code path deletes a material, spool segment, gap or self-observation event by age.
 - **no-plausible-defaults**: a record missing a field yields a record failure or an absent value, never a zero, empty string or current timestamp.
 - **capture-read-only**: no source issues a write, send or state-changing request to its provider.
+
+Screen-segment manifests may carry `accessibility_text` captured for that same
+frame. The parser keeps absent text distinct from an explicitly empty result.
+Screen-text derivation prefers this captured text and reads no image or OCR
+engine for it; without accessibility it uses the available local OCR engine.
+The captured frame remains its exact parent. This field does not enable an
+accessibility capture adapter or a model provider.

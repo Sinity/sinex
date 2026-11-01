@@ -15,6 +15,14 @@ The flake provides the packages (`sinexd`, `sinexctl`, `sinex-schema`, `sinex-se
 `services.sinex` runs the daemon and its stores on the main host:
 
 - **PostgreSQL with TimescaleDB**, its cluster initialized with data checksums, and a setup unit that adds the extensions and the roles (the writer, the API, and the SQL reader role of [admission.md](admission.md#read-models)).
+
+The database superuser runs `sinexd admin prepare-database` for initial setup
+and privileged upgrades. In this database, it removes public execution of
+PostgreSQL's `set_config` function and retains execution for the database owner
+and writer. Public SQL runs as the reader and cannot change its grants or role.
+Schema application and daemon startup refuse an unhardened boundary. The NixOS
+`sinex-db-setup` unit reruns when the package changes, before dependent daemon
+startup; activating that change includes the database preparation and restart.
 - **NATS with JetStream** for the ingress and the confirmed stream, with one user per producer identity and per registered outside consumer ([producers.md](producers.md)). The NATS configuration holds only password hashes; each process reads its own password from a file, never from its arguments.
 - **`sinexd`**, capturing every source whose input exists ([capture by default](sources.md#capture-by-default)). The per-source options are the source's typed settings and its exclusions, generated from the one source declaration in Rust, so what is captured is configuration, not database state. Inputs must be readable by the daemon's user.
 - **Capture units** for streams the daemon does not read itself (journald through `sinex-capture`).
@@ -45,6 +53,8 @@ The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log
 ## Configuration
 
 Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Every key will be listed in [planned reference/settings.md](reference/README.md#planned-pages); current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
+
+Session and satellite capture resolve the complete `discovery` configuration against process facts supplied once by the binary. Configured roots, explicit inputs and environment keys override the corresponding process facts; an empty environment map adds no overrides. Session capture takes its host identity from explicit `--host`, then configured `discovery.host`; missing or blank identity refuses before capture. Satellite capture requires explicit nonblank `--host`. CLI state chooses the spool, and CLI watch roots follow configured watch roots. The same strict file can carry daemon-only `signals` and `model_accounting` sections through capture without executing them. Optional `recorded_media.screen` and `recorded_media.speech` selectors choose retained interpretations by policy, request or instruction/settings version; absent selectors choose no policy or provider.
 
 **What deployment configuration holds:** the logical day, the API's listen address and authentication, the optional notification command ([signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
 

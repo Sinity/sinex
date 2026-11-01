@@ -121,13 +121,13 @@ fn a_stored_document_requires_its_bytes_and_a_referenced_copy_gives_no_text() {
                 event: &referenced,
                 bytes: None
             },
-            &Env::at(sinex_model::Timestamp::now())
+            &Env::at(sinex_model::Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"))
         )
         .unwrap()
         .is_empty()
     );
 
-    let env = Env::at(sinex_model::Timestamp::now());
+    let env = Env::at(sinex_model::Timestamp::now(), sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"));
     let out = d
         .derive(
             Input {

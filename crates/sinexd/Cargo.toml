@@ -7,6 +7,12 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+hashed-blobs.workspace = true
+query-language.workspace = true
+signals.workspace = true
+signal-delivery.workspace = true
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 sinex-sealing.workspace = true
 sinex-source-core = { workspace = true, features = ["archives", "sqlite"] }
 sinex-transport.workspace = true
@@ -36,12 +42,10 @@ serde.workspace = true
 jiff.workspace = true
 axum.workspace = true
 tokio-stream.workspace = true
-credential-masking.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 age.workspace = true
-hashed-blobs.workspace = true
 tar = "0.4"
 flate2 = "1"
 devkit.workspace = true

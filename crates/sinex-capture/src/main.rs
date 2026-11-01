@@ -75,7 +75,7 @@ fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<(), String> {
-    let spools = cli.state.join("spool");
+    let context = discovery_context(&cli)?;
     let positions = cli.state.join("positions");
     let store = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
     let connection = live::Connection {
@@ -85,18 +85,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         producer: cli.producer.clone(),
         upload: cli.upload,
     };
-    use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
-    let configuration = cli
-        .sources
-        .as_deref()
-        .map(Configuration::load)
-        .transpose()?
-        .unwrap_or_default();
-    let mut context = DiscoveryContext::for_process(&cli.host, spools);
-    context.sources = configuration.sources;
-    context.exclude = configuration.exclude;
-    context.watch = cli.watch;
-    context.watch.extend(configuration.discovery.watch);
+    use sinex_sources::discovery::{self, Owner};
     live::run(
         connection,
         &store,
@@ -112,3 +101,22 @@ async fn run(cli: Cli) -> Result<(), String> {
     )
     .await
 }
+
+fn discovery_context(cli: &Cli) -> Result<sinex_sources::discovery::DiscoveryContext, String> {
+    use sinex_sources::discovery::{self, Configuration, DiscoveryContext};
+    if cli.host.trim().is_empty(){return Err("satellite capture requires a nonblank --host".into())}
+    let configuration = cli
+        .sources
+        .as_deref()
+        .map(Configuration::load)
+        .transpose()?
+        .unwrap_or_default();
+    let mut process = DiscoveryContext::for_process(&cli.host, cli.state.join("spool"));
+    process.watch = cli.watch.clone();
+    let context = configuration.resolve_context(process);
+    discovery::validate(&context)?;
+    Ok(context)
+}
+
+#[cfg(test)]
+mod tests;

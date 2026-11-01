@@ -42,7 +42,7 @@ fn reading(material: MaterialId, key: &str, command: &str) -> Event {
 fn batch(events: Vec<Event>, archive: Vec<ArchiveRequest>, operation: OperationId) -> Batch {
     Batch {
         run: RunId::new(),
-        kind: BatchKind::Replay { operation },
+        kind: BatchKind::Replay {operation,source:None,host:None},
         records: vec![RecordOutcome::Events {
             location: None,
             events,

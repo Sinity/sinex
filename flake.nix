@@ -22,6 +22,7 @@
           # Git dependencies are fetched at the SHA recorded in Cargo.lock.
           allowBuiltinFetchGit = true;
         };
+        SINEX_BUILD = "${builtins.substring 0 40 (self.rev or self.dirtyRev or (throw "Sinex requires a Git source revision"))};dirty=${if self ? rev then "false" else "true"}";
         nativeBuildInputs = [ postgres ];
         # sinex-sources tests start a throwaway NATS server and make git
         # repositories.
@@ -101,15 +102,6 @@
             fi
           fi
           export CARGO_TARGET_DIR="''${CARGO_TARGET_DIR:-$PWD/target}"
-          # Build against a checkout of polylogue-sinex-common when there is
-          # one ($POLYLOGUE_SINEX_COMMON, else the sibling directory), unless
-          # `cargo xtask unlink-common` turned that off.
-          if [ -z "''${LINKING_COMMON:-}" ] && [ -f crates/sinexd/Cargo.toml ] \
-            && [ -f "''${POLYLOGUE_SINEX_COMMON:-../polylogue-sinex-common}/Cargo.toml" ] \
-            && [ ! -e .cargo/local.toml ] && [ ! -e .cargo/common-link.off ]; then
-            LINKING_COMMON=1 cargo xtask link-common \
-              || echo "sinex: linking polylogue-sinex-common failed; see cargo xtask link-common" >&2
-          fi
         '';
       };
     };

@@ -11,7 +11,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         (
             "kitty".into(),
             crate::ingress::fetch::Grants {
-                public_context: false,
+                indexed_catalog:None, public_context:false,
                 write: None,
                 kind_prefixes: vec!["command".into()],
                 classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
@@ -20,7 +20,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         (
             "replica".into(),
             crate::ingress::fetch::Grants {
-                public_context: false,
+                indexed_catalog:None, public_context:false,
                 write: None,
                 kind_prefixes: vec!["command.".into()],
                 classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
@@ -29,7 +29,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         (
             "near-prefix".into(),
             crate::ingress::fetch::Grants {
-                public_context: false,
+                indexed_catalog:None, public_context:false,
                 write: None,
                 kind_prefixes: vec!["command.import".into()],
                 classes: vec![sinex_model::Class::Guarded],
@@ -38,7 +38,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         (
             "open-only".into(),
             crate::ingress::fetch::Grants {
-                public_context: false,
+                indexed_catalog:None, public_context:false,
                 write: None,
                 kind_prefixes: vec!["command".into()],
                 classes: vec![sinex_model::Class::Open],
@@ -57,6 +57,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         .send(
             "kitty",
             &Ingress::Events {
+                source:Some(test_source("kitty")),coverage:None,
                 frame: "fetch-event".into(),
                 events: vec![event],
                 failures: vec![],
@@ -76,6 +77,10 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
             let event = reply.event.unwrap();
             assert_eq!(event.payload, expected);
             assert!(event.projection.verifies(&event.payload));
+            let mut conn=PgConnection::connect(&h.url).await.unwrap();
+            let reference=sinex_model::KindRef{name:event.event_type.clone(),version:event.kind_version};
+            let registered=sinex_schema::kinds::load(&mut conn,std::slice::from_ref(&reference)).await.unwrap();
+            assert_eq!(event.kind_definition_hash,registered[&reference].definition_hash());
             assert_eq!(Some(event.commit_seq), ack.commit_seq);
         } else {
             assert_eq!(reply.refusal_kind, Some(FetchRefusalKind::Denied));
@@ -114,7 +119,7 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     db: devkit::pg::TestDatabase,
 ) {
     let grant = || crate::ingress::fetch::Grants {
-        public_context: false,
+        indexed_catalog:None, public_context:false,
         write: None,
         kind_prefixes: vec!["command".into()],
         classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
@@ -146,6 +151,7 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     );
     let command = "y ".repeat(h.client.server_info().max_payload);
     let inner = Ingress::Events {
+        source:Some(test_source("kitty")),coverage:None,
         frame: "large-event".into(),
         events: vec![imported(material, 0, &command)],
         failures: vec![],
@@ -209,7 +215,7 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
     db: devkit::pg::TestDatabase,
 ) {
     let grant = |classes| crate::ingress::fetch::Grants {
-        public_context: false,
+        indexed_catalog:None, public_context:false,
         write: None,
         kind_prefixes: vec!["command".into()],
         classes,
@@ -222,6 +228,7 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
         ]),
     )
     .await;
+    let command="retained command";
     let (material, frame) = h.material_frame("erasure-race", b"retained command\n");
     assert_eq!(h.send("kitty", &frame).await.refusal, None);
     let mut event = imported(material, 0, &command);
@@ -232,6 +239,7 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
         .send(
             "kitty",
             &Ingress::Events {
+                source:Some(test_source("kitty")),coverage:None,
                 frame: "erasure-race-event".into(),
                 events: vec![event],
                 failures: vec![],
@@ -252,6 +260,8 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
     .await
     .unwrap();
     let received = before.event.expect("event received before erasure");
+    assert_eq!(received.payload,expected);
+    assert!(received.projection.verifies(&received.payload));
     assert!(before.erased.is_none());
     assert_eq!(Some(received.commit_seq), receipt.commit_seq);
     assert_eq!(h.excise("kitty", &[material]).await.refusal, None);
@@ -358,6 +368,7 @@ async fn raw_material_fetch_requires_complete_unchanged_current_policy_outputs(
         .send(
             "kitty",
             &Ingress::Events {
+                source:Some(test_source("kitty")),coverage:None,
                 frame: "policy-event".into(),
                 events: vec![imported(material, 0, "synthetic exact raw bytes")],
                 failures: vec![],

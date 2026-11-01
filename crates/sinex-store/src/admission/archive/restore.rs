@@ -35,7 +35,7 @@ pub(super) async fn reading(
     }
     sqlx::query!(
         r#"INSERT INTO core.live_equivalence(source,event_type,equivalence_key,event_id,reading_order,record_hash)
-           SELECT source,event_type,equivalence_key,id,reading_order,record_hash FROM core.events
+           SELECT source,event_type,core.encode_equivalence_key(equivalence_key),id,reading_order,record_hash FROM core.events
            WHERE id=$1 AND equivalence_key IS NOT NULL"#, event,
     ).execute(&mut *conn).await?;
     sqlx::query!(
@@ -71,7 +71,7 @@ pub(super) async fn descendants(
         conn,
         owners
             .into_iter()
-            .map(|row| (crate::derivations::static_type(&row.derivation), row.key))
+            .map(|row| (row.derivation, row.key))
             .collect(),
         seq,
     )

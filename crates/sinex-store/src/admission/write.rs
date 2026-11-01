@@ -20,6 +20,7 @@ pub(super) async fn insert_admitted(
     classified: &Classified,
     keys: &dyn DirtyKeys,
     outcome: &mut Outcome,
+    provenance: &super::register::Provenance,
 ) -> Result<()> {
     let admit_ords = &classified.admit;
     let replaced = &classified.replaced;
@@ -43,13 +44,19 @@ pub(super) async fn insert_admitted(
              FROM core.admission_stage s)
            INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
-             record_hash, record_state, class, kind_version, validation)
+             record_hash, record_state, class, kind_version, validation, producer_family, producer_identity, producer_host, producer_frame, source_version, source_fingerprint)
            SELECT id, event_type, source, $2, material_id, anchor, output_index, parents, ts_orig,
              ts_quality, seq, payload, equivalence_key, reading_order, record_hash, record_state,
-             class, kind_version, validation
+             class, kind_version, validation, $3, $4, $5, $6, $7, $8
            FROM a"#,
         first,
         batch.run.0,
+        provenance.family,
+        provenance.identity,
+        provenance.host,
+        provenance.frame,
+        provenance.source_version,
+        provenance.source_fingerprint,
     )
     .execute(&mut *conn)
     .await?;

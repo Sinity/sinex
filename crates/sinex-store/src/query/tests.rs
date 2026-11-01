@@ -81,20 +81,20 @@ pub(crate) async fn admit_commands(
         events.push(observed);
         events.push(fused);
     }
-    let batch = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "test".into(),
-        },
-        records: vec![RecordOutcome::Events {
-            location: None,
-            events,
-        }],
-        archive: vec![],
-    };
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&batch, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    // Derived inputs are committed readings, including in fixtures.
+    for derived in [false, true] {
+        let selected: Vec<_> = events.iter().filter(|event| matches!(&event.origin, Origin::Derived { .. }) == derived).cloned().collect();
+        if selected.is_empty() { continue; }
+        let batch = Batch {
+            run: RunId::new(),
+            kind: BatchKind::Api { actor: "test".into() },
+            records: vec![RecordOutcome::Events { location: None, events: selected }],
+            archive: vec![],
+        };
+        let mut tx = conn.begin().await.unwrap();
+        tx.admit(&batch, &NoDerivations).await.unwrap();
+        tx.commit().await.unwrap();
+    }
     ids
 }
 
@@ -553,6 +553,7 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
         .unwrap();
     let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
     let interval = |id: &str, ended: Option<i64>| StateInterval {
+        fenced_at: None,
         interval_id: id.into(),
         state_kind: "desktop.focus".into(),
         subject_id: Some(id.into()),
@@ -631,3 +632,37 @@ mod search;
 mod gaps;
 
 mod kinds;
+
+mod signals;
+
+mod calendar;
+
+mod follow;
+
+#[devkit::test]
+async fn read_only_sql_rejects_stale_projection_even_when_the_view_is_pruned(db: devkit::pg::TestDatabase) {
+    let mut conn=PgConnection::connect(&db.url(None)).await.unwrap();
+    let positive=super::read_sql::run(&mut conn,"SELECT 7 AS n").await.unwrap();
+    assert_eq!(positive,vec![serde_json::json!({"n":7})]);
+    sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES('synthetic-stale','guarded','test')").execute(&mut conn).await.unwrap();
+    let error=super::read_sql::run(&mut conn,"SELECT count(*) FROM core.visible_search_text WHERE false").await.unwrap_err();
+    assert!(error.to_string().contains("privacy_projection_stale"),"{error}");
+}
+
+
+#[devkit::test]
+async fn empty_exact_candidate_set_has_boolean_membership(db:devkit::pg::TestDatabase){
+    let mut conn=crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    world(&mut conn).await;
+    let all=ask(&mut conn,"events").await.total;
+    assert!(all>0);
+    for (op,expected) in [(sinex_model::query::Op::Eq,0),(sinex_model::query::Op::Ne,all)] {
+        let mut query=bind("events",&ctx()).unwrap();
+        query.filter=Some(Expr::Compare{
+            lhs:Operand::Field(FieldRef::Field(Table::Events.field("id").unwrap())),
+            op,rhs:sinex_model::query::Value::List(vec![]),
+        });
+        let answer=run(&mut conn,"events",Some(&query),&ctx(),&Page::default()).await.unwrap();
+        assert_eq!(answer.total,expected,"an empty private candidate set has ordinary set membership semantics");
+    }
+}

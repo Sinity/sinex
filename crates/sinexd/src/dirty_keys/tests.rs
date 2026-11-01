@@ -11,7 +11,7 @@ fn dirty_selection_uses_the_configured_activity_break() {
     };
     let keys = Registered::new(
         sinex_derivations::keyed_with(&configuration),
-        TimeSettings::operator_default(),
+        TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
     );
     let at = Timestamp::from_unix_secs(1_718_438_400).unwrap();
     let payload = json!({"scope":"host-a", "started_at":at, "ended_at":at});

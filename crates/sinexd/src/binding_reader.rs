@@ -57,40 +57,18 @@ impl BindingReader {
     }
 }
 
-/// Run ordinary bindings once, with one source run and its final outcome.
+/// Run ordinary bindings once, with a native run per source/version/host.
 pub(crate) async fn once(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
-    host: &str,
     mut readers: Vec<BindingReader>,
 ) -> Result<Totals, String> {
-    let mut emits: Vec<&str> = readers
-        .iter()
-        .flat_map(|b| b.source.spec().event_types.iter().copied())
-        .collect();
-    emits.push("source.coverage");
-    emits.sort_unstable();
-    emits.dedup();
-    let run = sinex_store::runs::start(
-        conn,
-        &sinex_store::runs::Manifest {
-            name: "sinexd sources",
-            kind: "source",
-            version: env!("CARGO_PKG_VERSION"),
-            build: crate::build_identity::current()?,
-            emits: &emits,
-        },
-        host,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
     let (_stop, stop) = watch::channel(false);
     let results = read(
         conn,
         blobs,
         writer,
-        run,
         &Sink(blobs.clone()),
         &mut readers,
         stop,
@@ -98,9 +76,6 @@ pub(crate) async fn once(
         &mut |_, _| {},
     )
     .await;
-    sinex_store::runs::end(conn, run)
-        .await
-        .map_err(|e| e.to_string())?;
     let mut totals = Totals::default();
     for (_, result) in results {
         totals.add(result?);
@@ -124,10 +99,11 @@ struct Results<'a> {
 }
 
 impl Results<'_> {
-    fn add(&mut self, binding: &Binding, result: Result<Totals, String>) {
+    fn add(&mut self, binding: &Binding, run:Option<RunId>, result: Result<Totals, String>) {
         (self.report)(&binding.name, &result);
-        self.coverage
-            .push(coverage::outcome(binding, self.started_at, &result));
+        let mut observation=coverage::outcome(binding,self.started_at,&result);
+        observation.observed_run=run;
+        self.coverage.push(observation);
         self.list.push((binding.source.clone(), result));
     }
 }
@@ -140,7 +116,6 @@ pub(crate) async fn read(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
-    run: RunId,
     sink: &Sink,
     readers: &mut [BindingReader],
     stop: watch::Receiver<bool>,
@@ -153,19 +128,39 @@ pub(crate) async fn read(
         list: Vec::new(),
         report,
     };
+    let mut native_runs=std::collections::BTreeMap::new();
+    let mut binding_runs=Vec::new();
+    for binding in readers.iter() {
+        let spec=binding.source.spec();
+        let key=(spec.name.to_owned(),spec.parser_version,binding.binding.settings.host.clone());
+        let run=if let Some(run)=native_runs.get(&key){Ok(*run)}else{
+            let version=spec.parser_version.to_string();
+            match crate::build_identity::current() {
+                Ok(build)=>{
+                    let mut emits=spec.event_types.to_vec();
+                    emits.extend(sinex_sources::sources::specs().into_iter().filter(|other|other.name==spec.name&&other.parser_version==spec.parser_version).flat_map(|other|other.event_types.iter().copied()));
+                    emits.sort_unstable();emits.dedup();
+                    sinex_store::runs::start(conn,&sinex_store::runs::Manifest{name:spec.name,kind:"source",version:&version,build,emits:&emits},&binding.binding.settings.host).await.map_err(|error|error.to_string())
+                },
+                Err(error)=>Err(error),
+            }
+        };
+        if let Ok(run)=run {native_runs.insert(key,run);}
+        binding_runs.push(run);
+    }
     let mut passes: Vec<SharedFileRead> = Vec::new();
     for (index, b) in readers.iter_mut().enumerate() {
         coverage::flush(
             conn,
             blobs,
             writer,
-            run,
             access,
             &mut results.coverage,
             &mut results.list,
         )
         .await;
         results.started_at = sinex_model::Timestamp::now();
+        let run=match &binding_runs[index] {Ok(run)=>*run,Err(error)=>{results.add(&b.binding,None,Err(format!("source run: {error}")));continue;}};
         let init = async {
             if !b.remembered {
                 backfill::record(conn, &b.binding).await?;
@@ -176,7 +171,7 @@ pub(crate) async fn read(
         }
         .await;
         if let Err(e) = init {
-            results.add(&b.binding, Err(e));
+            results.add(&b.binding, Some(run), Err(e));
             continue;
         }
         if let Reading::Shared(pass) = &mut b.reading {
@@ -226,9 +221,9 @@ pub(crate) async fn read(
                     }
                 }
                 Ok((SharedReadStart::Finished, _, _)) => {
-                    results.add(&b.binding, Ok(Totals::default()))
+                    results.add(&b.binding, Some(run), Ok(Totals::default()))
                 }
-                Err(e) => results.add(&b.binding, Err(format!("{}: {e}", b.binding.name))),
+                Err(e) => results.add(&b.binding, Some(run), Err(format!("{}: {e}", b.binding.name))),
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
             // Taken before the poll, so bytes appended during it change them.
@@ -238,7 +233,7 @@ pub(crate) async fn read(
             if let (Some(now), Some(then)) = (&facts, &b.settled)
                 && same_file(now, then)
             {
-                results.add(&b.binding, Ok(Totals::default()));
+                results.add(&b.binding, Some(run), Ok(Totals::default()));
                 continue;
             }
             let result = backfill::drive(
@@ -247,6 +242,7 @@ pub(crate) async fn read(
                 run,
                 b.source.clone(),
                 &b.binding.name,
+                &b.binding.settings.host,
                 sink,
                 access,
                 b.history_floor,
@@ -266,14 +262,13 @@ pub(crate) async fn read(
                 Err(e) => Err(e),
             };
             b.settled = if result.is_ok() { facts } else { None };
-            results.add(&b.binding, result);
+            results.add(&b.binding, Some(run), result);
         }
     }
     coverage::flush(
         conn,
         blobs,
         writer,
-        run,
         access,
         &mut results.coverage,
         &mut results.list,
@@ -284,7 +279,6 @@ pub(crate) async fn read(
             conn,
             blobs,
             writer,
-            run,
             access,
             &mut results.coverage,
             &mut results.list,
@@ -295,7 +289,7 @@ pub(crate) async fn read(
             conn,
             blobs,
             writer,
-            run,
+            &binding_runs,
             readers,
             &pass,
             stop.clone(),
@@ -305,13 +299,13 @@ pub(crate) async fn read(
         match outcome {
             Ok(per_route) => {
                 for (&i, r) in pass.indices.iter().zip(per_route) {
-                    results.add(&readers[i].binding, r);
+                    results.add(&readers[i].binding,binding_runs[i].as_ref().ok().copied(), r);
                 }
             }
             Err(e) => {
                 for &i in &pass.indices {
                     let failed = Err(format!("{}: {e}", readers[i].binding.name));
-                    results.add(&readers[i].binding, failed);
+                    results.add(&readers[i].binding,binding_runs[i].as_ref().ok().copied(), failed);
                 }
             }
         }
@@ -320,12 +314,14 @@ pub(crate) async fn read(
         conn,
         blobs,
         writer,
-        run,
         access,
         &mut results.coverage,
         &mut results.list,
     )
     .await;
+    for ((source,_,host),run) in native_runs {
+        if let Err(error)=sinex_store::runs::end(conn,run).await {results.list.push((source,Err(format!("ending source run on {host}: {error}"))));}
+    }
     results.list
 }
 /// Offer a polled reader the stored history it rebuilds its memory from. A

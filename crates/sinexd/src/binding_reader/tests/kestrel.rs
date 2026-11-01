@@ -24,7 +24,6 @@ async fn ingest(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
-        RunId::new(),
         &Sink(ctx.blobs.clone()),
         readers,
         stop,

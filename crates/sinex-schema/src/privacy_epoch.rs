@@ -4,7 +4,7 @@ pub(crate) const STATE:&str="CREATE TABLE privacy.policy_state (
   desired_epoch bigint NOT NULL CHECK (desired_epoch >= 0),
   active_epoch bigint NOT NULL CHECK (active_epoch >= 0)
 )";
-pub(crate) const INIT:&str="INSERT INTO privacy.policy_state(id,desired_epoch,active_epoch) VALUES(true,0,0)";
+pub(crate) const INIT:&str="INSERT INTO privacy.policy_state(id,desired_epoch,active_epoch) SELECT true,CASE WHEN EXISTS(SELECT 1 FROM core.events) THEN 1 ELSE 0 END,0";
 pub(crate) const BUILDS:&str="CREATE TABLE privacy.output_builds (\n  epoch bigint PRIMARY KEY,\n  after_seq bigint NOT NULL,\n  after_id uuid\n)";
 pub(crate) const ORIGINALS:&str="CREATE TABLE privacy.original_events (
   event_id uuid PRIMARY KEY,
@@ -55,7 +55,7 @@ pub(crate) const VISIBLE_EVENTS:&str=r#"CREATE VIEW core.visible_events AS SELEC
       WHEN o.state<>'complete' THEN jsonb_build_object('unavailable',o.state)
       WHEN core.class_visible(o.class) THEN o.payload ELSE jsonb_build_object('withheld',o.class) END AS payload,
  CASE WHEN o.state='complete' AND core.class_visible(o.class) THEN o.equivalence_key END AS equivalence_key,
- e.reading_order,e.record_hash,e.record_state,coalesce(o.class,e.class) AS class,e.kind_version,e.validation
+ e.reading_order,e.record_hash,e.record_state,coalesce(o.class,e.class) AS class,e.kind_version,e.validation,e.producer_family,e.producer_identity,e.source_version,e.source_fingerprint
  FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id AND o.epoch=privacy.require_active_epoch()
  WHERE privacy.require_active_epoch()>=0"#;
 pub(crate) const VISIBLE_SEARCH:&str=r#"CREATE VIEW core.visible_search_text AS SELECT s.event_id,s.text,s.tsv,s.trigram_indexed
@@ -78,7 +78,7 @@ pub(crate) const VISIBLE_VECTORS:&str=r#"CREATE VIEW core.visible_embedding_vect
 pub(crate) const DERIVATION_EVENTS:&str=r#"CREATE VIEW core.derivation_events AS SELECT
  e.id,e.event_type,e.source,e.run_id,e.material_id,e.anchor,e.output_index,e.parents,
  e.ts_orig,e.ts_quality,e.ts_coided,e.ts_persisted,e.commit_seq,o.payload,o.equivalence_key,
- e.reading_order,e.record_hash,e.record_state,o.class,e.kind_version,e.validation
+ e.reading_order,e.record_hash,e.record_state,o.class,e.kind_version,e.validation,e.producer_family,e.producer_identity,e.source_version,e.source_fingerprint
  FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id
  WHERE o.epoch=privacy.require_active_epoch() AND o.state='complete'"#;
 pub(crate) const DERIVATION_EPOCHS:&str="CREATE TABLE privacy.derivation_epochs (\n  derivation text PRIMARY KEY,\n  epoch bigint NOT NULL,\n  cursor jsonb NOT NULL\n)";

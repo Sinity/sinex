@@ -95,6 +95,8 @@ pub struct DiscoveryContext {
     pub runtime_dir: Option<PathBuf>,
     pub input_roots: BTreeMap<String, Vec<PathBuf>>,
     pub inputs: BTreeMap<String, Vec<PathBuf>>,
+    /// Configured keys override process environment keys; an empty map adds
+    /// no overrides. The map does not encode whole-environment replacement.
     pub environment: BTreeMap<String, String>,
     pub spool: PathBuf,
     pub layout_file: Option<PathBuf>,
@@ -165,12 +167,21 @@ pub struct Configuration {
     /// Daemon-only derivation settings pass through capture configuration unchanged.
     pub tags: Vec<serde_json::Value>,
     pub activity: serde_json::Value,
+    pub project_attribution: serde_json::Value,
+    #[serde(default)]
+    pub rhythm: serde_json::Value,
+    pub recorded_media: sinex_model::media_effects::MediaSelectors,
+    pub model_accounting: serde_json::Value,
+    pub signals: serde_json::Value,
 }
 
 impl Configuration {
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-        serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
+        let config: Self = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        config.recorded_media.validate()?;
+        Ok(config)
     }
 
     pub fn runs(&self, name: &str) -> bool {
@@ -184,4 +195,30 @@ impl Configuration {
         context.exclude.clone_from(&self.exclude);
         context
     }
+
+    /// The binary supplies its process facts once. Configured fields and map
+    /// keys override them; explicit CLI host, spool and watch remain last.
+    pub fn resolve_context(&self, process: DiscoveryContext) -> DiscoveryContext {
+        let mut context = self.context(&process.host);
+        context.home = context.home.or(process.home);
+        context.data_home = context.data_home.or(process.data_home);
+        context.config_home = context.config_home.or(process.config_home);
+        context.runtime_dir = context.runtime_dir.or(process.runtime_dir);
+        context.layout_file = context.layout_file.or(process.layout_file);
+        let mut environment = process.environment;
+        environment.append(&mut context.environment);
+        context.environment = environment;
+        let mut input_roots = process.input_roots;
+        input_roots.append(&mut context.input_roots);
+        context.input_roots = input_roots;
+        let mut inputs = process.inputs;
+        inputs.append(&mut context.inputs);
+        context.inputs = inputs;
+        context.spool = process.spool;
+        context.watch.extend(process.watch);
+        context
+    }
 }
+
+#[cfg(test)]
+mod tests;

@@ -271,7 +271,7 @@ pub async fn producer_live_hash(
 ) -> Result<(u64, String)> {
     let ids: Vec<_> = scope.materials.iter().map(|m| m.0).collect();
     let rows = sqlx::query!(
-        "SELECT e.id,e.record_hash FROM core.events e WHERE e.source=$1 AND e.material_id=ANY($2)
+        "SELECT e.id,e.record_hash FROM core.events e WHERE e.producer_family=$1 AND e.material_id=ANY($2)
       AND ($3::text[] IS NULL OR e.event_type=ANY($3))
       AND ($4::timestamptz IS NULL OR e.ts_orig >= $4)
       AND ($5::timestamptz IS NULL OR e.ts_orig < $5)
@@ -302,7 +302,7 @@ pub async fn producer_outputs_in_scope(
     let materials: Vec<_> = scope.materials.iter().map(|m| m.0).collect();
     let outside = sqlx::query_scalar!(
         r#"SELECT EXISTS(SELECT 1 FROM core.events e WHERE e.id=ANY($1)
-      AND (e.source<>$2 OR NOT e.material_id=ANY($3)
+      AND (e.producer_family IS DISTINCT FROM $2 OR e.material_id IS NULL OR NOT e.material_id=ANY($3)
         OR ($4::text[] IS NOT NULL AND NOT e.event_type=ANY($4))
         OR ($5::timestamptz IS NOT NULL AND (e.ts_orig IS NULL OR e.ts_orig<$5))
         OR ($6::timestamptz IS NOT NULL AND (e.ts_orig IS NULL OR e.ts_orig>=$6)))) AS "outside!""#,

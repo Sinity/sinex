@@ -23,3 +23,36 @@ fn ten_thousand_field_values_share_one_paged_read() {
     assert!(reader.groups.is_empty());
     assert!(reader.alone.is_empty());
 }
+
+#[devkit::test]
+async fn input_provenance_keeps_parser_versions_and_missing_manifests(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let ids = crate::query::tests::admit_commands(&mut conn, &[("pwd", "/work/a"), ("ls", "/work/b")]).await;
+    let run = crate::runs::start(&mut conn, &crate::runs::Manifest {
+        name: "source runner", kind: "source", version: "1", build: "synthetic-build",
+        emits: &["command.executed"],
+    }, "synthetic-host").await.unwrap();
+    let hash = format!("blake3:{}", "0".repeat(64));
+    sqlx::query!("INSERT INTO core.blobs (hash,size,status) VALUES ($1,0,'present')",hash)
+        .execute(&mut *conn).await.unwrap();
+    for (index, (_, observed)) in ids.iter().enumerate() {
+        let material = sqlx::query_scalar!("SELECT material_id FROM core.events WHERE id=$1",observed)
+            .fetch_one(&mut *conn).await.unwrap().unwrap();
+        sqlx::query!("INSERT INTO raw.materials (id,blob,length,manifest,parser,parser_version) VALUES ($1,$2,0,'{}','atuin-history',$3)",material,hash,index as i32+1)
+            .execute(&mut *conn).await.unwrap();
+        sqlx::query!("UPDATE core.events SET run_id=$1 WHERE id=$2",run.0,observed)
+            .execute(&mut *conn).await.unwrap();
+    }
+    let selected: Vec<_> = ids.into_iter().map(|(derived,_)| sinex_model::EventId(derived)).collect();
+    let versions = producer_versions(&mut conn,&selected).await.unwrap();
+    let rows = versions.as_array().unwrap();
+    let readings: Vec<_> = rows.iter().filter(|row| row["producer"]=="terminal.atuin").collect();
+    assert_eq!(readings.len(),2);
+    assert_eq!(readings[0]["parser_version"],1);
+    assert_eq!(readings[1]["parser_version"],2);
+    assert!(readings.iter().all(|row| row["manifest"]=="source runner" && row["build"]=="synthetic-build"));
+    let unknown = rows.iter().find(|row| row["producer"]=="derive.shell-fusion").unwrap();
+    assert!(unknown["version"].is_null());
+    assert!(unknown["build"].is_null());
+    assert_eq!(unknown["events"],2);
+}
