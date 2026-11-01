@@ -191,6 +191,13 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).expect("JSON prints"));
 }
 
+/// The text an answer was rendered as (`text`: the brief, a panel,
+/// `analysis-why`), printed instead of the JSON document unless `--json` is
+/// given.
+fn rendered_text(result: &Value) -> Option<&str> {
+    result["text"].as_str()
+}
+
 fn status_error(code: u8, reason: impl std::fmt::Display, state: Option<&str>) -> ExitCode {
     let mut status = serde_json::json!({"daemon": {"unavailable": reason.to_string()}});
     capture_health::attach(&mut status, state);
@@ -410,6 +417,11 @@ async fn main() -> ExitCode {
                     output::table(&columns, &rows, &output::Local::new(None))
                 );
                 println!("{} rows", rows.len());
+            } else if let Some(text) = rendered_text(&result) {
+                print!("{text}");
+                if !text.ends_with('\n') {
+                    println!();
+                }
             } else {
                 print_json(&result);
             }

@@ -7,7 +7,6 @@ fn observation() -> SourceCoverage {
     SourceCoverage {
         observed_run: None,
         observed_class: None,
-        observation: "synthetic-read".into(),
         observed_source: "terminal.synthetic".into(),
         binding: "synthetic-binding".into(),
         host: "synthetic-host".into(),

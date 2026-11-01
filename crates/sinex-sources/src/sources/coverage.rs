@@ -33,8 +33,7 @@ impl Parser for ObservationParser {
     ) -> Result<(Vec<SourceCoverage>, ()), RecordError> {
         let observation: SourceCoverage = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|error| RecordError::new(error.to_string()))?;
-        if observation.observation.is_empty()
-            || observation.observed_source.is_empty()
+        if observation.observed_source.is_empty()
             || observation.binding.is_empty()
             || observation.started_at > observation.ended_at
             || context.manifest.detail("host").as_str() != Some(observation.host.as_str())

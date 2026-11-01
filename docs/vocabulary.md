@@ -5,7 +5,10 @@ error text, comments and docs use these names. The values of closed sets
 (kinds, sources, tables, settings) are in the generated
 [reference](reference/README.md); the shared mechanics (blob, segment, extent,
 day setting, operation, failure kind, deadline class) are named in common's
-[vocabulary](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/vocabulary.md).
+[vocabulary](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/vocabulary.md)
+(including reference, locator, selector, authored record, current, order key, answer,
+envelope, section status, value state, seen mark, transform, order relation, coverage
+state, signal rule, delivery, outcome, route, attention, inhibition, lane and series row).
 
 ## Capture
 
@@ -22,6 +25,27 @@ day setting, operation, failure kind, deadline class) are named in common's
 - **gap**: an interval in which a capture may have missed data, recorded as a `capture.gap` event with its reason ([gaps](sources.md#gaps)).
 - **exclusion**: the one per-source setting: a source or input left out, with a recorded reason.
 - **source health**: whether a source is observing as its declaration expects; shown in status.
+- **expectation** (`expect`): when a source should have something: continuous with a `silent_after`, a cadence, an export, or on demand ([sources](sources.md#one-declaration-per-source)).
+- **input state**: the one computed state of an input: capturing, backlogged, quiet, stalled, held, unavailable (with cause), excluded (with reason), finished ([input states](sources.md#input-states)).
+- **stall**: a continuous source silent past its `silent_after`, or a reader failing on every attempt while its process lives; one interrupting notice per stall.
+- **coverage**: for a source, input and interval: complete, gap (with reason), unknown, outside span, not yet, excluded, unavailable (with cause), or held ([completeness](sources.md#completeness)).
+- **coverage read model**: the hour-grain table of coverage maintained from the commit log that every surface reads; the **coverage facet** is its part attached to a timed answer.
+- **expiry race**: the margin between a source's last capture and the provider's own expiry (`expires_after`), watched by a signal.
+- **accounting identity**: records framed = admitted + repeats + revisions + removed + failures + headers, per material and per input.
+- **inventory**: what a stage holds, listed before parsing finishes, with per-product accounting ([staging](materials.md#inventory-and-progress)).
+- **stored, not interpreted**: material staged with no parser, waiting in the parser backlog; `parser try` parses it as a dry run.
+- **execution token**: the identifier the shipped shell integration mints per command execution, seen by every observer of that command.
+
+## Hosts
+
+- **host**: a machine or device that captures, declared in configuration with a kind ([hosts](hosts.md)).
+- **placement**: the one host whose producer polls a host-free input such as an account.
+- **host-bound**, **host-free**: an input whose identity includes its host (a file, a device), or does not (an account, an API).
+- **contact**: whether a producer's last frame is within its host's out-of-contact deadline.
+- **held**: data a remote producer captured but has not yet delivered; a coverage state, never a gap.
+- **capture report**: a producer's per-input `captured_through`, held data, free spool space and capture state, carried in `progress`.
+- **transfer class**: when a producer sends a source's data: immediate, unmetered or charging. A sending rule, never a capture rule.
+- **clock offset**: a host's measured difference from the Sinex host's clock, with its uncertainty; a label on time evidence, never a rewrite.
 
 ## Materials and records
 
@@ -41,8 +65,9 @@ day setting, operation, failure kind, deadline class) are named in common's
 - **event**: a typed payload with one origin (a record, or parent events) and three clocks ([events](events.md)).
 - **kind**: the registered name and declaration of a payload type (`command.executed`), with its fields, field hints, keying and search participation.
 - **reading**: the event one read of a record produced; at most one reading of a record is **live**.
-- **reading order**: which of two readings of a record is newer; assigned or checked by Sinex, never taken from a producer's clock.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
+- **stratum**: the recall class each kind declares: act, state, incident, ambient, measure or presentation ([strata](recall.md#strata)).
+- **reading order**: which of two readings of a record is newer; assigned or checked by Sinex, never taken from a producer's clock.
 - **derived event**: an event computed by a derivation, naming its parents.
 - **producer version**: the exact version of the parser or derivation that made an event.
 - **run**: one execution of a producer; every event names its run.
@@ -96,35 +121,55 @@ day setting, operation, failure kind, deadline class) are named in common's
 - **dirty key**: a key whose inputs changed and whose output set will be recomputed.
 - **provisional**: the value of a key whose time window is still open.
 - **fusion**: joining readings of one occurrence seen by several sources, for a defined family, into a **fused record** with its **basis**.
-- **judgment**: an authored `same` or `distinct` decision on an ambiguous pair in `duplicates`.
+- **duplicate decision**: an authored `same` or `distinct` decision on an ambiguous pair in `duplicates`, or on a candidate pair in the library's duplicate review.
 - **interval**: a state with a start and maybe an end, computed by a derivation.
-- **figure**: a measure over one period, stored as an event with its coverage.
-- **coverage**: which sources could observe, over which interval, in which state (observed, partial, recorded with unknown coverage, missing).
+- **figure**: a measure over one period and grain, stored as an event (a figure cell) whose state has no default: observed, partial, lower bound, missing with a reason, not applicable, not estimable ([figure cells](evidence.md#figure-cells)).
 - **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).
-- **panel** (`analysis.panel`): the stored cells and selected source coverage for a canonical analysis question.
-- **analysis request** (`analysis.request`): an authenticated question retained as source material; its canonical identity includes the operation, dates, metrics, day setting and grants.
-- **finding** (`analysis.finding`): a stored typed statement with its caveats and the figures it cites; a **recipe** is a shipped analysis whose result is an **answer** (`recipe.answer`).
-- **model policy** (`model.policy`): an operator-authored route, instructions and explicit operating budget, effective only with the writer's authorization mark.
-- **model request** (`model.request`): retained instructions and verified typed input identities with their exact current reading references.
-- **recorded model response** (`model.response`): acquired response content, its separate output hash, provider receipt and reported actual charge; receiving it does not execute a model.
-- **actual model receipt** (`model.receipt`): acquired provider/account receipt, explicit charge and accounting basis. Authorized accounting may remain unbound to a request; this fact grants no input, effect or execution authority.
+- **panel**: figures for several metrics over a range of units, each cell drawn by its state.
+- **construct**: what a number is meant to stand for (sleep duration, spending); a **metric declaration** operationalizes exactly one, with its role, validity and opportunity ([personal evidence](evidence.md)).
+- **usual range**: a figure's prior-only robust baseline; a later day never changes an earlier day's range.
+- **affirmation**: a self-report that a logging period is complete, so a day with no entry is a recorded zero rather than unknown.
+- **study**: an authored question in computable form (design, family, population, method); **confirmatory** when registered before its outcome period, otherwise **exploratory**; its computed product is a **study result** (`study.result`).
+- **finding**: a typed statement in a study result, with role, support status, caveats and evidence.
+- **specification band**: a result's range across the declared reasonable alternatives of its parameters.
+- **detectable effect**: the smallest effect a result's units could have detected at 80% power.
+- **experiment**: a study with a protocol whose assignment Sinex fixes from a committed seed before exposure.
+- **track record**: a forecaster's scores over its resolved forecasts, with skill against climatology and persistence.
+- **method forecaster**: a declared method that issues forecasts as derived events.
+- **book of record**: the one source a money metric reads for an account and period.
 - **forecast**: a probability on a stated outcome with a horizon and an information cutoff.
-- **context pack**: a stored selection of evidence assembled for one purpose; a **narrative** is a written account over a period.
+- **recipe**: an ordered list of sections, each a named query with a render rule and a status rule.
+- **pack**: a recipe compiled for one selection under a budget, every line cited, with section statuses and left-out counts; stored as `context.pack`. A **card** is only the boxed rendering of a pack in a view. A **narrative** is a written account over a period.
 
 ## Reading and asking
 
 - **query table**: what a query reads (`events`, `materials`, `runs`, `sources`, `failures` …), with its fields ([query](query.md)).
 - **saved query**: a named query with declared scalar parameters.
 - **kept result**: a query's result stored as an event so it can be cited.
-- **recall**: everything recorded around a time, a day, a mark or the latest shell session ([recall](recall.md)).
-- **mark**: an operator-authored moment with a note.
-- **brief**: the daily summary.
-- **signal**: what a rule surfaces without being asked; **interrupting** signals are few and explicit.
+- **selection**: what a recall is about: a subject (moment, window, period, episode, project, here, last, query) plus read context; `sinex:sel/<hash>` ([selections](recall.md#selections)).
+- **recall**: build a pack about a selection from what Sinex already holds; the one verb for time questions ([recall](recall.md)).
+- **note**: an authored statement anchored at an instant or on targets, with text or an instrument value; the one kind for moment notes, notes on events and items, and self-reports ([notes](recall.md#notes)).
+- **instrument**: a declared, short self-report question set.
+- **tripwire**: a note with a trigger query that returns it when the trigger first holds.
+- **lane**: a timeline row defined by a query, with a render and a grouping ([lanes](recall.md#lanes)).
+- **open loop**: an unfinished thing gathered for Today: a failing check with no later pass, a wait, an unanswered thread, a tripwire note.
+- **here pack**: the pack for a working directory, Sinex's machine section in an agent's brief.
+- **signal**: what a rule surfaces without being asked; **interrupting** signals are few and explicit. A **notice** is a signal delivery's content, passive or interrupting; the **inbox** is the list of notices.
 - **status**: what Sinex holds, what it failed to read and what it has not processed.
 - **follow**: a live, resumable read of new events matching a query.
 - **Today**: the view Sinex opens with ([web](web.md#today)).
 
 ## Library
+
+- **item**: a continuing thing the library curates, keyed by its first locator: a file, a web page, a catalog object or an attachment ([locators](library.md#locators)).
+- **encounter**: a derived link from an event to the item it touched, with a relation (seen, played, read, saved, downloaded, made, fetched, mentioned) and an actor.
+- **capture** (library): a stored copy of a web item's content at one time; its **grade** says how it corresponds to a visit (during, same body, before or after, archive, none).
+- **correspondence**: a typed, derived relation between two items with its evidence; it never moves curation.
+- **curation record**: an authored or imported statement about a target (tag, property, note, rating, comparison, entry, tag relation, duplicate decision, dismissal) with the authored-record header.
+- **scale**: a named dimension with its question, for ratings and comparisons.
+- **comparison**: an authored order or preference over k targets on a scale; **judge** is the verb that writes it, and **compare** only reads.
+- **judgment**: a verdict on one exact revision: accepted, rejected or deferred (`judge accept|reject|defer`).
+- **judge set**: whose comparisons a ranking counts.
 
 - **item key**: the host, resolved root and original relative path identifying an item; an unambiguous equal-byte move within the root keeps it.
 - **move candidates**: missing and new equal-byte paths whose correspondence is ambiguous; curation stays separate.

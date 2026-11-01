@@ -26,6 +26,7 @@ async fn ingest(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
         &ctx.writer,
         &Sink(ctx.blobs.clone()),
         readers,
+        &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
         &mut |_, _| {},

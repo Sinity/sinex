@@ -64,8 +64,12 @@ async fn archive_history_preserves_archive_restore_archive_intervals_without_new
         let ended = lifecycle::move_events(&mut conn, act, vec![target], &NoDerivations).await;
         assert!(matches!(ended, lifecycle::Ended::Ok { .. }), "{ended:?}");
         let latest = commit_log::latest(&mut conn).await.unwrap();
-        assert!(latest > start, "each move takes a position");
-        moved_at.push(start + 1);
+        assert_eq!(
+            latest,
+            start + 1,
+            "a one-event move is one batch and takes exactly the next position"
+        );
+        moved_at.push(latest);
         assert_eq!(
             visible(&mut conn, 3).await,
             3,

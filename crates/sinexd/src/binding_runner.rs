@@ -183,15 +183,22 @@ async fn saved(
 struct Bindings {
     readers: Vec<BindingReader>,
     said: BTreeMap<String, String>,
-    coverage: Vec<sinex_model::event_types::coverage::SourceCoverage>,
     failures: ReadFailures,
 }
 
 impl Bindings {
     /// Plan `config` again and start the bindings not read yet: files a source
     /// writes later (a new day's file, a new recording) are read without a
-    /// restart.
-    fn extend(&mut self, config: &Config, host: &str, saved: &[Binding]) {
+    /// restart. An input that cannot be read is observed as missing coverage;
+    /// one that is not present yet (an export never staged) is waiting, not
+    /// failing, and is observed only to replace a missing reading it had.
+    fn extend(
+        &mut self,
+        config: &Config,
+        host: &str,
+        saved: &[Binding],
+        coverage: &mut binding_reader::coverage::Coverage,
+    ) {
         let inputs = match discovery::status(&config.context(host)) {
             Ok(inputs) => inputs,
             Err(error) => {
@@ -212,29 +219,43 @@ impl Bindings {
                     .map(|path| path.display().to_string())
                     .unwrap_or_default()
             );
+            let unavailable = input.availability == Availability::Unavailable;
+            if unavailable || coverage.has_reading(&key, host) {
+                use sinex_model::event_types::coverage::{
+                    CoverageCompleteness, CoverageState, SourceCoverage,
+                };
+                let at = sinex_model::Timestamp::now();
+                coverage.observe(SourceCoverage {
+                    observed_run: None,
+                    observed_class: input.settings.class,
+                    observed_source: input.source.clone(),
+                    binding: key.clone(),
+                    host: host.into(),
+                    started_at: at,
+                    ended_at: at,
+                    state: if unavailable {
+                        CoverageState::Missing
+                    } else {
+                        CoverageState::RecordedUnknownCoverage
+                    },
+                    reason: Some(input.reason.clone().unwrap_or_else(|| {
+                        if unavailable {
+                            "no input"
+                        } else {
+                            "input is readable"
+                        }
+                        .into()
+                    })),
+                    completeness: CoverageCompleteness::Unknown,
+                    bounded_by: "discovery; no read attempt".into(),
+                    events: 0,
+                    failures: 0,
+                });
+            }
             if matches!(
                 input.availability,
                 Availability::Unavailable | Availability::WaitingForInput
             ) {
-                let at = sinex_model::Timestamp::now();
-                self.coverage
-                    .push(sinex_model::event_types::coverage::SourceCoverage {
-                        observed_run: None,
-                        observed_class: input.settings.class,
-                        observation: uuid::Uuid::now_v7().to_string(),
-                        observed_source: input.source.clone(),
-                        binding: key.clone(),
-                        host: host.into(),
-                        started_at: at,
-                        ended_at: at,
-                        state: sinex_model::event_types::coverage::CoverageState::Missing,
-                        reason: Some(input.reason.clone().unwrap_or_else(|| "no input".into())),
-                        completeness:
-                            sinex_model::event_types::coverage::CoverageCompleteness::Unknown,
-                        bounded_by: "discovery found no readable input".into(),
-                        events: 0,
-                        failures: 0,
-                    });
                 self.say(
                     &key,
                     format!(
@@ -320,6 +341,7 @@ pub(crate) async fn run(
     let (mut read_conn, database) = connection;
     discovery::validate(&config.context(""))?;
     let sink = Sink(blobs.clone());
+    let mut rounds = binding_reader::Rounds::resume(&mut read_conn, &host).await?;
     let mut bindings = Bindings {
         failures: failures.clone(),
         ..Bindings::default()
@@ -331,7 +353,7 @@ pub(crate) async fn run(
             match saved(&mut read_conn, &database, &host).await {
                 Ok(saved) => {
                     bindings.said.remove("saved");
-                    bindings.extend(&config, &host, &saved);
+                    bindings.extend(&config, &host, &saved, &mut rounds.coverage);
                 }
                 Err(error) => bindings.say(
                     "saved",
@@ -343,21 +365,6 @@ pub(crate) async fn run(
             }
             planned_at = Some(std::time::Instant::now());
         }
-        let mut evidence_errors = Vec::new();
-        binding_reader::coverage::flush(
-            &mut read_conn,
-            &blobs,
-            &writer,
-            crate::material_access::Access::default(),
-            &mut bindings.coverage,
-            &mut evidence_errors,
-        )
-        .await;
-        for (_, error) in evidence_errors {
-            if let Err(error) = error {
-                eprintln!("sinexd: {error}");
-            }
-        }
         let said = &mut bindings.said;
         binding_reader::read(
             &mut read_conn,
@@ -365,6 +372,7 @@ pub(crate) async fn run(
             &writer,
             &sink,
             &mut bindings.readers,
+            &mut rounds,
             stop.clone(),
             crate::material_access::Access::default(),
             &mut |binding, result| {
@@ -394,7 +402,7 @@ pub(crate) async fn run(
             _ = stop.wait_for(|s| *s) => break,
         }
     }
-    Ok(())
+    rounds.end(&mut read_conn).await
 }
 
 #[cfg(test)]

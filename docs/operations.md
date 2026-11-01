@@ -1,6 +1,6 @@
 # Operations
 
-How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); every option, key and environment variable will be listed in [planned reference/settings.md](reference/README.md#planned-pages); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md).
+How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); every option, key and environment variable will be listed in [planned reference/settings.md](reference/README.md#planned-pages); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md).
 
 ## Deployment
 
@@ -26,7 +26,7 @@ startup; activating that change includes the database preparation and restart.
 - **NATS with JetStream** for the ingress and the confirmed stream, with one user per producer identity and per registered outside consumer ([producers.md](producers.md)). The NATS configuration holds only password hashes; each process reads its own password from a file, never from its arguments.
 - **`sinexd`**, capturing every source whose input exists ([capture by default](sources.md#capture-by-default)). The per-source options are the source's typed settings and its exclusions, generated from the one source declaration in Rust, so what is captured is configuration, not database state. Inputs must be readable by the daemon's user.
 - **Capture units** for streams the daemon does not read itself (journald through `sinex-capture`).
-- **A capture-only node** for another host: `sinex-capture` with its own spool, sending to the main host's ingress with its own producer identity.
+- **A capture-only node** for another host: `sinex-capture` with its own spool, sending to the main host's ingress with its own producer identity ([hosts and placement](#hosts-and-placement)).
 
 Kinds, CHECK lists, streams, consumers, derivations and sources are declared once in Rust and exported for the module, so the module never restates them.
 
@@ -54,7 +54,7 @@ The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log
 
 Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Every key will be listed in [planned reference/settings.md](reference/README.md#planned-pages); current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
 
-**What deployment configuration holds:** the logical day, the API's listen address and authentication, the optional notification command ([signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
+**What deployment configuration holds:** the logical day, the API's listen address and authentication, the optional notification command ([signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
 
 ### Listen address and authentication
 
@@ -69,7 +69,39 @@ Reaching Sinex from a phone or another machine (a tailnet address, a reverse pro
 
 Clients find the daemon through `SINEX_ENDPOINT` (the socket or HTTP address) and `SINEX_TOKEN_FILE`, which the modules set for login shells. Integrations in other languages (Kitty, Neovim) read the one variable the deployment sets for them. Which callers hold which powers is [interfaces.md](interfaces.md).
 
-A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#explicit-write-families). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write authority by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed native family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its actual host. Discovery also selects other session sources whose bus or runtime inputs are available. Cover those sources explicitly in the grant, or configure reasoned `services.sinex.exclude.<source>.reason` entries for a deliberately narrower capture plan. Read and canonical-publisher grants remain separate.
+A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#explicit-write-families). Decided target (2026-11-01): credentials become per-host nkeys bound to (component, host), and the `attestedHost` and canonical-publisher options go ([hosts and placement](#hosts-and-placement)). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write authority by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed native family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its actual host. Discovery also selects other session sources whose bus or runtime inputs are available. Cover those sources explicitly in the grant, or configure reasoned `services.sinex.exclude.<source>.reason` entries for a deliberately narrower capture plan. Read and canonical-publisher grants remain separate.
+
+## Hosts and placement
+
+Decided target (2026-11-01). Hosts, their producers' public keys and the placement of account inputs are deployment configuration; Sinex records the configured set as a host event at start, and its CLI shows these values and never edits them ([hosts](hosts.md)).
+
+```nix
+services.sinex.hosts = {
+  <server-name> = { kind = "server";
+    producers.capture.key   = "<public nkey>";
+    producers.polylogue.key = "<public nkey>"; };
+  <phone-name> = { kind = "phone"; outOfContactAfter = "48h";
+    producers.app.key = "<public nkey>"; };
+};
+services.sinex.inputs.<source>.<account>.placement = "<server-name>";
+
+# on the capture host
+services.sinex.captureNode = { enable = true; nats = "<sinex host>:4222"; keyFile = "<path to this producer's private key>"; };
+```
+
+| Parameter | Meaning | Default |
+|---|---|---|
+| `hosts.<name>.kind` | `workstation`, `server`, `phone` or `other`; chooses defaults only | — |
+| `hosts.<name>.producers.<component>.key` | the producer's public nkey; its private half is generated on that host with `sinex-capture key` and never leaves it | — |
+| `hosts.<name>.outOfContactAfter` | silence before an out-of-contact signal | server 15 min, workstation 1 h, phone 48 h |
+| `hosts.<name>.replaces` | the ID of a host this one continues (a reinstalled app) | none |
+| `inputs.<source>.<account>.placement` | the host whose producer polls a host-free input | the Sinex host |
+| transfer class per source | `immediate`, `unmetered`, `charging`; whether bulk data may use metered networks | discrete records `immediate`; media and sensor chunks `unmetered` on phones (open operator question) |
+| `captureNode.nats`, `captureNode.keyFile` | the Sinex host's ingress address and this producer's private key file | — |
+
+- The deployment's private network must let each capture host reach the Sinex host's NATS port, and nothing more is needed for capture.
+- A capture node only uploads over the link. The current mode in which a satellite mounts `sinexd`'s content store, and its `upload` flag, go: a capture host is never coupled to Sinex's storage layout or group IDs.
+- Whether a backup copy is kept off the Sinex host is the deployment's choice ([backup and restore](#backup-and-restore)).
 
 ## Logical day
 

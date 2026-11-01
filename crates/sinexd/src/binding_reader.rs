@@ -65,17 +65,20 @@ pub(crate) async fn once(
     mut readers: Vec<BindingReader>,
 ) -> Result<Totals, String> {
     let (_stop, stop) = watch::channel(false);
+    let mut rounds = Rounds::default();
     let results = read(
         conn,
         blobs,
         writer,
         &Sink(blobs.clone()),
         &mut readers,
+        &mut rounds,
         stop,
         Access::default(),
         &mut |_, _| {},
     )
     .await;
+    rounds.end(conn).await?;
     let mut totals = Totals::default();
     for (_, result) in results {
         totals.add(result?);
@@ -89,10 +92,42 @@ pub(crate) mod coverage;
 mod shared;
 use shared::{SharedFileRead, read_shared, same_file};
 
+/// A source run's identity: source, parser version and host.
+type RunKey = (String, u32, String);
+
+/// What reading keeps from one round to the next: one open run per source,
+/// parser version and host for as long as its bindings are read, and the
+/// coverage admitted so far.
+#[derive(Default)]
+pub(crate) struct Rounds {
+    runs: std::collections::BTreeMap<RunKey, RunId>,
+    pub(crate) coverage: coverage::Coverage,
+}
+
+impl Rounds {
+    /// Rounds that continue from the coverage stored for `host`.
+    pub(crate) async fn resume(conn: &mut PgConnection, host: &str) -> Result<Self, String> {
+        Ok(Self {
+            runs: std::collections::BTreeMap::new(),
+            coverage: coverage::Coverage::stored(conn, host).await?,
+        })
+    }
+
+    /// End every run these rounds started.
+    pub(crate) async fn end(self, conn: &mut PgConnection) -> Result<(), String> {
+        for ((source, _, host), run) in self.runs {
+            sinex_store::runs::end(conn, run)
+                .await
+                .map_err(|error| format!("ending the {source} run on {host}: {error}"))?;
+        }
+        self.coverage.end(conn).await
+    }
+}
+
 /// Each binding's outcome as it is read: its source and result, kept for the
 /// caller, and handed at once to `report` with the binding's name.
 struct Results<'a> {
-    coverage: Vec<sinex_model::event_types::coverage::SourceCoverage>,
+    coverage: &'a mut coverage::Coverage,
     started_at: sinex_model::Timestamp,
     list: Vec<(String, Result<Totals, String>)>,
     report: &'a mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
@@ -103,14 +138,27 @@ impl Results<'_> {
         (self.report)(&binding.name, &result);
         let mut observation = coverage::outcome(binding, self.started_at, &result);
         observation.observed_run = run;
-        self.coverage.push(observation);
+        self.coverage.observe(observation);
         self.list.push((binding.source.clone(), result));
+    }
+
+    async fn flush(
+        &mut self,
+        conn: &mut PgConnection,
+        blobs: &Blobs,
+        writer: &WriterHandle,
+        access: Access<'_>,
+    ) {
+        self.coverage
+            .flush(conn, blobs, writer, access, &mut self.list)
+            .await;
     }
 }
 
 /// Read independent bindings, reporting each error without preventing other
 /// bindings. `report` sees each binding's outcome as soon as it is known, so a
-/// round that takes hours does not hide its failures until it ends.
+/// round that takes hours does not hide its failures until it ends. Runs and
+/// coverage carry over in `rounds`; ending them is the caller's.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn read(
     conn: &mut PgConnection,
@@ -118,17 +166,21 @@ pub(crate) async fn read(
     writer: &WriterHandle,
     sink: &Sink,
     readers: &mut [BindingReader],
+    rounds: &mut Rounds,
     stop: watch::Receiver<bool>,
     access: Access<'_>,
     report: &mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
 ) -> Vec<(String, Result<Totals, String>)> {
+    let Rounds {
+        runs: native_runs,
+        coverage,
+    } = rounds;
     let mut results = Results {
-        coverage: Vec::new(),
+        coverage,
         started_at: sinex_model::Timestamp::now(),
         list: Vec::new(),
         report,
     };
-    let mut native_runs = std::collections::BTreeMap::new();
     let mut binding_runs = Vec::new();
     for binding in readers.iter() {
         let spec = binding.source.spec();
@@ -179,15 +231,7 @@ pub(crate) async fn read(
     }
     let mut passes: Vec<SharedFileRead> = Vec::new();
     for (index, b) in readers.iter_mut().enumerate() {
-        coverage::flush(
-            conn,
-            blobs,
-            writer,
-            access,
-            &mut results.coverage,
-            &mut results.list,
-        )
-        .await;
+        results.flush(conn, blobs, writer, access).await;
         results.started_at = sinex_model::Timestamp::now();
         let run = match &binding_runs[index] {
             Ok(run) => *run,
@@ -304,25 +348,9 @@ pub(crate) async fn read(
             results.add(&b.binding, Some(run), result);
         }
     }
-    coverage::flush(
-        conn,
-        blobs,
-        writer,
-        access,
-        &mut results.coverage,
-        &mut results.list,
-    )
-    .await;
+    results.flush(conn, blobs, writer, access).await;
     for pass in passes {
-        coverage::flush(
-            conn,
-            blobs,
-            writer,
-            access,
-            &mut results.coverage,
-            &mut results.list,
-        )
-        .await;
+        results.flush(conn, blobs, writer, access).await;
         results.started_at = sinex_model::Timestamp::now();
         let outcome = read_shared(
             conn,
@@ -357,22 +385,7 @@ pub(crate) async fn read(
             }
         }
     }
-    coverage::flush(
-        conn,
-        blobs,
-        writer,
-        access,
-        &mut results.coverage,
-        &mut results.list,
-    )
-    .await;
-    for ((source, _, host), run) in native_runs {
-        if let Err(error) = sinex_store::runs::end(conn, run).await {
-            results
-                .list
-                .push((source, Err(format!("ending source run on {host}: {error}"))));
-        }
-    }
+    results.flush(conn, blobs, writer, access).await;
     results.list
 }
 /// Offer a polled reader the stored history it rebuilds its memory from. A

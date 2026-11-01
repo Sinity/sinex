@@ -565,8 +565,9 @@ in
         '';
       };
 
-      # Extensions and roles need the superuser; the schema itself is applied
-      # by the sinex user at daemon start. Both come from sinex-schema.
+      # Extensions and roles need the superuser. The sinex user then creates
+      # or upgrades the schema in sinexd's preStart (`sinexd admin schema`),
+      # before the daemon itself starts; the daemon refuses any other version.
       systemd.services.sinex-db-setup = {
         description = "Sinex database extensions and roles";
         after = [ "postgresql.service" "postgresql-setup.service" ];

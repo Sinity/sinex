@@ -21,23 +21,26 @@ discovery input; its generator and test are described in
 | [admission.md](admission.md) | the one admission function and its writer; failures and progress; the commit log and positions; storage in PostgreSQL; schema evolution |
 | [producers.md](producers.md) | the public contract for producers and consumers outside the daemon: the NATS ingress, the producer client, refusals, the confirmed stream, kind registration, lifecycle requests on the wire |
 | [privacy.md](privacy.md) | field hints, detectors, rules, classes, grants and output actions; output parity; sealing |
-| [sources.md](sources.md) | the capture model: capture by default, one declaration per source, inputs and materials, capture survival, gaps and source health |
+| [sources.md](sources.md) | the capture model: capture by default, one declaration per source, inputs and materials, capture survival, gaps, input states and completeness (the coverage read model) |
+| [hosts.md](hosts.md) | capture from other hosts and devices: hosts, producer identity, placement, time across hosts, held data, a phone as a producer |
 | [streams.md](streams.md) | the base-layer streams and their spools |
 | [source-families.md](source-families.md) | every source family at full fidelity, and the catalog of sources |
 | [derivations.md](derivations.md) | the derivation model, fusion, intervals, documents and tags, model calling |
-| [higher-layer.md](higher-layer.md) | presence, agency, activity, attention, project attribution, episodes and the resume card, figures, answers, findings, forecasts, context packs |
+| [higher-layer.md](higher-layer.md) | presence, agency, activity, attention, project attribution, episodes and the resume card, figures, descriptions, packs and narratives |
+| [evidence.md](evidence.md) | personal evidence: constructs and metrics, figure cells, studies, experiments, forecasts and track records, places, money, retiring Lynchpin |
 | [query.md](query.md) | the query surface: tables, clocks and units, joins, paging, saved queries, kept results, citation forms, read, trace, related |
-| [recall.md](recall.md) | recall, context, marks, notes, the daily brief, agent arrival |
-| [interfaces.md](interfaces.md) | the operation table and its transports, callers and powers, the CLI, MCP, status, signals, follow, latency budgets |
-| [web.md](web.md) | Today and the reader web |
-| [library.md](library.md) | the media library and its curation |
+| [recall.md](recall.md) | selections, the `recall` verb, recipes and packs, strata, lanes, notes, agent arrival |
+| [interfaces.md](interfaces.md) | the operation table and its transports, callers and powers, the CLI, MCP's eight tools, status, signals and the host deliverer, follow, latency budgets |
+| [web.md](web.md) | Today, the reader web, keys and counterparts |
+| [library.md](library.md) | the library: items with any locator, encounters, page captures, curation, rankings, the link to Polylogue |
 | [operations.md](operations.md) | deployment, the NixOS and Home Manager modules, configuration, backup and restore |
 | [testing.md](testing.md) | the test database, the synthetic world, laws and their tests, crash, VM and fuzz tests, benchmarks |
 | [vocabulary.md](vocabulary.md) | each concept and its one name |
 | [reference/](reference/README.md) | current catalog and planned generated pages for commands, settings, kinds, sources, query tables and derivations |
 
-Shared mechanics (the segment container, the query grammar, the operation
-and failure model, the web shell, signal rules, the development tools) are
+Shared mechanics (the segment container, the query grammar, references and
+locators, the operation and answer contract, authored-record rules, ranking,
+forecast scoring, the web shell, signal rules, the development tools) are
 documented with their crates in
 [polylogue-sinex-common](https://github.com/Sinity/polylogue-sinex-common).
 How Polylogue uses Sinex is in Polylogue's
@@ -56,7 +59,13 @@ How Polylogue uses Sinex is in Polylogue's
   "(default; open operator question)".
 - **Laws.** Every area page ends with `## Laws`: properties with stable keys,
   each checked by tests named after the key
-  ([testing.md](testing.md#laws-and-their-tests)).
+  ([testing.md](testing.md#laws-and-their-tests)). A law's stored key takes the scope
+  `sx.` (`sx.cov.no-false-empty`), which the pages omit; a law both products run lives
+  in its shared suite in common under that suite's scope.
+- **Decided targets.** A section or law marked *decided target* states a decision
+  (most from the 2026-11-01 feature designs) that the code does not implement yet. Its
+  laws are its acceptance, and the work is tracked outside the repository. Unmarked text
+  is the design as the code is meant to hold it.
 - **Planned generated pages** under [reference/](reference/README.md#planned-pages)
   will be rendered by `cargo xtask docs` from the code's declarations. The
   generator is not implemented yet; existing generated artifacts are changed
