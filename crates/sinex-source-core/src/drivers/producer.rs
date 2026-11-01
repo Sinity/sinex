@@ -360,12 +360,7 @@ impl Producer {
         store: &Store,
     ) -> Result<Position, Error> {
         if let Some(mut batch) = UnacknowledgedFrames::load(state, binding)? {
-            if let Some(
-                kind @ (FrameRefusal::Excised
-                | FrameRefusal::PartiallyExcised
-                | FrameRefusal::Conflict),
-            ) = batch.refusal
-            {
+            if let Some(kind @ FrameRefusal::Conflict) = batch.refusal {
                 return Err(Error::Refused {
                     frame: batch
                         .frames
@@ -396,14 +391,7 @@ impl Producer {
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     if let Some(receipt) = recorded.iter().find(|receipt| {
-                        matches!(
-                            receipt.refusal_kind(),
-                            Some(
-                                FrameRefusal::Excised
-                                    | FrameRefusal::PartiallyExcised
-                                    | FrameRefusal::Conflict
-                            )
-                        )
+                        matches!(receipt.refusal_kind(), Some(FrameRefusal::Conflict))
                     }) {
                         return Err(Error::Refused {
                             frame: prepared.frame().to_owned(),

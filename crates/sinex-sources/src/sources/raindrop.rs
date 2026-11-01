@@ -16,7 +16,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "reading.raindrop",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "saved reading and URL recall",
     class: Class::Open,
     parser: "raindrop-export",

@@ -33,7 +33,6 @@ const MAGIC: &[u8] = b"arbtt-timelog-v1\n";
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.arbtt",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "which window was in use, sampled every interval",
     class: Class::Open,
     parser: "arbtt-timelog-v1",

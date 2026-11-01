@@ -180,12 +180,13 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
     // Change membership outside the marker invocation, through normal
     // admission/projection and archival. No dirty table reset hides old marks.
     admit_one(&mut conn, &batch(vec![command(50, "A", 6, false, false)])).await;
-    let mut hide = batch(vec![]);
-    hide.archive.push(ArchiveRequest::Hide {
-        target: old,
-        operation: OperationId::new(),
-    });
-    admit_one(&mut conn, &hide).await;
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![old],
+        &NoDerivations,
+    )
+    .await;
     let second = mark(
         &mut conn,
         vec![

@@ -17,7 +17,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "tasks.taskwarrior",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "tasks and their completion",
     class: Class::Open,
     parser: "taskwarrior-export",

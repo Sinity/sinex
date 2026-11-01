@@ -64,28 +64,12 @@ async fn physical_activity_crosses_days_and_replaces_outputs_after_hiding_a_brid
             .sum::<u64>(),
         4
     );
-    world
-        .batch(
-            vec![],
-            vec![ArchiveRequest::Hide {
-                target: bridge,
-                operation: OperationId::new(),
-            }],
-        )
-        .await;
+    world.moved(Act::Archive, vec![bridge]).await;
     runner.catch_up().await.unwrap();
     let sessions = world.live::<ActivitySession>().await;
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].operator_present_s, 20.0);
-    world
-        .batch(
-            vec![],
-            vec![ArchiveRequest::Unhide {
-                target: bridge,
-                operation: OperationId::new(),
-            }],
-        )
-        .await;
+    world.moved(Act::Restore, vec![bridge]).await;
     runner.catch_up().await.unwrap();
     assert_eq!(
         world.live::<ActivitySession>().await[0].operator_present_s,
@@ -112,15 +96,7 @@ async fn late_activity_bridges_and_first_member_removal_replace_complete_groups(
     assert_eq!(windows[0].counts.records["key.pressed"], 3);
     assert_eq!(windows[0].operator_present_s, 0.0);
     let old_window = windows[0].window_id.clone();
-    world
-        .batch(
-            vec![],
-            vec![ArchiveRequest::Hide {
-                target: first_id,
-                operation: OperationId::new(),
-            }],
-        )
-        .await;
+    world.moved(Act::Archive, vec![first_id]).await;
     runner.catch_up().await.unwrap();
     let windows = world.live::<ActivityWindow>().await;
     assert_eq!(windows.len(), 1);
@@ -232,14 +208,7 @@ async fn sessions_select_connected_windows_and_create_new_owners_after_removal(
         "a valid large break must not overflow a database interval"
     );
 
-    w.batch(
-        vec![],
-        vec![ArchiveRequest::Hide {
-            target: middle.id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    w.moved(Act::Archive, vec![middle.id]).await;
     runner.catch_up().await.unwrap();
     let sessions = w.live::<ActivitySession>().await;
     assert_eq!(sessions.len(), 3);

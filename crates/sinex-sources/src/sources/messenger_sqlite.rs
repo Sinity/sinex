@@ -16,7 +16,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.messenger-sqlite",
     driver: Driver::SqliteRows,
-    excisable: false,
     purpose: "conversations with people",
     class: Class::Open,
     parser: "fbmessengerexport",

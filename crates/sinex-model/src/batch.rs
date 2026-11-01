@@ -1,7 +1,7 @@
 //! What producers hand the writer. A source batch carries its new cursor and
 //! carried parser state, so events and progress commit in one transaction: a
 //! cursor advances only when what it covers is stored.
-use crate::{Event, EventId, InputId, MaterialId, OperationId, RecordLocation, RunId, Timestamp};
+use crate::{Event, InputId, MaterialId, OperationId, RecordLocation, RunId, Timestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -78,7 +78,7 @@ pub enum BatchKind {
 
 #[derive(Clone, Debug)]
 pub struct IngressFrame {
-    /// Digest of the frozen logical frame bytes; retained after payload excision.
+    /// Digest of the frozen logical frame bytes.
     pub content_hash: Option<String>,
     /// Reserved by the atomic replay writer, not by a producer.
     pub receipt_number: Option<i64>,
@@ -126,8 +126,6 @@ pub struct OwnerCoverage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameRefusal {
-    Excised,
-    PartiallyExcised,
     Conflict,
     Content,
     Bytes,
@@ -253,34 +251,28 @@ pub struct MaterialRef {
     pub manifest: crate::Manifest,
 }
 
-/// Why a reading left the live set. Excision is not one: it deletes the
-/// reading and its archive history.
+/// Why a reading left the live set. Members of a moved chain carry the
+/// reason of the move that took them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, crate::DbCheck)]
 #[serde(rename_all = "snake_case")]
 pub enum ArchiveReason {
+    /// An archive operation, or the archive half of an undo.
+    Archive,
     /// A replay read the record again.
     Replay,
     /// A newer reading of the same record replaced it.
     NewerReading,
-    /// The operator hid it.
-    Hide,
     /// Its derivation key was computed again and no longer produced it.
     Recomputed,
+    /// Its derivation switched to a version that recomputes history.
+    VersionChange,
 }
 
-/// Requests that archive live readings in the same transaction. Excision is
-/// not one of them: it deletes whole eligible materials in its own writer job
-/// (`sinex_store::excision`).
+/// Requests that archive live readings in the same transaction as a batch's
+/// new readings. Archive, restore, tombstone and undo are operations of their
+/// own (`sinex_store::lifecycle`).
 #[derive(Clone, Debug)]
 pub enum ArchiveRequest {
-    Hide {
-        target: EventId,
-        operation: OperationId,
-    },
-    Unhide {
-        target: EventId,
-        operation: OperationId,
-    },
     /// Archive the live readings a replay re-reads, before its new readings are
     /// admitted in the same transaction.
     Replay {

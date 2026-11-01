@@ -719,7 +719,9 @@ async fn paged_owner_replay_survives_later_admission_and_lifecycle_but_stamps_cu
     );
 }
 #[devkit::test]
-async fn pinned_excision_and_missing_basis_refuse_replay_authority(db: devkit::pg::TestDatabase) {
+async fn a_tombstone_between_pages_and_a_missing_basis_refuse_replay_authority(
+    db: devkit::pg::TestDatabase,
+) {
     let (h, material, _, _) = setup(db).await;
     let context: sinex_protocol::PublicContext = sinex_transport::replies::request_json(
         &h.client,
@@ -751,18 +753,7 @@ async fn pinned_excision_and_missing_basis_refuse_replay_authority(db: devkit::p
     else {
         panic!("first page")
     };
-    let erased: ExciseReply = sinex_transport::replies::request_json(
-        &h.client,
-        h.subjects.excise("polylogue"),
-        "polylogue",
-        &Excise {
-            materials: vec![material],
-        },
-        Duration::from_secs(20),
-    )
-    .await
-    .unwrap();
-    assert_eq!(erased.refusal, None);
+    h.tombstone_materials(&[material]).await;
     assert!(matches!(
         page(&h, "polylogue", "cache", Some(cursor)).await,
         InputReplayReply::Incomplete { .. }

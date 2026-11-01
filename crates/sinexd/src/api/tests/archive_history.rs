@@ -7,7 +7,7 @@ async fn totals(w: &World, question: &str) -> u64 {
 }
 
 #[devkit::test]
-async fn explicit_historical_api_views_survive_repeated_hide_and_unhide(
+async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
@@ -31,18 +31,20 @@ async fn explicit_historical_api_views_survive_repeated_hide_and_unhide(
     let stamp = jiff::Timestamp::from_nanosecond(stamp.unix_timestamp_nanos()).unwrap();
     let time_before = format!("events as of {stamp}");
     assert_eq!(totals(&w, &time_before).await, 3);
-    for (method, total) in [("hide", 2u64), ("unhide", 3), ("hide", 2)] {
-        let (status, body) = call(
-            &w,
-            Some(AGENT),
-            json!({"method":method,"reference":reference}),
-        )
-        .await;
+    let mut moved_at = vec![];
+    for (method, total) in [("archive", 2u64), ("restore", 3), ("archive", 2)] {
+        let start = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
+            .await
+            .unwrap();
+        let (status, body) =
+            call(&w, Some(AGENT), json!({"method":method,"target":reference})).await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["outcome"], "ok", "{body}");
         let position = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(position, before + snapshots.len() as i64);
+        assert!(position > start, "each move takes a position");
+        moved_at.push(start + 1);
         assert_eq!(totals(&w, "events").await, total);
         for (question, expected) in &snapshots {
             assert_eq!(totals(&w, question).await, *expected, "{question}");
@@ -51,7 +53,7 @@ async fn explicit_historical_api_views_survive_repeated_hide_and_unhide(
         assert_eq!(
             totals(&w, &time_before).await,
             3,
-            "time before hide stays complete"
+            "time before the first archive stays complete"
         );
         let current_time: time::OffsetDateTime = sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&w.reads)
@@ -66,11 +68,13 @@ async fn explicit_historical_api_views_survive_repeated_hide_and_unhide(
         let archived = format!("archive as of seq {position}");
         assert_eq!(
             totals(&w, &archived).await,
-            if method == "hide" { 1 } else { 0 }
+            if method == "archive" { 1 } else { 0 }
         );
     }
-    assert_eq!(totals(&w, "archive as of seq 4").await, 1);
-    assert_eq!(totals(&w, "archive as of seq 5").await, 0);
+    let archived_at = format!("archive as of seq {}", moved_at[0]);
+    assert_eq!(totals(&w, &archived_at).await, 1);
+    let restored_at = format!("archive as of seq {}", moved_at[1]);
+    assert_eq!(totals(&w, &restored_at).await, 0);
     sqlx::query("DELETE FROM core.commit_log")
         .execute(&w.reads)
         .await
@@ -80,5 +84,6 @@ async fn explicit_historical_api_views_survive_repeated_hide_and_unhide(
         3,
         "hot-log pruning must not erase time truth"
     );
-    assert_eq!(totals(&w, "events as of seq 4").await, 2);
+    let after_first_archive = format!("events as of seq {}", moved_at[0]);
+    assert_eq!(totals(&w, &after_first_archive).await, 2);
 }

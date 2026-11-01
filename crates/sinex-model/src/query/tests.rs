@@ -151,7 +151,7 @@ fn unknown_fields_are_refused_listing_the_fields() {
 
 #[devkit::test]
 fn closed_sets_refuse_outside_values_naming_where_they_belong() {
-    let e = err("runs where status = hide");
+    let e = err("runs where status = newer_reading");
     assert!(e.message.contains("archive.reason"), "{e}");
 }
 

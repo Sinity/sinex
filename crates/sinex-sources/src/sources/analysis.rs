@@ -12,7 +12,6 @@ use sinex_source_core::{Parser, RecordError};
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "analysis.request",
     driver: Driver::ApiRequest,
-    excisable: false,
     purpose: "canonical analysis questions",
     class: Class::Open,
     parser: "analysis-request",

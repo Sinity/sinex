@@ -292,10 +292,10 @@ async fn known_recorded_binding_survives_current_authority_loss_without_permitti
 }
 
 #[devkit::test]
-async fn negative_legacy_or_excised_material_receipts_remain_unknown(db: devkit::pg::TestDatabase) {
+async fn negative_or_legacy_material_receipts_remain_unknown(db: devkit::pg::TestDatabase) {
     let (h, _, _, claim) = prepared(db).await;
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    for kind in ["excised", "partially_excised", "conflict", "content"] {
+    for kind in ["conflict", "content"] {
         sqlx::query("UPDATE core.ingress_frames SET refusal='synthetic retained negative',outcome=jsonb_set(outcome,'{refusal_kind}',to_jsonb($2::text)) WHERE producer='kitty' AND frame=$1")
             .bind(&claim.frame).bind(kind).execute(&mut conn).await.unwrap();
         assert!(
@@ -317,21 +317,9 @@ async fn negative_legacy_or_excised_material_receipts_remain_unknown(db: devkit:
 }
 
 #[devkit::test]
-async fn actually_excised_recorded_material_has_no_continuation_binding(
-    db: devkit::pg::TestDatabase,
-) {
+async fn a_tombstoned_recorded_material_has_no_continuation_binding(db: devkit::pg::TestDatabase) {
     let (h, _, _, claim) = prepared(db).await;
-    let result = h
-        .requests
-        .excise(
-            "kitty",
-            &Excise {
-                materials: vec![claim.material],
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(result.refusal, None);
+    h.tombstone_materials(&[claim.material]).await;
     assert!(matches!(
         lookup(&h, "kitty", claim).await,
         RecordedContinuation::Unknown { .. }

@@ -16,14 +16,14 @@ def run(psql, output_directory, source_root):
     source = (root / "crates/sinex-store/src/commit_log.rs").read_text()
     # Run the exact checked statements from this source revision.
     statements = {}
-    for function in ("record_published", "excised_on_stream", "forget_published"):
+    for function in ("record_published", "tombstoned_on_stream", "forget_published"):
         body = source[source.index("pub async fn " + function):]
         match = re.search(r'r#"(.*?)"#', body, re.S)
         if match:
             sql = match.group(1).replace(' AS "event_id!"', '').replace(' AS "stream_seq!"', '')
         else:
             raise RuntimeError("statement not found: " + function)
-        types = {"record_published": "uuid[], bigint[]", "excised_on_stream": "bigint", "forget_published": "uuid[], bigint[]"}[function]
+        types = {"record_published": "uuid[], bigint[]", "tombstoned_on_stream": "bigint", "forget_published": "uuid[], bigint[]"}[function]
         statements[function] = (types, sql)
 
     def query(sql):
@@ -55,7 +55,7 @@ def run(psql, output_directory, source_root):
         # Both ordered and random identities use the exact event index.
         target = "md5('3850500')::uuid" if overlap else "lpad(to_hex(3850500),32,'0')::uuid"
         query(f"INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) VALUES ({target},'bench.synthetic','bench.event','00000000-0000-0000-0000-000000000001')")
-        types, sql = statements["excised_on_stream"]
+        types, sql = statements["tombstoned_on_stream"]
         lookup = [timed(f"PREPARE lookup({types}) AS {sql}; EXECUTE lookup(1000)") for _ in range(3)]
         # Rewriting uses the same pair equality as the checked store code.
         types, sql = statements["forget_published"]
@@ -73,7 +73,7 @@ def run(psql, output_directory, source_root):
         id_array = 'ARRAY[' + ','.join("'" + value + "'" for value in ids) + ']::uuid[]'
         seq_array = 'ARRAY[' + ','.join(str(i * 3) for i in numbers) + ']::bigint[]'
         query(f"INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) SELECT id,'bench.synthetic','bench.event','00000000-0000-0000-0000-000000000001'::uuid FROM unnest({id_array}) t(id); ANALYZE core.event_tombstones")
-        types, sql = statements['excised_on_stream']
+        types, sql = statements['tombstoned_on_stream']
         batch_lookup = [timed(f'PREPARE lookup({types}) AS {sql}; EXECUTE lookup(1000)') for _ in range(3)]
         for sample in batch_lookup:
             found = {int(line.split('|')[1]) for line in sample['result'].splitlines() if '|' in line}
@@ -85,7 +85,7 @@ def run(psql, output_directory, source_root):
         batch_remaining = int(query('SELECT count(*) FROM core.published'))
         if batch_remaining != 3849999:
             raise RuntimeError(f'wrong pair count after scattered erasures: {batch_remaining}')
-        types, sql = statements['excised_on_stream']
+        types, sql = statements['tombstoned_on_stream']
         empty_lookup = [timed(f'PREPARE lookup({types}) AS {sql}; EXECUTE lookup(1000)') for _ in range(3)]
         if any('|' in sample['result'] for sample in empty_lookup):
             raise RuntimeError('erased pairs were returned again')

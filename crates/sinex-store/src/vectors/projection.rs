@@ -79,7 +79,7 @@ async fn apply_one(conn: &mut PgConnection, id: Uuid, payload: &Value, class: &s
             }),
         )
     };
-    // Excision takes the same table lock and deletes before deleting events.
+    // A tombstone takes the same table lock and deletes before deleting events.
     // Rechecking the event prevents an already-read page resurrecting its vector.
     sqlx::query!(r#"INSERT INTO core.embedding_vectors(embedding_id,target_id,space,dimensions,projected,coverage,reason)
         SELECT e.id,$2,$3,$4,$5::text::vector,$6,$7 FROM core.events e WHERE e.id=$1

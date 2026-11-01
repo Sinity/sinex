@@ -5,18 +5,17 @@
 //! 2. validate configured rules while preserving original payloads;
 //! 3. stage the events with one `COPY`;
 //! 4. classify every staged event in one set-based query against the live side
-//!    tables and the remembered removals: new, repeat, newer, older, hidden, or
-//!    superseded by a newer reading in the same batch;
+//!    tables: new, repeat, newer, older, or superseded by a newer reading in
+//!    the same batch;
 //! 5. allocate one `commit_seq` range for the admitted events;
 //! 6. insert events, commit log and side-table rows, archive replaced readings;
 //! 7. record failures and the source position;
-//! 8. mark dirty keys for keyed derivations whose inputs changed;
-//! 9. apply hide and unhide requests.
+//! 8. mark dirty keys for keyed derivations whose inputs changed.
 //!
 //! A replay's request to archive the readings it re-reads runs first, before
 //! staging, so the new readings are classified against what remains. A
 //! derived batch first drops the outputs whose inputs stopped being live
-//! after the derivation read them (a replay or excision in between).
+//! after the derivation read them (a replay or archive in between).
 //!
 //! The caller commits; events and progress are then durable together.
 use crate::{Result, privacy};
@@ -35,9 +34,9 @@ mod orders;
 mod register;
 mod write;
 
-pub(crate) use archive::remove_live;
-pub(crate) use derived::mark_archived_dirty;
+pub(crate) use archive::{archive_at, position, remove_live, restore_at};
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
+pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty};
 pub use register::native_key;
 pub(crate) use register::{native_keys, recorded};
 
@@ -94,8 +93,6 @@ pub struct Outcome {
     pub replaced: usize,
     /// Older readings of a record that has a newer live reading: suppressed.
     pub older: usize,
-    /// Readings of hidden records: suppressed.
-    pub hidden: usize,
     /// Superseded by a newer reading of the same record in this batch.
     pub superseded: usize,
     /// Derived outputs dropped because an input they cite stopped being live
@@ -120,7 +117,6 @@ impl std::ops::AddAssign<&Outcome> for Outcome {
         self.repeats += other.repeats;
         self.replaced += other.replaced;
         self.older += other.older;
-        self.hidden += other.hidden;
         self.superseded += other.superseded;
         self.superseded_input += other.superseded_input;
         self.failures += other.failures;
@@ -386,9 +382,6 @@ pub(crate) async fn admit(
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {
         write::save_position(conn, progress).await?;
-    }
-    for request in &batch.archive {
-        outcome.dirty_keys += archive::request(conn, request, keys).await?;
     }
     if let BatchKind::Ingress(frame) = &batch.kind
         && !frame.frame.is_empty()

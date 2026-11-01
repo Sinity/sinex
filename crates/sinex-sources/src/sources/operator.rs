@@ -20,7 +20,6 @@ use std::path::PathBuf;
 pub const RAW_LOG: SourceSpec = SourceSpec {
     name: "operator.raw-log",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "the operator's quick notes, as primary data",
     class: Class::Open,
     parser: "operator-raw-log",
@@ -147,7 +146,6 @@ const fn steering_spec(parser: &'static str) -> SourceSpec {
     SourceSpec {
         name: "operator.steering",
         driver: Driver::SqliteRows,
-        excisable: false,
         purpose: "commitments, forecasts and reviews the operator keeps",
         class: Class::Open,
         parser,

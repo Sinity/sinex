@@ -2,8 +2,8 @@
 //! [`changes_page`] is the canonical ordered feed, including completion markers
 //! for scalar checkpoints and named gaps for unknown historical metadata.
 //! [`after`] is the event-only projection used by internal event derivations.
-//! Excision retains positions and payload-free lifecycle history; exact stream
-//! placements are tracked per native stream incarnation for physical erasure.
+//! A tombstone retains positions and payload-free lifecycle history; exact
+//! stream placements are tracked per native stream incarnation for erasure.
 use crate::{Error, Result};
 use serde_json::Value;
 use sinex_model::{
@@ -91,7 +91,7 @@ pub struct Committed {
 #[derive(Clone, Debug, Default)]
 pub struct Page {
     pub events: Vec<Committed>,
-    /// The last commit position this page covered, including excised events
+    /// The last commit position this page covered, including tombstoned events
     /// it skipped; `None` when there was nothing after the position.
     pub up_to: Option<i64>,
 }
@@ -141,7 +141,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             continue;
         };
         page.up_to = Some(position);
-        // Excised: the content is gone, the position is not.
+        // Tombstoned: the content is gone, the position is not.
         let (Some(id), Some(event_type), Some(source), Some(run_id)) =
             (row.id, row.event_type, row.source, row.run_id)
         else {
@@ -255,8 +255,7 @@ fn from_db<T: serde::de::DeserializeOwned>(text: &str) -> Result<T> {
         .map_err(|e| Error::Invalid(format!("stored value {text:?}: {e}")))
 }
 
-/// A reading taken out of the live set: replaced by a newer reading, hidden or
-/// excised.
+/// A reading taken out of or put back into the live set.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArchiveChange {
     pub change_seq: i64,
@@ -427,7 +426,7 @@ pub struct ProducerMaterial {
 }
 
 /// Up to `limit` materials `producer` registered after the frame numbered
-/// `after`, that Sinex still holds (not excised), in the order their frames
+/// `after`, that Sinex still holds (not tombstoned), in the order their frames
 /// were recorded.
 pub async fn producer_materials(
     conn: &mut PgConnection,
@@ -445,8 +444,7 @@ pub async fn producer_materials(
            JOIN raw.inputs i ON i.id = m.input_id
            JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
            WHERE f.producer = $1 AND f.refusal IS NULL AND f.number > $2
-             AND NOT EXISTS (SELECT 1 FROM core.operations o
-                             WHERE o.kind = 'excise' AND o.scope->'materials' ? m.id::text)
+             AND m.status <> 'tombstoned'
            ORDER BY f.number LIMIT $3"#,
         producer,
         after,
@@ -487,31 +485,31 @@ pub async fn record_published_in(
     Ok(())
 }
 
-/// An excised event whose message is still on the confirmed stream.
+/// A tombstoned event whose message is still on the confirmed stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExcisedOnStream {
+pub struct TombstonedOnStream {
     pub commit_seq: Option<i64>,
     pub event_id: Uuid,
     pub stream_seq: i64,
     pub operation_id: Uuid,
 }
 
-/// Up to `limit` excised events whose messages are still on the stream.
+/// Up to `limit` tombstoned events whose messages are still on the stream.
 #[cfg(test)]
-pub async fn excised_on_stream(
+pub async fn tombstoned_on_stream(
     conn: &mut PgConnection,
     limit: i64,
-) -> Result<Vec<ExcisedOnStream>> {
-    excised_on_stream_in(conn, "", limit).await
+) -> Result<Vec<TombstonedOnStream>> {
+    tombstoned_on_stream_in(conn, "", limit).await
 }
 
-pub async fn excised_on_stream_in(
+pub async fn tombstoned_on_stream_in(
     conn: &mut PgConnection,
     stream_instance: &str,
     limit: i64,
-) -> Result<Vec<ExcisedOnStream>> {
+) -> Result<Vec<TombstonedOnStream>> {
     Ok(sqlx::query_as!(
-        ExcisedOnStream,
+        TombstonedOnStream,
         r#"SELECT p.event_id, p.stream_seq, t.operation_id,t.commit_seq
            FROM core.event_tombstones t
            JOIN core.published p ON p.event_id = t.event_id
@@ -614,8 +612,7 @@ pub async fn recorded_material(
     let row = sqlx::query!(r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,
         x.descriptor AS "material_extent?",m.blob AS "blob?",m.length AS "length?",
         f.source_name,f.source_version,f.source_fingerprint,f.family,f.write_kind_prefixes,f.producer_host,
-        (m.id IS NOT NULL AND x.descriptor IS NOT NULL AND NOT EXISTS (
-            SELECT 1 FROM core.operations o WHERE o.kind='excise' AND o.scope->'materials' ? m.id::text)) AS "available!"
+        (m.id IS NOT NULL AND x.descriptor IS NOT NULL AND m.status <> 'tombstoned') AS "available!"
         FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
         LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
         WHERE f.producer=$1 AND f.frame=$2"#,producer,frame)

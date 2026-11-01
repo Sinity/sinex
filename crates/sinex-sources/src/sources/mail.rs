@@ -33,7 +33,6 @@ use std::path::PathBuf;
 pub const MBOX: SourceSpec = SourceSpec {
     name: "communication.mbox",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -48,7 +47,6 @@ pub const MBOX: SourceSpec = SourceSpec {
 pub const MAILDIR: SourceSpec = SourceSpec {
     name: "communication.maildir",
     driver: Driver::DirSnapshot,
-    excisable: false,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",

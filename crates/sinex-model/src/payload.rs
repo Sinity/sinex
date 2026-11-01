@@ -60,8 +60,8 @@ impl EquivalenceKey {
 
 /// Stored bytes an event's payload names and owns beyond its material: a
 /// library copy's file, kept in the content store by the scan. The
-/// event holds the only reference to them, so excising the event deletes the
-/// bytes once no other event or material refers to them.
+/// event holds the only reference to them, so tombstoning the event removes
+/// the bytes once no other event or material holds them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct OwnedBlob {
     /// The content store's name, `blake3:<hex>`.

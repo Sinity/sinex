@@ -265,8 +265,8 @@ fn mbox(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
     }
 }
 
-/// Framers for a source's stored plain-file parts, so a replay or an
-/// excision finds the records the driver read. (A compressed export's records
+/// Framers for a source's stored plain-file parts, so a replay finds the
+/// records the driver read. (A compressed export's records
 /// are in its decoded member stream, which these do not decode.)
 pub fn frame_lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     Framing::Lines.frame(bytes, true)

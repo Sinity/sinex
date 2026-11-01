@@ -168,14 +168,6 @@ fn check_receipt_for(
             kind: sinex_model::FrameRefusal::Conflict,
         });
     }
-    if receipt.content_hash().is_none()
-        && matches!(
-            receipt.refusal_kind(),
-            Some(sinex_model::FrameRefusal::Excised | sinex_model::FrameRefusal::PartiallyExcised)
-        )
-    {
-        return Ok(receipt);
-    }
     if receipt.content_hash() != Some(expected.as_str()) {
         if receipt.number.is_none_or(|number| number <= 0) {
             return Err(SubmitError::NoReceipt(frame.frame().into()));

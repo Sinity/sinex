@@ -32,8 +32,25 @@ impl Description {
         }
     }
 
-    pub(crate) fn before_output_ordinals() -> Self {
+    /// The description just before the lifecycle upgrade.
+    pub(crate) fn before_lifecycle() -> Self {
         let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| crate::lifecycle::before(statement));
+        description.tables.extend(crate::lifecycle::removed());
+        for statement in description
+            .tables
+            .iter_mut()
+            .chain(description.after_tables.iter_mut())
+        {
+            crate::lifecycle::previous(statement);
+        }
+        description
+    }
+
+    pub(crate) fn before_output_ordinals() -> Self {
+        let mut description = Self::before_lifecycle();
         description
             .tables
             .retain(|statement| crate::model_calls::before(statement));
@@ -90,7 +107,7 @@ impl Description {
     /// Type and range changes come from the same declarations as fresh tables.
     pub(crate) fn output_ordinal_changes() -> Vec<String> {
         let before = Self::before_output_ordinals();
-        let after = Self::current();
+        let after = Self::before_lifecycle();
         let mut changes = Vec::new();
         for (name, column) in [
             ("core.events", "output_index"),

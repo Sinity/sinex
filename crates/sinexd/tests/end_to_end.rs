@@ -1,5 +1,5 @@
 //! Whole-system rules checked end to end through the real `sinexd` binary on
-//! small generated inputs: backfill, replay, hide, excise. Run through `xtask
+//! small generated inputs: backfill, replay, archive, tombstone. Run through `xtask
 //! test`, which provides the development database.
 mod support;
 
@@ -115,6 +115,24 @@ impl Target {
         let mut all = vec!["admin"];
         all.extend_from_slice(args);
         finish(&mut self.sinexd(&all))
+    }
+
+    /// A lifecycle command (`archive`, `restore`, `tombstone`, ...) with its
+    /// arguments after the connection options, since a scope given as an
+    /// event reference takes the rest of the line.
+    fn lifecycle(&self, verb: &str, args: &[&str]) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
+        c.args(["admin", verb, "--database", &self.url, "--store"])
+            .arg(&self.store)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        c
+    }
+
+    /// A lifecycle command that succeeds, and its answer.
+    fn lifecycle_done(&self, verb: &str, args: &[&str]) -> serde_json::Value {
+        serde_json::from_str(&finish(&mut self.lifecycle(verb, args))).unwrap()
     }
 
     /// A query through the public command, its text last (it takes the rest
@@ -605,8 +623,15 @@ async fn rows_that_change_are_read_to_their_final_values() {
     .await
     .unwrap();
     assert_eq!(removed.get::<String, _>("s"), "removed");
-    let excluded = scalar(&mut c, "SELECT count(*) FROM core.hidden_records").await;
-    assert_eq!(excluded, 0, "a source deletion is not an exclusion");
+    let archived = scalar(
+        &mut c,
+        "SELECT count(*) FROM audit.archived WHERE reason = 'archive'",
+    )
+    .await;
+    assert_eq!(
+        archived, 0,
+        "a source deletion is a removed reading, not an archive"
+    );
     consistent(&mut c).await;
 }
 
@@ -654,10 +679,13 @@ async fn repeated_commands_are_kept() {
     );
 }
 
-/// A hidden record stays hidden across replay and reread of its native input.
-/// An independent copy remains visible; unhide restores only the original input.
+/// Archive is not hiding: a replay of the native input reads an archived
+/// record again and admits a new live reading. Restoring the archived reading
+/// is refused while that one is live, and succeeds once it is archived.
+/// Rereading and copying inputs keep their own root sequences, and the last
+/// replay journals exactly the original input's roots.
 #[devkit::test]
-async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
+async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let path = dir.0.join("a/history.db");
@@ -665,50 +693,59 @@ async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
     atuin_db(&path, &(0..10).map(atuin_row).collect::<Vec<_>>());
     t.backfill(None, Some(&path));
     let mut c = t.connect().await;
-    let id: uuid::Uuid = sqlx::query_scalar(
-        "SELECT e.id FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id WHERE e.payload->>'native_id' = 'a000003'",
-    )
-    .fetch_one(&mut c)
-    .await
-    .unwrap();
+    let id = live_a3(&mut c, &path).await;
     let initial_markers = support::marker_count(&mut c).await;
-    t.admin(&["hide", &id.to_string()]);
+    let archived = t.lifecycle_done("archive", &[&id.to_string()]);
     assert_eq!(
-        support::marker_count(&mut c).await,
-        initial_markers + 1,
-        "hide has one lifecycle position"
+        (&archived["act"], &archived["result"]),
+        (&serde_json::json!("archive"), &serde_json::json!("ok")),
+        "{archived}"
     );
     assert_eq!(visible_a3(&mut c, &path).await, 0);
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
     assert_eq!(
-        support::marker_count(&mut c).await,
-        initial_markers + 2,
-        "the first replay reads one retained root sequence"
+        visible_a3(&mut c, &path).await,
+        1,
+        "replay reads the archived record again as a new live reading"
     );
-    assert_eq!(visible_a3(&mut c, &path).await, 0, "replay brought it back");
+    let reread = live_a3(&mut c, &path).await;
+    assert_ne!(reread, id);
+    let refused = t.lifecycle("restore", &[&id.to_string()]).output().unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!refused.status.success(), "{said}");
+    assert!(said.contains("is live; archive it first"), "{said}");
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM core.operations WHERE kind = 'restore'"
+        )
+        .await,
+        0,
+        "a refused restore records nothing"
+    );
     sqlx::query("DELETE FROM raw.positions")
         .execute(&mut c)
         .await
         .unwrap();
     t.backfill(None, Some(&path));
     assert_eq!(
-        visible_a3(&mut c, &path).await,
-        0,
-        "rereading the same native input cannot lift its hidden key"
+        live_a3(&mut c, &path).await,
+        reread,
+        "rereading the same native input repeats the live reading"
     );
     let copy = dir.0.join("b/history.db");
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
     std::fs::copy(&path, &copy).unwrap();
     t.backfill(None, Some(&copy));
-    assert_eq!(
-        visible_a3(&mut c, &path).await,
-        0,
-        "copying another input cannot lift the original hidden key"
-    );
+    assert_eq!(visible_a3(&mut c, &path).await, 1);
     assert_eq!(
         visible_a3(&mut c, &copy).await,
         1,
-        "hide authority does not cross native input scope"
+        "an independent copy has its own live reading"
     );
     let retained: Vec<(uuid::Uuid, String)> = sqlx::query_as(
         "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=ANY($1) ORDER BY m.input_id"
@@ -719,11 +756,6 @@ async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
         retained[0].1, retained[1].1,
         "independent inputs retain byte-identical row materials"
     );
-    assert_eq!(
-        support::marker_count(&mut c).await,
-        initial_markers + 2,
-        "rereading and copying inputs allocate no lifecycle markers"
-    );
     let roots: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1 AND m.previous_part_id IS NULL ORDER BY m.id"
     ).bind(atuin_binding(&path)).fetch_all(&mut c).await.unwrap();
@@ -732,13 +764,15 @@ async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
         2,
         "the forced reread retains a second independent root sequence for the same native input"
     );
-    t.admin(&["unhide", &id.to_string()]);
-    let before_replay = support::marker_count(&mut c).await;
+    t.lifecycle_done("archive", &[&reread.to_string()]);
+    let restored = t.lifecycle_done("restore", &[&id.to_string()]);
+    assert_eq!(restored["result"], "ok", "{restored}");
     assert_eq!(
-        before_replay,
-        initial_markers + 3,
-        "unhide has one lifecycle position"
+        live_a3(&mut c, &path).await,
+        id,
+        "the original reading is live again"
     );
+    let before_replay = support::marker_count(&mut c).await;
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
     assert_eq!(visible_a3(&mut c, &path).await, 1);
     assert_eq!(visible_a3(&mut c, &copy).await, 1);
@@ -772,23 +806,41 @@ async fn hide_and_replay_follow_native_input_scope_across_independent_copies() {
         "each replay root, including an empty live scope, has one lifecycle position"
     );
     let reasons: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT reason,count(DISTINCT commit_seq) FROM audit.archive_changes WHERE reason IN ('hide','replay','unhide') GROUP BY reason ORDER BY reason"
+        "SELECT reason,count(DISTINCT commit_seq) FROM audit.archive_changes WHERE reason IN ('archive','replay','restore') GROUP BY reason ORDER BY reason"
     ).fetch_all(&mut c).await.unwrap();
     assert_eq!(
         reasons,
         vec![
-            ("hide".into(), 1),
+            ("archive".into(), 2),
             ("replay".into(), 2),
-            ("unhide".into(), 1)
+            ("restore".into(), 1)
         ],
-        "typed history identifies hide, both nonempty replay scopes and unhide; the last replay's empty second scope still retains its marker"
+        "typed history identifies both archives, both nonempty replay scopes and the restore"
     );
+    let batches = scalar(
+        &mut c,
+        "SELECT coalesce(sum((progress->>'batches')::bigint), 0)::bigint FROM core.operations WHERE kind IN ('archive','restore')",
+    )
+    .await;
     assert_eq!(
         support::marker_count(&mut c).await - initial_markers,
-        2 + journals.iter().map(|(_, count)| *count).sum::<i64>(),
-        "markers cover hide/unhide and every journaled replay sequence"
+        batches + journals.iter().map(|(_, count)| *count).sum::<i64>(),
+        "markers cover every lifecycle batch and every journaled replay sequence"
     );
     consistent(&mut c).await;
+}
+
+/// The live reading of the record `a000003` read through `path`.
+async fn live_a3(c: &mut PgConnection, path: &Path) -> uuid::Uuid {
+    sqlx::query_scalar(
+        "SELECT e.id FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
+         JOIN raw.materials m ON m.id=e.material_id JOIN raw.inputs i ON i.id=m.input_id
+         WHERE e.payload->>'native_id'='a000003' AND i.binding=$1",
+    )
+    .bind(atuin_binding(path))
+    .fetch_one(c)
+    .await
+    .unwrap()
 }
 
 async fn visible_a3(c: &mut PgConnection, path: &Path) -> i64 {
@@ -803,8 +855,8 @@ async fn visible_a3(c: &mut PgConnection, path: &Path) -> i64 {
     .unwrap()
 }
 
-/// A clipboard spool holding one copy of each of `texts`: a source whose
-/// records can be excised.
+/// A clipboard spool holding one copy of each of `texts`, each spool its own
+/// material.
 fn clipboard_spool(dir: &Dir, name: &str, texts: &[&str]) -> PathBuf {
     use sinex_source_core::drivers::live_stream;
     use sinex_sources::sources::clipboard;
@@ -818,10 +870,10 @@ fn clipboard_spool(dir: &Dir, name: &str, texts: &[&str]) -> PathBuf {
     segment.parent().unwrap().to_path_buf()
 }
 
-/// Dry runs change nothing, and bytes two materials share survive the excision
-/// of one of them.
+/// Comparisons change nothing and name the cascade the operation then moves,
+/// and bytes two materials share survive the tombstone of one of them.
 #[devkit::test]
-async fn dry_runs_change_nothing_and_shared_bytes_survive() {
+async fn comparisons_change_nothing_and_shared_bytes_survive_a_material_tombstone() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let texts = ["synthetic one"];
@@ -845,39 +897,68 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     assert_eq!(shared.len(), 1, "both spools stored the same bytes once");
     let before = live(&mut c).await;
     let events = scalar(&mut c, "SELECT count(*) FROM core.events").await;
-    let victim: uuid::Uuid = sqlx::query_scalar(
-        "SELECT event_id FROM core.live_locations WHERE event_type = 'clipboard.copied' ORDER BY event_id LIMIT 1",
+    let (victim, material): (uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT event_id, material_id FROM core.live_locations WHERE event_type = 'clipboard.copied' ORDER BY event_id LIMIT 1",
     )
     .fetch_one(&mut c)
     .await
     .unwrap();
-    let planned = t.admin(&["excise", &victim.to_string(), "--dry-run"]);
+    let material = material.to_string();
+    let changes = "SELECT (SELECT count(*) FROM audit.archive_changes)
+                        + (SELECT count(*) FROM core.operations)
+                        + (SELECT count(*) FROM raw.material_changes)";
+    let recorded = scalar(&mut c, changes).await;
+
+    let compared = t.lifecycle_done("archive", &["--material", &material, "--compare"]);
+    assert_eq!(compared["compare_only"], true, "{compared}");
     assert_eq!(
         live(&mut c).await,
         before,
-        "dry runs keep the live readings"
+        "a comparison keeps the live readings"
     );
     assert_eq!(
-        scalar(&mut c, "SELECT count(*) FROM core.events").await,
-        events
+        scalar(&mut c, changes).await,
+        recorded,
+        "a comparison records nothing"
+    );
+    let archived = t.lifecycle_done("archive", &["--material", &material]);
+    assert_eq!(archived["cascade"], compared["cascade"], "{archived}");
+    assert_eq!(archived["cascade"]["materials"], 1);
+    assert!(
+        !live(&mut c)
+            .await
+            .values()
+            .any(|reading| reading.id == victim),
+        "archiving the material archives what was read from it"
     );
 
-    let done = t.admin(&["excise", &victim.to_string()]);
-    let said = |text: &str, field: &str| -> String {
-        let reply: serde_json::Value = serde_json::from_str(text).unwrap();
-        reply[field].as_str().unwrap().to_owned()
-    };
-    let (planned, done) = (said(&planned, "would_excise"), said(&done, "excised"));
-    assert!(
-        done.strip_prefix("excised ")
-            .is_some_and(|counts| counts.starts_with(&format!("{planned} |"))),
-        "the dry run's counts are the run's: {planned} / {done}"
+    let compared = t.lifecycle_done("tombstone", &["--material", &material, "--compare"]);
+    assert_eq!(
+        scalar(&mut c, "SELECT count(*) FROM core.events").await,
+        events,
+        "a comparison tombstones nothing"
     );
-    let still: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE blob = $1")
-        .bind(&shared[0])
-        .fetch_one(&mut c)
-        .await
-        .unwrap();
+    let done = t.lifecycle_done("tombstone", &["--material", &material]);
+    assert_eq!(done["result"], "ok", "{done}");
+    for field in ["tombstoned", "materials", "bytes_removed", "bytes_kept"] {
+        assert_eq!(
+            done["cascade"][field], compared["cascade"][field],
+            "the comparison's {field} is the operation's"
+        );
+    }
+    assert_eq!(done["cascade"]["bytes_removed"], 0);
+    assert_eq!(
+        done["cascade"]["bytes_kept"],
+        serde_json::json!([material]),
+        "the tombstoned material's bytes are held by the other material"
+    );
+    let still: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM raw.materials WHERE blob = $1 AND status <> 'tombstoned'",
+    )
+    .bind(&shared[0])
+    .fetch_one(&mut c)
+    .await
+    .unwrap();
     assert_eq!(
         still, 1,
         "the other spool's material keeps the shared bytes"
@@ -895,10 +976,12 @@ async fn dry_runs_change_nothing_and_shared_bytes_survive() {
     consistent(&mut c).await;
 }
 
-/// Records of a source that reads its input again are refused, and nothing
-/// changes.
+/// Tombstone takes only archived readings, of any source: a live shell
+/// history record is refused and nothing changes; archived, it becomes a
+/// skeleton, and a replay of its live material admits a new live reading of
+/// the same record.
 #[devkit::test]
-async fn excision_of_a_shell_history_record_is_refused() {
+async fn a_tombstoned_shell_history_record_is_read_again_by_replay() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let zsh = dir.file("zsh", small_zsh().as_bytes());
@@ -912,7 +995,7 @@ async fn excision_of_a_shell_history_record_is_refused() {
     .await
     .unwrap();
     let out = t
-        .sinexd(&["admin", "excise", &victim.to_string()])
+        .lifecycle("tombstone", &[&victim.to_string()])
         .output()
         .unwrap();
     let said = format!(
@@ -920,19 +1003,57 @@ async fn excision_of_a_shell_history_record_is_refused() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        said.contains("records of terminal.zsh-history cannot be excised"),
-        "{said}"
-    );
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("live; archive it first"), "{said}");
     assert_eq!(live(&mut c).await, before);
     assert_eq!(
         scalar(
             &mut c,
-            "SELECT count(*) FROM core.operations WHERE kind = 'excise'"
+            "SELECT count(*) FROM core.operations WHERE kind = 'tombstone'"
         )
         .await,
         0
     );
+
+    t.lifecycle_done("archive", &[&victim.to_string()]);
+    let done = t.lifecycle_done("tombstone", &[&victim.to_string()]);
+    assert_eq!(
+        done["cascade"]["tombstoned"]["command.imported"], 1,
+        "{done}"
+    );
+    let skeleton: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.event_tombstones WHERE event_id = $1")
+            .bind(victim)
+            .fetch_one(&mut c)
+            .await
+            .unwrap();
+    assert_eq!(skeleton, 1);
+    let refused = t
+        .lifecycle("restore", &[&victim.to_string()])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "nothing restores a tombstone");
+
+    t.admin(&["replay", "--binding", &zsh_binding(&zsh)]);
+    let after = live(&mut c).await;
+    assert_eq!(
+        after.keys().collect::<Vec<_>>(),
+        before.keys().collect::<Vec<_>>(),
+        "every record has a live reading again"
+    );
+    for (key, reading) in &after {
+        let earlier = &before[key];
+        assert_eq!(
+            (&reading.payload, &reading.ts_orig, &reading.hash),
+            (&earlier.payload, &earlier.ts_orig, &earlier.hash),
+            "{key} reads back the same record"
+        );
+    }
+    assert!(
+        !after.values().any(|reading| reading.id == victim),
+        "the tombstoned record's new reading has a new identity"
+    );
+    consistent(&mut c).await;
 }
 
 /// One writer per database: a second writer is refused while the first holds

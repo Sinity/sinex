@@ -1,10 +1,12 @@
 use super::*;
 use crate::writer::{self, Priority, WriterHandle};
 use serde_json::json;
+use sinex_model::lifecycle::{Act, Scope};
 use sinex_model::{
     Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId, Timestamp, event_types::CommandImported,
 };
+use sinex_store::lifecycle;
 use std::sync::Arc;
 
 /// The record of `command`, alone in material `n + 1`, started `n` seconds in.
@@ -168,46 +170,51 @@ async fn read_models_get_every_event_once_across_restarts(db: devkit::pg::TestDa
 }
 
 #[devkit::test]
-async fn excised_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
+async fn tombstoned_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
     let mut connection = sinex_store::AdmissionContext::connect(&url).await.unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
-    crate::excision::tests::register(
-        &mut connection,
-        &blobs,
-        &sinex_sources::sources::clipboard::SPEC,
-        MaterialId(uuid::Uuid::from_u128(1)),
-        b"secret\n",
-    )
-    .await;
     let secret = imported("secret", 0);
     let keep = imported("keep", 1);
-    let excise_target = secret.id;
+    let tombstoned = secret.id;
     let keep_id = keep.id;
     let mut tx = connection.begin().await.unwrap();
     tx.admit(&api_batch(vec![secret, keep]), &sinex_store::NoDerivations)
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    crate::excision::tests::excise_directly(
-        &mut connection,
-        &blobs,
-        sinex_store::excision::Target::Event(excise_target),
-    )
-    .await;
+    for act in [Act::Archive, Act::Tombstone] {
+        let scope = Scope::Events {
+            events: vec![tombstoned],
+            query: None,
+        };
+        let op = lifecycle::begin(&mut connection, act, "agent:test", scope)
+            .await
+            .unwrap();
+        let ended = lifecycle::run_on(
+            &mut connection,
+            &op,
+            lifecycle::Progress::default(),
+            64,
+            &sinex_store::NoDerivations,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(ended, lifecycle::Ended::Ok { .. }), "{ended:?}");
+    }
     let mut conn = PgConnection::connect(&url).await.unwrap();
     let page = commit_log::after(&mut conn, 0, 10, i64::MAX).await.unwrap();
     let removed_at: i64 =
         sqlx::query_scalar("SELECT commit_seq FROM core.event_tombstones WHERE event_id=$1")
-            .bind(excise_target.0)
+            .bind(tombstoned.0)
             .fetch_one(&mut conn)
             .await
             .unwrap();
+    let latest = sinex_store::query::current_seq(&mut conn).await.unwrap();
+    assert!(removed_at <= latest);
     assert_eq!(
         page.up_to,
-        Some(removed_at),
-        "the event reader covers the excision lifecycle position even though its removed payload is absent"
+        Some(latest),
+        "the event reader covers the tombstone's lifecycle positions even though its removed payload is absent"
     );
     assert_eq!(page.events.len(), 1);
     assert_eq!(page.events[0].id, keep_id.0);

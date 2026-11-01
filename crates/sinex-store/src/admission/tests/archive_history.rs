@@ -1,20 +1,35 @@
 use super::*;
+use crate::lifecycle::{self, Operation, Step};
 use crate::{commit_log, read_models};
+use sinex_model::lifecycle::{Act, Scope};
 
-fn action(target: EventId, hide: bool) -> Batch {
-    let mut change = batch(vec![]);
-    change.archive.push(if hide {
-        ArchiveRequest::Hide {
-            target,
-            operation: OperationId::new(),
-        }
-    } else {
-        ArchiveRequest::Unhide {
-            target,
-            operation: OperationId::new(),
-        }
-    });
-    change
+async fn operation(conn: &mut PgConnection, act: Act, target: EventId) -> Operation {
+    lifecycle::begin(
+        conn,
+        act,
+        "test",
+        Scope::Events {
+            events: vec![target],
+            query: None,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+/// One batch of `op` inside the caller's transaction.
+async fn first_batch(conn: &mut PgConnection, op: &Operation) {
+    let step = lifecycle::step(conn, op, Default::default(), 16, &NoDerivations)
+        .await
+        .unwrap();
+    assert!(matches!(step, Step::Moved { .. }), "{step:?}");
+}
+
+async fn operations(conn: &mut PgConnection) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM core.operations")
+        .fetch_one(conn)
+        .await
+        .unwrap()
 }
 
 async fn visible(conn: &mut PgConnection, position: i64) -> i64 {
@@ -29,7 +44,7 @@ async fn visible(conn: &mut PgConnection, position: i64) -> i64 {
 }
 
 #[devkit::test]
-async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events(
+async fn archive_history_preserves_archive_restore_archive_intervals_without_new_events(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -43,34 +58,37 @@ async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events
         .await
         .unwrap();
     assert_eq!(visible(&mut conn, 3).await, 3);
-    for (hide, position, total) in [(true, 4, 2), (false, 5, 3), (true, 6, 2)] {
-        let out = admit_one(&mut conn, &action(target, hide)).await;
-        assert_eq!(out.admitted, 0);
-        assert_eq!(out.commit_seq, None, "event admission range stays absent");
-        assert_eq!(commit_log::latest(&mut conn).await.unwrap(), position);
+    let mut moved_at = vec![];
+    for (act, total) in [(Act::Archive, 2), (Act::Restore, 3), (Act::Archive, 2)] {
+        let start = commit_log::latest(&mut conn).await.unwrap();
+        let ended = lifecycle::move_events(&mut conn, act, vec![target], &NoDerivations).await;
+        assert!(matches!(ended, lifecycle::Ended::Ok { .. }), "{ended:?}");
+        let latest = commit_log::latest(&mut conn).await.unwrap();
+        assert!(latest > start, "each move takes a position");
+        moved_at.push(start + 1);
         assert_eq!(
             visible(&mut conn, 3).await,
             3,
-            "before-hide view survives every transition"
+            "the view before the first archive survives every transition"
         );
-        assert_eq!(visible(&mut conn, 4).await, 2);
-        if position >= 5 {
-            assert_eq!(visible(&mut conn, 5).await, 3);
+        assert_eq!(visible(&mut conn, moved_at[0]).await, 2);
+        if let Some(&restored) = moved_at.get(1) {
+            assert_eq!(visible(&mut conn, restored).await, 3);
         }
-        assert_eq!(visible(&mut conn, position).await, total);
-        let page = commit_log::after(&mut conn, position - 1, 10, i64::MAX)
+        assert_eq!(visible(&mut conn, latest).await, total);
+        let page = commit_log::after(&mut conn, start, 10, i64::MAX)
             .await
             .unwrap();
         assert!(
             page.events.is_empty(),
             "metadata must not fabricate an event"
         );
-        assert_eq!(page.up_to, Some(position));
+        assert_eq!(page.up_to, Some(latest));
         assert_eq!(
             read_models::tests::catch_up_search_text(&mut conn)
                 .await
                 .unwrap(),
-            position
+            latest
         );
     }
     let changes = commit_log::changes_after(&mut conn, 0, 10).await.unwrap();
@@ -79,7 +97,11 @@ async fn archive_history_preserves_hide_unhide_hide_intervals_without_new_events
             .iter()
             .map(|n| (n.commit_seq, n.archived))
             .collect::<Vec<_>>(),
-        [(4, true), (5, false), (6, true)]
+        [
+            (moved_at[0], true),
+            (moved_at[1], false),
+            (moved_at[2], true)
+        ]
     );
     assert!(
         changes
@@ -110,12 +132,16 @@ async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDa
         .unwrap();
     let event = keyed("rollback", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
-    for hide in [true, false] {
+    for act in [Act::Archive, Act::Restore] {
         let before = commit_log::latest(&mut conn).await.unwrap();
-        let mut tx = conn.begin().await.unwrap();
-        tx.admit(&action(event.id, hide), &NoDerivations)
+        let changes_before = commit_log::changes_after(&mut conn, 0, 10)
             .await
-            .unwrap();
+            .unwrap()
+            .len();
+        let operations_before = operations(&mut conn).await;
+        let op = operation(&mut conn, act, event.id).await;
+        let mut tx = conn.begin().await.unwrap();
+        first_batch(&mut tx, &op).await;
         assert_eq!(commit_log::latest(&mut tx).await.unwrap(), before + 1);
         tx.rollback().await.unwrap();
         assert_eq!(commit_log::latest(&mut conn).await.unwrap(), before);
@@ -124,14 +150,19 @@ async fn archive_changes_and_positions_roll_back_together(db: devkit::pg::TestDa
                 .await
                 .unwrap()
                 .len(),
-            usize::from(!hide)
+            changes_before
         );
         let page = commit_log::after(&mut conn, before, 10, i64::MAX)
             .await
             .unwrap();
         assert!(page.up_to.is_none());
-        if hide {
-            admit_one(&mut conn, &action(event.id, true)).await;
+        assert_eq!(
+            operations(&mut conn).await,
+            operations_before,
+            "a rolled-back batch records no operation"
+        );
+        if act == Act::Archive {
+            lifecycle::move_events(&mut conn, Act::Archive, vec![event.id], &NoDerivations).await;
         }
     }
 }
@@ -151,10 +182,9 @@ async fn cancelling_an_archive_transaction_does_not_publish_partial_history_or_a
     let (ready, started) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
         let mut connection = crate::AdmissionContext::connect(&url).await.unwrap();
+        let op = operation(&mut connection, Act::Archive, event.id).await;
         let mut tx = connection.begin().await.unwrap();
-        tx.admit(&action(event.id, true), &NoDerivations)
-            .await
-            .unwrap();
+        first_batch(&mut tx, &op).await;
         ready.send(()).unwrap();
         std::future::pending::<()>().await;
     });

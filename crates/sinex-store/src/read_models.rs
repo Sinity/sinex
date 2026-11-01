@@ -35,8 +35,8 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
     if ids.is_empty() {
         return Ok(());
     }
-    // Excision deletes search rows before deleting events. Serialize with that
-    // deletion so an already-read page cannot put excised text back.
+    // A tombstone deletes search rows before deleting events. Serialize with
+    // that deletion so an already-read page cannot put tombstoned text back.
     sqlx::query!("LOCK TABLE core.search_text IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *conn)
         .await?;

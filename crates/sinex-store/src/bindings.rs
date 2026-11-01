@@ -1,5 +1,5 @@
 //! Bindings as stored: each binding's source, input and the settings it is
-//! read with, so a replay or an excision reads its materials exactly as the
+//! read with, so a replay reads its materials exactly as the
 //! capture did. The store keeps them as data; the source framework gives them
 //! meaning.
 use crate::Result;

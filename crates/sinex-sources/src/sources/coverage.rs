@@ -8,7 +8,6 @@ use sinex_source_core::{DeclaredSource, Driver, Parser, RecordContext, RecordErr
 pub const OBSERVATION: SourceSpec = SourceSpec {
     name: "source.observation",
     driver: Driver::ApiRequest,
-    excisable: false,
     purpose: "source read outcomes and coverage evidence",
     class: Class::Open,
     parser: "source-observation",

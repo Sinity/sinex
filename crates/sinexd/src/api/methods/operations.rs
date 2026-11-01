@@ -1,17 +1,36 @@
-//! Operations that change what is stored: excision, replay, recomputing a
-//! derivation, and the crawl.
+//! Operations that change what is stored: the lifecycle (archive, restore,
+//! tombstone, undo, resume), replay, recomputing a derivation, and the crawl.
 use super::*;
+use sinex_model::lifecycle::{Act, Scope};
+
+/// A lifecycle request's scope options, as the command table names them.
+pub(super) struct ScopeArgs {
+    pub target: Option<String>,
+    pub material: Vec<String>,
+    pub run: Option<String>,
+    pub source: Option<String>,
+    pub after: Option<String>,
+    pub before: Option<String>,
+    pub operation: Option<String>,
+}
+
+fn uuid(what: &str, text: &str) -> Result<uuid::Uuid, String> {
+    uuid::Uuid::parse_str(text).map_err(|e| format!("{what} {text}: {e}"))
+}
 
 impl Api {
-    /// Excise the record a citation names, with its bytes.
-    pub(super) async fn excise(
+    /// Archive, restore, tombstone or undo, through the writer in batches.
+    pub(super) async fn lifecycle(
         &self,
         caller: &Caller,
-        reference: Option<&str>,
-        material: Option<&str>,
-        dry_run: bool,
-        actor: &str,
+        act: Act,
+        scope: Result<Scope, Reply>,
+        compare: bool,
     ) -> Reply {
+        let scope = match scope {
+            Ok(scope) => scope,
+            Err(reply) => return reply,
+        };
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");
         };
@@ -19,37 +38,162 @@ impl Api {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
-        let target = match (reference, material) {
-            (Some(reference), None) => {
-                let r = match query::parse_reference(reference) {
-                    Ok(r) => r,
-                    Err(e) => return query_refusal(reference, e),
-                };
-                match sinex_store::query::resolve(&mut conn, &r).await {
-                    Ok(id) => sinex_store::excision::Target::Event(EventId(id)),
-                    Err(e) => return refused(e.to_string()),
-                }
-            }
-            (None, Some(m)) => match uuid::Uuid::parse_str(m) {
-                Ok(m) => sinex_store::excision::Target::Material(sinex_model::MaterialId(m)),
-                Err(e) => return refused(format!("material {m}: {e}")),
-            },
-            _ => return refused("excise needs exactly one of an event reference or --material"),
+        answer(crate::lifecycle::run(&mut conn, writer, act, caller.actor, scope, compare).await)
+    }
+
+    /// Continue an operation from its saved position: a lifecycle operation
+    /// or a replay.
+    pub(super) async fn resume(&self, caller: &Caller, operation: &str) -> Reply {
+        let operation = match uuid("operation", operation) {
+            Ok(id) => OperationId(id),
+            Err(e) => return refused(e),
         };
-        if dry_run {
-            return match crate::excision::plan(&mut conn, &self.blobs, target).await {
-                Ok(plan) => Reply::Ok {
-                    result: json!({ "dry_run": true, "would_excise": crate::excision::describe(&plan) }),
-                },
-                Err(e) => refused(e),
+        let Some(writer) = &self.writer else {
+            return refused("this daemon has no writer; writes go through `sinexd run`");
+        };
+        let mut conn = match self.acquire(caller).await {
+            Ok(c) => c,
+            Err(e) => return refused(e.to_string()),
+        };
+        let kind = match sinex_store::lifecycle::operation_kind(&mut conn, operation).await {
+            Ok(kind) => kind,
+            Err(e) => return refused(e.to_string()),
+        };
+        match kind.as_deref() {
+            None => refused(format!("no operation {}", operation.0)),
+            Some("replay") => {
+                drop(conn);
+                self.replay(
+                    caller,
+                    crate::replay::Options {
+                        scope: crate::replay::Scope::default(),
+                        compare: false,
+                        resume: Some(operation),
+                        actor: caller.actor.to_string(),
+                        unlock: None,
+                    },
+                    false,
+                    false,
+                )
+                .await
+            }
+            Some(_) => answer(crate::lifecycle::resume(&mut conn, writer, operation).await),
+        }
+    }
+
+    /// The one scope a lifecycle request names: an event reference, the
+    /// event rows of a query, materials, a run, a source and time range, or
+    /// an earlier operation. None or several is an error, never everything.
+    pub(super) async fn lifecycle_scope(
+        &self,
+        caller: &Caller,
+        args: ScopeArgs,
+    ) -> Result<Scope, Reply> {
+        let given = [
+            args.target.is_some(),
+            !args.material.is_empty(),
+            args.run.is_some(),
+            args.source.is_some(),
+            args.operation.is_some(),
+        ]
+        .into_iter()
+        .filter(|g| *g)
+        .count();
+        if given != 1 {
+            return Err(refused(
+                "name exactly one scope: a reference or query, --material, --run, --source or --operation",
+            ));
+        }
+        if args.source.is_none() && (args.after.is_some() || args.before.is_some()) {
+            return Err(refused("--after and --before narrow --source"));
+        }
+        if !args.material.is_empty() {
+            return args
+                .material
+                .iter()
+                .map(|m| uuid("material", m).map(sinex_model::MaterialId))
+                .collect::<Result<_, _>>()
+                .map(|materials| Scope::Materials { materials })
+                .map_err(refused);
+        }
+        if let Some(run) = &args.run {
+            return uuid("run", run)
+                .map(|run| Scope::Run { run: RunId(run) })
+                .map_err(refused);
+        }
+        if let Some(operation) = &args.operation {
+            return uuid("operation", operation)
+                .map(|operation| Scope::Operation {
+                    operation: OperationId(operation),
+                })
+                .map_err(refused);
+        }
+        if let Some(source) = args.source {
+            return Ok(Scope::Source {
+                source,
+                after: args
+                    .after
+                    .as_deref()
+                    .map(timestamp)
+                    .transpose()
+                    .map_err(refused)?,
+                before: args
+                    .before
+                    .as_deref()
+                    .map(timestamp)
+                    .transpose()
+                    .map_err(refused)?,
+            });
+        }
+        let target = args.target.expect("one scope was given");
+        let mut conn = self
+            .acquire(caller)
+            .await
+            .map_err(|e| refused(e.to_string()))?;
+        if let Ok(reference) = query::parse_reference(&target) {
+            let id = sinex_store::query::resolve(&mut conn, &reference)
+                .await
+                .map_err(|e| refused(e.to_string()))?;
+            return Ok(Scope::Events {
+                events: vec![EventId(id)],
+                query: None,
+            });
+        }
+        // A query: every event row of its answer, page by page.
+        let ctx = self.context();
+        let mut page = Page::default();
+        let mut events = Vec::new();
+        loop {
+            let answer = match sinex_store::query::run(&mut conn, &target, None, &ctx, &page).await
+            {
+                Ok(answer) => answer,
+                Err(sinex_store::Error::Query(error)) => return Err(query_refusal(&target, error)),
+                Err(e) => return Err(refused(e.to_string())),
             };
+            if !matches!(answer.table.as_str(), "events" | "archive") {
+                return Err(refused(format!(
+                    "the query selects {} rows; a lifecycle scope takes event rows",
+                    answer.table
+                )));
+            }
+            for row in &answer.rows {
+                let id = row
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| refused("the query's rows carry no event id"))?;
+                events.push(EventId(uuid("event", id).map_err(refused)?));
+            }
+            match answer.page.cursor {
+                Some(cursor) => page.cursor = Some(cursor),
+                None => break,
+            }
         }
-        match crate::excision::excise(&mut conn, &self.blobs, writer, target, actor).await {
-            Ok(summary) => Reply::Ok {
-                result: json!({ "excised": summary }),
-            },
-            Err(e) => refused(e),
-        }
+        events.sort_by_key(|e| e.0);
+        events.dedup();
+        Ok(Scope::Events {
+            events,
+            query: Some(target),
+        })
     }
 
     pub(super) async fn replay(
@@ -176,5 +320,16 @@ impl Api {
             },
             Err(e) => refused(e),
         }
+    }
+}
+
+fn answer(result: Result<crate::lifecycle::Answer, String>) -> Reply {
+    match result {
+        Ok(crate::lifecycle::Answer::Done(result)) => Reply::Ok { result },
+        Ok(crate::lifecycle::Answer::Refused(reason)) => refused(reason),
+        Ok(crate::lifecycle::Answer::StoppedEarly(reason, result)) => {
+            Reply::StoppedEarly { reason, result }
+        }
+        Err(e) => refused(e),
     }
 }

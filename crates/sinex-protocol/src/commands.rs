@@ -10,7 +10,7 @@ pub enum Access {
     Read,
     /// Writes attributed to a caller.
     Agent,
-    /// Permanent changes: excision.
+    /// Irreversible changes: tombstoning.
     Operator,
 }
 
@@ -79,6 +79,64 @@ const fn opt(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
         help,
     }
 }
+
+/// What an archive, restore or tombstone acts on. Exactly one scope; an
+/// omitted scope is an error, never everything.
+const LIFECYCLE_SCOPE: &[Arg] = &[
+    pos_opt(
+        "target",
+        ArgKind::Rest,
+        "an event reference, or a query whose event rows are the scope",
+    ),
+    opt("material", ArgKind::List, "a whole material (repeatable)"),
+    opt("run", ArgKind::Text, "every reading one run produced"),
+    opt("source", ArgKind::Text, "one source's readings"),
+    opt(
+        "after",
+        ArgKind::Text,
+        "with --source: readings at or after this time (RFC 3339)",
+    ),
+    opt(
+        "before",
+        ArgKind::Text,
+        "with --source: readings before this time (RFC 3339)",
+    ),
+    opt(
+        "compare",
+        ArgKind::Bool,
+        "show the cascade and what would refuse, and change nothing",
+    ),
+];
+const LIFECYCLE_SCOPE_OR_OPERATION: &[Arg] = &[
+    pos_opt(
+        "target",
+        ArgKind::Rest,
+        "an event reference, or a query whose event rows are the scope",
+    ),
+    opt("material", ArgKind::List, "a whole material (repeatable)"),
+    opt("run", ArgKind::Text, "every reading one run produced"),
+    opt("source", ArgKind::Text, "one source's readings"),
+    opt(
+        "after",
+        ArgKind::Text,
+        "with --source: readings at or after this time (RFC 3339)",
+    ),
+    opt(
+        "before",
+        ArgKind::Text,
+        "with --source: readings before this time (RFC 3339)",
+    ),
+    opt(
+        "operation",
+        ArgKind::Text,
+        "the chains an earlier operation archived",
+    ),
+    opt(
+        "compare",
+        ArgKind::Bool,
+        "show the cascade and what would refuse, and change nothing",
+    ),
+];
 
 const PAGE: Arg = opt("page", ArgKind::Integer, "rows per page (default 50)");
 const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous page");
@@ -447,11 +505,6 @@ pub const COMMANDS: &[Command] = &[
                 "show what the replay would change and keep nothing",
             ),
             opt(
-                "resume",
-                ArgKind::Text,
-                "continue an interrupted replay operation, skipping the part sequences it finished",
-            ),
-            opt(
                 "all",
                 ArgKind::Bool,
                 "list every change, not only the first few of each kind",
@@ -533,37 +586,46 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
-        name: "hide",
-        summary: "Take an event out of views, counts and re-imports; reversible with unhide.",
-        args: &[pos("reference", ArgKind::Reference, "the event")],
+        name: "archive",
+        summary: "Archive readings with their whole live chains: the trash, reversible with restore or undo. Prints the cascade it moved; --compare prints it and moves nothing.",
+        args: LIFECYCLE_SCOPE,
         access: Access::Agent,
         mcp: true,
     },
     Command {
-        name: "unhide",
-        summary: "Put a hidden event back.",
-        args: &[pos("reference", ArgKind::Reference, "the event")],
+        name: "restore",
+        summary: "Bring archived readings back with the chains that left with them. Refused while another reading of the same record is live; archive that one first.",
+        args: LIFECYCLE_SCOPE_OR_OPERATION,
         access: Access::Agent,
         mcp: true,
     },
     Command {
-        name: "excise",
-        summary: "Permanently delete the record an event was read from, with every reading of it and the material holding it, or a whole material. Refused when other records share the material or the source can read a record again.",
-        args: &[
-            pos_opt("reference", ArgKind::Reference, "the event"),
-            opt(
-                "material",
-                ArgKind::Text,
-                "a whole material instead of one event",
-            ),
-            opt(
-                "dry-run",
-                ArgKind::Bool,
-                "report exactly what would be removed, and remove nothing",
-            ),
-        ],
+        name: "tombstone",
+        summary: "Irreversibly drop the payloads of archived readings and their chains, keeping skeletons; a tombstoned material's bytes go when nothing else holds them. Refused for anything live. Use --compare first.",
+        args: LIFECYCLE_SCOPE_OR_OPERATION,
         access: Access::Operator,
         mcp: false,
+    },
+    Command {
+        name: "undo",
+        summary: "Reverse an operation: archive what it made live, then restore what it archived. Undoes archive, restore, replay and undo; a tombstone is irreversible.",
+        args: &[
+            pos("operation", ArgKind::Text, "the operation to reverse"),
+            opt(
+                "compare",
+                ArgKind::Bool,
+                "show what would move and change nothing",
+            ),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "resume",
+        summary: "Continue an operation that stopped early (archive, restore, tombstone, undo or replay) from its saved position.",
+        args: &[pos("operation", ArgKind::Text, "the operation to continue")],
+        access: Access::Agent,
+        mcp: true,
     },
     Command {
         name: "privacy-rules",

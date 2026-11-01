@@ -6,11 +6,11 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 /// A non-event change receives an ordinary writer position, not an Event.
-pub(in crate::admission) async fn position(conn: &mut PgConnection) -> Result<i64> {
+pub(crate) async fn position(conn: &mut PgConnection) -> Result<i64> {
     crate::commit_log::allocate_position(conn).await
 }
 
-pub(in crate::admission) async fn archive_at(
+pub(crate) async fn archive_at(
     conn: &mut PgConnection,
     ids: &[Uuid],
     position: i64,
@@ -44,22 +44,24 @@ pub(in crate::admission) async fn archive_at(
     Ok(())
 }
 
-pub(super) async fn unhide_at(
+/// Take `events` out of the archive at `position`, under `operation`, and
+/// count them live again. Returns the events that were archived.
+pub(crate) async fn restore_at(
     conn: &mut PgConnection,
-    event: Uuid,
+    events: &[Uuid],
     position: i64,
     operation: Uuid,
-) -> Result<bool> {
-    let changed=sqlx::query_scalar!(r#"WITH unhidden AS (
-        DELETE FROM audit.archived WHERE event_id=$1 AND reason='hide' RETURNING event_id),
+) -> Result<Vec<Uuid>> {
+    Ok(sqlx::query_scalar!(r#"WITH restored AS (
+        DELETE FROM audit.archived WHERE event_id = ANY($1) RETURNING event_id),
       changes AS (
         INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason,operation_id)
-        SELECT nextval(pg_get_serial_sequence('audit.archived','change_seq')),event_id,$2,false,'unhide',$3 FROM unhidden),
+        SELECT nextval(pg_get_serial_sequence('audit.archived','change_seq')),event_id,$2,false,'restore',$3 FROM restored),
       counted AS (
-        UPDATE core.source_counts c SET events = c.events + 1
-        FROM core.events e
-        WHERE e.id = $1 AND e.id IN (SELECT event_id FROM unhidden) AND c.source = e.source)
-      SELECT count(*) AS "n!" FROM unhidden"#,event,position,operation)
-      .fetch_one(conn).await?;
-    Ok(changed != 0)
+        UPDATE core.source_counts c SET events = c.events + back.n
+        FROM (SELECT e.source, count(*) AS n FROM core.events e
+              WHERE e.id IN (SELECT event_id FROM restored) GROUP BY e.source) back
+        WHERE c.source = back.source)
+      SELECT event_id AS "event_id!" FROM restored"#,events,position,operation)
+      .fetch_all(conn).await?)
 }

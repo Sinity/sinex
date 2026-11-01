@@ -871,7 +871,6 @@ pub(super) fn summarize_batches(batches: &[Value]) -> Value {
             ("admitted", "admitted"),
             ("repeats", "repeats"),
             ("replaced", "replaced"),
-            ("hidden", "hidden"),
             ("older", "older"),
             ("superseded", "superseded"),
             ("failures", "failures"),

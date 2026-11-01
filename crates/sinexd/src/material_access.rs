@@ -197,7 +197,7 @@ impl MaterialAccess {
         if let Some(sealing) = self.sealing.as_deref() {
             sealing.seal(std::slice::from_mut(batch))?;
             if let (Some(material), BatchKind::Source(progress)) = (stored, &mut batch.kind) {
-                // A stored material's key must not be published after excision.
+                // A stored material's key must not be published after a tombstone.
                 progress.data_keys.retain(|key| key.material != material);
             }
         }

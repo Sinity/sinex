@@ -42,13 +42,13 @@ async fn exact_pairs_survive_gaps_redelivery_and_partial_erasure(db: devkit::pg:
     for id in [a, gap, c] {
         tombstone(&mut conn, id).await;
     }
-    let page = excised_on_stream(&mut conn, 2).await.unwrap();
+    let page = tombstoned_on_stream(&mut conn, 2).await.unwrap();
     let erased: Vec<_> = page.iter().map(|m| (m.event_id, m.stream_seq)).collect();
     assert_eq!(erased, [(c, 5), (a, 7)]);
     forget_published(&mut conn, &erased).await.unwrap();
     forget_published(&mut conn, &erased).await.unwrap();
     assert_eq!(pairs(&mut conn).await, [(a, 19), (b, 2), (c, 12)]);
-    let remaining = excised_on_stream(&mut conn, 10).await.unwrap();
+    let remaining = tombstoned_on_stream(&mut conn, 10).await.unwrap();
     assert_eq!(
         remaining
             .iter()
@@ -60,7 +60,12 @@ async fn exact_pairs_survive_gaps_redelivery_and_partial_erasure(db: devkit::pg:
         .await
         .unwrap();
     assert_eq!(pairs(&mut conn).await, [(b, 2)]);
-    assert!(excised_on_stream(&mut conn, 10).await.unwrap().is_empty());
+    assert!(
+        tombstoned_on_stream(&mut conn, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     forget_published(&mut conn, &[(b, 2)]).await.unwrap();
     assert!(pairs(&mut conn).await.is_empty());
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM core.published")
@@ -112,13 +117,13 @@ async fn duplicate_acknowledgments_are_erased_without_losing_other_copies(
         .await
         .unwrap();
     tombstone(&mut conn, id).await;
-    let page = excised_on_stream(&mut conn, 1).await.unwrap();
+    let page = tombstoned_on_stream(&mut conn, 1).await.unwrap();
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].stream_seq, 1);
     forget_published(&mut conn, &[(id, 1)]).await.unwrap();
     assert_eq!(pairs(&mut conn).await.len(), 3);
     assert_eq!(
-        excised_on_stream(&mut conn, 10).await.unwrap()[0].stream_seq,
+        tombstoned_on_stream(&mut conn, 10).await.unwrap()[0].stream_seq,
         4
     );
 }
@@ -139,7 +144,7 @@ async fn random_identifiers_keep_exact_copies_through_scattered_erasure(
     record_published(&mut conn, &[(id, 3), (id, 3), (id, 30001)])
         .await
         .unwrap();
-    let first = excised_on_stream(&mut conn, 1000).await.unwrap();
+    let first = tombstoned_on_stream(&mut conn, 1000).await.unwrap();
     assert_eq!(first.len(), 1000);
     assert_eq!(first[0].stream_seq, 3);
     let erased: Vec<_> = first
@@ -147,7 +152,7 @@ async fn random_identifiers_keep_exact_copies_through_scattered_erasure(
         .map(|pair| (pair.event_id, pair.stream_seq))
         .collect();
     forget_published(&mut conn, &erased).await.unwrap();
-    let remaining = excised_on_stream(&mut conn, 1000).await.unwrap();
+    let remaining = tombstoned_on_stream(&mut conn, 1000).await.unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(
         (remaining[0].event_id, remaining[0].stream_seq),
@@ -155,7 +160,12 @@ async fn random_identifiers_keep_exact_copies_through_scattered_erasure(
     );
     assert_eq!(pairs(&mut conn).await.len(), 9001);
     forget_published(&mut conn, &[(id, 30001)]).await.unwrap();
-    assert!(excised_on_stream(&mut conn, 1000).await.unwrap().is_empty());
+    assert!(
+        tombstoned_on_stream(&mut conn, 1000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 mod upgrade;

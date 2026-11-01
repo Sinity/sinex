@@ -36,7 +36,6 @@ fn declarations_are_deterministic_and_named() {
         "core.events",
         "core.live_locations",
         "core.live_equivalence",
-        "core.hidden_records",
         "core.commit_log",
         "audit.archived",
         "raw.materials",
@@ -44,7 +43,8 @@ fn declarations_are_deterministic_and_named() {
         "derivation.dirty",
         "core.admission_stage",
         "core.source_counts",
-        "core.excised_materials",
+        "raw.material_changes",
+        "core.operations",
     ] {
         assert!(all.contains(&format!("TABLE {table} (")), "{table}");
     }

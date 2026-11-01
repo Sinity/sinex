@@ -315,7 +315,7 @@ async fn build_page(conn: &mut PgConnection) -> Result<bool> {
     let (covered, covered_id) = inputs
         .last()
         .map_or((head, None), |row| (row.commit_seq, Some(row.id)));
-    // The same lock order is used by admission/search and excision.
+    // The same lock order is used by admission/search and tombstoning.
     sqlx::query("LOCK TABLE core.search_text IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await?;

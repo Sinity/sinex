@@ -24,7 +24,6 @@ use std::time::{Duration, Instant};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.udev",
     driver: Driver::LiveStream,
-    excisable: false,
     purpose: "which devices were attached when, peripheral and storage history",
     class: Class::Open,
     parser: "udev-blocks",

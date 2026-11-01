@@ -148,7 +148,7 @@ impl Client {
             let reply: Reply = serde_json::from_slice(&bytes)
                 .map_err(|e| ClientError::Protocol(format!("{status}: {e}")))?;
             return Err(ClientError::Protocol(match reply {
-                Reply::Refused { reason, .. } => reason,
+                Reply::Refused { reason, .. } | Reply::StoppedEarly { reason, .. } => reason,
                 Reply::Ok { .. } => status.to_string(),
             }));
         }

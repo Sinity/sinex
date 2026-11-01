@@ -34,7 +34,7 @@ pub async fn store_key(
     Ok(())
 }
 
-/// A wrapped key by its reference; `None` once excised.
+/// A wrapped key by its reference; `None` once tombstoned.
 pub async fn wrapped_key(conn: &mut PgConnection, key_ref: &str) -> Result<Option<Vec<u8>>> {
     Ok(sqlx::query_scalar!(
         "SELECT wrapped_key FROM privacy.data_keys WHERE key_ref = $1",

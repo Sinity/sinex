@@ -43,8 +43,8 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
             let output = Command::new(&binary)
                 .args([
                     "admin",
-                    "hide",
-                    &format!("sinex:ev/{}", id.as_str().ok_or("missing hide target")?),
+                    "archive",
+                    &format!("sinex:ev/{}", id.as_str().ok_or("missing archive target")?),
                     "--database",
                     &cluster.url(),
                     "--store",
@@ -52,10 +52,10 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
                 .arg(out.join("store"))
                 .output()
                 .map_err(|e| e.to_string())?;
-            fs::write(phase.join("hide.stdout"), output.stdout).map_err(|e| e.to_string())?;
-            fs::write(phase.join("hide.stderr"), output.stderr).map_err(|e| e.to_string())?;
+            fs::write(phase.join("archive.stdout"), output.stdout).map_err(|e| e.to_string())?;
+            fs::write(phase.join("archive.stderr"), output.stderr).map_err(|e| e.to_string())?;
             if !output.status.success() {
-                return Err("hiding synthetic case event failed".into());
+                return Err("archiving a synthetic case event failed".into());
             }
         }
         cluster
@@ -79,19 +79,13 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
             Some(&phase),
         )?;
         let totals = &result["sources"]["google.youtube-history"];
-        let admitted = if changed {
-            events.saturating_sub(1)
-        } else if name == "repeat" {
-            0
-        } else {
-            events
-        };
+        // The archived reading's record has no live reading, so reading it
+        // again admits it as new; every other changed record replaces.
+        let admitted = if name == "repeat" { 0 } else { events };
         let repeats = if name == "repeat" { events } else { 0 };
-        let hidden = u64::from(changed && events > 0);
         if totals["admitted"].as_u64() != Some(admitted)
             || totals["repeats"].as_u64() != Some(repeats)
-            || totals["hidden"].as_u64() != Some(hidden)
-            || (changed && totals["replaced"].as_u64() != Some(admitted))
+            || (changed && totals["replaced"].as_u64() != Some(events.saturating_sub(1)))
         {
             save(&phase, "result.json", &result)?;
             return Err(format!(

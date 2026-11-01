@@ -21,7 +21,6 @@ use std::path::{Path, PathBuf};
 pub const VISITS: SourceSpec = SourceSpec {
     name: "browser.chromium-visits",
     driver: Driver::SqliteRows,
-    excisable: false,
     purpose: "browsing recall and the attention stream",
     class: Class::Open,
     parser: "chromium-visits",
@@ -33,7 +32,6 @@ pub const VISITS: SourceSpec = SourceSpec {
 pub const URLS: SourceSpec = SourceSpec {
     name: "browser.chromium-urls",
     driver: Driver::SqliteRows,
-    excisable: false,
     purpose: "browsing recall and page titles",
     class: Class::Open,
     parser: "chromium-urls",

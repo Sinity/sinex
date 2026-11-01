@@ -26,7 +26,6 @@ const fn spec(lane: &'static str, event_type: &'static [&'static str]) -> Source
     SourceSpec {
         name: "network.router",
         driver: Driver::AppendFile,
-        excisable: false,
         purpose: "which devices were on the home network, their traffic and the router's log",
         // Leases and clients name the household's devices, and the log
         // their addresses.

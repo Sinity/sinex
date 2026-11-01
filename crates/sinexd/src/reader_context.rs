@@ -38,6 +38,14 @@ impl ReaderContext {
             .recover(&mut writer_conn)
             .await
             .map_err(|error| error.to_string())?;
+        // As at daemon start: finish removing tombstoned bytes, and no
+        // operation holds keys while the writer starts.
+        sinex_store::lifecycle::remove_unreferenced(&mut writer_conn, &blobs)
+            .await
+            .map_err(|e| e.to_string())?;
+        sinex_store::lifecycle::release_held_keys(&mut writer_conn)
+            .await
+            .map_err(|e| e.to_string())?;
         sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs)
             .await
             .map_err(|e| e.to_string())?;

@@ -9,9 +9,11 @@
 //! This crate uses no compile-time-checked queries: it builds before any
 //! database exists and provisions the one the store's queries are checked
 //! against.
+use sinex_model::lifecycle::{MaterialStatus, OperationResult};
 use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod lifecycle;
 mod model_calls;
 mod owner_protocol;
 mod privacy_epoch;
@@ -145,8 +147,10 @@ pub(crate) struct Checks {
     pub record_state: String,
     pub class: String,
     pub archive_reason: String,
-    /// The archive reasons, and `unhide` for a reading put back.
+    /// The archive reasons, and `restore` for a reading put back.
     pub archive_change_reason: String,
+    pub material_status: String,
+    pub operation_result: String,
 }
 
 impl Checks {
@@ -161,9 +165,11 @@ impl Checks {
                     .iter()
                     .map(|v| format!("'{v}'"))
                     .collect();
-                reasons.push("'unhide'".into());
+                reasons.push("'restore'".into());
                 format!("CHECK (reason IN ({}))", reasons.join(", "))
             },
+            material_status: MaterialStatus::check("status"),
+            operation_result: OperationResult::check("result"),
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Admission rules: one live reading per location and key; newer replaces, older
-//! suppresses; hidden stays hidden across re-admission; events and progress
-//! commit together. Run against a real database.
+//! suppresses; events and progress commit together. Run against a real
+//! database. The lifecycle's laws are in `crate::lifecycle`.
 use super::*;
 use proptest::prelude::*;
 use serde_json::json;
@@ -343,36 +343,6 @@ async fn location_keyed_records_are_one_live_reading_and_never_replaced(
 }
 
 #[devkit::test]
-async fn hidden_stays_hidden_across_readmission_until_unhidden(db: devkit::pg::TestDatabase) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
-    let e = keyed("s", 7, 1, 1);
-    admit_one(&mut conn, &batch(vec![e.clone()])).await;
-    let mut hide = batch(vec![]);
-    hide.archive.push(ArchiveRequest::Hide {
-        target: e.id,
-        operation: OperationId::new(),
-    });
-    admit_one(&mut conn, &hide).await;
-    assert!(live(&mut conn, "s").await.is_empty());
-    for (content, order) in [(1, 1), (2, 5), (3, 9)] {
-        let out = admit_one(&mut conn, &batch(vec![keyed("s", 7, content, order)])).await;
-        assert_eq!((out.admitted, out.hidden), (0, 1));
-    }
-    let mut unhide = batch(vec![]);
-    unhide.archive.push(ArchiveRequest::Unhide {
-        target: e.id,
-        operation: OperationId::new(),
-    });
-    admit_one(&mut conn, &unhide).await;
-    assert_eq!(
-        live(&mut conn, "s").await.get("k7").map(String::as_str),
-        Some("cmd-1")
-    );
-}
-
-#[devkit::test]
 async fn a_dropped_record_gets_a_removed_reading_once(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
@@ -538,27 +508,34 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
         (frontier, frontier),
         "the atomic batch first marks its key at the completed frontier of every original and projected input"
     );
-    let mut hide = batch(vec![]);
-    hide.archive.push(ArchiveRequest::Hide {
-        target,
-        operation: OperationId::new(),
-    });
-    let mut tx = conn.begin().await.unwrap();
-    let archived = tx.admit(&hide, &ByDay).await.unwrap();
-    tx.commit().await.unwrap();
-    assert!(archived.dirty_keys > 0);
-    let position = crate::query::current_seq(&mut conn).await.unwrap();
-    assert!(position > frontier);
+    let op = crate::lifecycle::begin(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        "test",
+        sinex_model::lifecycle::Scope::Events {
+            events: vec![target],
+            query: None,
+        },
+    )
+    .await
+    .unwrap();
+    let ended = crate::lifecycle::run_on(&mut conn, &op, Default::default(), 16, &ByDay)
+        .await
+        .unwrap();
+    assert!(
+        matches!(ended, crate::lifecycle::Ended::Ok { .. }),
+        "{ended:?}"
+    );
     let changed: (i64, i64) = sqlx::query_as(
         "SELECT first_dirty_seq,last_dirty_seq FROM derivation.dirty WHERE derivation='daily'",
     )
     .fetch_one(&mut conn)
     .await
     .unwrap();
-    assert_eq!(
-        changed,
-        (first, position),
-        "archival preserves the first dirty mark and advances the last one to its actual lifecycle position"
+    assert_eq!(changed.0, first, "archival preserves the first dirty mark");
+    assert!(
+        changed.1 > frontier,
+        "and advances the last one to its actual lifecycle position"
     );
 }
 #[devkit::test]
@@ -705,12 +682,20 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
     admit_one(&mut conn, &batch(vec![parent.clone()])).await;
     for id in [EventId::new(), parent.id] {
         if id == parent.id {
-            let mut archive = batch(vec![]);
-            archive.archive.push(sinex_model::ArchiveRequest::Hide {
-                target: id,
-                operation: sinex_model::OperationId::new(),
-            });
-            admit_one(&mut conn, &archive).await;
+            let op = crate::lifecycle::begin(
+                &mut conn,
+                sinex_model::lifecycle::Act::Archive,
+                "test",
+                sinex_model::lifecycle::Scope::Events {
+                    events: vec![id],
+                    query: None,
+                },
+            )
+            .await
+            .unwrap();
+            crate::lifecycle::run_on(&mut conn, &op, Default::default(), 16, &NoDerivations)
+                .await
+                .unwrap();
         }
         let mut child = keyed("derived", 2, 2, 1);
         child.origin = Origin::Derived { parents: vec![id] };
@@ -722,105 +707,6 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
         );
         tx.rollback().await.unwrap();
     }
-}
-
-#[devkit::test]
-async fn a_hidden_chain_restores_its_per_event_readings_in_parent_order(
-    db: devkit::pg::TestDatabase,
-) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
-    let root = keyed("chain", 1, 1, 1);
-    admit_one(&mut conn, &batch(vec![root.clone()])).await;
-    let mut child = keyed("chain", 2, 2, 1);
-    child.origin = Origin::Derived {
-        parents: vec![root.id],
-    };
-    admit_one(&mut conn, &batch(vec![child.clone()])).await;
-    let mut grandchild = keyed("chain", 3, 3, 1);
-    grandchild.origin = Origin::Derived {
-        parents: vec![child.id],
-    };
-    admit_one(&mut conn, &batch(vec![grandchild.clone()])).await;
-    let operation = OperationId::new();
-    let mut hide = batch(vec![]);
-    hide.archive.push(ArchiveRequest::Hide {
-        target: root.id,
-        operation,
-    });
-    admit_one(&mut conn, &hide).await;
-    let ids = [root.id.0, child.id.0, grandchild.id.0];
-    let archived: i64 = sqlx::query_scalar("SELECT count(*) FROM audit.archived WHERE event_id=ANY($1) AND reason='hide' AND operation_id=$2")
-        .bind(ids.as_slice()).bind(operation.0).fetch_one(&mut conn).await.unwrap();
-    assert_eq!(archived, 3);
-    let mut restore = batch(vec![]);
-    restore.archive.push(ArchiveRequest::Unhide {
-        target: root.id,
-        operation: OperationId::new(),
-    });
-    admit_one(&mut conn, &restore).await;
-    let restored: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT event_id FROM core.live_equivalence WHERE source='chain' ORDER BY event_id",
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
-    let mut expected = ids.to_vec();
-    expected.sort();
-    assert_eq!(
-        restored, expected,
-        "restore moves the same readings, without a runner"
-    );
-    let count: i64 =
-        sqlx::query_scalar("SELECT events FROM core.source_counts WHERE source='chain'")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(count, 3);
-}
-
-#[devkit::test]
-async fn restoring_a_chain_refuses_an_independently_archived_parent(db: devkit::pg::TestDatabase) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
-    let root = keyed("chain", 1, 1, 1);
-    let other = keyed("chain", 2, 2, 1);
-    admit_one(&mut conn, &batch(vec![root.clone(), other.clone()])).await;
-    let mut child = keyed("chain", 3, 3, 1);
-    child.origin = Origin::Derived {
-        parents: vec![root.id, other.id],
-    };
-    admit_one(&mut conn, &batch(vec![child])).await;
-    for target in [root.id, other.id] {
-        let mut hide = batch(vec![]);
-        hide.archive.push(ArchiveRequest::Hide {
-            target,
-            operation: OperationId::new(),
-        });
-        admit_one(&mut conn, &hide).await;
-    }
-    let mut restore = batch(vec![]);
-    restore.archive.push(ArchiveRequest::Unhide {
-        target: root.id,
-        operation: OperationId::new(),
-    });
-    let mut tx = conn.begin().await.unwrap();
-    assert!(matches!(
-        tx.admit(&restore, &NoDerivations).await,
-        Err(crate::Error::Invalid(_))
-    ));
-    tx.rollback().await.unwrap();
-    let live: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.live_equivalence WHERE source='chain'")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(
-        live, 0,
-        "a failed restore leaves the complete chain archived"
-    );
 }
 
 mod kinds;
@@ -841,7 +727,6 @@ fn outcomes_add_all_counts_positions_and_ids() {
             repeats: 3,
             replaced: 4,
             older: 5,
-            hidden: 6,
             superseded: 7,
             superseded_input: 0,
             failures: 8,
@@ -861,7 +746,6 @@ fn outcomes_add_all_counts_positions_and_ids() {
             repeats: 6,
             replaced: 8,
             older: 10,
-            hidden: 12,
             superseded: 14,
             superseded_input: 0,
             failures: 16,

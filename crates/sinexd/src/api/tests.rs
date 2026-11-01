@@ -250,13 +250,13 @@ async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
     let (status, body) = call(&w, Some(READ), json!({"method": "status"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], json!("ok"));
-    let (status, body) = call(&w, Some(READ), json!({"method": "hide", "reference": "x"})).await;
+    let (status, body) = call(&w, Some(READ), json!({"method": "archive", "target": "x"})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(body["reason"].as_str().unwrap().contains("needs agent"));
     let (status, _) = call(
         &w,
         Some(AGENT),
-        json!({"method": "excise", "reference": "x"}),
+        json!({"method": "tombstone", "target": "x"}),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -329,7 +329,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn hide_and_unhide_go_through_the_writer(db: devkit::pg::TestDatabase) {
+async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["ls", "pwd"], 0).await;
     let (_, body) = call(
@@ -345,10 +345,11 @@ async fn hide_and_unhide_go_through_the_writer(db: devkit::pg::TestDatabase) {
     let (_, body) = call(
         &w,
         Some(AGENT),
-        json!({"method": "hide", "reference": format!("sinex:ev/{id}")}),
+        json!({"method": "archive", "target": format!("sinex:ev/{id}")}),
     )
     .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
+    assert_eq!(body["result"]["actor"], json!("agent"), "{body}");
     let (_, body) = call(
         &w,
         Some(READ),
@@ -358,12 +359,7 @@ async fn hide_and_unhide_go_through_the_writer(db: devkit::pg::TestDatabase) {
     assert_eq!(body["result"]["total"], json!(1));
     let (_, body) = call(&w, Some(READ), json!({"method": "show", "reference": id})).await;
     assert_eq!(body["result"]["event"]["state"], json!("archived"));
-    let (_, body) = call(
-        &w,
-        Some(AGENT),
-        json!({"method": "unhide", "reference": id}),
-    )
-    .await;
+    let (_, body) = call(&w, Some(AGENT), json!({"method": "restore", "target": id})).await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     let (_, body) = call(
         &w,

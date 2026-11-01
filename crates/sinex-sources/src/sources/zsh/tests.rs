@@ -257,7 +257,7 @@ fn observations(
 fn mixed_history_append_cuts_keep_carry_coordinates_and_failures() {
     let file = b"pwd\n: 10:0;pwd\npwd\n\n: invalid\n: 10:2;pwd\nprintf a\\\nb\n\\: literal\npwd\n: 10:0;pwd\n";
     let (whole, state) = observations(file, 0, serde_json::Value::Null);
-    // The shared drain accounts blank/excised records without emitting an outcome.
+    // The shared drain accounts blank records without emitting an outcome.
     assert_eq!(whole.len(), 9);
     assert_eq!(whole[0][3], "unknown");
     assert_eq!(whole[1][1]["n"], 0);

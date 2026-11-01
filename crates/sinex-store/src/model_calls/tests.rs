@@ -620,17 +620,17 @@ async fn a_retained_request_reconciles_incurred_cost_after_targets_and_policy_ar
     )
     .await;
     let target = request.request.inputs[0].event;
-    let mut archive = batch(vec![]);
-    archive.archive = vec![target, policy.id]
-        .into_iter()
-        .map(|target| sinex_model::ArchiveRequest::Hide {
-            target,
-            operation: sinex_model::OperationId::new(),
-        })
-        .collect();
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&archive, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    let archived = crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![target, policy.id],
+        &NoDerivations,
+    )
+    .await;
+    assert!(
+        matches!(archived, crate::lifecycle::Ended::Ok { .. }),
+        "{archived:?}"
+    );
     let output = json!({"text":"recorded after interrupted execution"});
     let response = RecordedResponse {
         request_id: request.request_id.clone(),

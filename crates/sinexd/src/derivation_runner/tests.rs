@@ -8,7 +8,8 @@ use sinex_derivations::{Computed, KeyState, Keyed};
 use sinex_model::event_types::{
     CommandExecuted, CommandFused, CommandImported, MetricFigure, ShellSession, StateInterval,
 };
-use sinex_model::{ArchiveRequest, Class, MaterialId, OperationId, Origin, RecordLocation};
+use sinex_model::lifecycle::{Act, Scope};
+use sinex_model::{Class, MaterialId, Origin, RecordLocation};
 use sqlx::Connection;
 
 const T: i64 = 1_718_438_400; // 2024-06-15 10:00 CEST
@@ -129,10 +130,6 @@ impl World {
     }
 
     async fn admit(&self, events: Vec<Event>) {
-        self.batch(events, vec![]).await;
-    }
-
-    async fn batch(&self, events: Vec<Event>, archive: Vec<ArchiveRequest>) {
         let batch = Batch {
             run: RunId::new(),
             kind: BatchKind::Api {
@@ -142,9 +139,34 @@ impl World {
                 location: None,
                 events,
             }],
-            archive,
+            archive: vec![],
         };
         self.handle.submit(Priority::Live, batch).await.unwrap();
+    }
+
+    /// Run a lifecycle act over named readings through the writer.
+    async fn lifecycle(
+        &self,
+        act: Act,
+        events: Vec<sinex_model::EventId>,
+    ) -> crate::lifecycle::Answer {
+        let mut read = PgConnection::connect(&self.url).await.unwrap();
+        let scope = Scope::Events {
+            events,
+            query: None,
+        };
+        crate::lifecycle::run(&mut read, &self.handle, act, "agent:test", scope, false)
+            .await
+            .unwrap()
+    }
+
+    /// Run a lifecycle act that must end `ok`.
+    async fn moved(&self, act: Act, events: Vec<sinex_model::EventId>) {
+        let answer = self.lifecycle(act, events).await;
+        assert!(
+            matches!(answer, crate::lifecycle::Answer::Done(_)),
+            "{answer:?}"
+        );
     }
 
     async fn runner(&self) -> DerivationRunner {
@@ -257,23 +279,16 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
     d.catch_up().await.unwrap();
     assert_eq!(w.live::<CommandFused>().await[0].observed_by.len(), 2);
 
-    // Hiding the Atuin reading leaves zsh alone: the two-source fused command
-    // goes, a zsh-only one takes its place.
-    w.batch(
-        vec![],
-        vec![ArchiveRequest::Hide {
-            target: a_id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    // Archiving the Atuin reading leaves zsh alone: the two-source fused
+    // command goes, a zsh-only one takes its place.
+    w.moved(Act::Archive, vec![a_id]).await;
     d.catch_up().await.unwrap();
     let fused: Vec<CommandFused> = w.live().await;
     assert_eq!(fused.len(), 1);
     assert_eq!(fused[0].observed_by, vec!["terminal.zsh"]);
     assert!(
         w.count(
-            "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id WHERE e.event_type = 'command.fused' AND a.reason = 'hide'"
+            "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id WHERE e.event_type = 'command.fused' AND a.reason = 'archive'"
         )
         .await
             >= 1

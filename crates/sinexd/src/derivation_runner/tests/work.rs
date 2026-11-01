@@ -139,14 +139,7 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
     .fetch_one(&mut conn)
     .await
     .unwrap();
-    w.batch(
-        vec![],
-        vec![ArchiveRequest::Hide {
-            target: first.id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    w.moved(Act::Archive, vec![first.id]).await;
     assert!(w.live::<ContextPack>().await.is_empty());
     assert!(w.live::<WorkEpisode>().await.is_empty());
     assert!(w.live::<WorkAct>().await.is_empty());
@@ -158,14 +151,14 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
         .unwrap();
     runner.catch_up().await.unwrap();
     assert!(w.live::<ContextPack>().await.is_empty());
-    w.batch(
-        vec![],
-        vec![ArchiveRequest::Unhide {
-            target: sinex_model::EventId(old_pack),
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    // A stored work level cannot come back while its parent is archived.
+    let answer = w
+        .lifecycle(Act::Restore, vec![sinex_model::EventId(old_pack)])
+        .await;
+    assert!(
+        matches!(answer, crate::lifecycle::Answer::Refused(..)),
+        "{answer:?}"
+    );
     assert_eq!(w.count(LIVE_WITH_ARCHIVED_PARENT).await, 0);
     assert_eq!(
         w.count(&format!(
@@ -175,14 +168,7 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
         1
     );
     runner.catch_up().await.unwrap();
-    w.batch(
-        vec![],
-        vec![ArchiveRequest::Unhide {
-            target: first.id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    w.moved(Act::Restore, vec![first.id]).await;
     runner.catch_up().await.unwrap();
     assert_eq!(w.live::<ContextPack>().await[0].trail.len(), 2);
     assert_eq!(w.count(LIVE_WITH_ARCHIVED_PARENT).await, 0);

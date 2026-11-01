@@ -182,7 +182,7 @@ outer read snapshot. `hour()` continues to name the local clock hour.
   The seal key belongs to the database and is unavailable through public read-only SQL.
   Paging Open records works while sealed payload classes are locked.
 - Event continuations retain their selected commit position, declarations and current
-  privacy/excision versions. Mutable metadata also carries an atomic metadata epoch;
+  privacy and tombstone versions. Mutable metadata also carries an atomic metadata epoch;
   a run finishing invalidates its old metadata view without scanning prior result rows.
   Stored recall continuations cite one immutable pack and a row coordinate in that pack.
 

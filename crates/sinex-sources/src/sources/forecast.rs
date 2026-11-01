@@ -11,7 +11,6 @@ use sinex_source_core::{DeclaredSource, Driver, Parser, RecordContext, RecordErr
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",
     driver: Driver::ApiRequest,
-    excisable: true,
     purpose: "submitted probability forecasts",
     class: Class::Guarded,
     parser: "forecast-request",

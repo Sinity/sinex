@@ -38,7 +38,6 @@ pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<GapParser> {
         spec: crate::SourceSpec {
             name: "capture.gap",
             driver: crate::Driver::AppendFile,
-            excisable: false,
             purpose: "intervals when a capture stream could not record",
             class,
             parser: "capture-gap",

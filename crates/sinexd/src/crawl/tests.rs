@@ -1,5 +1,6 @@
 use super::*;
-use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, MaterialId, OperationId, RunId};
+use sinex_model::lifecycle::{Act, Scope};
+use sinex_model::{EventId, MaterialId};
 
 #[devkit::test]
 async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::TestDatabase) {
@@ -20,8 +21,8 @@ async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::Te
         .unwrap();
     let mut visits = Vec::new();
     for (sequence, name, domain) in [
-        (1i64, "hidden", "allowed.test"),
-        (2, "excised", "allowed.test"),
+        (1i64, "archived", "allowed.test"),
+        (2, "tombstoned", "allowed.test"),
         (3, "blocked", "other.test"),
         (4, "shown", "allowed.test"),
     ] {
@@ -62,37 +63,35 @@ async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::Te
         .execute(&mut ctx.read_conn)
         .await
         .unwrap();
-    ctx.writer
-        .submit(
-            crate::writer::Priority::Bulk,
-            Batch {
-                run: RunId::new(),
-                kind: BatchKind::Api {
-                    actor: "test".into(),
-                },
-                records: vec![],
-                archive: vec![ArchiveRequest::Hide {
-                    target: visits[0].0,
-                    operation: OperationId::new(),
-                }],
+    let materials = Scope::Materials {
+        materials: vec![visits[1].1],
+    };
+    for (act, scope) in [
+        (
+            Act::Archive,
+            Scope::Events {
+                events: vec![visits[0].0],
+                query: None,
             },
+        ),
+        (Act::Archive, materials.clone()),
+        (Act::Tombstone, materials),
+    ] {
+        let answer = crate::lifecycle::run(
+            &mut ctx.read_conn,
+            &ctx.writer,
+            act,
+            "operator",
+            scope,
+            false,
         )
         .await
         .unwrap();
-    let target = sinex_store::excision::Target::Material(visits[1].1);
-    let plan = sinex_store::excision::plan(&mut ctx.read_conn, target)
-        .await
-        .unwrap();
-    ctx.writer
-        .excise(crate::writer::Excision {
-            target,
-            plan,
-            operation: OperationId::new(),
-            actor: "test".into(),
-            blobs: ctx.blobs.clone(),
-        })
-        .await
-        .unwrap();
+        assert!(
+            matches!(answer, crate::lifecycle::Answer::Done(_)),
+            "{answer:?}"
+        );
+    }
     let selected = history_urls(&mut ctx.read_conn).await.unwrap();
     assert_eq!(selected, [visits[2].2.clone(), visits[3].2.clone()]);
     // A zero limit exercises the public command path without making network requests.

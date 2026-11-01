@@ -34,16 +34,21 @@ fn the_table_and_the_requests_agree() {
 
 #[devkit::test]
 fn requests_have_stable_wire_names() {
-    let r = Request::Excise {
-        reference: Some("sinex:ev/x".into()),
-        material: None,
-        dry_run: None,
+    let r = Request::Undo {
+        operation: "x".into(),
+        compare: None,
     };
     assert_eq!(
         serde_json::to_value(&r).unwrap(),
-        json!({"method": "excise", "reference": "sinex:ev/x"})
+        json!({"method": "undo", "operation": "x", "compare": null})
     );
-    assert_eq!(r.access(), Access::Operator);
+    assert_eq!(r.access(), Access::Agent);
+    let tombstone = Request::from_args(
+        "tombstone",
+        serde_json::from_value(json!({"material": ["m"]})).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(tombstone.access(), Access::Operator);
     assert_eq!(Request::Status.access(), Access::Read);
 }
 

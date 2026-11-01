@@ -25,7 +25,6 @@ use std::path::PathBuf;
 pub const PST: SourceSpec = SourceSpec {
     name: "communication.outlook",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -40,7 +39,6 @@ pub const PST: SourceSpec = SourceSpec {
 pub const CSV: SourceSpec = SourceSpec {
     name: "communication.outlook-csv",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "outlook-csv",

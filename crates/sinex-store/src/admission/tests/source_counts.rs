@@ -1,4 +1,5 @@
 use super::*;
+use sinex_model::lifecycle::Act;
 use sqlx::Executor;
 
 type Time = time::OffsetDateTime;
@@ -65,19 +66,16 @@ fn without_positions(catalog: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn change(target: sinex_model::EventId, hide: bool) -> Batch {
-    let operation = OperationId::new();
-    let mut b = batch(vec![]);
-    b.archive.push(if hide {
-        ArchiveRequest::Hide { target, operation }
-    } else {
-        ArchiveRequest::Unhide { target, operation }
-    });
-    b
+async fn change(conn: &mut PgConnection, act: Act, target: sinex_model::EventId) {
+    let ended = crate::lifecycle::move_events(conn, act, vec![target], &NoDerivations).await;
+    assert!(
+        matches!(ended, crate::lifecycle::Ended::Ok { .. }),
+        "{ended:?}"
+    );
 }
 
 #[devkit::test]
-async fn counts_follow_admission_replacement_hiding_and_unhiding(db: devkit::pg::TestDatabase) {
+async fn counts_follow_admission_replacement_archiving_and_restoring(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -86,9 +84,9 @@ async fn counts_follow_admission_replacement_hiding_and_unhiding(db: devkit::pg:
     admit_one(&mut conn, &batch(vec![keyed("b", 9, 1, 1)])).await;
     // A newer reading of key 0 archives the first one.
     admit_one(&mut conn, &batch(vec![keyed("a", 0, 2, 5)])).await;
-    admit_one(&mut conn, &change(first[1].id, true)).await;
-    admit_one(&mut conn, &change(first[2].id, true)).await;
-    admit_one(&mut conn, &change(first[2].id, false)).await;
+    change(&mut conn, Act::Archive, first[1].id).await;
+    change(&mut conn, Act::Archive, first[2].id).await;
+    change(&mut conn, Act::Restore, first[2].id).await;
 
     let kept = kept(&mut conn).await;
     assert_eq!(kept, counted(&mut conn).await);
@@ -108,7 +106,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
     let run = under_run(&mut conn, first.clone()).await;
     assert_eq!(run_events(&mut conn, run).await, 3);
     admit_one(&mut conn, &batch(vec![keyed("b", 9, 1, 1)])).await;
-    admit_one(&mut conn, &change(first[0].id, true)).await;
+    change(&mut conn, Act::Archive, first[0].id).await;
     let fresh = without_positions(crate::test_schema::catalog(&mut conn).await);
     let expected = kept(&mut conn).await;
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")

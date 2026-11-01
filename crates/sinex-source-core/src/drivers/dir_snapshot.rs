@@ -393,7 +393,7 @@ impl DirSnapshot {
             });
         }
         // Every file read by one walk is as new as the walk; the records are
-        // listed so a replay or an excision finds them in the bundle.
+        // listed so a replay finds them in the bundle.
         let mut manifest = json!({
             "path": paths::display(&self.root),
             "host": self.host,

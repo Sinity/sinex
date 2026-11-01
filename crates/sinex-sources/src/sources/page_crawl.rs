@@ -22,7 +22,6 @@ use std::time::{Duration, Instant};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "browser.page-crawl",
     driver: Driver::ApiCursor,
-    excisable: false,
     purpose: "page content for recall and search over what was read",
     class: Class::Guarded,
     parser: "page-fetch",

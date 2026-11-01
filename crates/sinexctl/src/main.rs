@@ -2,7 +2,8 @@
 //! `sinex-protocol`, calling the daemon's API. A small offline mode diagnoses a
 //! stopped daemon without writing anything.
 //!
-//! Exit codes: 0 done; 2 refused; 3 asks for something not built yet; 6 the
+//! Exit codes: 0 done; 2 refused; 3 asks for something not built yet; 5 an
+//! operation stopped early (it moved some batches and can be resumed); 6 the
 //! daemon is not reachable; 1 anything else.
 mod client;
 mod mcp;
@@ -19,6 +20,7 @@ use std::process::ExitCode;
 
 const REFUSED: u8 = 2;
 const NOT_BUILT: u8 = 3;
+const STOPPED_EARLY: u8 = 5;
 const UNREACHABLE: u8 = 6;
 
 fn default_socket() -> PathBuf {
@@ -143,7 +145,9 @@ fn fail(code: u8, message: impl std::fmt::Display) -> ExitCode {
 async fn open_and_record(client: &Client, request: &Request, item: &str) -> ExitCode {
     let target = match client.call(request).await {
         Ok((_, Reply::Ok { result })) => result,
-        Ok((_, Reply::Refused { reason, .. })) => return fail(REFUSED, reason),
+        Ok((_, Reply::Refused { reason, .. } | Reply::StoppedEarly { reason, .. })) => {
+            return fail(REFUSED, reason);
+        }
         Err(ClientError::Unreachable(m)) => {
             return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
         }
@@ -175,7 +179,7 @@ async fn open_and_record(client: &Client, request: &Request, item: &str) -> Exit
     };
     match client.call(&viewed).await {
         Ok((_, Reply::Ok { .. })) => ExitCode::SUCCESS,
-        Ok((_, Reply::Refused { reason, .. })) => fail(
+        Ok((_, Reply::Refused { reason, .. } | Reply::StoppedEarly { reason, .. })) => fail(
             REFUSED,
             format!("opened, but the view was not recorded: {reason}"),
         ),
@@ -381,6 +385,11 @@ async fn main() -> ExitCode {
                 not_built: true,
             } => return fail(NOT_BUILT, format!("not built yet: {reason}")),
             Reply::Refused { reason, .. } => return fail(REFUSED, reason),
+            Reply::StoppedEarly { reason, result } => {
+                // What moved before the refusal.
+                print_json(&result);
+                return fail(STOPPED_EARLY, reason);
+            }
         };
         if name == "status" {
             capture_health::attach(&mut result, capture_state);

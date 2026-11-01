@@ -8,7 +8,9 @@
 //! is one transaction: its live in-scope readings (and their live derived
 //! descendants) are archived and the new readings admitted together, so a
 //! failure changes nothing and a crash leaves the sequence as it was. Finished
-//! sequences are journaled under the operation, and `--resume` skips them.
+//! sequences are journaled under the operation, and `resume` skips them.
+//! The new readings carry the operation's ID as their run, so an undo finds
+//! what the replay admitted.
 //!
 //! `--compare` runs exactly the same transactions and rolls each back after
 //! reading what it would change.
@@ -201,6 +203,29 @@ pub(crate) async fn run(
     let stored = replay::materials_of(read_conn, &inputs, &in_scope_list)
         .await
         .map_err(|e| e.to_string())?;
+    // An archived material is not replayed until it is restored, and a
+    // tombstoned one never is.
+    if let Some(m) = stored
+        .iter()
+        .find(|m| in_scope.contains(&m.id) && m.status != "live")
+    {
+        return Err(format!(
+            "material {} is {}; {}",
+            m.id,
+            m.status,
+            if m.status == "archived" {
+                "restore it before replaying it"
+            } else {
+                "it is never read again"
+            }
+        ));
+    }
+    // A tombstoned part's bytes may be gone; the parts after it read on
+    // from a fresh carry.
+    let stored: Vec<Stored> = stored
+        .into_iter()
+        .filter(|m| m.status != "tombstoned")
+        .collect();
 
     let saved_scope = match &prior_scope {
         Some(saved) => saved.clone(),
@@ -484,7 +509,7 @@ fn read_sequence_into(
         until: scope.until,
     };
     send(Batch {
-        run: RunId::new(),
+        run: RunId(operation.0),
         kind: BatchKind::Replay {
             operation,
             source: None,
@@ -599,7 +624,7 @@ fn read_sequence_into(
             }
             crate::material_access::sealing::seal_records(&mut records, key)?;
             send(Batch {
-                run: RunId::new(),
+                run: RunId(operation.0),
                 kind: BatchKind::Replay {
                     operation,
                     source: Some(sinex_model::SourceRef {

@@ -21,7 +21,6 @@ mod metadata;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.notes-vault",
     driver: Driver::DirSnapshot,
-    excisable: false,
     purpose: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",

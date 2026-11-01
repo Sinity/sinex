@@ -23,7 +23,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "calendar.export",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "planned events beside what happened",
     class: Class::Open,
     parser: "icalendar",

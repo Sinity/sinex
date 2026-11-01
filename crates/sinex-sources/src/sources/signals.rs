@@ -12,7 +12,6 @@ pub const SPEC: SourceSpec = SourceSpec {
     driver: Driver::ApiRequest,
     purpose: "canonical signal rules and host delivery receipts",
     class: Class::Open,
-    excisable: false,
     event_types: &[
         "signal.rule",
         "signal.checkpoint",

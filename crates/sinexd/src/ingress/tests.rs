@@ -1148,18 +1148,34 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
 }
 
 impl Harness {
-    async fn excise(&self, producer: &str, materials: &[MaterialId]) -> ExciseReply {
-        let request = Excise {
-            materials: materials.to_vec(),
-        };
+    async fn lifecycle(&self, producer: &str, request: &Lifecycle) -> sinex_protocol::Reply {
         let reply = rpc(
             &self.client,
-            self.subjects.excise(producer),
-            serde_json::to_vec(&request).unwrap().into(),
+            self.subjects.lifecycle(producer),
+            serde_json::to_vec(request).unwrap(),
         )
         .await
         .unwrap();
         serde_json::from_slice(&reply.payload).unwrap()
+    }
+
+    /// Archive and then tombstone whole materials as the operator does.
+    async fn tombstone_materials(&self, materials: &[MaterialId]) {
+        use sinex_model::lifecycle::{Act, Scope};
+        let mut conn = PgConnection::connect(&self.url).await.unwrap();
+        for act in [Act::Archive, Act::Tombstone] {
+            let scope = Scope::Materials {
+                materials: materials.to_vec(),
+            };
+            let answer =
+                crate::lifecycle::run(&mut conn, &self.writer, act, "operator", scope, false)
+                    .await
+                    .unwrap();
+            assert!(
+                matches!(answer, crate::lifecycle::Answer::Done(_)),
+                "{answer:?}"
+            );
+        }
     }
 
     async fn stored(&self, material: MaterialId) -> Vec<u8> {
@@ -1173,12 +1189,15 @@ impl Harness {
     }
 }
 
-/// A producer excises whole materials it registered: their events, bytes,
-/// frames and input go, and sending the same material again is refused. A
-/// request naming a material another producer registered is refused, and
-/// nothing changes.
+/// A producer takes its material out of the live set with a lifecycle
+/// request, as a CLI caller would: archiving the material archives the
+/// readings read from it, records the producer as actor and keeps the
+/// bytes; another producer's material is untouched. Tombstoning is
+/// reserved to the operator, so a producer may only compare it.
 #[devkit::test]
-async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDatabase) {
+async fn a_producer_archives_through_a_lifecycle_request(db: devkit::pg::TestDatabase) {
+    use sinex_model::lifecycle::{Act, Scope};
+    use sinex_protocol::Reply;
     let h = Harness::start(db).await;
     let (mine, mine_frame) = h.material_frame("m1", b": 1760788800:0;ls\n");
     assert_eq!(h.send("kitty", &mine_frame).await.refusal, None);
@@ -1194,72 +1213,68 @@ async fn a_producer_excises_only_its_own_whole_materials(db: devkit::pg::TestDat
         };
         assert_eq!(h.send(producer, &events).await.refusal, None);
     }
+    let live = |source: &str| {
+        format!(
+            "SELECT count(*) FROM core.events e WHERE source = '{source}' \
+             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"
+        )
+    };
+    let materials = Scope::Materials {
+        materials: vec![mine],
+    };
 
-    let refused = h.excise("kitty", &[mine, other]).await;
+    let tombstone = h
+        .lifecycle(
+            "kitty",
+            &Lifecycle {
+                act: Act::Tombstone,
+                scope: materials.clone(),
+                compare: false,
+            },
+        )
+        .await;
     assert!(
-        refused
-            .refusal
-            .as_deref()
-            .is_some_and(|r| r.contains("not registered by kitty")),
-        "{refused:?}"
+        matches!(&tombstone, Reply::Refused { reason, .. } if reason.contains("reserved to the operator")),
+        "{tombstone:?}"
     );
-    assert_eq!(h.count("SELECT count(*) FROM core.events").await, 2);
-    assert_eq!(h.stored(mine).await, b": 1760788800:0;ls\n");
 
-    let done = h.excise("kitty", &[mine]).await;
-    assert_eq!(
-        done,
-        ExciseReply {
-            materials: 1,
-            events: 1,
-            refusal: None
-        }
-    );
+    let archived = h
+        .lifecycle(
+            "kitty",
+            &Lifecycle {
+                act: Act::Archive,
+                scope: materials,
+                compare: false,
+            },
+        )
+        .await;
+    let Reply::Ok { result } = archived else {
+        panic!("{archived:?}");
+    };
+    assert_eq!(result["actor"], "producer:kitty", "{result}");
+    assert_eq!(result["cascade"]["materials"], 1, "{result}");
+    assert_eq!(h.count(&live("kitty")).await, 0);
     assert_eq!(
         h.count("SELECT count(*) FROM core.events WHERE source = 'kitty'")
             .await,
-        0
+        1,
+        "the archived reading is kept"
     );
     assert_eq!(
         h.count(&format!(
-            "SELECT count(*) FROM raw.materials WHERE id = '{}'",
+            "SELECT count(*) FROM raw.materials WHERE id = '{}' AND status = 'archived'",
             mine.0
         ))
         .await,
-        0
+        1
     );
-    assert_eq!(
-        h.count("SELECT count(*) FROM raw.inputs WHERE binding LIKE 'ingress:kitty:%'")
-            .await,
-        0,
-        "no excised path stays"
-    );
-    assert_eq!(
-        h.count("SELECT count(*) FROM core.ingress_frames WHERE producer = 'kitty'")
-            .await,
-        2
-    );
-    assert!(
-        h.materials("kitty", 0, 10).await.is_empty(),
-        "an excised material is no longer listed"
-    );
-    assert_eq!(h.materials("phone", 0, 10).await.len(), 1);
+    assert_eq!(h.stored(mine).await, b": 1760788800:0;ls\n");
     assert_eq!(
         h.stored(other).await,
         b": 1760788801:0;pwd\n",
         "another producer's material is untouched"
     );
-    assert_eq!(
-        h.count("SELECT count(*) FROM core.events WHERE source = 'phone'")
-            .await,
-        1
-    );
-    let again = h.send("kitty", &mine_frame).await;
-    assert_eq!(
-        again.refusal_kind(),
-        Some(FrameRefusal::Excised),
-        "{again:?}"
-    );
+    assert_eq!(h.count(&live("phone")).await, 1);
 }
 
 /// A slow producer request (here one waiting for a database connection)
@@ -2011,8 +2026,6 @@ mod consumer_reads;
 mod families;
 
 mod replies;
-
-mod receipts;
 
 mod coverage;
 

@@ -53,7 +53,7 @@ pub(crate) enum Admin {
         #[arg(long = "producer")]
         producers: Vec<String>,
     },
-    /// Any command of the command table (`replay`, `hide`, `excise`,
+    /// Any command of the command table (`replay`, `archive`, `tombstone`,
     /// `recompute`, `library-add`, `crawl`, …), run locally against the
     /// database and content store without the daemon, with the operator's
     /// access: `sinexd admin <command> [arguments] --database URL --store DIR`.
@@ -281,5 +281,12 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         sinex_protocol::Reply::Refused { reason, .. } => Err(reason),
+        sinex_protocol::Reply::StoppedEarly { reason, result } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result).expect("JSON values print")
+            );
+            Err(reason)
+        }
     }
 }

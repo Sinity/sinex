@@ -27,7 +27,6 @@ use std::path::{Path, PathBuf};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.input-log",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "keystroke timing, typing and pointer activity",
     // Keystrokes spell out what was typed, passwords included.
     class: Class::Guarded,

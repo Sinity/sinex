@@ -26,13 +26,13 @@ pub mod signals;
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
     Acknowledgment, Archived, Confirmed, ConfirmedConsumer, ConfirmedConsumerReply, ConfirmedEvent,
-    DeclarationHash, ErasedEvent, Excise, ExciseReply, FetchEvent, FetchEventReply, FetchMaterial,
-    FetchMaterialReply, FetchRefusalKind, ForwardedSignal, Ingress, MaterialFrame, Materials,
-    MaterialsPage, PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello,
-    ProducerMaterial, ProducerReplay, ProducerWelcome, ReceiptHint, RecordedContinuation,
+    DeclarationHash, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
+    FetchRefusalKind, ForwardedSignal, Ingress, Lifecycle, MaterialFrame, Materials, MaterialsPage,
+    PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello, ProducerMaterial,
+    ProducerReplay, ProducerWelcome, ReceiptHint, RecordedContinuation,
     RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders, RecordedMaterialBinding,
     RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery,
-    ReplaySelection, SignalCondition, SignalConditionReply, Subjects, Unhidden,
+    ReplaySelection, Restored, SignalCondition, SignalConditionReply, Subjects,
 };
 pub use request::{Reply, Request};
 pub use sinex_model::SourceRef;

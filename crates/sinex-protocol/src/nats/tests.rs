@@ -14,7 +14,7 @@ fn subjects_and_streams_follow_the_root() {
     assert_eq!(t.producer_of("t123x9f.ingress.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.recorded.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.materials.kitty"), Some("kitty"));
-    assert_eq!(t.producer_of("t123x9f.excise.kitty"), Some("kitty"));
+    assert_eq!(t.producer_of("t123x9f.lifecycle.kitty"), Some("kitty"));
     assert_eq!(t.producer_of("t123x9f.ingress.Kitty"), None);
     assert_eq!(t.producer_of("other.ingress.kitty"), None);
     assert_eq!(t.producer_of("t123x9f.ack.kitty"), None);
@@ -31,7 +31,7 @@ fn producer_permissions_name_only_its_own_subjects() {
             "sinex.connect.phone",
             "sinex.recorded.phone",
             "sinex.materials.phone",
-            "sinex.excise.phone",
+            "sinex.lifecycle.phone",
             "sinex.replay_scope.phone",
             "sinex.public_context.phone",
             "sinex.fetch_event.phone",

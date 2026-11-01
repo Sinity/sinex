@@ -30,7 +30,6 @@ const fn spec(
     SourceSpec {
         name,
         driver: Driver::AppendFile,
-        excisable: false,
         purpose,
         // The class of each lane is the operator's to choose; floors raise it
         // without a code change.

@@ -13,7 +13,6 @@ use sinex_source_core::{Parser, RecordError};
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "query.request",
     driver: Driver::ApiRequest,
-    excisable: false,
     purpose: "moment marks and saved queries",
     class: Class::Guarded,
     parser: "query-request",

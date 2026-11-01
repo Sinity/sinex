@@ -18,7 +18,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "social.reddit",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "what the operator wrote, voted on, saved and sent at Reddit",
     class: Class::Open,
     parser: "reddit-gdpr",

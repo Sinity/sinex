@@ -22,7 +22,6 @@ use std::path::Path;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.gmail",
     driver: Driver::ApiCursor,
-    excisable: false,
     purpose: "mail and provider history",
     class: Class::Guarded,
     parser: "gmail",

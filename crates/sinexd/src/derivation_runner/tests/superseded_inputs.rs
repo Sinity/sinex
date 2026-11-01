@@ -2,6 +2,7 @@
 //! are dropped, never admitted citing a non-live parent.
 use super::*;
 use sinex_derivations::PerEvent;
+use sinex_model::{ArchiveRequest, OperationId};
 
 /// Replay `event`'s material: its reading is archived and read again, with a
 /// new ID. Returns the new reading.

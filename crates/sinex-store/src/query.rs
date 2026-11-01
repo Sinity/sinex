@@ -443,9 +443,9 @@ async fn run_inner(
 
 /// Current policies can make an otherwise reconstructable read unavailable.
 /// Mutable metadata has one atomic write epoch; event rows use their commit
-/// position and only privacy/excision changes invalidate their continuations.
+/// position and only privacy and tombstone changes invalidate their continuations.
 async fn availability(conn: &mut PgConnection, query: &Query) -> Result<Json> {
-    let mut policy:Json=sqlx::query_scalar("SELECT jsonb_build_object('policy_epoch',privacy.require_active_epoch(),'privacy_outputs',coalesce((SELECT value FROM core.counters WHERE name='privacy_outputs'),0),'rules',coalesce((SELECT max(seq) FROM privacy.rules),0),'floors',coalesce((SELECT max(seq) FROM privacy.source_classes),0),'excised',coalesce((SELECT value FROM core.counters WHERE name='excised'),0))").fetch_one(&mut *conn).await?;
+    let mut policy:Json=sqlx::query_scalar("SELECT jsonb_build_object('policy_epoch',privacy.require_active_epoch(),'privacy_outputs',coalesce((SELECT value FROM core.counters WHERE name='privacy_outputs'),0),'rules',coalesce((SELECT max(seq) FROM privacy.rules),0),'floors',coalesce((SELECT max(seq) FROM privacy.source_classes),0),'tombstoned',coalesce((SELECT value FROM core.counters WHERE name='tombstoned'),0))").fetch_one(&mut *conn).await?;
     if matches!(query.source,Source::Table{table,..} if !table.is_events()) {
         let metadata:Json=sqlx::query_scalar("SELECT jsonb_build_object('epoch',(SELECT value FROM core.counters WHERE name='query_metadata'),'head',(SELECT value FROM core.counters WHERE name='commit_seq'))").fetch_one(conn).await?;
         policy["metadata"] = metadata;

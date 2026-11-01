@@ -18,9 +18,9 @@ pub(crate) const SCHEMAS: &[&str] = &[
 ];
 
 /// Per source: its live events, and the oldest and newest event time and the
-/// newest reading time of every event admitted from it. Admission, archival,
-/// unhiding and excision keep it current in their own transactions, so status
-/// reads one row per source instead of counting events.
+/// newest reading time of every event admitted from it. Admission and the
+/// lifecycle keep it current in their own transactions, so status reads one
+/// row per source instead of counting events.
 pub(crate) const SOURCE_COUNTS: &str = "CREATE TABLE core.source_counts (
   source text PRIMARY KEY,
   events bigint NOT NULL CHECK (events >= 0),
@@ -29,16 +29,70 @@ pub(crate) const SOURCE_COUNTS: &str = "CREATE TABLE core.source_counts (
   last_seen timestamptz NOT NULL
 )";
 
-/// The materials excisions removed, by the digest of their bytes, so the same
-/// bytes are refused if they are registered again. Nothing else of them is
-/// kept.
-pub(crate) const EXCISED_MATERIALS: &str = "CREATE TABLE core.excised_materials (
-  material_id uuid PRIMARY KEY,
-  blob text NOT NULL,
-  operation_id uuid NOT NULL
+/// What a tombstone keeps of a reading: its identity, time and place, never
+/// its payload or its key's fields. Kept forever.
+pub(crate) const TOMBSTONES: &str = "CREATE TABLE core.event_tombstones (
+  event_id uuid PRIMARY KEY,
+  source text NOT NULL,
+  event_type text NOT NULL,
+  ts_orig timestamptz,
+  operation_id uuid NOT NULL,
+  removed_at timestamptz NOT NULL DEFAULT now(),
+  commit_seq bigint,
+  original_commit_seq bigint,
+  class text,
+  ts_quality text,
+  reason text,
+  material_id uuid,
+  anchor bigint,
+  output_index bigint,
+  key_hash text
 )";
-pub(crate) const EXCISED_MATERIALS_BLOB: &str =
-    "CREATE INDEX excised_materials_blob ON core.excised_materials (blob)";
+
+/// The chains an operation archived, and the readings it restored: what a
+/// restore or an undo of that operation moves.
+pub(crate) const ARCHIVED_OPERATION: &str = "CREATE INDEX archived_operation ON audit.archived (operation_id) WHERE operation_id IS NOT NULL";
+pub(crate) const ARCHIVE_CHANGES_RESTORED: &str = "CREATE INDEX archive_changes_restored ON audit.archive_changes (operation_id) WHERE NOT archived";
+
+/// Every change of a material's status at its writer position, so an
+/// operation's inverse finds the materials it moved.
+pub(crate) fn material_changes(c: &Checks) -> String {
+    format!(
+        "CREATE TABLE raw.material_changes (
+  material_id uuid NOT NULL REFERENCES raw.materials(id),
+  commit_seq bigint NOT NULL,
+  status text NOT NULL {status},
+  operation_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (material_id, commit_seq)
+)",
+        status = c.material_status
+    )
+}
+pub(crate) const MATERIAL_CHANGES_OPERATION: &str =
+    "CREATE INDEX material_changes_operation ON raw.material_changes (operation_id)";
+
+/// Every act that changed state, with its computed actor, its scope as given,
+/// the counts it moved, where it began and ended in the commit log, and its
+/// saved progress while it runs.
+pub(crate) fn operations(c: &Checks) -> String {
+    format!(
+        "CREATE TABLE core.operations (
+  id uuid PRIMARY KEY,
+  kind text NOT NULL,
+  actor text NOT NULL,
+  scope jsonb NOT NULL,
+  at timestamptz NOT NULL DEFAULT now(),
+  start_seq bigint,
+  end_seq bigint,
+  result text {result},
+  counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+  progress jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+  refusals jsonb NOT NULL DEFAULT '[]'::jsonb
+)",
+        result = c.operation_result
+    )
+}
 
 /// Live keys keep all digest bits and distinguish their logical string forms.
 pub(crate) const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
@@ -150,35 +204,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // Found by event: removal of live readings, and readings at a location.
         "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)".into(),
         "CREATE INDEX live_locations_event ON core.live_locations (event_id)".into(),
-        // Hidden records, remembered so neither replay nor re-import brings
-        // them back.
-        "CREATE TABLE core.hidden_records (
-  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  source text NOT NULL,
-  event_type text NOT NULL,
-  equivalence_key text,
-  material_id uuid,
-  anchor bigint,
-  output_index bigint,
-  operation_id uuid NOT NULL,
-  hidden_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT output_index_in_range CHECK (output_index >= 0),
-  CONSTRAINT keyed_or_located CHECK ((equivalence_key IS NOT NULL AND material_id IS NULL AND anchor IS NULL AND output_index IS NULL) OR (equivalence_key IS NULL AND material_id IS NOT NULL AND anchor IS NOT NULL AND output_index IS NOT NULL))
-)".into(),
-        "CREATE UNIQUE INDEX hidden_by_key ON core.hidden_records (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL".into(),
-        "CREATE UNIQUE INDEX hidden_by_location ON core.hidden_records (material_id, anchor, event_type, output_index) WHERE material_id IS NOT NULL".into(),
-        // What an excision removed: identity and time, never the payload.
-        "CREATE TABLE core.event_tombstones (
-  event_id uuid PRIMARY KEY,
-  source text NOT NULL,
-  event_type text NOT NULL,
-  ts_orig timestamptz,
-  operation_id uuid NOT NULL,
-  removed_at timestamptz NOT NULL DEFAULT now(),
-  commit_seq bigint,
-  original_commit_seq bigint,
-  class text
-)".into(),
+        TOMBSTONES.into(),
         // Replay runs one transaction per part sequence; a finished sequence is
         // recorded here, so a resumed replay skips it.
         "CREATE TABLE core.replayed_sequences (
@@ -197,13 +223,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
-        "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0), ('excised', 0)".into(),
+        "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0), ('tombstoned', 0)".into(),
         QUERY_CURSOR_KEY.into(),
         QUERY_CURSOR_KEY_INIT.into(),
         crate::query_cursors::INIT.into(),
         SOURCE_COUNTS.into(),
-        EXCISED_MATERIALS.into(),
-        EXCISED_MATERIALS_BLOB.into(),
         // Positions of the commit-log consumers that are not derivations: the
         // confirmed-stream publisher and the read-model maintainers. Each
         // commits its position with the work it covers.
@@ -257,9 +281,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   operation_id uuid,
   recorded_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (event_id, commit_seq),
-  CHECK (archived = (reason <> 'unhide'))
+  CHECK (archived = (reason <> 'restore'))
 )", archive_change_reason = c.archive_change_reason),
         "CREATE INDEX archive_changes_position ON audit.archive_changes (event_id, commit_seq DESC)".into(),
+        ARCHIVED_OPERATION.into(),
+        ARCHIVE_CHANGES_RESTORED.into(),
         "CREATE INDEX events_feed ON core.events (commit_seq,id)".into(),
         "CREATE INDEX archive_changes_feed ON audit.archive_changes (commit_seq,change_seq,event_id)".into(),
         "CREATE INDEX tombstones_feed ON core.event_tombstones (commit_seq,event_id)".into(),
@@ -271,13 +297,14 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),
   size bigint NOT NULL CHECK (size >= 0),
   -- Segment extents are synced before this row and its citations commit.
-  -- `deleting` records an excision before its extents are punched; ordinary
-  -- writer startup finishes that work before admitting new references.
-  status text NOT NULL CHECK (status IN ('present', 'deleting')),
+  -- `deleting` records a tombstone's unshared bytes before their extents are
+  -- punched; ordinary writer startup finishes that work before admitting new
+  -- references. `removed` keeps the name of bytes no longer held.
+  status text NOT NULL CHECK (status IN ('present', 'deleting', 'removed')),
   registered_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         // Stored bytes an event owns beyond its material (a library file
-        // kept by the scan): excising the event deletes them once nothing
+        // kept by the scan): tombstoning the event removes them once nothing
         // else refers to them. No foreign key into the events hypertable.
         "CREATE TABLE core.event_blobs (
   event_id uuid NOT NULL,
@@ -315,7 +342,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   kind text NOT NULL CHECK (kind IN ('appended', 'rewritten', 'replaced', 'truncated', 'snapshot')),
   started_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        "CREATE TABLE raw.materials (
+        format!("CREATE TABLE raw.materials (
   id uuid PRIMARY KEY,
   input_id uuid REFERENCES raw.inputs(id),
   revision_id uuid REFERENCES raw.revisions(id),
@@ -325,9 +352,13 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   length bigint NOT NULL CHECK (length >= 0),
   manifest jsonb NOT NULL,
   parser text NOT NULL,
-  parser_version integer NOT NULL
-)".into(),
+  parser_version integer NOT NULL,
+  status text NOT NULL DEFAULT 'live' {material_status},
+  status_operation uuid
+)", material_status = c.material_status),
         "CREATE INDEX materials_input ON raw.materials (input_id, part_index)".into(),
+        material_changes(c),
+        MATERIAL_CHANGES_OPERATION.into(),
         // One row per record a parser could not read; the bytes stay in the
         // material, so a retry is a replay of exactly those bytes.
         "CREATE TABLE raw.failures (
@@ -383,16 +414,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   -- The newest privacy rule row in force when the run's events were admitted.
   privacy_rules_seq bigint,
   -- How many of the run's events are stored, kept by admission and
-  -- excision.
+  -- tombstoning.
   events bigint NOT NULL DEFAULT 0
 )".into(),
-        "CREATE TABLE core.operations (
-  id uuid PRIMARY KEY,
-  kind text NOT NULL,
-  actor text NOT NULL,
-  scope jsonb NOT NULL,
-  at timestamptz NOT NULL DEFAULT now()
-)".into(),
+        operations(c),
         KIND_PREFIXES.into(),
         kind_declarations(),
         REPLAY_REFUSALS.into(),
@@ -418,6 +443,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   key jsonb NOT NULL,
   first_dirty_seq bigint NOT NULL,
   last_dirty_seq bigint NOT NULL,
+  held_by uuid,
   PRIMARY KEY (derivation, key)
 )".into(),
         "CREATE TABLE derivation.positions (derivation text PRIMARY KEY, commit_seq bigint NOT NULL)".into(),
@@ -590,8 +616,8 @@ BEGIN
   IF TG_OP = 'UPDATE' THEN
     RAISE EXCEPTION 'event rows are immutable' USING ERRCODE = '23514';
   END IF;
-  IF TG_OP = 'DELETE' AND nullif(current_setting('sinex.excise_operation', true), '') IS NULL THEN
-    RAISE EXCEPTION 'events are deleted only by an excision' USING ERRCODE = '23514';
+  IF TG_OP = 'DELETE' AND nullif(current_setting('sinex.tombstone_operation', true), '') IS NULL THEN
+    RAISE EXCEPTION 'events are deleted only by a tombstone' USING ERRCODE = '23514';
   END IF;
   RETURN OLD;
 END $$"

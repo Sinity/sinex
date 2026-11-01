@@ -21,7 +21,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "work.agentctl",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "the builds, tests and agent jobs run on this host, and how they ended",
     class: Class::Open,
     parser: "agentctl-events",

@@ -16,7 +16,6 @@ use sinex_source_core::{Parser, RecordError};
 pub const RECORDS: SourceSpec = SourceSpec {
     name: "model.records",
     driver: Driver::ApiRequest,
-    excisable: true,
     purpose: "configured model policy and recorded effects",
     class: Class::Open,
     parser: "model-records",
