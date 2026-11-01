@@ -352,7 +352,11 @@ fn a_consumer_reads_each_command_once_whichever_shells_saw_it() {
 #[devkit::test]
 fn absorb_joins_a_repeat_inside_a_group_led_by_a_preferred_input() {
     let rule: &'static FusionRule = Box::leak(Box::new(FusionRule {
-        absorb_ns: Some(60_000_000_000),
+        matching: Matching::Time {
+            window_ns: 2_000_000_000,
+            fallback_ns: 60_000_000_000,
+            absorb_ns: Some(60_000_000_000),
+        },
         ..COMMANDS
     }));
     let inputs = [
@@ -420,6 +424,24 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
         ["communication.imap", "communication.mbox"]
     );
     assert_eq!(joined["subject"], "about <1@x>");
+}
+
+#[devkit::test]
+fn copies_of_a_message_fuse_whatever_dates_their_stores_give() {
+    let inputs = [
+        mail("communication.mbox", "<1@x>", H + 5.0),
+        // The provider's own receive time, three days after the header date.
+        mail("communication.gmail", "<1@x>", H + 5.0 + 3.0 * 86_400.0),
+    ];
+    let out = fuse_events(&MAIL, &inputs);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 2));
+    // The most preferred input supplies the time.
+    assert_eq!(
+        out[0].payload["sent_at"],
+        json!(at(H + 5.0 + 3.0 * 86_400.0))
+    );
+    assert_eq!(occurrences(&MAIL, &inputs).len(), 1);
 }
 
 #[devkit::test]
