@@ -1,5 +1,5 @@
 //! The commit-log reader for read models: one task that reads committed events
-//! in commit order from `core.commit_log` and feeds every read-model maintainer
+//! in commit order (event positions and `core.commit_log`) and feeds every read-model maintainer
 //! (never database triggers). Each maintainer updates its tables and its
 //! position (`core.consumer_positions`) in one transaction, so a restart
 //! resumes exactly where it stopped: nothing is skipped, and nothing is applied

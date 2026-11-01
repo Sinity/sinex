@@ -28,7 +28,7 @@ pub(crate) async fn allocate_position(conn: &mut PgConnection) -> Result<i64> {
     .fetch_one(&mut *conn)
     .await?;
     sqlx::query!(
-        "INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES($1,NULL,NULL)",
+        "INSERT INTO core.commit_log(commit_seq) VALUES($1)",
         position
     )
     .execute(conn)
@@ -96,9 +96,10 @@ pub struct Page {
     pub up_to: Option<i64>,
 }
 
-/// Up to `limit` commit-log entries after `after`, in commit order, ending
-/// early once the events' stored payloads pass `bytes` (the first entry is
-/// always read).
+/// Up to `limit` positions after `after`, in commit order, ending early once
+/// the events' stored payloads pass `bytes` (the first position is always
+/// read). Event positions are on the events; the commit log holds the
+/// positions that admitted no event.
 pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) -> Result<Page> {
     if limit <= 0 {
         return Err(Error::Invalid("commit page limit must be positive".into()));
@@ -116,10 +117,18 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
                SELECT q.commit_seq, q.event_id,
                       (sum(q.size) OVER (ORDER BY q.commit_seq) - q.size)::bigint AS before
                FROM (
-                 SELECT c.commit_seq, c.event_id, coalesce(pg_column_size(s.payload), 0)::bigint AS size
-                 FROM core.commit_log c LEFT JOIN core.events s ON s.id = c.event_id
-                 WHERE c.commit_seq > $1 AND c.commit_seq <= head.value
-                 ORDER BY c.commit_seq LIMIT $2
+                 SELECT u.commit_seq, u.event_id, u.size FROM (
+                   (SELECT s.commit_seq, s.id AS event_id,
+                      coalesce(pg_column_size(s.payload), 0)::bigint AS size
+                    FROM core.events s
+                    WHERE s.commit_seq > $1 AND s.commit_seq <= head.value
+                    ORDER BY s.commit_seq LIMIT $2)
+                   UNION ALL
+                   (SELECT l.commit_seq, NULL::uuid, 0::bigint
+                    FROM core.commit_log l
+                    WHERE l.commit_seq > $1 AND l.commit_seq <= head.value
+                    ORDER BY l.commit_seq LIMIT $2)
+                 ) u ORDER BY u.commit_seq LIMIT $2
                ) q
              ) p WHERE p.before < $3::bigint
            ) c ON true

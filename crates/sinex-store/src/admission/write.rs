@@ -1,6 +1,6 @@
-//! Writing what admission admitted: events, their source's and run's counts,
-//! the commit log, the live side tables, archived readings, dirty keys and citations; then failures and the
-//! source position.
+//! Writing what admission admitted: events with their commit positions, their
+//! source's and run's counts, the live side tables, archived readings, dirty
+//! keys and citations; then failures and the source position.
 use super::classify::Classified;
 use super::derived::{mark_archived_dirty, mark_inputs_dirty};
 use super::{DirtyKeys, KeyInput, Outcome};
@@ -10,7 +10,8 @@ use sinex_model::{Batch, Event, RecordOutcome, SourceProgress};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-/// Allocate the commit sequence range and write every admitted event. The
+/// Allocate the commit sequence range and write every admitted event; each
+/// event's position is on its own row, so the commit log gets no row. The
 /// live side tables are written in key order: equivalence keys are hashes, so
 /// a batch in arrival order would touch the key index at random.
 pub(super) async fn insert_admitted(
@@ -94,17 +95,6 @@ pub(super) async fn insert_admitted(
     .execute(&mut *conn)
     .await?;
     outcome.timings.insert("run_count", started.elapsed());
-
-    let started = std::time::Instant::now();
-    sqlx::query!(
-        r#"INSERT INTO core.commit_log (commit_seq, event_id, event_type)
-           SELECT $1::bigint + row_number() OVER (ORDER BY s.ord) - 1, s.id, s.event_type
-           FROM core.admission_stage s"#,
-        first,
-    )
-    .execute(&mut *conn)
-    .await?;
-    outcome.timings.insert("commit_log", started.elapsed());
 
     let started = std::time::Instant::now();
     sqlx::query!(

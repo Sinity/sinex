@@ -123,6 +123,9 @@ async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Val
             format!(
                 "SELECT to_jsonb(t)||jsonb_build_object('reason',CASE reason WHEN 'hide' THEN 'archive' WHEN 'unhide' THEN 'restore' ELSE reason END) FROM {name} t ORDER BY 1"
             )
+        } else if schema == "core" && table == "commit_log" {
+            // Positions are kept; an event's moves from its commit-log row to its own row.
+            "SELECT to_jsonb(p) FROM (SELECT commit_seq FROM core.commit_log UNION SELECT commit_seq FROM core.events) p ORDER BY 1".into()
         } else if table == "published" {
             format!("SELECT to_jsonb(t)-'stream_instance' FROM {name} t ORDER BY 1")
         } else if table == "search_text" {

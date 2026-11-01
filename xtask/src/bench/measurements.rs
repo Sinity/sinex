@@ -326,7 +326,7 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
     let mut counts = query(
         cluster,
         "SELECT json_build_object('events', (SELECT count(*) FROM core.events),
-        'commit_events', (SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL),
+        'event_positions', (SELECT count(DISTINCT commit_seq) FROM core.events),
         'last_commit', (SELECT value FROM core.counters WHERE name='commit_seq'),
         'source_counts', (SELECT coalesce(sum(events),0) FROM core.source_counts),
         'run_events', (SELECT coalesce(sum(events),0) FROM core.runs),
@@ -340,7 +340,7 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
     )?;
     counts["complete"] = json!(
         counts["events"].as_u64() == Some(events)
-            && counts["commit_events"].as_u64() == Some(events)
+            && counts["event_positions"].as_u64() == Some(events)
             && counts["last_commit"].as_u64() == Some(events)
             && counts["source_counts"].as_u64() == Some(events)
             && counts["run_events"].as_u64() == Some(events)
@@ -910,6 +910,49 @@ pub(super) fn relation_size(snapshot: &Value, relation: &str, field: &str) -> Op
         .iter()
         .find(|row| row["schema"] == "core" && row["name"] == relation)?[field]
         .as_u64()
+}
+
+/// Bytes kept per stored event: each table's heap, TOAST and indexes
+/// (event chunks counted under `core.events`), after minus before, divided
+/// by the events the run stored. A table rewritten smaller counts negative.
+pub(super) fn stored_bytes(before: &Value, after: &Value, events: u64) -> Value {
+    let sizes = |snapshot: &Value| -> BTreeMap<String, i64> {
+        let mut sizes = BTreeMap::new();
+        for row in snapshot["relations"].as_array().into_iter().flatten() {
+            let (Some(schema), Some(name), Some(bytes)) = (
+                row["schema"].as_str(),
+                row["name"].as_str(),
+                row["total_bytes"].as_i64(),
+            ) else {
+                continue;
+            };
+            if row["relkind"] != "r" {
+                continue;
+            }
+            let table = if schema == "_timescaledb_internal" {
+                "core.events".to_owned()
+            } else {
+                format!("{schema}.{name}")
+            };
+            *sizes.entry(table).or_default() += bytes;
+        }
+        sizes
+    };
+    let (before, after) = (sizes(before), sizes(after));
+    let per_event = |bytes: i64| bytes as f64 / events.max(1) as f64;
+    let mut tables = serde_json::Map::new();
+    let mut total = 0;
+    for (table, bytes) in &after {
+        let grown = bytes - before.get(table).copied().unwrap_or(0);
+        if grown != 0 {
+            total += grown;
+            tables.insert(
+                table.clone(),
+                json!({"bytes": grown, "per_event": per_event(grown)}),
+            );
+        }
+    }
+    json!({"bytes": total, "per_event": per_event(total), "tables": tables})
 }
 
 pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, String> {

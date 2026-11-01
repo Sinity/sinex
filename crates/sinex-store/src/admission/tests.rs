@@ -455,15 +455,14 @@ async fn commit_seq_is_dense_and_in_batch_order(db: devkit::pg::TestDatabase) {
     let events: Vec<Event> = (0..5).map(|k| keyed("s", k, 1, 1)).collect();
     let out = admit_one(&mut conn, &batch(events.clone())).await;
     assert_eq!(out.commit_seq, Some((1, 5)));
-    let seqs = sqlx::query!("SELECT event_id, commit_seq FROM core.commit_log ORDER BY commit_seq")
+    let seqs = sqlx::query!("SELECT id, commit_seq FROM core.events ORDER BY commit_seq")
         .fetch_all(&mut conn)
         .await
         .unwrap();
-    let ids: Vec<_> = seqs
-        .iter()
-        .map(|r| r.event_id.expect("admitted event entry"))
-        .collect();
+    let ids: Vec<_> = seqs.iter().map(|r| r.id).collect();
     assert_eq!(ids, events.iter().map(|e| e.id.0).collect::<Vec<_>>());
+    let positions: Vec<_> = seqs.iter().map(|r| r.commit_seq).collect();
+    assert_eq!(positions, (1..=5).collect::<Vec<i64>>());
 }
 
 struct ByDay;

@@ -39,7 +39,7 @@ def run(psql, output_directory, source_root):
 
     mapping = "core.published m"
     # Stream positions are acknowledgment coordinates, distinct from commit positions.
-    audit = json.loads(query(f"SELECT json_build_object('pairs', count(*), 'event_ids', count(DISTINCT m.event_id), 'stream_seqs', count(DISTINCT m.stream_seq), 'invalid_pairs', count(*) FILTER (WHERE c.event_id IS NULL OR m.stream_seq <= 0), 'expected', (SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL)) FROM {mapping} LEFT JOIN core.commit_log c ON c.event_id=m.event_id"))
+    audit = json.loads(query(f"SELECT json_build_object('pairs', count(*), 'event_ids', count(DISTINCT m.event_id), 'stream_seqs', count(DISTINCT m.stream_seq), 'invalid_pairs', count(*) FILTER (WHERE c.id IS NULL OR m.stream_seq <= 0), 'expected', (SELECT count(*) FROM core.events)) FROM {mapping} LEFT JOIN core.events c ON c.id=m.event_id"))
     pathlib.Path(output_directory, 'publication-audit.json').write_text(json.dumps(audit, indent=2))
     if not (audit['event_ids'] == audit['expected'] and audit['pairs'] == audit['stream_seqs'] and audit['pairs'] >= audit['event_ids'] and audit['invalid_pairs'] == 0):
         raise RuntimeError('published pairs differ from the generated stream: ' + json.dumps(audit))

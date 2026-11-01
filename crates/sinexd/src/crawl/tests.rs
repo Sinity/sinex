@@ -57,8 +57,6 @@ async fn crawl_never_records_history_urls_in_binding_settings(db: devkit::pg::Te
         .unwrap();
     sqlx::query("INSERT INTO core.source_counts(source,events,first_event,last_event,last_seen) SELECT source,count(*),min(ts_orig),max(ts_orig),max(ts_coided) FROM core.events GROUP BY source")
         .execute(&mut ctx.read_conn).await.unwrap();
-    sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,event_type) SELECT commit_seq,id,event_type FROM core.events")
-        .execute(&mut ctx.read_conn).await.unwrap();
     sqlx::query("UPDATE core.counters SET value=4 WHERE name='commit_seq'")
         .execute(&mut ctx.read_conn)
         .await

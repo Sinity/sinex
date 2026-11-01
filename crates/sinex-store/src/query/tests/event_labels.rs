@@ -241,12 +241,11 @@ async fn telemetry_uses_ordinary_admission_commit_order_and_visibility(
         1
     );
     assert_eq!(ask(&mut conn, "telemetry").await.total, 1);
-    let committed: i64 =
-        sqlx::query_scalar("SELECT commit_seq FROM core.commit_log WHERE event_id = $1")
-            .bind(event_id.0)
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
+    let committed: i64 = sqlx::query_scalar("SELECT commit_seq FROM core.events WHERE id = $1")
+        .bind(event_id.0)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
     assert!(committed > 0);
     crate::lifecycle::move_events(
         &mut conn,
