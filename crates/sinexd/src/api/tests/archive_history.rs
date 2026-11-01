@@ -43,8 +43,12 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
         let position = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
             .await
             .unwrap();
-        assert!(position > start, "each move takes a position");
-        moved_at.push(start + 1);
+        assert_eq!(
+            position,
+            start + 1,
+            "a one-event move is one batch and takes exactly the next position"
+        );
+        moved_at.push(position);
         assert_eq!(totals(&w, "events").await, total);
         for (question, expected) in &snapshots {
             assert_eq!(totals(&w, question).await, *expected, "{question}");
