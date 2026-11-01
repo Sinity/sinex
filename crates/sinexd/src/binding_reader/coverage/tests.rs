@@ -88,7 +88,8 @@ const COVERAGE_READINGS: &str =
     "SELECT count(*) FROM core.events WHERE event_type='source.coverage'";
 const LIVE_COVERAGE: &str = "SELECT count(*) FROM core.events e WHERE e.event_type='source.coverage' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)";
 const OBSERVATION_MATERIALS: &str = "SELECT count(*) FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.kind='source-observation'";
-const RUNS: &str = "SELECT count(*) FROM core.runs WHERE name IN ('terminal.zsh-history','source.observation')";
+const RUNS: &str =
+    "SELECT count(*) FROM core.runs WHERE name IN ('terminal.zsh-history','source.observation')";
 const OPEN_RUNS: &str = "SELECT count(*) FROM core.runs WHERE name IN ('terminal.zsh-history','source.observation') AND ended_at IS NULL";
 
 /// law: coverage-on-change
@@ -101,7 +102,10 @@ async fn coverage_on_change(db: devkit::pg::TestDatabase) {
     let mut readers = vec![zsh_reader(&input)];
     let mut rounds = crate::binding_reader::Rounds::default();
     for _ in 0..100 {
-        assert_eq!(round(&mut context, &mut readers, &mut rounds).await, [false]);
+        assert_eq!(
+            round(&mut context, &mut readers, &mut rounds).await,
+            [false]
+        );
     }
     assert_eq!(count(&mut context, COVERAGE_READINGS).await, 1);
     assert_eq!(count(&mut context, OBSERVATION_MATERIALS).await, 1);
@@ -118,7 +122,10 @@ async fn coverage_on_change(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     let mut readers = vec![zsh_reader(&input)];
-    assert_eq!(round(&mut context, &mut readers, &mut rounds).await, [false]);
+    assert_eq!(
+        round(&mut context, &mut readers, &mut rounds).await,
+        [false]
+    );
     assert_eq!(count(&mut context, COVERAGE_READINGS).await, 1);
 
     // A failure replaces the current reading; the earlier one stays in history.
@@ -137,9 +144,7 @@ async fn coverage_on_change(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn binding_reads_store_their_evidence_with_bytes_under_one_run(
-    db: devkit::pg::TestDatabase,
-) {
+async fn binding_reads_store_their_evidence_with_bytes_under_one_run(db: devkit::pg::TestDatabase) {
     let root = tempfile::tempdir().unwrap();
     let input = root.path().join("history");
     std::fs::write(&input, b"").unwrap();
@@ -159,7 +164,11 @@ async fn binding_reads_store_their_evidence_with_bytes_under_one_run(
     let evidence: Vec<(serde_json::Value, Option<uuid::Uuid>)> = sqlx::query_as(
         "SELECT payload, material_id FROM core.events WHERE event_type='source.coverage' ORDER BY commit_seq"
     ).fetch_all(&mut context.read_conn).await.unwrap();
-    assert_eq!(evidence.len(), 2, "the unchanged second read writes nothing");
+    assert_eq!(
+        evidence.len(),
+        2,
+        "the unchanged second read writes nothing"
+    );
     assert_eq!(evidence[0].0["state"], "recorded_unknown_coverage");
     assert_eq!(evidence[1].0["state"], "missing");
     let mut observed_runs = std::collections::BTreeSet::new();

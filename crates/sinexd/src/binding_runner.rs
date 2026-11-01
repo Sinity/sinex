@@ -239,7 +239,12 @@ impl Bindings {
                         CoverageState::RecordedUnknownCoverage
                     },
                     reason: Some(input.reason.clone().unwrap_or_else(|| {
-                        if unavailable { "no input" } else { "input is readable" }.into()
+                        if unavailable {
+                            "no input"
+                        } else {
+                            "input is readable"
+                        }
+                        .into()
                     })),
                     completeness: CoverageCompleteness::Unknown,
                     bounded_by: "discovery; no read attempt".into(),

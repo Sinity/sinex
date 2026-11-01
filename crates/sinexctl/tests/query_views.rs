@@ -124,7 +124,8 @@ fn rendered_answers_print_their_text_once_unless_json_is_asked() {
         answered(&["brief"], brief.clone()),
         "# Brief for 2026-09-14\n- synthetic finding\n"
     );
-    let printed: Value = serde_json::from_str(&answered(&["--json", "brief"], brief.clone())).unwrap();
+    let printed: Value =
+        serde_json::from_str(&answered(&["--json", "brief"], brief.clone())).unwrap();
     assert_eq!(printed, brief);
     assert_eq!(
         answered(

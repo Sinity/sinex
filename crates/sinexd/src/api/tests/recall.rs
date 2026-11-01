@@ -878,7 +878,10 @@ async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomp
         first["result"]["presentation"]["context"]["citation"],
         citation
     );
-    assert_eq!(first["result"]["presentation"]["context"]["as_of"], position);
+    assert_eq!(
+        first["result"]["presentation"]["context"]["as_of"],
+        position
+    );
     assert!(
         first["result"]["presentation"]["markdown"]
             .as_str()
