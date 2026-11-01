@@ -432,7 +432,7 @@ impl Requests {
                 material: Some(MaterialFrame {
                     source,
                     id: material.id,
-                    input: input,
+                    input,
                     blob: material.blob,
                     length: material.length,
                     parser: material.parser,

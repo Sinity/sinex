@@ -207,16 +207,13 @@ impl Ingest {
                     )
                     .await
                     .map_err(|error| Check::Unavailable(error.to_string()))?
-                    {
-                        if previous.payload
+                        && previous.payload
                             != serde_json::to_value(incoming)
                                 .map_err(|error| Check::Malformed(error.to_string()))?
-                        {
-                            return Err(Check::Refused(
-                                "emergency transfer ID already has different frozen evidence"
-                                    .into(),
-                            ));
-                        }
+                    {
+                        return Err(Check::Refused(
+                            "emergency transfer ID already has different frozen evidence".into(),
+                        ));
                     }
                 }
                 _ => {}
