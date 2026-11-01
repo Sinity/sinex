@@ -55,7 +55,10 @@ impl ReadMark {
         )
         .fetch_one(conn)
         .await?;
-        Ok(Self { changes, tombstoned })
+        Ok(Self {
+            changes,
+            tombstoned,
+        })
     }
 }
 

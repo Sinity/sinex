@@ -7,7 +7,7 @@
 //!
 //! The terminal's command reports are not a command input: they carry no
 //! host, which a command's identity needs.
-use super::{FusionInput, FusionRecord, FusionRule};
+use super::{FusionInput, FusionRecord, FusionRule, Matching};
 use serde_json::{Map, Value, json};
 use sinex_model::Event;
 
@@ -103,9 +103,11 @@ pub static COMMANDS: FusionRule = FusionRule {
         },
     ],
     inputs: &["command.executed", "command.imported"],
-    window_ns: secs(2),
-    fallback_ns: secs(60),
-    absorb_ns: None,
+    matching: Matching::Time {
+        window_ns: secs(2),
+        fallback_ns: secs(60),
+        absorb_ns: None,
+    },
     start_field: "started_at",
     end_field: None,
 };
@@ -160,10 +162,12 @@ pub static MAIL: FusionRule = FusionRule {
         mail_from("communication.outlook-csv"),
     ],
     inputs: &["mail.message"],
-    // The same `Date` header wherever the message is stored.
-    window_ns: secs(1),
-    fallback_ns: secs(1),
-    absorb_ns: None,
+    // Copies of one message match on the Message-ID within the account,
+    // whatever dates their stores give it.
+    matching: Matching::Identity {
+        fields: &["account", "message_id"],
+        spread_ns: secs(86_400),
+    },
     start_field: "sent_at",
     end_field: None,
 };
