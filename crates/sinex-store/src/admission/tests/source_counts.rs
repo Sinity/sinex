@@ -318,7 +318,6 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
         "activity.session",
         "activity.span",
         "conversation.day",
-        "rest.fused",
         "document.text",
     ];
     let expected = sinex_model::event_types::declarations()

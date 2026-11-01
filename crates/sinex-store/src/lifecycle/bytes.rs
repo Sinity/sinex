@@ -53,14 +53,6 @@ pub(super) async fn tombstone_events(
     )
     .execute(&mut *conn)
     .await?;
-    sqlx::query("DELETE FROM privacy.original_events WHERE event_id = ANY($1)")
-        .bind(events)
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query("DELETE FROM privacy.event_outputs WHERE event_id = ANY($1)")
-        .bind(events)
-        .execute(&mut *conn)
-        .await?;
     sqlx::query!(
         "DELETE FROM derivation.outputs WHERE event_id = ANY($1)",
         events

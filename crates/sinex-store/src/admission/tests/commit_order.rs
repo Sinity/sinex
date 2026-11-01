@@ -19,7 +19,6 @@ async fn a_second_transaction_waits_for_the_first_to_commit(db: devkit::pg::Test
         &mut early_cache,
         &batch(vec![keyed("s", 1, 1, 1)]),
         &NoDerivations,
-        None,
     )
     .await
     .unwrap();
@@ -30,7 +29,6 @@ async fn a_second_transaction_waits_for_the_first_to_commit(db: devkit::pg::Test
             &mut late_cache,
             &batch(vec![keyed("s", 2, 1, 1)]),
             &NoDerivations,
-            None,
         )
         .await
         .unwrap();

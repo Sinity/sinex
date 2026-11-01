@@ -298,20 +298,6 @@ async fn run_owned(
             wait_until(Some(state.evaluator.now().saturating_add(1))).await;
             continue;
         }
-        if !sinex_store::privacy::projection::epoch(&mut tx)
-            .await
-            .map_err(error)?
-            .ready()
-        {
-            tx.rollback().await.map_err(error)?;
-            drop(conn);
-            drop(_serial);
-            tokio::select! {
-                _=commits.changed()=>{},_=stop.changed()=>{},
-                update=updates.recv()=>if let Some(update)=update {persist_update(&api,update).await?;},
-            }
-            continue;
-        }
         let read_mark = sinex_store::ReadMark::now(&mut tx).await.map_err(error)?;
         let (products, class) =
             evaluate::evaluate(&api, &mut tx, &mut state, now, seq, &calendar).await?;
@@ -527,7 +513,6 @@ async fn run_owned(
         if let Err(reason) = result {
             if reason.contains("signal evaluation input snapshot changed")
                 || reason.contains("signal checkpoint changed")
-                || reason.contains("derivation_policy_epoch_changed")
             {
                 drop(_serial);
                 continue;

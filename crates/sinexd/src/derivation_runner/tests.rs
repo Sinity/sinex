@@ -226,9 +226,15 @@ async fn commands_fuse_into_sessions_and_figures(db: devkit::pg::TestDatabase) {
     let mut d = w.runner().await;
     d.catch_up().await.unwrap();
 
+    // The two commands both shells saw fuse; the one only zsh saw stays a
+    // zsh record, and every consumer counts each command once.
     let fused: Vec<CommandFused> = w.live().await;
-    assert_eq!(fused.len(), 3, "{fused:?}");
-    assert_eq!(fused[0].observed_by, vec!["terminal.atuin", "terminal.zsh"]);
+    assert_eq!(fused.len(), 2, "{fused:?}");
+    assert!(
+        fused
+            .iter()
+            .all(|f| f.observed_by == ["terminal.atuin", "terminal.zsh"])
+    );
     let sessions: Vec<ShellSession> = w.live().await;
     assert_eq!(sessions.len(), 2, "{sessions:?}");
     assert_eq!(sessions[0].commands, 2);
@@ -238,7 +244,7 @@ async fn commands_fuse_into_sessions_and_figures(db: devkit::pg::TestDatabase) {
         .iter()
         .find(|f| f.grain == "day" && f.metric == "shell.commands" && f.dimension.is_empty())
         .unwrap();
-    assert_eq!(commands.value, Some(3.0), "fused commands, each once");
+    assert_eq!(commands.value, Some(3.0), "each command once");
     assert_eq!(
         w.count("SELECT count(*) FROM derivation.dirty").await,
         0,
@@ -263,10 +269,14 @@ async fn a_changed_input_replaces_outputs_downstream(db: devkit::pg::TestDatabas
     // Atuin rewrote the row: the command failed after all.
     w.admit(vec![atuin("1", "make", 0, 2, 2)]).await;
     d.catch_up().await.unwrap();
-    let fused: Vec<CommandFused> = w.live().await;
-    assert_eq!(fused.len(), 1, "replaced, not duplicated");
-    assert_eq!(fused[0].exit_code, Some(2));
-    assert_eq!(w.live::<ShellSession>().await[0].failed, 1);
+    assert!(
+        w.live::<CommandFused>().await.is_empty(),
+        "one shell saw it"
+    );
+    let sessions: Vec<ShellSession> = w.live().await;
+    assert_eq!(sessions.len(), 1, "replaced, not duplicated");
+    assert_eq!(sessions[0].commands, 1);
+    assert_eq!(sessions[0].failed, 1);
 }
 
 #[devkit::test]
@@ -279,13 +289,14 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
     d.catch_up().await.unwrap();
     assert_eq!(w.live::<CommandFused>().await[0].observed_by.len(), 2);
 
-    // Archiving the Atuin reading leaves zsh alone: the two-source fused
-    // command goes, a zsh-only one takes its place.
+    // Archiving the Atuin reading leaves zsh alone: the fused command goes
+    // and the zsh record is read directly.
     w.moved(Act::Archive, vec![a_id]).await;
     d.catch_up().await.unwrap();
-    let fused: Vec<CommandFused> = w.live().await;
-    assert_eq!(fused.len(), 1);
-    assert_eq!(fused[0].observed_by, vec!["terminal.zsh"]);
+    assert!(w.live::<CommandFused>().await.is_empty());
+    let sessions: Vec<ShellSession> = w.live().await;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].commands, 1);
     assert!(
         w.count(
             "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id WHERE e.event_type = 'command.fused' AND a.reason = 'archive'"
@@ -779,8 +790,4 @@ mod selected_provenance;
 
 mod embedding;
 
-mod policy;
-
 mod exact;
-
-mod estimability;

@@ -60,11 +60,6 @@ pub(crate) struct ReplaySequence {
 
 enum WriterJob {
     Admit(Batch),
-    ModelCall {
-        actor: String,
-        action: sinex_model::model_calls::Action,
-        capabilities: sinex_model::model_calls::Capabilities,
-    },
     Signals(Batch, Box<sinex_store::signals::Commit>),
     Checked(Batch, AdmissionCheck),
     Source(Batch, AdmissionCheck),
@@ -88,7 +83,6 @@ enum WriterJob {
 
 enum Done {
     Admitted(Outcome),
-    ModelCall(Box<sinex_model::model_calls::Outcome>),
     Replayed(Vec<Outcome>, Diff),
     Lifecycle(Step),
 }
@@ -121,28 +115,6 @@ impl WriterHandle {
     /// Shared by keyed computations in commands and the background runner.
     pub(crate) async fn lock_derivations(&self) -> tokio::sync::OwnedMutexGuard<()> {
         self.derivations.clone().lock_owned().await
-    }
-
-    pub(crate) async fn model_call(
-        &self,
-        actor: String,
-        action: sinex_model::model_calls::Action,
-        capabilities: sinex_model::model_calls::Capabilities,
-    ) -> Result<sinex_model::model_calls::Outcome, WriteError> {
-        match self
-            .send(
-                Priority::Live,
-                WriterJob::ModelCall {
-                    actor,
-                    action,
-                    capabilities,
-                },
-            )
-            .await?
-        {
-            Done::ModelCall(outcome) => Ok(*outcome),
-            _ => unreachable!("model accounting returns its own operational outcome"),
-        }
     }
 
     pub(crate) async fn submit_checked(
@@ -296,26 +268,6 @@ impl WriterHandle {
     }
 }
 
-async fn model_call(
-    connection: &mut AdmissionContext,
-    actor: &str,
-    action: &sinex_model::model_calls::Action,
-    capabilities: sinex_model::model_calls::Capabilities,
-) -> Result<sinex_model::model_calls::Outcome, WriteError> {
-    let mut tx = connection.begin().await.map_err(store_error)?;
-    match tx.model_call(actor, action, capabilities).await {
-        Ok(outcome) => {
-            tx.commit().await.map_err(store_error)?;
-            Ok(outcome)
-        }
-        Err(error) => {
-            let error = store_error(error);
-            tx.rollback().await.map_err(store_error)?;
-            Err(error)
-        }
-    }
-}
-
 /// The writer's receiving side, separate from the task so tests can queue work
 /// before the writer starts.
 pub(crate) struct Queues {
@@ -413,13 +365,6 @@ pub(crate) async fn run_notifying(
         };
         let service_started = std::time::Instant::now();
         let mut result = match job.work {
-            WriterJob::ModelCall {
-                actor,
-                action,
-                capabilities,
-            } => model_call(&mut connection, &actor, &action, capabilities)
-                .await
-                .map(|outcome| Done::ModelCall(Box::new(outcome))),
             WriterJob::Admit(batch) => admit_checked(
                 &mut connection,
                 &batch,

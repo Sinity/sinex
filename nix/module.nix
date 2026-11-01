@@ -209,11 +209,6 @@ in
       default = null;
       description = "Shared host signal policy and deployment-owned outlets. The daemon validates interrupt_budget_per_hour, quiet_hours, private, notifications, values, actions and outlet_timeout_ms as one configuration.";
     };
-    modelAccounting.actualReceipts = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Permit operator-authorized accounting of recorded actual model receipts; this enables no provider call.";
-    };
 
     nats = {
       address = mkOption {
@@ -315,7 +310,7 @@ in
       type = types.listOf (types.attrsOf types.anything);
       default = [ ];
       example = lib.literalExpression ''
-        [ { tag = "editor"; event_type = "focus.fused"; when = [ { field = "/app"; is = "kitty"; } { field = "/title"; contains = "nvim"; } ]; } ]
+        [ { tag = "editor"; event_type = "window.span"; when = [ { field = "/app"; is = "kitty"; } { field = "/title"; contains = "nvim"; } ]; } ]
       '';
       description = ''
         Rules the tag applier attaches tags with: each names a tag, an event
@@ -498,7 +493,6 @@ in
       }) producers);
       environment.etc."sinex/sources.json".text = builtins.toJSON {
         signals = cfg.signals;
-        model_accounting.actual_receipts = cfg.modelAccounting.actualReceipts;
         sources = cfg.sources;
         exclude = cfg.exclude;
         discovery = cfg.discovery // {

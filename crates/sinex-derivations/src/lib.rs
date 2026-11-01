@@ -25,6 +25,7 @@ pub mod figures;
 pub mod fusion;
 pub mod health;
 pub mod library;
+pub mod observed;
 pub mod portfolio;
 pub mod presence;
 pub mod selected;
@@ -273,23 +274,6 @@ pub trait Keyed: Send + Sync {
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
 
-    /// Exact input kind/version and computational payload footprint. None
-    /// conservatively refuses inputs touched by transforming policy actions.
-    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
-        None
-    }
-    fn unavailable_inputs(
-        &self,
-        _: &Value,
-        _: &[Event],
-        _: &[sinex_model::UnavailableInput],
-        _: &Env,
-    ) -> Computed {
-        Computed {
-            waiting: true,
-            ..Default::default()
-        }
-    }
     fn version(&self) -> u32 {
         Self::VERSION
     }
@@ -369,19 +353,6 @@ pub trait PerEvent: Send + Sync {
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
-    /// Exact input kind/version and computational payload footprint. None
-    /// conservatively refuses inputs touched by transforming policy actions.
-    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
-        None
-    }
-    fn unavailable_inputs(
-        &self,
-        _: Input<'_>,
-        _: &[sinex_model::UnavailableInput],
-        _: &Env,
-    ) -> Result<Vec<Event>, String> {
-        Err("required_input_unavailable".into())
-    }
     /// A tool's availability and version may change what this run can read.
     fn version(&self) -> u32 {
         Self::VERSION
@@ -404,23 +375,6 @@ pub trait PerEvent: Send + Sync {
 pub trait AnyKeyed: Send + Sync {
     fn history_policy(&self) -> sinex_model::DerivationHistory {
         sinex_model::DerivationHistory::Recompute
-    }
-    /// Exact input kind/version and computational payload footprint. None
-    /// conservatively refuses inputs touched by transforming policy actions.
-    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
-        None
-    }
-    fn unavailable_inputs(
-        &self,
-        _: &Value,
-        _: &[Event],
-        _: &[sinex_model::UnavailableInput],
-        _: &Env,
-    ) -> Computed {
-        Computed {
-            waiting: true,
-            ..Default::default()
-        }
     }
     fn name(&self) -> &'static str;
     fn version(&self) -> u32;
@@ -469,19 +423,6 @@ pub trait AnyKeyed: Send + Sync {
 }
 
 impl<K: Keyed> AnyKeyed for K {
-    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
-        Keyed::input_requirements(self)
-    }
-    fn unavailable_inputs(
-        &self,
-        key: &Value,
-        inputs: &[Event],
-        issues: &[sinex_model::UnavailableInput],
-        env: &Env,
-    ) -> Computed {
-        Keyed::unavailable_inputs(self, key, inputs, issues, env)
-    }
-
     fn history_policy(&self) -> sinex_model::DerivationHistory {
         K::HISTORY
     }
@@ -554,18 +495,6 @@ impl<K: Keyed> AnyKeyed for K {
 
 /// A per-event derivation with its type erased.
 pub trait AnyPerEvent: Send + Sync {
-    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
-        None
-    }
-    fn unavailable_inputs(
-        &self,
-        _: Input<'_>,
-        _: &[sinex_model::UnavailableInput],
-        _: &Env,
-    ) -> Result<Vec<Event>, String> {
-        Err("required_input_unavailable".into())
-    }
-
     fn history_policy(&self) -> sinex_model::DerivationHistory {
         sinex_model::DerivationHistory::Recompute
     }
@@ -578,18 +507,6 @@ pub trait AnyPerEvent: Send + Sync {
 }
 
 impl<P: PerEvent> AnyPerEvent for P {
-    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
-        PerEvent::input_requirements(self)
-    }
-    fn unavailable_inputs(
-        &self,
-        input: Input<'_>,
-        issues: &[sinex_model::UnavailableInput],
-        env: &Env,
-    ) -> Result<Vec<Event>, String> {
-        PerEvent::unavailable_inputs(self, input, issues, env)
-    }
-
     fn history_policy(&self) -> sinex_model::DerivationHistory {
         P::HISTORY
     }

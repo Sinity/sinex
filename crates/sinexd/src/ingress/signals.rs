@@ -75,11 +75,7 @@ impl Ingest {
                 sinex_store::read_coverage::DOMAIN,
                 &proof.stamp,
             ) {
-                Ok(claims)
-                    if proof.policy_epoch == claims.policy_epoch
-                        && proof.position == claims.position
-                        && proof.scope == claims.scope =>
-                {
+                Ok(claims) if proof.position == claims.position && proof.scope == claims.scope => {
                     Some(claims)
                 }
                 Ok(_) if optional => None,
@@ -99,11 +95,8 @@ impl Ingest {
             let grant = self.grants.get(producer).ok_or_else(|| {
                 Check::Configuration("signal input read grants are unavailable".into())
             })?;
-            let epoch = sinex_store::privacy::projection::epoch(&mut self.conn)
-                .await
-                .map_err(|error| Check::Unavailable(error.to_string()))?;
             for id in signals.iter().flat_map(|signal| &signal.inputs) {
-                if !readable_input(&mut self.conn, *id, claims, grant, epoch).await? {
+                if !readable_input(&mut self.conn, *id, claims, grant).await? {
                     return Err(Check::Refused(
                         "signal input is outside its certified readable basis".into(),
                     ));
@@ -375,7 +368,6 @@ async fn readable_input(
     id: sinex_model::EventId,
     claims: &sinex_store::read_coverage::Claims,
     grant: &super::fetch::Grants,
-    epoch: sinex_store::privacy::projection::Epoch,
 ) -> Result<bool, Check> {
     let Some(input) = sinex_store::producer_reads::event_output(conn, id.0)
         .await
@@ -383,24 +375,16 @@ async fn readable_input(
     else {
         return Ok(false);
     };
-    let class = input
-        .class
-        .and_then(|class| serde_json::from_value::<sinex_model::Class>(Value::String(class)).ok());
+    let class = serde_json::from_value::<sinex_model::Class>(Value::String(input.class)).ok();
     let position = sinex_store::signals::input_position(conn, id)
         .await
         .map_err(|error| Check::Unavailable(error.to_string()))?;
-    Ok(epoch.ready()
-        && input.epoch == Some(epoch.active)
-        && input.epoch == Some(claims.policy_epoch)
-        && input.state.as_deref() == Some("complete")
-        && input.changed == Some(false)
-        && class.is_some_and(|class| {
-            class != sinex_model::Class::Sealed && grant.allows(&input.kind, class)
-        })
-        && claims
-            .indexed_kinds
-            .iter()
-            .any(|(kind, _)| kind.name == input.kind)
+    Ok(class.is_some_and(|class| {
+        class != sinex_model::Class::Sealed && grant.allows(&input.kind, class)
+    }) && claims
+        .indexed_kinds
+        .iter()
+        .any(|(kind, _)| kind.name == input.kind)
         && position.is_some_and(|position| position <= claims.position))
 }
 

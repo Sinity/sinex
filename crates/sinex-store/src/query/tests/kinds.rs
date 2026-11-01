@@ -135,7 +135,7 @@ async fn timestamp_extraction_checks_calendar_dates_and_schemaless_mixed_values(
 }
 
 #[devkit::test]
-async fn dynamic_json_uses_projected_row_types_without_losing_scalar_spelling(
+async fn dynamic_json_uses_stored_row_types_without_losing_scalar_spelling(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -240,7 +240,7 @@ async fn dynamic_json_uses_projected_row_types_without_losing_scalar_spelling(
     crate::privacy::add_rule(
         &mut conn,
         &crate::privacy::NewRule {
-            name: "project-current-values".into(),
+            name: "mask-new-values".into(),
             source: "example".into(),
             event_type: Some("example.point".into()),
             field: Some("/value".into()),
@@ -253,17 +253,48 @@ async fn dynamic_json_uses_projected_row_types_without_losing_scalar_spelling(
     )
     .await
     .unwrap();
-    crate::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
-    let original = ask(
+    let late = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Api {
+            actor: "test".into(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events: vec![Event::submitted(
+                d.kind.clone(),
+                json!({"value":42,"label":"late42","at":"2026-10-27T12:00:00Z"}),
+                "example".into(),
+                Origin::Record {
+                    location: RecordLocation {
+                        material: MaterialId::new(),
+                        anchor: 0,
+                    },
+                    output_index: 0,
+                },
+                ReadingOrder(0),
+                [0; 32],
+                Class::Open,
+            )],
+        }],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&late, &NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut stored: Vec<_> = ask(
         &mut conn,
         "events WHERE event_type = example.point AND payload.value = 42",
     )
-    .await;
+    .await
+    .rows
+    .iter()
+    .map(|row| row["payload"]["label"].as_str().unwrap().to_owned())
+    .collect();
+    stored.sort_unstable();
     assert_eq!(
-        original.total, 0,
-        "raw numeric values cannot bypass current transformed JSON rows"
+        stored,
+        ["number42", "string42"],
+        "a new rule applies at admission and never reaches stored events"
     );
     let masked = ask(
         &mut conn,
@@ -275,8 +306,9 @@ async fn dynamic_json_uses_projected_row_types_without_losing_scalar_spelling(
         .iter()
         .map(|row| row["payload"]["label"].as_str().unwrap())
         .collect();
-    assert!(
-        labels.contains("number42"),
-        "the projected string controls the comparison type of an originally numeric value"
+    assert_eq!(
+        labels,
+        ["late42"].into(),
+        "the masked string controls the comparison type of an originally numeric value"
     );
 }

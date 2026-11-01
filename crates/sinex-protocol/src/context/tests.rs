@@ -1,27 +1,22 @@
 use super::*;
 
 #[test]
-fn coverage_requires_explicit_signed_epoch_and_typed_failure_certainty() {
+fn coverage_requires_explicit_signed_scope_and_typed_failure_certainty() {
     let proof = CoverageProof {
         stamp: "opaque-owner-stamp".into(),
         position: 17,
-        policy_epoch: 9,
         scope: "scope-a".into(),
     };
     let mut wire = serde_json::to_value(&proof).unwrap();
-    assert_eq!(wire["policy_epoch"], 9);
-    wire.as_object_mut().unwrap().remove("policy_epoch");
+    assert_eq!(wire["scope"], "scope-a");
+    wire.as_object_mut().unwrap().remove("scope");
     assert!(serde_json::from_value::<CoverageProof>(wire).is_err());
     for basis in [
         crate::ReplayBasisStatus::Unverified,
         crate::ReplayBasisStatus::Invalidated {
-            policy_epoch: Some(9),
             scope: Some("scope-a".into()),
         },
-        crate::ReplayBasisStatus::Invalidated {
-            policy_epoch: None,
-            scope: None,
-        },
+        crate::ReplayBasisStatus::Invalidated { scope: None },
     ] {
         let status = CoverageStatus::Incomplete {
             reason: "synthetic-failure".into(),

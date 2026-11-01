@@ -61,12 +61,13 @@ pub(crate) const NAMED: &[&str] = &[
     "query_cursor_key",
     "embedding_projection",
     "signal_host_checkpoint",
-    "privacy_output_epoch",
+    "withdrawn_privacy_outputs",
     "owner_protocol_key",
     "source_declarations",
-    "model_effect_accounting",
+    "withdrawn_model_accounting",
     "lifecycle",
     "event_indexes",
+    "remove_privacy_outputs_and_model_accounting",
 ];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
@@ -122,12 +123,14 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(cursor_step);
     steps.push(crate::vectors::statements());
     steps.push(crate::signals::statements());
-    steps.push(crate::privacy_epoch::statements());
+    // Empty positions keep later version numbers; the last step removes what they created.
+    steps.push(vec![]);
     steps.push(crate::owner_protocol::statements());
     steps.push(crate::source_declarations::statements());
-    steps.push(crate::model_calls::statements());
+    steps.push(vec![]);
     steps.push(crate::lifecycle::statements());
     steps.push(crate::event_indexes::statements());
+    steps.push(remove_privacy_outputs_and_model_accounting());
     steps
 }
 
@@ -212,5 +215,25 @@ fn segments() -> Vec<String> {
             .into(),
         "GRANT INSERT, UPDATE, DELETE ON core.blob_segments, core.blob_extents TO sinex_writer"
             .into(),
+    ]
+}
+
+/// A database that ran the two emptied steps drops what they created. The
+/// visibility views are first redefined by class alone, so nothing that reads
+/// them depends on the removed function; `Description::apply` re-creates them
+/// afterwards as declared.
+fn remove_privacy_outputs_and_model_accounting() -> Vec<String> {
+    vec![
+        crate::VISIBLE_EVENTS.replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1),
+        crate::VISIBLE_SEARCH_TEXT.replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1),
+        crate::VISIBLE_EMBEDDING_VECTORS.replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1),
+        "DROP VIEW IF EXISTS core.derivation_events CASCADE".into(),
+        "DROP TRIGGER IF EXISTS rules_policy_epoch ON privacy.rules".into(),
+        "DROP TRIGGER IF EXISTS floors_policy_epoch ON privacy.source_classes".into(),
+        "DROP FUNCTION IF EXISTS privacy.invalidate_outputs() CASCADE".into(),
+        "DROP FUNCTION IF EXISTS privacy.require_active_epoch() CASCADE".into(),
+        "DROP TABLE IF EXISTS privacy.event_outputs, privacy.original_events, privacy.output_builds, privacy.derivation_contracts, privacy.derivation_epochs, privacy.policy_state CASCADE".into(),
+        "DELETE FROM core.counters WHERE name = 'privacy_outputs'".into(),
+        "DROP TABLE IF EXISTS derivation.model_calls, derivation.model_policies CASCADE".into(),
     ]
 }

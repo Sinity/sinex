@@ -25,11 +25,6 @@ pub async fn run(conn: &mut PgConnection, statement: &str) -> Result<Vec<Json>> 
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
         .execute(&mut *tx)
         .await?;
-    // An empty or planner-pruned view must not turn an incomplete projection
-    // into an apparently complete empty answer.
-    sqlx::query_scalar::<_, i64>("SELECT privacy.require_active_epoch()")
-        .fetch_one(&mut *tx)
-        .await?;
     // Wrapping keeps column order (json, not jsonb) and refuses anything that
     // is not a query.
     let wrapped = format!("SELECT row_to_json(q) FROM ({statement}) q");

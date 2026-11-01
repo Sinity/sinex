@@ -1,5 +1,5 @@
-//! Positive raw capture through the real media spool reader and writer. No
-//! model policy or model execution is needed to retain screen and audio bytes.
+//! Positive raw capture through the real media spool reader and writer: screen
+//! and audio bytes are retained exactly and survive a restart.
 use super::*;
 use sinex_sources::sources::media_capture;
 
@@ -23,25 +23,16 @@ fn wav() -> Vec<u8> {
     bytes
 }
 #[devkit::test]
-async fn model_disabled_capture_keeps_exact_screen_and_audio_materials_after_restart(
+async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);
-    let dir = std::env::temp_dir().join(format!("sinex-model-off-media-{}", uuid::Uuid::now_v7()));
+    let dir = std::env::temp_dir().join(format!("sinex-media-capture-{}", uuid::Uuid::now_v7()));
     let store = dir.join("store");
     let frame = b"P6\n1 1\n255\n\0\0\0".to_vec();
     let audio = wav();
     let settings = sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
         .expect("fixture day setting");
-    let configuration = crate::binding_runner::Config::default();
-    assert!(!configuration.model_accounting.actual_receipts);
-    assert_eq!(
-        sinex_model::model_calls::execute::<(), ()>(
-            || panic!("model input selection must remain disabled"),
-            |_: ()| panic!("provider construction must remain disabled")
-        ),
-        Err::<(), _>(sinex_model::model_calls::Refusal::ProviderDisabled)
-    );
     let mut bindings = Vec::new();
     for (kind, extension, mime, bytes, end) in [
         (
@@ -107,14 +98,6 @@ async fn model_disabled_capture_keeps_exact_screen_and_audio_materials_after_res
         assert_eq!(row.payload["bytes"], original.len() as u64);
         retained.push((row.id, row.blob, original.clone()));
     }
-    assert_eq!(sqlx::query_scalar!("SELECT count(*) FROM core.events WHERE event_type IN ('model.request','model.response','model.receipt')").fetch_one(&mut ctx.read_conn).await.unwrap(),Some(0));
-    assert_eq!(
-        sqlx::query_scalar!("SELECT count(*) FROM derivation.model_calls")
-            .fetch_one(&mut ctx.read_conn)
-            .await
-            .unwrap(),
-        Some(0)
-    );
     ctx.close().await.unwrap();
     drop(sink);
     let mut fresh = ReaderContext::open(&url, &store, settings).await.unwrap();

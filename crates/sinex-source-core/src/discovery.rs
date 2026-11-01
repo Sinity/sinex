@@ -169,7 +169,6 @@ pub struct Configuration {
     #[serde(default)]
     pub rhythm: serde_json::Value,
     pub signals: serde_json::Value,
-    pub model_accounting: serde_json::Value,
 }
 
 impl Configuration {

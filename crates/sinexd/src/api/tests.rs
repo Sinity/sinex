@@ -1,6 +1,5 @@
 //! The API against a real database and the real writer.
 mod exact_payloads;
-mod model_calls;
 mod sql_boundary;
 mod versions;
 use super::*;

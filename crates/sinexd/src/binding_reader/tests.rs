@@ -673,7 +673,7 @@ async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
 
 mod directory;
 mod long_history;
-mod model_disabled_media;
+mod media_capture;
 
 #[devkit::test]
 async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestDatabase) {

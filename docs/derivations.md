@@ -222,11 +222,11 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 - Tags on events, the operator's [library tags](library.md) and inferred classifications are different records with explicit authorship.
 - A classification names its label set, method and version. An unmatched item is classified `unknown`; classified time reports classified, total and unknown seconds. No label ships without its construct declaration ([principles](#principles)).
 
-## Model calling
+## Model features
 
 ### Current state
 
-Derivations that call a model provider are off (default; open operator question). No provider is constructed or probed at start, no weights are downloaded, and no request is made. A disabled operation returns the typed failure `provider_disabled` before reading credentials or selecting content.
+Derivations that call a model provider are off (default; open operator question). No provider is constructed or probed at start, no weights are downloaded, and no request is made.
 
 They stay off until the features are redesigned purpose first: search ranking, OCR beyond the local engine, speech transcription with speaker separation, model-written [narratives](higher-layer.md#narratives) and the [narrative corpus](higher-layer.md#the-narrative-corpus), classification, episode labels, and [model suggestions](higher-layer.md#model-suggestions). The settled inputs to that design:
 
@@ -260,25 +260,7 @@ Local OCR runs. It calls no provider and spends nothing, so the off switch above
 | Classification and labels | values from a recorded vocabulary, evidence spans, method and abstention; out-of-vocabulary labels refused; inferred and unchecked until evaluated |
 | Narratives and summaries | the [narrative contract](higher-layer.md#narratives) |
 
-### Recorded requests and operating budgets
-
-`model-policy` records an operator's explicit policy as `model.policy`. The policy names each route's provider, provider account, model and revision, retains prompt, rubric and settings content with their versions and checked hashes, and declares its accounting scope, currency, integer unit, absolute period, limit and prices. Policy authoring and recording an incurred expenditure require operator access. A captured policy is inert until the writer validates it and commits its private authorization mark; a payload's author label grants no authority.
-
-`model.request` retains the exact target readings and each target's source, kind and version, stable record, original reading hash, selected content hash and byte length. Admission reconstructs these identities from current transformed inputs. A byte selection also proves the retained material or owned content and its exact range. The request's spend identity preserves ordered input positions, including repeated inputs, and uses their verified stable identities, route, full instructions and configured maximum output, while exact reading IDs remain its provenance. The input hash and response output hash are separate values. Payload and settings identities use SJSON1, the same canonical JSON bytes as projected payload identities.
-
-The writer reserves the configured per-call, per-input-byte and per-output-unit estimate in one admission transaction. The input byte count comes from verified selected content and the output bound comes from the operator's route. Missing policy and insufficient configured budget return explicit refusal states. Scope, currency, unit and period identify the account independently of policy name, version and changing limits, so revising a policy retains prior spend and pending reservations.
-
-`model-record` first retains an already supplied `model.response` with known input classification. The writer matches its exact request identity and authorized policy to a retained request, then reconciles its reported actual charge, including after the targets or policy are archived. A new effect binding separately requires current input proof; the reply states when that binding is unavailable. Without a retained matching request or current proof for a new one, the retained response remains explicitly unaccounted. Actual expenditure is recorded even when it exceeds the estimate or limit. The overrun is recorded at reconciliation, and later reservations use the actual spend when checking remaining capacity. Repeated effects reuse the same accounting row; contradictory output, charge or provider receipt identities are refused. Uncertain calls retain their reservation. An unrepresentable estimate refuses a new reservation; an already incurred exact charge is still recorded with an absent quote, never an invented zero. The private ledger keeps request and receipt hashes and accounting metadata through replay, archive and removal of response content; those lifecycle acts never refund a purchase.
-
-`model-receipt` records actual expenditure without asserting a model request. It requires operator access and a separate deployment capability, disabled by default. The retained receipt supplies the provider, provider account, native receipt identity, actual amount and currency/unit, exact accounting scope and period, and policy name/version. Missing facts leave the receipt unavailable or unaccounted; the recording clock supplies no incurred period, amount or exchange rate. An `actual_unbound` accounting entry has no request hash and cites its receipt with that frozen basis.
-
-The private accounting period retains exact integer Unix nanoseconds, including sub-microsecond boundaries. A repeat or later binding compares that frozen basis without timestamp rounding; observation time never changes the incurred period.
-
-Provider, account and native receipt identify one actual charge across bound and unbound paths. A later verified request binds that entry without moving its period or charging again. Its matching pending hold merges in the same writer transaction, leaving ordinary request and reservation source facts intact. Conflicting amount, currency, policy version or period requires operator review. The existing ledger holds pending reservations and actual expenditure; it is not a provider-side account mutation. Receipt-only replies carry canonical references, opaque receipt/account identities and operational state. Financial basis, amount and labels are read through the ordinary current projected receipt/policy views. An identity reference does not assert equality with raw payload bytes or grant access to them.
-
-Policy authority and incurred-cost accounting read their immutable canonical records privately, so a display mask cannot rewrite a route or erase known expenditure. New calls and new bindings still require current authorized policy and current transformed target equivalence. Raw response material can be reused after a target replay only through a newly verified current request, and derived outputs retain exact current parents. Ordinary configured output rules govern all source records and derived text.
-
-The `model-call` entry remains `provider_disabled` before acquiring content, credentials or a provider. These recorded-effect and accounting operations do not activate execution or choose a financial configuration.
+### Supplied embeddings
 
 **Embeddings rank; they never filter.** Once embeddings are on, Sinex search may combine a stored similarity as a ranking term over the filtered set (`similar:`); it never removes a row the filters selected.
 
@@ -326,4 +308,4 @@ Targets are stated as hardware-independent figures (rows read per key, invalidat
 
 ### Exact target inputs
 
-A keyed consumer can name exact event IDs instead of a time window, for example when a recorded model result cites a frame or audio segment. These inputs use the same private current-policy projection and input snapshot as temporal reads. They are transferred in commit order with count and byte page budgets, including unknown-time records. Missing, archived or policy-unavailable targets remain absent; the consumer compares the actual IDs and target content identities with its required evidence and reports unavailable or waiting. It never substitutes a nearby record.
+A keyed consumer can name exact event IDs instead of a time window, for example when a recorded model result cites a frame or audio segment. These inputs use the same stored events and input snapshot as temporal reads. They are transferred in commit order with count and byte page budgets, including unknown-time records. Missing or archived targets remain absent; the consumer compares the actual IDs and target content identities with its required evidence and reports unavailable or waiting. It never substitutes a nearby record.

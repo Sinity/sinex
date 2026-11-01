@@ -7,12 +7,11 @@ fn sjson1_hashes_sorted_nested_objects_and_numeric_unicode_values_without_source
         String::from_utf8(sinex_model::json_identity::bytes(&value)).unwrap(),
         golden
     );
-    let identity = ProjectionIdentity::for_payload(42, &value);
+    let identity = ProjectionIdentity::for_payload(&value);
     assert_eq!(
         identity.payload_hash,
         blake3::hash(golden.as_bytes()).to_hex().to_string()
     );
-    assert_eq!(identity.policy_epoch, 42);
     assert!(identity.verifies(&value));
     assert!(!identity.verifies(&serde_json::json!({"different":"view"})));
 }

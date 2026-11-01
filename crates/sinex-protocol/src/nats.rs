@@ -731,7 +731,7 @@ pub enum Confirmed {
     },
 }
 
-/// A successful current-policy fetch. Stream messages carry only event references.
+/// A successful fetch. Stream messages carry only event references.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
     /// Historical readings retain unknown source authority explicitly.

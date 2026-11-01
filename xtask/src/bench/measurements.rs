@@ -661,7 +661,6 @@ pub(super) fn with_consumers(
             .arg(&runtime)
             .arg("--sources")
             .arg(out.join("sources.json"))
-            .env("SINEX_PRIVATE_MODE", runtime.join("private-mode"))
             .env("SINEX_BENCH_TIMINGS", "1")
             .stdout(daemon_log.try_clone().map_err(|e| e.to_string())?)
             .stderr(daemon_log)
