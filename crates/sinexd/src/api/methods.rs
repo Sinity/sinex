@@ -221,6 +221,10 @@ impl Api {
                 Ok(v) => Reply::Ok { result: v },
                 Err(e) => refused(e.to_string()),
             },
+            Request::SourcesDiscover => match self.sources_discover().await {
+                Ok(v) => Reply::Ok { result: v },
+                Err(e) => refused(e),
+            },
             Request::Query {
                 query,
                 page,
@@ -670,6 +674,19 @@ impl Api {
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
         }
+    }
+
+    /// The discovery dry run: what this host's sources would capture, read
+    /// only from the inputs' metadata.
+    async fn sources_discover(&self) -> Result<Value, String> {
+        let context = self.source_config.context(&self.host);
+        let (inputs, unimplemented) = tokio::task::spawn_blocking(move || {
+            sinex_sources::discovery::status(&context)
+                .map(|inputs| (inputs, sinex_sources::unimplemented::census(&context)))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        Ok(json!({"inputs": inputs, "unimplemented": unimplemented}))
     }
 
     async fn status(&self, caller: &Caller) -> Result<Value, String> {

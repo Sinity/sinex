@@ -239,6 +239,13 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        name: "sources-discover",
+        summary: "Discovery dry run: every input with its state (capturing, unavailable and why, excluded and why, on demand), and the catalog sources without an implementation whose data this host has.",
+        args: &[],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
         name: "mark",
         summary: "Mark a moment for recall, with an optional note and client-observed context.",
         args: &[
