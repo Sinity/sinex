@@ -5,6 +5,7 @@
 // The derives in `sinex-macros` name `::sinex_model`; this lets them work here too.
 extern crate self as sinex_model;
 
+pub mod backup;
 pub mod batch;
 pub mod clock;
 pub mod event;

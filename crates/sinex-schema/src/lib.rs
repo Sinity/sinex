@@ -12,6 +12,7 @@
 use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod backups;
 mod model_calls;
 mod owner_protocol;
 mod privacy_epoch;

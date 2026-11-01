@@ -7,6 +7,7 @@
 pub mod admission;
 mod admission_context;
 pub use admission_context::{AdmissionContext, AdmissionTransaction};
+pub mod backup;
 pub mod bindings;
 pub mod blobs;
 pub mod commit_log;

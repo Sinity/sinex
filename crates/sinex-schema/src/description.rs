@@ -36,7 +36,7 @@ impl Description {
         let mut description = Self::current();
         description
             .tables
-            .retain(|statement| crate::model_calls::before(statement));
+            .retain(|statement| crate::model_calls::before(statement) && crate::backups::before(statement));
         description.tables.retain(|statement| {
             crate::source_declarations::before(statement)
                 && crate::privacy_epoch::before(statement)
@@ -49,7 +49,7 @@ impl Description {
                 && !statement.contains("VALUES ('query_metadata',0)")
         });
         description.after_tables.retain(|statement| {
-            crate::source_declarations::before(statement)
+            crate::backups::before(statement) && crate::source_declarations::before(statement)
                 && crate::privacy_epoch::before(statement)
                 && crate::owner_protocol::before(statement)
                 && crate::query_cursors::before(statement)

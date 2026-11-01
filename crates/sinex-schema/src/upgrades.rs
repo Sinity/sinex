@@ -65,6 +65,7 @@ pub(crate) const NAMED: &[&str] = &[
     "owner_protocol_key",
     "source_declarations",
     "model_effect_accounting",
+    "online_backup_holds",
 ];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
@@ -124,6 +125,7 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(crate::owner_protocol::statements());
     steps.push(crate::source_declarations::statements());
     steps.push(crate::model_calls::statements());
+    steps.push(crate::backups::statements());
     steps
 }
 

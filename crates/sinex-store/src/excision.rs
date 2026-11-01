@@ -577,7 +577,7 @@ pub async fn finish_deletions(
             tx.commit().await?;
             continue;
         }
-        if blobs.delete(&name).is_err() {
+        if !matches!(blobs.delete(&mut tx, &name).await, Ok(true)) {
             tx.commit().await?;
             left.push(name);
             continue;
