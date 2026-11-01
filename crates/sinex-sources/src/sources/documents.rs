@@ -141,7 +141,7 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 use sinex_source_core::discovery::{
-    Availability, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location, Owner,
+    Availability, Cause, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location, Owner,
 };
 
 fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {

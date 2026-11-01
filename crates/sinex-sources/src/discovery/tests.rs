@@ -72,7 +72,7 @@ fn discovers_late_inputs_and_distinguishes_empty_missing_and_unreadable() {
 #[devkit::test]
 fn every_browser_profile_and_shared_source_format_is_discovered() {
     let root = tempfile::tempdir().unwrap();
-    let mut context = context(root.path());
+    let context = context(root.path());
     for browser in ["chromium", "google-chrome"] {
         for profile in ["Default", "Profile 1"] {
             let dir = context
