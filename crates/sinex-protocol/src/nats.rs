@@ -101,12 +101,6 @@ impl Subjects {
         format!("{}.ingress.{producer}", self.root)
     }
 
-    /// Only this authenticated producer can receive condition requests and
-    /// reply through its scoped inbox. The host owns the request side.
-    pub fn signal_condition(&self, producer: &str) -> String {
-        format!("{}.signal_condition.{producer}", self.root)
-    }
-
     pub fn ingress_all(&self) -> String {
         format!("{}.ingress.*", self.root)
     }
@@ -231,7 +225,6 @@ impl Subjects {
             publish,
             vec![
                 self.ack(producer),
-                self.signal_condition(producer),
                 format!("{}.>", self.inbox_prefix(producer)),
             ],
         )
@@ -319,16 +312,11 @@ pub enum Ingress {
         frame: String,
         material: Box<MaterialFrame>,
     },
-    /// Shared evaluator intents from a configured canonical product. Host
-    /// policy and effects are applied only by Sinex after durable admission.
+    /// Evaluator reports from a product whose grant forwards signals: this
+    /// host's deliverer takes them in with its own and routes their firings.
     Signals {
         frame: String,
-        coverage: Option<crate::CoverageProof>,
-        signals: Vec<ForwardedSignal>,
-        #[serde(default)]
-        receipts: Vec<signals::DeliveryReceipt>,
-        #[serde(default)]
-        emergency: Vec<crate::signals::EmergencyCompletion>,
+        reports: Vec<signals::Report>,
         class: Class,
     },
     Events {
@@ -380,30 +368,6 @@ impl Ingress {
             | Ingress::LargeFrame { frame, .. } => frame,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ForwardedSignal {
-    pub active_rule: Option<signals::ActiveRule>,
-    /// Exact owner-resolved canonical input readings, separate from product UI references.
-    pub inputs: Vec<sinex_model::EventId>,
-    pub intent: signals::FiredIntent,
-    pub notice: signals::notifications::Notice,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SignalCondition {
-    pub delivery_id: String,
-    pub at: signals::Instant,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SignalConditionReply {
-    pub condition: signals::Condition,
-    pub reason: Option<String>,
 }
 
 /// Exact declarations a producer used while parsing a replacement.

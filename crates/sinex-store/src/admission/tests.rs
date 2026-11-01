@@ -990,7 +990,6 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
             source_fingerprint: None,
             host: None,
             coverage: Some(sinex_model::OwnerCoverage {
-                required: true,
                 stamp: "already-validated-by-admission".into(),
                 position,
                 policy_epoch,

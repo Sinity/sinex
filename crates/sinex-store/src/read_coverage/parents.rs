@@ -59,27 +59,6 @@ pub(super) async fn validate(
     )
 }
 
-pub(super) async fn inputs(
-    conn: &mut PgConnection,
-    frame: &IngressFrame,
-    ids: &[sinex_model::EventId],
-) -> Result<()> {
-    if super::validate(conn, frame).await?.is_none() {
-        return Err(Error::Invalid("coverage_inputs_uncertified".into()));
-    }
-    let proof = frame.coverage.as_ref().expect("validated above");
-    let claims = open(conn, &proof.stamp).await?;
-    let ids = ids
-        .iter()
-        .map(|id| id.0)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    checked(conn, &claims, &ids, &BTreeSet::new())
-        .await
-        .map(drop)
-}
-
 async fn checked(
     conn: &mut PgConnection,
     claims: &Claims,

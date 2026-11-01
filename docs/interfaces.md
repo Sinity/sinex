@@ -460,11 +460,15 @@ its conformance cases run in Sinex. What Sinex supplies:
 - **Passive by default:** a delivery appears in the inbox, Today's Signals pane, the
   status bar and the day pack. **Interrupting** only for rules marked so, under the
   one interrupt budget.
-- **Three event kinds** (decided target, 2026-11-01): `signal.rule`, `signal.delivery`
-  and `signal.outcome`, plus `notice.submitted` from producers and `instrument.defined`
-  for elicitation. The evaluator checkpoint is daemon state, not events. Every delivery
-  stores its route decision and reason, so "why did this fire" and "why didn't it
-  interrupt" are both queries.
+- **Event kinds:** `signal.rule` (an authored rule revision), `signal.delivery` (one
+  handoff by the host deliverer, derived from the rule or forwarded report that fired
+  and the readings its rows were computed from) and `signal.outcome` (what happened to
+  a delivery afterwards: an outlet's attempt, shown, cleared, closed), plus
+  `signal.report` for evaluator reports another product forwards. Decided target, not
+  built: `notice.submitted` from producers and `instrument.defined` for elicitation.
+  The evaluator and host policy checkpoint is daemon state, not events. Every delivery
+  stores its route decision, holds and attention, so "why did this fire" and "why
+  didn't it interrupt" are both queries.
 - **Acts:** `delivery:ID open|ack|snooze 1h`, `quiet until 14:00 | quiet off`.
   `QUERY wait [--for D] [--timeout T] [--until-empty]` blocks until the query first
   matches or empties, recording nothing; `signal:NAME backtest since:30d` replays a rule
@@ -476,14 +480,30 @@ its conformance cases run in Sinex. What Sinex supplies:
 
 ### The host deliverer
 
-Decided target (2026-11-01). Sinex is the one deliverer on its host. Polylogue on Sinex
-writes its deliveries as `polylogue.delivery` facts through the producer path with
-their interrupt request and urgency; Sinex's deliverer routes them under the host's
-attention with its own, and a `cleared` outcome closes a current-state notice. Polylogue
-shows only its own "Sinex blocked" notice directly, because the path to the deliverer is
-what is broken.
+Sinex is the one deliverer on its host. A product whose grant has `forward_signals`
+(Polylogue on Sinex) sends its evaluator's reports (firings, cleared conditions, rule
+revisions and withdrawals, progress) in a signals frame through the producer path; each
+report is stored as a `signal.report` naming its authenticated producer, and a report
+about any product but the producer's own family is refused. Sinex's host policy takes
+them in beside its own rules' reports and routes their firings under the host's
+attention, budget and quiet hours; a forwarded current-state firing is held until its
+producer reports being up to date. A forwarded value or action is recorded not sent,
+because its configured outlet belongs to its own product. Polylogue shows only its own
+"Sinex blocked" notice directly, because the path to the deliverer is what is broken.
 
-- **Any producer may notify.** A credentialed producer submits a `notice.submitted` fact
+- **Outlets.** An interrupting decision becomes a desktop notification through the
+  common deliverer (`notifications.bus_address`, or the session bus) and, for a notice
+  sent away while the operator is away, the configured `notifications.away_command`.
+  A value is written to its configured file or loopback URL, and an action runs its
+  configured command. Each attempt is recorded `unknown` and committed before the
+  outlet runs, so an interrupted attempt is never run twice; an outlet still running at
+  `outlet_timeout_ms` may have acted and stays unknown.
+- **Deliveries cite what fired.** A delivery's parents are the rule's reading (or the
+  forwarded report) and the readings each matched row was computed from when it was
+  first seen: the reading itself, or every reading a group selected. Replaying one of
+  those readings archives the delivery with the rest of the chain, like any derived
+  reading.
+- **Any producer may notify** (decided target, not built). A credentialed producer submits a `notice.submitted` fact
   (title, body, reference or URL, an interrupt request, a `key` for grouping and
   replacement, an optional `clears` key); it is a delivery of the implicit rule
   `producer:<name>` with author class `producer`, inside the budget and passive unless
@@ -491,16 +511,11 @@ what is broken.
   [--key K] [--clears K] [--interrupt]` is the CLI for scripts, so a host's scripts, job
   runners and CI reports share one budget, grouping, quiet hours and inbox instead of
   calling a notification command themselves.
-- **Own notifications are excluded.** A notification captured by Sinex's D-Bus source
+- **Own notifications are excluded** (decided target, not built). A notification captured by Sinex's D-Bus source
   whose hints carry a product's delivery identifier is marked as a signal origin, and no
   rule reads it.
 - `sinexctl attention` prints presence, quiet, the budget, held notices and the last 24
   hours of interruptions.
-- Decided target: the current build's authorization layer for forwarded signals (author
-  attestations, the offline emergency lease and its signed capability, per-attempt
-  policy re-authorization) and its seven further signal event kinds go; the handoff
-  rechecks of the common host policy are one function, and with one deliverer per host
-  no attempt changes owner.
 
 ### Shipped rules
 

@@ -26,7 +26,6 @@ fn available() -> PublicContext {
         },
         observed_at: Timestamp::from_unix_secs(1800000000).unwrap(),
         coverage: CoverageStatus::NotRequested,
-        offline_emergency: None,
     }
 }
 #[test]
@@ -57,7 +56,6 @@ fn identity_tracks_day_and_public_policy_without_private_outlets() {
     let day = day();
     let mut config = config();
     let baseline = settings_identity(&day, "host-a", &config).unwrap();
-    config.private = vec![signals::Interval { start: 1, end: 2 }];
     config.outlet_timeout_ms = 2000;
     assert_eq!(
         baseline,
@@ -101,81 +99,30 @@ async fn unconfigured_and_uninitialized_context_stay_explicit(db: devkit::pg::Te
     ));
 }
 
-#[test]
-fn offline_permission_requires_deployment_lease_and_is_inside_signed_context() {
-    let provider = Provider::new(day(), "host-a".into(), Some(&config())).unwrap();
-    let mut context = available();
-    let at = Timestamp::from_unix_secs(1_800_000_000).unwrap();
-    provider
-        .grant_offline_emergency(&mut context, "primary", None, at)
-        .unwrap();
-    assert!(matches!(
-        &context,
-        PublicContext::Available {
-            offline_emergency: None,
-            ..
-        }
-    ));
-    let mut write: crate::ingress::authority::WriteGrant = serde_json::from_value(json!({
-        "family":"polylogue", "host":"host-a", "kind_prefixes":["polylogue"], "classes":["open"],
-        "canonical_prefixes":["polylogue"], "forward_signals":true, "emergency_sinex_blocked_host":"host-a"
-    })).unwrap();
-    provider
-        .grant_offline_emergency(&mut context, "primary", Some(&write), at)
-        .unwrap();
-    assert!(matches!(
-        &context,
-        PublicContext::Available {
-            offline_emergency: None,
-            ..
-        }
-    ));
-    write.emergency_lease_seconds = Some(900);
-    provider
-        .grant_offline_emergency(&mut context, "primary", Some(&write), at)
-        .unwrap();
-    let PublicContext::Available {
-        offline_emergency: Some(permission),
-        ..
-    } = &context
-    else {
-        panic!("explicit lease");
+/// The producer side of the token: what `sign` issued opens only for the
+/// producer and host it was issued to, unchanged.
+fn open(key: &[u8; 32], producer: &str, host: &str, token: &str) -> Result<PublicContext, String> {
+    let invalid = || "invalid owner context token".to_string();
+    let (body, tag) = token.split_once('.').ok_or_else(invalid)?;
+    let bytes = URL_SAFE_NO_PAD.decode(body).map_err(|_| invalid())?;
+    let tag: [u8; 32] = URL_SAFE_NO_PAD
+        .decode(tag)
+        .map_err(|_| invalid())?
+        .try_into()
+        .map_err(|_| invalid())?;
+    if blake3::Hash::from(tag) != blake3::keyed_hash(&signing_key(key), &bytes) {
+        return Err(invalid());
+    }
+    let mut claims: Claims = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    if claims.producer != producer || claims.host != host {
+        return Err(invalid());
+    }
+    let PublicContext::Available { context_token, .. } = &mut claims.context else {
+        return Err(invalid());
     };
-    assert!(permission.permits("primary", "host-a", "configured", at));
-    assert_eq!(
-        permission.expires_at.unix_ns() - at.unix_ns(),
-        900_000_000_000
-    );
-    let key = [22; 32];
-    let token = sign(&key, "primary", "host-a", &context).unwrap();
-    let signed = open(&key, "primary", "host-a", &token).unwrap();
-    assert!(matches!(
-        signed,
-        PublicContext::Available {
-            offline_emergency: Some(_),
-            ..
-        }
-    ));
-    let (body, tag) = token.split_once('.').unwrap();
-    let mut claims: serde_json::Value =
-        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(body).unwrap()).unwrap();
-    claims["context"]["offline_emergency"]["producer"] = json!("foreign");
-    let forged = format!(
-        "{}.{}",
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap()),
-        tag
-    );
-    assert!(open(&key, "primary", "host-a", &forged).is_err());
-    write.emergency_lease_seconds = Some(0);
-    assert!(
-        provider
-            .grant_offline_emergency(&mut context, "primary", Some(&write), at)
-            .is_err()
-    );
-    write.emergency_lease_seconds = Some(3601);
-    assert!(
-        provider
-            .grant_offline_emergency(&mut context, "primary", Some(&write), at)
-            .is_err()
-    );
+    if !context_token.is_empty() {
+        return Err(invalid());
+    }
+    *context_token = token.into();
+    Ok(claims.context)
 }

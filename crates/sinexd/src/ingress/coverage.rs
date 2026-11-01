@@ -612,7 +612,6 @@ impl Ingest {
         producer: &str,
         frame: Option<&Ingress>,
     ) -> Result<Option<sinex_model::OwnerCoverage>, Check> {
-        let optional = matches!(frame,Some(Ingress::Signals{signals,emergency,..}) if signals.is_empty()&&!emergency.is_empty());
         let (coverage, required) = match frame {
             Some(Ingress::Events {
                 events,
@@ -635,9 +634,6 @@ impl Ingest {
                 }
                 (coverage, required)
             }
-            Some(Ingress::Signals {
-                coverage, signals, ..
-            }) => (coverage, !signals.is_empty()),
             _ => return Ok(None),
         };
         let Some(proof) = coverage else {
@@ -670,7 +666,6 @@ impl Ingest {
             .await
             .map_err(Check::Unavailable)?;
             Ok(sinex_model::OwnerCoverage {
-                required: !optional,
                 stamp: proof.stamp.clone(),
                 position: proof.position,
                 policy_epoch: proof.policy_epoch,
@@ -685,11 +680,7 @@ impl Ingest {
             })
         }
         .await;
-        match claim {
-            Ok(claim) => Ok(Some(claim)),
-            Err(_) if optional => Ok(None),
-            Err(error) => Err(error),
-        }
+        claim.map(Some)
     }
 }
 
@@ -781,14 +772,6 @@ impl Requests {
                     *coverage = status;
                 }
             }
-            self.public_context.grant_offline_emergency(
-                &mut context,
-                producer,
-                self.read_grants
-                    .get(producer)
-                    .and_then(|grant| grant.write.as_ref()),
-                Timestamp::now(),
-            )?;
             self.public_context
                 .sign_snapshot(&mut tx, producer, &mut context)
                 .await?;

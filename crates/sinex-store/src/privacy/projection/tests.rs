@@ -680,7 +680,8 @@ async fn same_epoch_projection_catchup_preserves_a_repeatable_read_policy_lock(
 
     let mut reader = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut snapshot = reader.begin().await.unwrap();
-    crate::signals::effect_snapshot(&mut snapshot)
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *snapshot)
         .await
         .unwrap();
     // A plain read establishes the old snapshot without locking the policy row.
@@ -760,7 +761,8 @@ async fn a_real_epoch_activation_still_invalidates_an_older_policy_snapshot(
     assert!(before.ready());
     let mut reader = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut snapshot = reader.begin().await.unwrap();
-    crate::signals::effect_snapshot(&mut snapshot)
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *snapshot)
         .await
         .unwrap();
     assert_eq!(epoch(&mut snapshot).await.unwrap(), before);

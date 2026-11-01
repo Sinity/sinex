@@ -750,14 +750,7 @@ impl Api {
         )
         .await
         .map_err(|error| error.to_string())?;
-        let evaluation_rows = sinex_store::signals::rule_rows(
-            &mut conn,
-            sinex_model::event_types::signal::EvaluationRecorded::EVENT_TYPE,
-            row.commit_seq,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
+        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>()});
         drop(conn);
         let sources = match self
             .query(

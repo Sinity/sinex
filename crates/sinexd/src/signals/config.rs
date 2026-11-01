@@ -8,8 +8,6 @@ use std::path::PathBuf;
 pub(crate) struct Config {
     pub interrupt_budget_per_hour: usize,
     pub quiet_hours: Option<::signals::QuietHours>,
-    #[serde(default)]
-    pub private: Vec<::signals::Interval>,
     pub notifications: Option<Notifications>,
     #[serde(default)]
     pub values: BTreeMap<String, ValueTarget>,
@@ -33,21 +31,37 @@ pub(crate) enum ValueTarget {
     Loopback { url: String },
 }
 
+/// Desktop notifications for interrupting notices, and the command that
+/// receives each notice sent away while the operator is away.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Notifications {
-    pub route: ::signals::notifications::Route,
-    pub command: Option<Command>,
+    pub away_command: Option<Command>,
     /// A supplied bus address is used by isolated fixtures and host deployment;
-    /// an absent address uses the host session bus only for an enabled route.
+    /// an absent address uses the host session bus.
     pub bus_address: Option<String>,
 }
+
+/// Programs that start or resume an agent session. No delivery may run one,
+/// because a run would spend quota with no one acting.
+const AGENT_LAUNCHERS: &[&str] = &["claude", "codex"];
 
 impl Config {
     pub(crate) fn configuration(&self) -> ::signals::Configuration {
         ::signals::Configuration {
             value_targets: self.values.keys().cloned().collect(),
             action_commands: self.actions.keys().cloned().collect(),
+        }
+    }
+    pub(crate) fn host_settings(&self) -> ::signals::HostSettings {
+        ::signals::HostSettings {
+            product: super::PRODUCT.into(),
+            quiet_hours: self.quiet_hours,
+            away_command: self
+                .notifications
+                .as_ref()
+                .is_some_and(|notifications| notifications.away_command.is_some()),
+            deep_work_deferral: ::signals::DeepWorkDeferral::default(),
         }
     }
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -60,17 +74,10 @@ impl Config {
         {
             return Err("signal quiet hours must be civil minutes".into());
         }
-        if self
-            .private
-            .iter()
-            .any(|interval| interval.end <= interval.start)
-        {
-            return Err("signal private intervals must have positive length".into());
-        }
         for command in self.actions.values().chain(
             self.notifications
                 .iter()
-                .flat_map(|notifications| notifications.command.iter()),
+                .flat_map(|notifications| notifications.away_command.iter()),
         ) {
             if !command.program.is_absolute() {
                 return Err("signal command programs must be absolute paths".into());
@@ -106,15 +113,13 @@ impl Config {
                 _ => {}
             }
         }
-        if let Some(notifications) = &self.notifications
-            && matches!(
-                notifications.route,
-                ::signals::notifications::Route::Command | ::signals::notifications::Route::Both
-            )
-            && notifications.command.is_none()
-        {
-            return Err("signal notification command route requires a configured command".into());
-        }
+        ::signals::refuse_agent_launchers(
+            self.actions
+                .iter()
+                .map(|(name, command)| (name.as_str(), command.program.as_path())),
+            AGENT_LAUNCHERS,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(())
     }
 }

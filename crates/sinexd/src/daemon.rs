@@ -349,27 +349,11 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         reader_api.source_config.signals.as_ref(),
     )?;
     if let Some(settings_identity) = public_context.settings_identity.clone() {
-        let (signals_api, signals_client, signals_subjects, signals_grants, c, s) = (
-            reader_api.clone(),
-            client.clone(),
-            subjects.clone(),
-            Arc::new(o.producer_grants.clone()),
-            commits.clone(),
-            stop.clone(),
-        );
+        let (signals_api, c, s) = (reader_api.clone(), commits.clone(), stop.clone());
         tasks.spawn(async move {
             (
                 "signals",
-                crate::signals::run(
-                    signals_api,
-                    signals_client,
-                    signals_subjects,
-                    signals_grants,
-                    settings_identity,
-                    c,
-                    s,
-                )
-                .await,
+                crate::signals::run(signals_api, settings_identity, c, s).await,
             )
         });
     }
