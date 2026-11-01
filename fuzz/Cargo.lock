@@ -1904,6 +1904,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "query-language"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "jiff",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2401,6 +2412,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "signals"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "jiff",
+ "query-language",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2441,10 +2464,12 @@ dependencies = [
  "blake3",
  "caseless",
  "jiff",
+ "query-language",
  "schemars",
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "signals",
  "sinex-macros",
  "thiserror 2.0.21",
  "time",
@@ -2457,8 +2482,11 @@ dependencies = [
 name = "sinex-protocol"
 version = "0.1.0"
 dependencies = [
+ "query-language",
+ "schemars",
  "serde",
  "serde_json",
+ "signals",
  "sinex-model",
 ]
 
@@ -2501,10 +2529,12 @@ dependencies = [
  "getrandom 0.3.4",
  "hashed-blobs",
  "jiff",
+ "query-language",
  "regex",
  "sea-query",
  "serde",
  "serde_json",
+ "signals",
  "sinex-model",
  "sinex-schema",
  "sinex-sealing",
@@ -3502,5 +3532,5 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "credential-masking"
-version = "0.1.1"
+name = "signal-delivery"
+version = "0.1.0"

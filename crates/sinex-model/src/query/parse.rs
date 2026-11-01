@@ -710,7 +710,10 @@ impl Binder<'_> {
                                 syntax::AggregateFunction::Max => AggFn::Max,
                                 syntax::AggregateFunction::CountDistinct => AggFn::CountDistinct,
                                 _ => {
-                                    return Err(QueryError::not_built(at, "aggregate is not built"));
+                                    return Err(QueryError::not_built(
+                                        at,
+                                        "aggregate is not built",
+                                    ));
                                 }
                             };
                             if a.fields.len() > 1 {
