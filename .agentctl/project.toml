@@ -98,15 +98,14 @@ scratch = "nvme"
 cache = "none"
 
 [operations.bench]
-description = "Run the corpus benchmark through the shared job queue"
-exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "bench"]
+description = "Three paired disposable search measurements using fixed release binaries"
+exec = ["python3", "/realm/tmp/work/codex/sx-admit-c/search-measure.py"]
 arguments = "required"
 pool = "measure"
 result = "exit"
 timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 
 [operations.compile]
 description = "Selected package or target compilation against the schema database"
