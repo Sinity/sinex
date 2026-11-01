@@ -8,8 +8,11 @@
 //! be equal for two fusion records to be the same occurrence (`identity`;
 //! none when the record never joins another), when it began, when it ended if
 //! the source knows, and the output fields it can supply. Fusion inputs are
-//! listed in preference order. Fusion records of one identity from different
-//! inputs match:
+//! listed in preference order. A rule matching by [`Matching::Identity`]
+//! joins the first record of each input with one identity, whatever their
+//! times (mail by Message-ID within its account). A rule matching by
+//! [`Matching::Time`] joins fusion records of one identity from different
+//! inputs in passes:
 //!
 //! 1. strong pass: the globally closest pairs within `window`, closest first
 //!    (ties by preference, then commit order);
@@ -33,7 +36,8 @@
 //! fused record joins, through [`FusionRule::occurrences`], so each
 //! occurrence counts once.
 //!
-//! The key is the UTC hour a group's first fusion record starts in. Each hour
+//! An identity rule's key is the identity's field values. A time rule's key
+//! is the UTC hour a group's first fusion record starts in. Each hour
 //! reads a margin on both sides wide enough for any group that reaches into
 //! it, and emits only groups whose first fusion record starts inside it, so a
 //! group straddling an hour edge is emitted exactly once.
@@ -93,15 +97,35 @@ pub struct FusionRule {
     pub fusion_inputs: &'static [FusionInput],
     /// The inputs' event types, once each (a test checks the list).
     pub inputs: &'static [&'static str],
-    pub window_ns: i128,
-    pub fallback_ns: i128,
-    /// How long after a group's first start a later group of the same
-    /// identity can join it; `None` when every fusion record is a thing of its own
-    /// (two runs of `ls` are two commands).
-    pub absorb_ns: Option<i128>,
+    pub matching: Matching,
     /// The output fields the group's start and end are written to.
     pub start_field: &'static str,
     pub end_field: Option<&'static str>,
+}
+
+/// How a rule decides that records of one identity are one occurrence.
+#[derive(Clone, Copy, Debug)]
+pub enum Matching {
+    /// Records of one identity match by time, as the module documentation
+    /// describes; a key is the hour a group starts in.
+    Time {
+        window_ns: i128,
+        fallback_ns: i128,
+        /// How long after a group's first start a later group of the same
+        /// identity can join it; `None` when every fusion record is a thing
+        /// of its own (two runs of `ls` are two commands).
+        absorb_ns: Option<i128>,
+    },
+    /// The identity alone decides, whatever the records' times: the first
+    /// record of each input with that identity joins one group. A key is the
+    /// values of `fields`, which together are the identity.
+    Identity {
+        fields: &'static [&'static str],
+        /// How far apart in time copies of one occurrence are expected to be.
+        /// Consumers that read a time period read this far beyond it; copies
+        /// further apart than this can count once in each of two periods.
+        spread_ns: i128,
+    },
 }
 
 const HOUR_NS: i128 = 3_600_000_000_000;
@@ -114,7 +138,14 @@ impl FusionRule {
     /// hours it affects reach. A consumer reads this far beyond its own window,
     /// so the set it reads holds the fused record of every member it holds.
     pub fn margin(&self) -> i128 {
-        self.window_ns + self.fallback_ns + self.absorb_ns.unwrap_or(0)
+        match self.matching {
+            Matching::Time {
+                window_ns,
+                fallback_ns,
+                absorb_ns,
+            } => window_ns + fallback_ns + absorb_ns.unwrap_or(0),
+            Matching::Identity { spread_ns, .. } => spread_ns,
+        }
     }
 
     fn input(&self, event_type: &str, payload: &Value) -> Option<usize> {
@@ -231,6 +262,49 @@ fn read<'a>(rule: &FusionRule, event: &'a Event) -> Option<Seen<'a>> {
 /// Group fusion records, sorted by time, by the rule. Returns groups of indices
 /// into `seen`, each sorted by preference, then time.
 fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
+    match rule.matching {
+        Matching::Time {
+            window_ns,
+            fallback_ns,
+            absorb_ns,
+        } => group_by_time(seen, window_ns, fallback_ns, absorb_ns),
+        Matching::Identity { .. } => group_by_identity(seen),
+    }
+}
+
+/// The first record of each input with an identity joins that identity's
+/// group; a later record of the same input with the same identity stays alone.
+fn group_by_identity(seen: &[Seen<'_>]) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut by_identity: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (i, record) in seen.iter().enumerate() {
+        let Some(identity) = record.fusion_record.identity.as_deref() else {
+            groups.push(vec![i]);
+            continue;
+        };
+        match by_identity.get(identity) {
+            Some(&g) if groups[g].iter().all(|&m| seen[m].rank != record.rank) => {
+                groups[g].push(i);
+            }
+            Some(_) => groups.push(vec![i]),
+            None => {
+                by_identity.insert(identity, groups.len());
+                groups.push(vec![i]);
+            }
+        }
+    }
+    for g in &mut groups {
+        g.sort_by_key(|&m| (seen[m].rank, seen[m].at));
+    }
+    groups
+}
+
+fn group_by_time(
+    seen: &[Seen<'_>],
+    window_ns: i128,
+    fallback_ns: i128,
+    absorb_ns: Option<i128>,
+) -> Vec<Vec<usize>> {
     let n = seen.len();
     let mut group_of: Vec<usize> = (0..n).collect();
     let mut members: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
@@ -246,7 +320,7 @@ fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
     for i in 0..n {
         for j in i + 1..n {
             let dt = seen[j].at - seen[i].at;
-            if dt > rule.fallback_ns {
+            if dt > fallback_ns {
                 break;
             }
             if compatible(&seen[i], &seen[j]) {
@@ -268,7 +342,7 @@ fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
         let all: Vec<usize> = members[gi].iter().chain(&members[gj]).copied().collect();
         let lo = all.iter().map(|&m| seen[m].at).min().unwrap_or(0);
         let hi = all.iter().map(|&m| seen[m].at).max().unwrap_or(0);
-        if hi - lo > rule.window_ns && all.len() > 2 {
+        if hi - lo > window_ns && all.len() > 2 {
             return;
         }
         let moved = std::mem::take(&mut members[gj]);
@@ -280,7 +354,7 @@ fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
 
     // Strong pass.
     for &(dt, i, j) in &pairs {
-        if dt <= rule.window_ns {
+        if dt <= window_ns {
             merge(i, j, &mut members, &mut group_of);
         }
     }
@@ -294,7 +368,7 @@ fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
     let fallback: Vec<(usize, usize)> = pairs
         .iter()
         .filter(|&&(dt, i, j)| {
-            dt > rule.window_ns && alone(i, &members, &group_of) && alone(j, &members, &group_of)
+            dt > window_ns && alone(i, &members, &group_of) && alone(j, &members, &group_of)
         })
         .map(|&(_, i, j)| (i, j))
         .collect();
@@ -308,8 +382,8 @@ fn group(seen: &[Seen<'_>], rule: &FusionRule) -> Vec<Vec<usize>> {
         }
     }
 
-    if let Some(absorb_ns) = rule.absorb_ns {
-        absorb(seen, rule.window_ns, absorb_ns, &mut members, &mut group_of);
+    if let Some(absorb_ns) = absorb_ns {
+        absorb(seen, window_ns, absorb_ns, &mut members, &mut group_of);
     }
 
     let mut groups: Vec<Vec<usize>> = members.into_iter().filter(|g| !g.is_empty()).collect();
@@ -442,6 +516,20 @@ fn fused(
     )
 }
 
+/// The key of a record whose identity is `fields`: their values, each a
+/// non-empty string; none when one is missing.
+fn identity_key(fields: &[&str], payload: &Value) -> Option<Value> {
+    let mut key = Map::new();
+    for field in fields {
+        let value = payload.get(*field)?.as_str()?;
+        if value.trim().is_empty() {
+            return None;
+        }
+        key.insert((*field).to_owned(), json!(value));
+    }
+    Some(Value::Object(key))
+}
+
 fn hour_of(key: &Value) -> Option<i128> {
     key.get("hour")?.as_i64().map(i128::from)
 }
@@ -472,9 +560,14 @@ impl AnyKeyed for Fusion {
 
     fn keys_for(&self, input: &KeyView<'_>, _env: &Env) -> Vec<Value> {
         let rule = self.0;
-        let (Some(_), Some(t)) = (rule.input(input.event_type, input.payload), input.ts_orig)
-        else {
-            // No time, or nothing this rule reads: nothing to fuse with.
+        if rule.input(input.event_type, input.payload).is_none() {
+            return vec![];
+        }
+        if let Matching::Identity { fields, .. } = rule.matching {
+            return identity_key(fields, input.payload).into_iter().collect();
+        }
+        // No time: nothing to fuse with.
+        let Some(t) = input.ts_orig else {
             return vec![];
         };
         let ns = t.unix_ns();
@@ -485,12 +578,19 @@ impl AnyKeyed for Fusion {
 
     fn inputs(&self, key: &Value, _env: &Env) -> Option<InputQuery> {
         let rule = self.0;
-        let start = hour_of(key)? * HOUR_NS;
         let kinds = rule
             .fusion_inputs
             .iter()
             .map(|o| Kind::only(o.event_type, o.only))
             .collect();
+        if let Matching::Identity { fields, .. } = rule.matching {
+            let mut query = InputQuery::all(kinds);
+            for field in fields {
+                query = query.only(field, key.get(*field)?.clone());
+            }
+            return Some(query);
+        }
+        let start = hour_of(key)? * HOUR_NS;
         Some(InputQuery::of(
             kinds,
             Timestamp::from_unix_ns(start - rule.margin()).ok()?,
@@ -500,8 +600,14 @@ impl AnyKeyed for Fusion {
 
     fn compute(&self, key: &Value, inputs: &[Event], _env: &Env) -> Computed {
         let rule = self.0;
-        let Some(start) = hour_of(key).map(|h| h * HOUR_NS) else {
-            return Computed::default();
+        // An hour key emits the groups that start in its hour; an identity
+        // key emits its identity's groups whenever they start.
+        let hour = match rule.matching {
+            Matching::Time { .. } => match hour_of(key) {
+                Some(h) => Some(h * HOUR_NS),
+                None => return Computed::default(),
+            },
+            Matching::Identity { .. } => None,
         };
         let mut seen: Vec<Seen<'_>> = inputs.iter().filter_map(|e| read(rule, e)).collect();
         seen.sort_by_key(|s| (s.at, s.rank));
@@ -518,8 +624,10 @@ impl AnyKeyed for Fusion {
             .into_iter()
             .filter(|g| g.len() >= 2)
             .filter(|g| {
-                let first = g.iter().map(|&m| seen[m].at).min().unwrap_or(i128::MIN);
-                (start..start + HOUR_NS).contains(&first)
+                hour.is_none_or(|start| {
+                    let first = g.iter().map(|&m| seen[m].at).min().unwrap_or(i128::MIN);
+                    (start..start + HOUR_NS).contains(&first)
+                })
             })
             .map(|g| fused(rule, &g, &seen, registered))
             .collect::<Result<Vec<_>, _>>();
@@ -540,6 +648,10 @@ impl AnyKeyed for Fusion {
     }
 
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
+        if let Matching::Identity { .. } = self.0.matching {
+            // Another copy can arrive at any time; it dirties the key again.
+            return KeyState::Closed;
+        }
         let Some(hour) = hour_of(key) else {
             return KeyState::Closed;
         };
