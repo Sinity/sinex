@@ -83,9 +83,16 @@ sinexctl 'events where event_type = command.executed sum(payload.duration_ns)'
   the query.
 - `sum` and `avg` need numbers; `min` and `max` need ordered scalar values. Numeric
   payload fields sort numerically.
-- Text, boolean, numeric and timestamp comparisons keep their declared types. A
-  comparison on a text list matches any member; `!=` excludes every matching member.
+- Text, boolean, numeric and timestamp comparisons keep their declared types. Quoting
+  changes token boundaries, not value types: text such as `001` retains its spelling,
+  while integer, boolean and timestamp fields parse that scalar under their declarations.
+  Grouped columns and expanded saved queries retain their output types in later stages.
+  A comparison on a text list matches any member; `!=` excludes every matching member.
   An empty list has no matching member.
+- `source` and `event_type` accept `*` identifier patterns with either quoted or unquoted
+  spelling. Payload equality treats `*` literally; `~` and `^` take literal operands.
+  A dynamic JSON field keeps the original scalar until execution knows the current
+  projected value's type; incompatible and absent values stay unknown.
 - An unknown value stays unknown (null), and an unknown list stays unknown.
 - Completion offers field names with their types at each position.
 

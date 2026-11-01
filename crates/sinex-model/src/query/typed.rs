@@ -1,7 +1,7 @@
 //! Payload fields come from the same Rust schemas that admission registers.
 use super::*;
 use serde_json::Value as Json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
@@ -121,8 +121,8 @@ pub fn complete(text: &str) -> Vec<Completion> {
                                         add(v, out);
                                     }
                                 }
-                                V::Scalar { text, quoted } => {
-                                    let v = if !quoted && text.contains('*') {
+                                V::Scalar { text, .. } => {
+                                    let v = if text.contains('*') {
                                         Value::Glob(text.clone())
                                     } else {
                                         Value::Text(text.clone())
@@ -335,6 +335,7 @@ fn field(
 fn operand(
     o: &mut Operand,
     kinds: &Option<BTreeSet<String>>,
+    columns: &Columns,
     ctx: &Context,
 ) -> Result<(), QueryError> {
     match o {
@@ -346,60 +347,98 @@ fn operand(
             {
                 *ty = FieldType::Time;
             }
-            if let FieldRef::TypedPayload { ty, .. } = f
-                && *ty != FieldType::Time
-                && !(ctx.catalog.is_some() && *ty == FieldType::Json)
-            {
+            let ty = output_type(f, columns)?;
+            if ty != FieldType::Time && !(ctx.catalog.is_some() && ty == FieldType::Json) {
                 return Err(QueryError::new("time functions require a time field"));
             }
             Ok(())
         }
     }
 }
-fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
+fn numeric_value(text: &str) -> Option<Value> {
+    text.parse::<i64>().ok().map(Value::Integer).or_else(|| {
+        text.parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(Value::Number)
+    })
+}
+
+fn validate_value(
+    v: &mut Value,
+    ty: FieldType,
+    identifier_pattern: bool,
+    ctx: &Context,
+) -> Result<(), QueryError> {
     if matches!(v, Value::Unknown) {
         return Ok(());
     }
-    if ty == FieldType::Json {
-        return Ok(());
+    if matches!(v, Value::Number(number) if !number.is_finite()) {
+        return Err(QueryError::new("a numeric value must be finite"));
+    }
+    if matches!(v, Value::Glob(_)) && !identifier_pattern {
+        return Err(QueryError::new(
+            "wildcards require a registered source or event_type field",
+        ));
     }
     if let Value::List(values) = v {
         for value in values {
-            validate_value(value, ty, ctx)?;
+            validate_value(value, ty, identifier_pattern, ctx)?;
         }
         return Ok(());
     }
-    if ty == FieldType::Text && matches!(v, Value::Integer(_) | Value::Number(_) | Value::Bool(_)) {
-        *v = Value::Text(match &*v {
-            Value::Integer(v) => v.to_string(),
-            Value::Number(v) => v.to_string(),
-            Value::Bool(v) => v.to_string(),
-            _ => unreachable!(),
-        });
-    }
-    if ty == FieldType::Time
-        && let Value::Text(text) = v
-    {
-        *v = Value::Time(
-            time::instant(ctx, text)
-                .ok_or_else(|| QueryError::new("a payload time requires an absolute timestamp"))?,
-        );
-    }
     if ty == FieldType::Json {
+        // Only the projected row can determine a dynamic JSON scalar's type.
         return Ok(());
+    }
+    if let Value::Text(text) = v {
+        if identifier_pattern && text.contains('*') {
+            *v = Value::Glob(text.clone());
+            return Ok(());
+        }
+        let parsed = match ty {
+            FieldType::Integer => text.parse().ok().map(Value::Integer),
+            FieldType::Number => numeric_value(text),
+            FieldType::Bool => text.parse().ok().map(Value::Bool),
+            FieldType::Time => time::instant(ctx, text).map(Value::Time),
+            FieldType::Id | FieldType::IdList => text
+                .strip_prefix("sinex:ev/")
+                .unwrap_or(text)
+                .parse()
+                .ok()
+                .map(Value::Id),
+            FieldType::Enum(values) => values
+                .contains(&text.as_str())
+                .then(|| Value::Text(text.clone())),
+            FieldType::Text | FieldType::TextList | FieldType::Path | FieldType::PathList => {
+                return Ok(());
+            }
+            FieldType::Json => return Ok(()),
+        };
+        *v = parsed.ok_or_else(|| {
+            QueryError::new(format!(
+                "value must be {}",
+                format!("{ty:?}").to_lowercase()
+            ))
+        })?;
     }
     let valid = matches!(
         (ty, &*v),
         (FieldType::Integer, Value::Integer(_))
             | (FieldType::Number, Value::Integer(_) | Value::Number(_))
             | (
-                FieldType::Text | FieldType::TextList,
-                Value::Text(_) | Value::Glob(_) | Value::PlaceholderText(_)
+                FieldType::Text
+                    | FieldType::TextList
+                    | FieldType::Path
+                    | FieldType::PathList
+                    | FieldType::Enum(_),
+                Value::Text(_) | Value::PlaceholderText(_)
             )
             | (FieldType::Time, Value::Time(_))
             | (FieldType::Bool, Value::Bool(_))
+            | (FieldType::Id | FieldType::IdList, Value::Id(_))
     );
-    if valid {
+    if valid || (identifier_pattern && matches!(v, Value::Glob(_))) {
         Ok(())
     } else {
         Err(QueryError::new(format!(
@@ -408,7 +447,45 @@ fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), Que
         )))
     }
 }
-fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
+type Columns = BTreeMap<String, FieldType>;
+
+pub(super) fn join_columns(kind: JoinKind, previous: usize) -> Vec<(String, FieldType)> {
+    let suffix = if previous == 0 {
+        String::new()
+    } else {
+        format!("_{}", previous + 1)
+    };
+    let fields: &[(&str, FieldType)] = match kind {
+        JoinKind::Near | JoinKind::Before | JoinKind::After => {
+            &[("near", FieldType::Id), ("offset", FieldType::Number)]
+        }
+        JoinKind::During => &[("during", FieldType::Id)],
+        JoinKind::Containing => &[("containing", FieldType::Id)],
+    };
+    fields
+        .iter()
+        .map(|(name, ty)| (format!("{name}{suffix}"), *ty))
+        .collect()
+}
+
+fn output_type(field: &FieldRef, columns: &Columns) -> Result<FieldType, QueryError> {
+    match field {
+        FieldRef::Field(field) => Ok(field.ty),
+        FieldRef::TypedPayload { ty, .. } => Ok(*ty),
+        FieldRef::Group(name) => columns
+            .get(name)
+            .copied()
+            .ok_or_else(|| QueryError::new(format!("output column {name} has no declared type"))),
+        FieldRef::Payload(_) => Err(QueryError::new("payload path needs its selected schema")),
+    }
+}
+
+fn expr(
+    e: &mut Expr,
+    kinds: &Option<BTreeSet<String>>,
+    columns: &Columns,
+    ctx: &Context,
+) -> Result<(), QueryError> {
     let narrowed = selected(e, ctx).map(|selected| {
         kinds.as_ref().map_or(selected.clone(), |ks| {
             ks.intersection(&selected).cloned().collect()
@@ -416,28 +493,44 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
     });
     let kinds = if narrowed.is_some() { &narrowed } else { kinds };
     match e {
-        Expr::Truth { operand: field, .. } => operand(field, kinds, ctx)?,
+        Expr::Truth { operand: field, .. } => operand(field, kinds, columns, ctx)?,
         Expr::And(a, b) | Expr::Or(a, b) => {
-            expr(a, kinds, ctx)?;
-            expr(b, kinds, ctx)?;
+            expr(a, kinds, columns, ctx)?;
+            expr(b, kinds, columns, ctx)?;
         }
-        Expr::Not(e) => expr(e, kinds, ctx)?,
+        Expr::Not(e) => expr(e, kinds, columns, ctx)?,
         Expr::Compare { lhs, op, rhs } => {
-            operand(lhs, kinds, ctx)?;
-            if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs {
+            operand(lhs, kinds, columns, ctx)?;
+            if let Operand::Field(FieldRef::TypedPayload { .. } | FieldRef::Group(_)) = lhs {
+                let ty = output_type(
+                    match lhs {
+                        Operand::Field(field) => field,
+                        _ => unreachable!(),
+                    },
+                    columns,
+                )?;
                 if matches!(op, Op::Contains | Op::Prefix)
-                    && !matches!(ty, FieldType::Text | FieldType::TextList)
-                    && !(ctx.catalog.is_some() && *ty == FieldType::Json)
+                    && !matches!(
+                        ty,
+                        FieldType::Text
+                            | FieldType::TextList
+                            | FieldType::Path
+                            | FieldType::PathList
+                            | FieldType::Enum(_)
+                    )
+                    && !(ctx.catalog.is_some() && ty == FieldType::Json)
                 {
                     return Err(QueryError::new("~ and ^ require a text payload field"));
                 }
                 if op.ordering()
                     && matches!(ty, FieldType::Bool | FieldType::Json | FieldType::TextList)
-                    && !(ctx.catalog.is_some() && *ty == FieldType::Json)
+                    && !(ctx.catalog.is_some() && ty == FieldType::Json)
                 {
                     return Err(QueryError::new("this payload field cannot be ordered"));
                 }
-                validate_value(rhs, *ty, ctx)?;
+                let identifier_pattern = matches!(op, Op::Eq | Op::Ne)
+                    && matches!(lhs, Operand::Field(FieldRef::Group(name)) if matches!(name.as_str(), "source" | "event_type"));
+                validate_value(rhs, ty, identifier_pattern, ctx)?;
                 if let Operand::Field(FieldRef::TypedPayload { path, .. }) = lhs {
                     let available = definitions(ctx);
                     let definitions: Vec<_> = available
@@ -476,20 +569,20 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
             }
         }
         Expr::Within { lhs, .. } => {
-            operand(lhs, kinds, ctx)?;
+            operand(lhs, kinds, columns, ctx)?;
             if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
                 && *ty == FieldType::Json
             {
                 *ty = FieldType::Time;
             }
-            if let Operand::Field(FieldRef::TypedPayload { ty, .. }) = lhs
-                && *ty != FieldType::Time
-                && !(ctx.catalog.is_some() && *ty == FieldType::Json)
-            {
-                return Err(QueryError::new("in requires a time field"));
+            if let Operand::Field(field) = lhs {
+                let ty = output_type(field, columns)?;
+                if ty != FieldType::Time && !(ctx.catalog.is_some() && ty == FieldType::Json) {
+                    return Err(QueryError::new("in requires a time field"));
+                }
             }
         }
-        Expr::Exists(o) => operand(o, kinds, ctx)?,
+        Expr::Exists(o) => operand(o, kinds, columns, ctx)?,
         Expr::TimeDiff { a, b, .. } => {
             field(a, kinds, ctx)?;
             field(b, kinds, ctx)?;
@@ -500,8 +593,11 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                     *ty = FieldType::Time;
                 }
             }
-            if [a, b].iter().any(|field| matches!(field, FieldRef::TypedPayload { ty, .. } if *ty != FieldType::Time)) {
-                return Err(QueryError::new("time differences require time fields"));
+            for field in [&*a, &*b] {
+                let ty = output_type(field, columns)?;
+                if ty != FieldType::Time && !(ctx.catalog.is_some() && ty == FieldType::Json) {
+                    return Err(QueryError::new("time differences require time fields"));
+                }
             }
         }
         Expr::Words(_) | Expr::Overlaps { .. } | Expr::Similar { .. } => {}
@@ -580,7 +676,7 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
     if let Source::RecallLast { filter: Some(e) } = &mut q.source {
         let alias = Alias::from_name("shell-sessions").expect("shell sessions declared");
         let kinds = Some(alias.kinds.iter().map(|s| (*s).into()).collect());
-        expr(e, &kinds, ctx)?;
+        expr(e, &kinds, &Columns::new(), ctx)?;
     }
     let mut kinds: Option<BTreeSet<String>> = q
         .source
@@ -604,13 +700,19 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
             }));
         }
     }
+    let mut columns = Columns::new();
+    let mut joins = 0;
     if let Some(e) = &mut q.filter {
-        expr(e, &kinds, ctx)?;
+        expr(e, &kinds, &columns, ctx)?;
     }
     for stage in &mut q.stages {
         match stage {
-            Stage::Where(e) => expr(e, &kinds, ctx)?,
-            Stage::Join(j) => check(&mut j.inner, ctx)?,
+            Stage::Where(e) => expr(e, &kinds, &columns, ctx)?,
+            Stage::Join(j) => {
+                check(&mut j.inner, ctx)?;
+                columns.extend(join_columns(j.kind, joins));
+                joins += 1;
+            }
             Stage::Fields(fs) => {
                 for f in fs {
                     field(f, &kinds, ctx)?;
@@ -619,44 +721,36 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
             Stage::Sort(keys) => {
                 for k in keys {
                     if let SortBy::Operand(o) = &mut k.key {
-                        operand(o, &kinds, ctx)?;
+                        operand(o, &kinds, &columns, ctx)?;
                     }
                 }
             }
             Stage::Group(g) => {
                 for k in &mut g.keys {
-                    operand(k, &kinds, ctx)?;
+                    operand(k, &kinds, &columns, ctx)?;
                 }
                 for a in &mut g.aggregates {
                     if let Some(f) = &mut a.field {
                         field(f, &kinds, ctx)?;
-                        let ty = match f {
-                            FieldRef::TypedPayload { ty, .. } => Some(*ty),
-                            FieldRef::Field(f) => Some(f.ty),
-                            _ => None,
-                        };
+                        let ty = output_type(f, &columns)?;
                         if matches!(a.function, AggFn::Min | AggFn::Max)
-                            && ty.is_some_and(|ty| {
-                                matches!(
-                                    ty,
-                                    FieldType::Bool
-                                        | FieldType::Json
-                                        | FieldType::TextList
-                                        | FieldType::PathList
-                                        | FieldType::IdList
-                                        | FieldType::Id
-                                )
-                            })
+                            && matches!(
+                                ty,
+                                FieldType::Bool
+                                    | FieldType::Json
+                                    | FieldType::TextList
+                                    | FieldType::PathList
+                                    | FieldType::IdList
+                                    | FieldType::Id
+                            )
                         {
                             return Err(QueryError::new(
                                 "min and max require an ordered scalar field",
                             ));
                         }
                         if matches!(a.function, AggFn::Sum | AggFn::Avg)
-                            && ty.is_some_and(|ty| {
-                                !matches!(ty, FieldType::Integer | FieldType::Number)
-                                    && !(ctx.catalog.is_some() && ty == FieldType::Json)
-                            })
+                            && !matches!(ty, FieldType::Integer | FieldType::Number)
+                            && !(ctx.catalog.is_some() && ty == FieldType::Json)
                         {
                             return Err(QueryError::new(format!(
                                 "{} requires a numeric field declared by the event schema",
@@ -665,6 +759,33 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                         }
                     }
                 }
+                let mut output = Columns::new();
+                for key in &g.keys {
+                    let ty = match key {
+                        Operand::Field(field) => output_type(field, &columns)?,
+                        Operand::TimeFn(TimeFn::Hour, _) => FieldType::Integer,
+                        Operand::TimeFn(_, _) => FieldType::Text,
+                    };
+                    output.insert(key.column(), ty);
+                }
+                for aggregate in &g.aggregates {
+                    let ty = match aggregate.function {
+                        AggFn::Count | AggFn::CountDistinct => FieldType::Integer,
+                        AggFn::Avg => FieldType::Number,
+                        AggFn::Sum | AggFn::Min | AggFn::Max => output_type(
+                            aggregate
+                                .field
+                                .as_ref()
+                                .ok_or_else(|| QueryError::new("aggregate needs a field"))?,
+                            &columns,
+                        )?,
+                    };
+                    output.insert(aggregate.column(), ty);
+                }
+                if g.fill.is_some() {
+                    output.insert("coverage".into(), FieldType::Text);
+                }
+                columns = output;
             }
             _ => {}
         }

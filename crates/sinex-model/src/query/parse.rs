@@ -314,7 +314,6 @@ impl Binder<'_> {
             };
         }
         let raw = self.scalar(value, at)?;
-        let quoted = matches!(value, syntax::Value::Scalar { quoted: true, .. });
         if matches!(value, syntax::Value::Parameter { .. }) {
             return Err(QueryError::at(at, "unbound saved query parameter"));
         }
@@ -328,20 +327,11 @@ impl Binder<'_> {
                 }
                 self.time_fn_value(*func, raw, at)
             }
-            Operand::Field(FieldRef::Group(_)) => Ok(infer(raw, quoted, op)),
-            Operand::Field(FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. }) => {
-                if self
-                    .ctx
-                    .catalog
-                    .as_ref()
-                    .and_then(|c| c.field(path))
-                    .is_some_and(|f| f.ty == catalog::DataType::Time)
-                {
-                    Ok(Value::Time(self.instant(value, at)?))
-                } else {
-                    Ok(infer(raw, quoted, op))
-                }
-            }
+            // The typed pass knows the selected payload kinds and output columns.
+            // Keep the scalar spelling until that declaration chooses its type.
+            Operand::Field(
+                FieldRef::Group(_) | FieldRef::Payload(_) | FieldRef::TypedPayload { .. },
+            ) => Ok(Value::Text(raw.to_owned())),
             Operand::Field(FieldRef::Field(f)) => {
                 let text_like = matches!(
                     f.ty,
@@ -408,7 +398,10 @@ impl Binder<'_> {
                         {
                             return Err(QueryError::at(at, "path prefix must be absolute"));
                         }
-                        if !quoted && raw.contains('*') && matches!(op, Op::Eq | Op::Ne) {
+                        if matches!(f.name, "source" | "event_type")
+                            && raw.contains('*')
+                            && matches!(op, Op::Eq | Op::Ne)
+                        {
                             Value::Glob(raw.into())
                         } else {
                             Value::Text(raw.into())
@@ -820,17 +813,11 @@ impl Binder<'_> {
                             })
                         })
                         .count();
-                    let suffix = if n == 0 {
-                        String::new()
-                    } else {
-                        format!("_{}", n + 1)
-                    };
-                    let names: &[&str] = match kind {
-                        JoinKind::Near | JoinKind::Before | JoinKind::After => &["near", "offset"],
-                        JoinKind::During => &["during"],
-                        JoinKind::Containing => &["containing"],
-                    };
-                    columns.extend(names.iter().map(|name| format!("{name}{suffix}")));
+                    columns.extend(
+                        super::typed::join_columns(kind, n)
+                            .into_iter()
+                            .map(|(name, _)| name),
+                    );
                     stages.push(Stage::Join(Join {
                         kind,
                         inner: Box::new(inner),
@@ -893,24 +880,5 @@ fn has_words(e: &Expr) -> bool {
         Expr::Words(_) => true,
         Expr::And(a, b) | Expr::Or(a, b) => has_words(a) || has_words(b),
         _ => false,
-    }
-}
-pub(super) fn infer(raw: &str, quoted: bool, op: Op) -> Value {
-    if quoted {
-        return Value::Text(raw.to_string());
-    }
-    if let Ok(i) = raw.parse::<i64>() {
-        return Value::Integer(i);
-    }
-    if let Ok(n) = raw.parse::<f64>()
-        && n.is_finite()
-    {
-        return Value::Number(n);
-    }
-    match raw {
-        "true" => Value::Bool(true),
-        "false" => Value::Bool(false),
-        _ if raw.contains('*') && matches!(op, Op::Eq | Op::Ne) => Value::Glob(raw.to_string()),
-        _ => Value::Text(raw.to_string()),
     }
 }

@@ -36,8 +36,16 @@ fn bare_words_search_events() {
         panic!("two words are joined with and")
     };
     let terms = [*a, *b];
-    assert!(terms.iter().any(|term| matches!(term, Expr::Words(w) if w.words == ["harbor"] && !w.phrase)));
-    assert!(terms.iter().any(|term| matches!(term, Expr::Words(w) if w.words == ["tide"] && !w.phrase)));
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.words == ["harbor"] && !w.phrase))
+    );
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.words == ["tide"] && !w.phrase))
+    );
 }
 
 #[devkit::test]
@@ -47,8 +55,16 @@ fn quoted_phrases_and_prefixes() {
         panic!()
     };
     let terms = [*a, *b];
-    assert!(terms.iter().any(|term| matches!(term, Expr::Words(w) if w.phrase && w.words == ["cargo", "test"])));
-    assert!(terms.iter().any(|term| matches!(term, Expr::Words(w) if w.prefix && w.words == ["deploy"])));
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.phrase && w.words == ["cargo", "test"]))
+    );
+    assert!(
+        terms
+            .iter()
+            .any(|term| matches!(term, Expr::Words(w) if w.prefix && w.words == ["deploy"]))
+    );
 }
 
 #[devkit::test]
@@ -106,10 +122,13 @@ fn and_binds_tighter_than_or_and_both_bounds_are_kept() {
         Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
         if field.name == "source" && value == "a"
     )));
-    let grouped = branches.iter().find_map(|term| match term {
-        Expr::And(a, b) => Some([&**a, &**b]),
-        _ => None,
-    }).expect("the AND branch stays grouped under OR");
+    let grouped = branches
+        .iter()
+        .find_map(|term| match term {
+            Expr::And(a, b) => Some([&**a, &**b]),
+            _ => None,
+        })
+        .expect("the AND branch stays grouped under OR");
     assert!(grouped.iter().any(|term| matches!(term,
         Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
         if field.name == "source" && value == "b"
@@ -195,7 +214,10 @@ fn ranges_are_half_open_logical_days() {
 #[devkit::test]
 fn a_bare_duration_with_an_ordering_is_refused() {
     let e = err("events where when > 7d");
-    assert!(e.message.contains("a bare duration is not a time instant"), "{e}");
+    assert!(
+        e.message.contains("a bare duration is not a time instant"),
+        "{e}"
+    );
     assert!(e.message.contains("when in last 7d"), "{e}");
 }
 
@@ -554,3 +576,68 @@ fn shared_match_unknown_and_any_keep_their_explicit_predicate_meanings() {
         })
     ));
 }
+
+#[devkit::test]
+fn scalar_quotes_preserve_identifier_patterns_and_literal_payload_operators() {
+    for text in [
+        "events where source = terminal.*",
+        "events where source = \"terminal.*\"",
+        "events where event_type = metric.*",
+        "events where event_type = \"metric.*\"",
+    ] {
+        assert!(
+            matches!(
+                q(text).filter,
+                Some(Expr::Compare {
+                    rhs: Value::Glob(_),
+                    ..
+                })
+            ),
+            "{text}"
+        );
+    }
+    for text in [
+        "events where payload.note = alpha*beta",
+        "events where payload.note = \"alpha*beta\"",
+        "events where payload.note != alpha*beta",
+        "events where payload.note ~ alpha*beta",
+        "events where payload.note ^ alpha*beta",
+    ] {
+        assert!(
+            matches!(q(text).filter, Some(Expr::Compare {rhs:Value::Text(ref value), ..}) if value == "alpha*beta"),
+            "{text}"
+        );
+    }
+    for text in [
+        "commands where payload.exit_code = 42",
+        "commands where payload.exit_code = \"42\"",
+    ] {
+        assert!(
+            matches!(
+                q(text).filter,
+                Some(Expr::Compare {
+                    rhs: Value::Integer(42),
+                    ..
+                })
+            ),
+            "{text}"
+        );
+    }
+}
+
+#[devkit::test]
+fn numeric_looking_payload_text_keeps_its_literal_spelling() {
+    for value in ["001", "1.00", "-0.0"] {
+        for literal in [value.to_string(), format!("\"{value}\"")] {
+            let text = format!("events where payload.note = {literal}");
+            assert!(
+                matches!(q(&text).filter,
+                    Some(Expr::Compare { rhs: Value::Text(ref actual), .. }) if actual == value
+                ),
+                "{text}"
+            );
+        }
+    }
+}
+
+mod literals;
