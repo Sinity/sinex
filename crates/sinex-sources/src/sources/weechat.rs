@@ -10,13 +10,15 @@
 use sinex_model::event_types::communication::{ChatLineKind, ChatMessage};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.weechat-log",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(7),
+    expires_after: None,
     purpose: "chat recall and correspondence history",
     class: Class::Open,
     parser: "weechat-log",
@@ -174,8 +176,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

@@ -310,9 +310,10 @@ pub(crate) async fn read(
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
             // Taken before the poll, so bytes appended during it change them.
-            let facts = (b.source.spec().driver == sinex_source_core::Driver::AppendFile)
-                .then(|| drivers::file_facts(&b.binding.input).ok())
-                .flatten();
+            let facts = (b.source.spec().origin
+                == sinex_source_core::Origin::Input(sinex_source_core::Shape::AppendFile))
+            .then(|| drivers::file_facts(&b.binding.input).ok())
+            .flatten();
             if let (Some(now), Some(then)) = (&facts, &b.settled)
                 && same_file(now, then)
             {

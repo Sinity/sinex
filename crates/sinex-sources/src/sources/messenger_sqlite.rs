@@ -8,13 +8,15 @@ use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
 use sinex_source_core::drivers::sqlite_rows::SqliteRows;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.messenger-sqlite",
-    driver: Driver::SqliteRows,
+    origin: Origin::Input(Shape::SqliteRows),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "conversations with people",
     class: Class::Open,
     parser: "fbmessengerexport",
@@ -103,8 +105,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

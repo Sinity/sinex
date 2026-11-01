@@ -110,11 +110,11 @@ fn discovery_uses_finance_environment_home_and_text_history_inputs() {
         .insert("finance".into(), vec![root.clone()]);
     let found = crate::discovery::discover_format(&super::super::FORMAT, &context);
     assert!(found.iter().any(|i| i.input.as_ref() == Some(&root)
-        && i.availability == Availability::Reading
+        && i.availability == Availability::Capturing
         && i.bindings.len() == 1));
     assert!(found.iter().any(
         |i| i.input.as_ref() == Some(&dir.path().join(".hledger.journal"))
-            && i.availability == Availability::WaitingForInput
+            && i.availability == Availability::Unavailable(sinex_source_core::discovery::Cause::NotPresent)
     ));
     context
         .environment
@@ -132,7 +132,7 @@ fn discovery_uses_finance_environment_home_and_text_history_inputs() {
     assert!(
         crate::discovery::discover_format(&crate::sources::text_history::FORMAT, &context)
             .iter()
-            .any(|i| i.input.as_ref() == Some(&root) && i.availability == Availability::Reading)
+            .any(|i| i.input.as_ref() == Some(&root) && i.availability == Availability::Capturing)
     );
 }
 

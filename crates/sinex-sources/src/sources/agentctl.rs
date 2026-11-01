@@ -14,13 +14,15 @@ use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::work::AgentctlEvent;
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "work.agentctl",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "the builds, tests and agent jobs run on this host, and how they ended",
     class: Class::Open,
     parser: "agentctl-events",
@@ -126,8 +128,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

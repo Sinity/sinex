@@ -68,6 +68,7 @@ pub(crate) const NAMED: &[&str] = &[
     "lifecycle",
     "event_indexes",
     "remove_privacy_outputs_and_model_accounting",
+    "source_expectations",
 ];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
@@ -131,6 +132,7 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(crate::lifecycle::statements());
     steps.push(crate::event_indexes::statements());
     steps.push(remove_privacy_outputs_and_model_accounting());
+    steps.push(crate::source_expectations::statements());
     steps
 }
 

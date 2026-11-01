@@ -3,11 +3,13 @@ use serde_json::{Map, Value, json};
 use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
 use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange};
 use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::{DeclaredSource, Driver, Parser, RecordContext, RecordError, SourceSpec};
+use sinex_source_core::{DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec};
 
 pub const OBSERVATION: SourceSpec = SourceSpec {
     name: "source.observation",
-    driver: Driver::ApiRequest,
+    origin: Origin::Request,
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "source read outcomes and coverage evidence",
     class: Class::Open,
     parser: "source-observation",
@@ -104,8 +106,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: true,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&OBSERVATION],

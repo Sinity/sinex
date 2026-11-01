@@ -24,7 +24,7 @@
 use sinex_model::event_types::desktop::{SampledWindow, WindowSampled};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
@@ -32,7 +32,9 @@ const MAGIC: &[u8] = b"arbtt-timelog-v1\n";
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.arbtt",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "which window was in use, sampled every interval",
     class: Class::Open,
     parser: "arbtt-timelog-v1",
@@ -279,8 +281,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

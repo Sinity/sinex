@@ -22,7 +22,6 @@ let
     services.sinex = {
       session.stateDir = "/realm/state/sinex-session/alice";
       exclude."desktop.clipboard".reason = "Synthetic operator exclusion";
-      sources."terminal.zsh-history".paths = [ "/host-declared/history" ];
       discovery = {
         inputRoots.projects = [ "/subjects/project" ];
         inputs.spotify = [ "/exports/current" ];
@@ -78,7 +77,6 @@ let
     (plan.exclude."desktop.clipboard".reason == "Synthetic operator exclusion")
     (plan.exclude."terminal.atuin-history" == null)
     (!(plan.sources."terminal.atuin-history" ? enable))
-    (plan.sources."terminal.zsh-history".paths == [ "/host-declared/history" ])
     (plan.discovery.inputs.spotify == [ "/exports/current" "/exports/earlier" ])
     (plan.discovery.home == "/home/alice")
     ((evaluate { }).services.sinex.session.stateDir == "/home/alice/.local/state/sinex-session")
@@ -92,6 +90,8 @@ let
     (fails { services.sinex.exclude."desktop.clipboard".reason = " \t\n"; })
     (fails { services.sinex.exclude."no.such.source".reason = "fixture"; })
     (fails { services.sinex.sources."terminal.atuin-history".enable = true; })
+    (fails { services.sinex.sources."terminal.zsh-history".paths = [ "/host-declared/history" ]; })
+    (fails { services.sinex.sources."terminal.zsh-history".format = "zsh"; })
     (fails { services.sinex.session.clipboard = true; })
     (fails { services.sinex.session.enable = true; })
     (fails { services.sinex.journald.enable = true; })

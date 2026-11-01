@@ -97,7 +97,7 @@ impl Config {
         }
     }
 }
-use sinex_sources::discovery::{self, Availability};
+use sinex_sources::discovery::{self, Availability, Cause};
 
 pub(crate) fn plan(
     config: &Config,
@@ -212,7 +212,13 @@ impl Bindings {
                     .map(|path| path.display().to_string())
                     .unwrap_or_default()
             );
-            let unavailable = input.availability == Availability::Unavailable;
+            // An input that exists but cannot be read is missing coverage; one
+            // that is absent or inapplicable on this host is not.
+            let unavailable = matches!(
+                input.availability,
+                Availability::Unavailable(cause)
+                    if !matches!(cause, Cause::NotPresent | Cause::NotApplicable)
+            );
             if unavailable || coverage.has_reading(&key, host) {
                 use sinex_model::event_types::coverage::{
                     CoverageCompleteness, CoverageState, SourceCoverage,
@@ -245,10 +251,7 @@ impl Bindings {
                     failures: 0,
                 });
             }
-            if matches!(
-                input.availability,
-                Availability::Unavailable | Availability::WaitingForInput
-            ) {
+            if matches!(input.availability, Availability::Unavailable(_)) {
                 self.say(
                     &key,
                     format!(

@@ -13,13 +13,15 @@ use sinex_model::event_types::operator::{LogEntry, SteeringRow};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const RAW_LOG: SourceSpec = SourceSpec {
     name: "operator.raw-log",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(7),
+    expires_after: None,
     purpose: "the operator's quick notes, as primary data",
     class: Class::Open,
     parser: "operator-raw-log",
@@ -145,13 +147,19 @@ const STEERING: [SourceSpec; 3] = [
 const fn steering_spec(parser: &'static str) -> SourceSpec {
     SourceSpec {
         name: "operator.steering",
-        driver: Driver::SqliteRows,
+        origin: Origin::Input(Shape::SqliteRows),
+        expect: Expectation::continuous_days(30),
+        expires_after: None,
         purpose: "commitments, forecasts and reviews the operator keeps",
         class: Class::Open,
         parser,
         parser_version: 3,
         event_types: &["steering.row"],
         framer: sinex_source_core::Framer::incremental(
+            sinex_source_core::drivers::append_file::lines,
+        ),
+    }
+r::incremental(
             sinex_source_core::drivers::append_file::lines,
         ),
     }
@@ -221,8 +229,6 @@ pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&RAW_LOG],
@@ -264,8 +270,6 @@ pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || STEERING.iter().collect(),

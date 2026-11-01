@@ -12,7 +12,7 @@ use sinex_model::event_types::media::NoteDocument;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
@@ -20,7 +20,9 @@ mod metadata;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.notes-vault",
-    driver: Driver::DirSnapshot,
+    origin: Origin::Input(Shape::DirSnapshot),
+    expect: Expectation::cadence_hours(1),
+    expires_after: None,
     purpose: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",
@@ -153,8 +155,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

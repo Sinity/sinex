@@ -59,20 +59,10 @@ let
   discoveryInputs = lib.zipAttrsWith (_: values: lib.unique (lib.flatten values)) [ cfg.discovery.inputs backfillInputs ];
 
   sourceOption = spec: {
-    paths = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      description = "Where ${spec.name} reads from on this host.";
-    };
     class = mkOption {
       type = types.enum [ "open" "guarded" "sealed" ];
       default = spec.class;
       description = "Privacy class of ${spec.name}'s events.";
-    };
-    format = mkOption {
-      type = types.nullOr types.str;
-      default = null;
-      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Canonical discovery still considers every format.";
     };
     zone = mkOption {
       type = types.nullOr types.str;

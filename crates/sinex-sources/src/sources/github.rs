@@ -26,7 +26,7 @@ use sinex_model::event_types::code::{
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::DriverError;
 use sinex_source_core::drivers::api_cursor::{Api, ApiCursor, Page};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -35,7 +35,9 @@ use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "code.github",
-    driver: Driver::ApiCursor,
+    origin: Origin::Input(Shape::ApiCursor),
+    expect: Expectation::cadence_hours(6),
+    expires_after: Some(sinex_source_core::registry::days(90)),
     purpose: "the outcome of work: pull requests, reviews, checks and CI runs beside the commits",
     class: Class::Open,
     parser: "github",
@@ -1099,8 +1101,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &["token_file"],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover,
         specs: || vec![&SPEC],
@@ -1116,10 +1116,10 @@ fn discover(
     format: &sinex_source_core::InputFormat,
     context: &sinex_source_core::discovery::DiscoveryContext,
 ) -> Vec<sinex_source_core::discovery::DiscoveredInput> {
-    use sinex_source_core::discovery::Availability;
+    use sinex_source_core::discovery::{Availability, Cause};
     let mut inputs = crate::discovery::discover_format(format, context);
     for input in &mut inputs {
-        if input.availability != Availability::Reading {
+        if input.availability != Availability::Capturing {
             continue;
         }
         let credential = input
@@ -1140,7 +1140,7 @@ fn discover(
                     })
             });
         if let Err(reason) = credential {
-            input.availability = Availability::Unavailable;
+            input.availability = Availability::Unavailable(Cause::AwaitingCredentials);
             input.reason = Some(reason);
             input.bindings.clear();
         }

@@ -8,13 +8,15 @@ use serde_json::{Map, Value};
 use sinex_model::event_types::account::PurchaseObserved;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const PLAY_STORE: SourceSpec = SourceSpec {
     name: "google.play-store",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "apps installed, bought and reviewed",
     class: Class::Open,
     parser: "google-play-store",
@@ -28,7 +30,9 @@ pub const PLAY_STORE: SourceSpec = SourceSpec {
 
 pub const PURCHASES: SourceSpec = SourceSpec {
     name: "google.purchases",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "orders and reservations",
     class: Class::Open,
     parser: "google-purchases",

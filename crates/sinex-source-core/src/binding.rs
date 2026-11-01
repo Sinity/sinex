@@ -221,8 +221,8 @@ pub struct InputFormat {
     pub discover: crate::discovery::Discover,
     pub specs: fn() -> Vec<&'static SourceSpec>,
     /// `None` for sources written only through another path (the API's
-    /// library requests, the crawl command): they are replayable but not
-    /// planned from a path.
+    /// requests, the crawl command): they are replayable but not planned from
+    /// a path, and discovery reports them as on demand.
     pub plan: Option<Plan>,
     pub source: SourceFor,
     pub reader: Option<ReaderFor>,
@@ -233,6 +233,12 @@ impl InputFormat {
     /// Whether this format reads `spec_name`.
     pub fn reads(&self, spec_name: &str) -> bool {
         (self.specs)().iter().any(|s| s.name == spec_name)
+    }
+
+    /// Whether `spec`'s records are written only on request: there is no
+    /// input to discover, so silence means nothing.
+    pub fn on_demand(&self, spec: &SourceSpec) -> bool {
+        self.plan.is_none() || spec.origin == crate::registry::Origin::Request
     }
 }
 

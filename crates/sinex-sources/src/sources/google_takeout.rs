@@ -80,8 +80,6 @@ pub const FORMAT: InputFormat = InputFormat {
         capabilities: &[],
         credentials: &[],
         streams: &[],
-        requests: &[],
-        request_only: false,
     },
     discover: crate::discovery::discover_format,
     specs: || PRODUCTS.iter().map(|p| p.0).collect(),

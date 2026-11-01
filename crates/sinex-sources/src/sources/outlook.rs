@@ -18,13 +18,15 @@ use crate::sources::{fields, mail};
 use sinex_model::Class;
 use sinex_model::event_types::communication::MailMessage;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const PST: SourceSpec = SourceSpec {
     name: "communication.outlook",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -38,7 +40,9 @@ pub const PST: SourceSpec = SourceSpec {
 
 pub const CSV: SourceSpec = SourceSpec {
     name: "communication.outlook-csv",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "outlook-csv",
@@ -180,8 +184,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&PST],
@@ -204,8 +206,6 @@ pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&CSV],

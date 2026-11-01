@@ -7,14 +7,16 @@ use serde_json::{Map, Value};
 use sinex_model::event_types::telemetry::SinexTelemetry;
 use sinex_model::{Class, InputRef};
 use sinex_source_core::drivers::live_stream::{self, LiveStream};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "sinex.telemetry",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_hours(1),
+    expires_after: None,
     purpose: "Sinex's sampled state",
     class: Class::Open,
     parser: "sinex-telemetry",
@@ -93,8 +95,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: &[],
                 capabilities: &[],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

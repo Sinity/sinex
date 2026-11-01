@@ -1,5 +1,6 @@
 //! One material record and parser for every capture gap. Capture callers
 //! persist these records with their spool and supply the stream's class floor.
+use crate::registry::{Expectation, Origin, Shape};
 use crate::{Parser, RecordContext, RecordError};
 pub use sinex_model::event_types::capture::Gap;
 
@@ -37,7 +38,9 @@ pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<GapParser> {
     crate::DeclaredSource {
         spec: crate::SourceSpec {
             name: "capture.gap",
-            driver: crate::Driver::AppendFile,
+            origin: Origin::Input(Shape::AppendFile),
+            expect: Expectation::OnDemand,
+            expires_after: None,
             purpose: "intervals when a capture stream could not record",
             class,
             parser: "capture-gap",

@@ -32,9 +32,18 @@ impl Description {
         }
     }
 
+    /// The description just before sources declared expectations.
+    pub(crate) fn before_source_expectations() -> Self {
+        let mut description = Self::current();
+        for statement in &mut description.tables {
+            crate::source_expectations::previous(statement);
+        }
+        description
+    }
+
     /// The description just before the lifecycle upgrade.
     pub(crate) fn before_lifecycle() -> Self {
-        let mut description = Self::current();
+        let mut description = Self::before_source_expectations();
         crate::event_indexes::previous(&mut description.tables, &mut description.after_tables);
         description
             .tables

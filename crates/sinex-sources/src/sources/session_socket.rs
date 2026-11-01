@@ -16,7 +16,7 @@ use sinex_model::event_types::machine::ScrollbackCaptured;
 use sinex_model::event_types::session::{EditorReport, TerminalReport};
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::io::{BufRead, BufReader};
 use std::net::Shutdown;
@@ -27,7 +27,9 @@ use std::time::Duration;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "session.integrations",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "recall: files edited, commands run in the terminal and what they printed",
     // Paths, command lines and terminal output.
     class: Class::Guarded,
@@ -359,8 +361,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: &[],
                 capabilities: &[],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

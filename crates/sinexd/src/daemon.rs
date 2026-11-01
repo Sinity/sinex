@@ -189,13 +189,12 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     // Discovery must see the configured spool before its first planning turn.
     std::fs::create_dir_all(&telemetry_spool)
         .map_err(|error| format!("telemetry spool: {error}"))?;
-    sources.sources.insert(
-        sinex_sources::sources::telemetry::SPEC.name.to_owned(),
-        binding_runner::SourceConfig {
-            paths: vec![telemetry_spool.display().to_string()],
-            ..Default::default()
-        },
-    );
+    sources
+        .discovery
+        .inputs
+        .entry(sinex_sources::sources::telemetry::FORMAT.name.to_owned())
+        .or_default()
+        .push(telemetry_spool.clone());
     let configuration = sources.derivation_configuration();
     let (keyed, per_event) = (
         crate::analysis::keyed_with(&configuration),
@@ -314,19 +313,18 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             Vec::new()
         } else {
             sources
-                .sources
-                .get("library.scan")
+                .discovery
+                .input_roots
+                .get("library")
                 .into_iter()
-                .flat_map(|source| source.paths.iter().map(std::path::PathBuf::from))
                 .chain(
                     sources
                         .discovery
-                        .input_roots
-                        .get("library")
-                        .into_iter()
-                        .flatten()
-                        .cloned(),
+                        .inputs
+                        .get(sinex_sources::sources::library::FORMAT.name),
                 )
+                .flatten()
+                .cloned()
                 .collect()
         },
     };

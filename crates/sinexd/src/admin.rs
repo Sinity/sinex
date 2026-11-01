@@ -29,7 +29,9 @@ pub(crate) enum Admin {
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
-    /// Read-only discovery of this host's inputs and exclusions.
+    /// Read-only discovery dry run: every input with its state (capturing,
+    /// unavailable with its cause, excluded with its reason, on demand), and
+    /// the catalog sources with no implementation whose data this host has.
     Discover {
         #[arg(long)]
         sources: PathBuf,
@@ -101,13 +103,20 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
         Admin::Discover { sources, host } => {
             let config = crate::binding_runner::Config::load(&sources)?;
             let context = config.context(&host);
-            let inputs =
-                tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
-                    .await
-                    .map_err(|error| error.to_string())??;
+            let census = tokio::task::spawn_blocking(move || {
+                sinex_sources::discovery::status(&context)
+                    .map(|inputs| (inputs, sinex_sources::unimplemented::census(&context)))
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            let (inputs, unimplemented) = census;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&inputs).map_err(|error| error.to_string())?
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "inputs": inputs,
+                    "unimplemented": unimplemented,
+                }))
+                .map_err(|error| error.to_string())?
             );
             Ok(())
         }

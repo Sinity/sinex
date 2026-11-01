@@ -412,13 +412,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         kind_declarations(),
         REPLAY_REFUSALS.into(),
         KIND_IMMUTABILITY.into(),
-        "CREATE TABLE registry.sources (
-  name text PRIMARY KEY,
-  driver text NOT NULL,
-  version integer NOT NULL,
-  event_types text[] NOT NULL,
-  purpose text NOT NULL
-)".into(),
+        crate::source_expectations::SOURCES.into(),
         "CREATE TABLE registry.derivations (
   name text PRIMARY KEY,
   kind text NOT NULL CHECK (kind IN ('per_event', 'keyed')),

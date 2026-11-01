@@ -22,8 +22,6 @@ pub(crate) const fn spec(transcripts: bool) -> DiscoverySpec {
         },
         capabilities: &[],
         credentials: &[],
-        request_only: false,
-        requests: &[],
         streams: &[],
     }
 }
@@ -36,16 +34,6 @@ pub(crate) fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<
                 .inputs
                 .get(format.name)
                 .is_some_and(|paths| paths.contains(path))
-                || context
-                    .sources
-                    .get(&input.source)
-                    .is_some_and(|configuration| {
-                        configuration.format.as_deref() == Some(format.name)
-                            && configuration
-                                .paths
-                                .iter()
-                                .any(|configured| Path::new(configured) == path.as_path())
-                    })
         });
         let mut bindings = Vec::new();
         let mut failures = Vec::new();
@@ -58,8 +46,9 @@ pub(crate) fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<
                         let mut failed = input.clone();
                         failed.input = Some(binding.input.clone());
                         failed.settings = binding.settings.clone();
-                        failed.availability =
-                            sinex_source_core::discovery::Availability::Unavailable;
+                        failed.availability = sinex_source_core::discovery::Availability::Unavailable(
+                            sinex_source_core::discovery::Cause::Failed,
+                        );
                         failed.reason = Some(reason);
                         failures.push(failed);
                         continue;

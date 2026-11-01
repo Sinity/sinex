@@ -19,6 +19,7 @@ mod owner_protocol;
 mod query_cursors;
 mod read_boundary;
 mod source_declarations;
+mod source_expectations;
 pub use read_boundary::require as require_read_boundary;
 mod description;
 pub mod kinds;

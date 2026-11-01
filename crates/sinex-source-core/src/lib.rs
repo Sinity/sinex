@@ -24,7 +24,7 @@ pub mod shared_pass;
 pub use binding::{Binding, InputFormat, Reader, Reading, Settings, StoredMaterial};
 pub use drain::{DrainInput, DrainOutput, Drainer, Limits, RecordContext, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
-pub use registry::{DeclaredSource, Driver, Framer, Source, SourceSpec};
+pub use registry::{DeclaredSource, Expectation, Framer, Origin, Shape, Source, SourceSpec};
 
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_model::Payloads;

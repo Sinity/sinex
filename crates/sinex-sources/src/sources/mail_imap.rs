@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -39,7 +39,9 @@ use std::time::Duration;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.imap",
-    driver: Driver::ApiCursor,
+    origin: Origin::Input(Shape::ApiCursor),
+    expect: Expectation::cadence_hours(1),
+    expires_after: None,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -603,8 +605,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &["token_file or password_file"],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover,
         specs: || vec![&SPEC],
@@ -633,10 +633,10 @@ fn discover(
     format: &sinex_source_core::InputFormat,
     context: &sinex_source_core::discovery::DiscoveryContext,
 ) -> Vec<sinex_source_core::discovery::DiscoveredInput> {
-    use sinex_source_core::discovery::Availability;
+    use sinex_source_core::discovery::{Availability, Cause};
     let mut inputs = crate::discovery::discover_format(format, context);
     for input in &mut inputs {
-        if input.availability != Availability::Reading {
+        if input.availability != Availability::Capturing {
             continue;
         }
         let checked = input
@@ -654,7 +654,7 @@ fn discover(
                     .map_err(|error| format!("IMAP credential {}: {error}", credential.display()))
             });
         if let Err(error) = checked {
-            input.availability = Availability::Unavailable;
+            input.availability = Availability::Unavailable(Cause::AwaitingCredentials);
             input.reason = Some(error);
             input.bindings.clear();
         }

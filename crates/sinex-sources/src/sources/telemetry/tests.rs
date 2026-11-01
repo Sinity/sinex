@@ -32,7 +32,7 @@ fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
 
 #[devkit::test]
 fn telemetry_discovery_reads_the_supplied_spool_without_starting_a_capture() {
-    use sinex_source_core::discovery::{DiscoveryContext, SourceConfig};
+    use sinex_source_core::discovery::DiscoveryContext;
     assert_eq!(
         FORMAT.discovery.owner,
         sinex_source_core::discovery::Owner::System
@@ -54,13 +54,9 @@ fn telemetry_discovery_reads_the_supplied_spool_without_starting_a_capture() {
             .all(|input| input.bindings.is_empty() && !input.capture)
     );
     let spool = tempfile::tempdir().unwrap();
-    context.sources.insert(
-        SPEC.name.into(),
-        SourceConfig {
-            paths: vec![spool.path().display().to_string()],
-            ..Default::default()
-        },
-    );
+    context
+        .inputs
+        .insert(FORMAT.name.into(), vec![spool.path().to_path_buf()]);
     let discovered = (FORMAT.discover)(&FORMAT, &context);
     let bindings: Vec<_> = discovered
         .iter()

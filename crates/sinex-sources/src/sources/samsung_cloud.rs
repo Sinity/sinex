@@ -32,13 +32,15 @@ use sinex_model::event_types::communication::CallLogged;
 use sinex_model::event_types::health::HealthRecord;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::{Path, PathBuf};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "account.samsung",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",
@@ -403,8 +405,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

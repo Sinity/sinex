@@ -19,13 +19,15 @@ use sinex_model::event_types::session::{
     NotificationAction, NotificationClosed, NotificationShown,
 };
 use sinex_source_core::drivers::live_stream::{self, LiveStream};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.notifications",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "recall and the day's interruptions",
     // Message bodies are anything any program chose to show.
     class: Class::Guarded,
@@ -236,8 +238,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: &[],
                 capabilities: &[],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

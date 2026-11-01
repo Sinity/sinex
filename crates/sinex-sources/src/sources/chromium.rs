@@ -14,13 +14,15 @@ use sinex_model::Class;
 use sinex_model::event_types::browser::{BrowserUrl, BrowserVisit};
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
 pub const VISITS: SourceSpec = SourceSpec {
     name: "browser.chromium-visits",
-    driver: Driver::SqliteRows,
+    origin: Origin::Input(Shape::SqliteRows),
+    expect: Expectation::continuous_days(2),
+    expires_after: Some(sinex_source_core::registry::days(90)),
     purpose: "browsing recall and the attention stream",
     class: Class::Open,
     parser: "chromium-visits",
@@ -31,7 +33,9 @@ pub const VISITS: SourceSpec = SourceSpec {
 
 pub const URLS: SourceSpec = SourceSpec {
     name: "browser.chromium-urls",
-    driver: Driver::SqliteRows,
+    origin: Origin::Input(Shape::SqliteRows),
+    expect: Expectation::continuous_days(2),
+    expires_after: Some(sinex_source_core::registry::days(90)),
     purpose: "browsing recall and page titles",
     class: Class::Open,
     parser: "chromium-urls",
@@ -293,8 +297,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&VISITS, &URLS],

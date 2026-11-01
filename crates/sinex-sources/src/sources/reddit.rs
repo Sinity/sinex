@@ -11,13 +11,15 @@ use sinex_model::event_types::communication::ConversationMessage;
 use sinex_model::event_types::media::BookmarkSaved;
 use sinex_model::event_types::social::{PostPublished, VoteCast};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "social.reddit",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "what the operator wrote, voted on, saved and sent at Reddit",
     class: Class::Open,
     parser: "reddit-gdpr",
@@ -275,8 +277,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

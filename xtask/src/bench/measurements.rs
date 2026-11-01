@@ -220,7 +220,6 @@ pub(super) fn environment(out: &Path) -> Value {
 
 pub(super) struct SyntheticInput {
     pub format: &'static str,
-    pub source: &'static str,
     pub path: PathBuf,
 }
 
@@ -243,7 +242,6 @@ pub(super) fn synthetic_inputs(
     history.flush().map_err(|e| e.to_string())?;
     let mut inputs = vec![SyntheticInput {
         format: "zsh",
-        source: "terminal.zsh-history",
         path,
     }];
     if mixed {
@@ -276,7 +274,6 @@ pub(super) fn journal_input(
     file.flush().map_err(|e| e.to_string())?;
     Ok(SyntheticInput {
         format: "journald",
-        source: "machine.journald",
         path,
     })
 }
@@ -600,19 +597,17 @@ pub(super) fn with_consumers(
                 .map(|name| (name.to_owned(), json!(false)))
         })
         .collect();
-    let sources: serde_json::Map<String, Value> = inputs
-        .iter()
-        .map(|input| {
-            (
-                input.source.into(),
-                json!({"enable": true, "paths": [input.path], "format": input.format}),
-            )
-        })
-        .collect();
+    let mut discovered: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
+    for input in &inputs {
+        discovered
+            .entry(input.format)
+            .or_default()
+            .push(input.path.as_ref());
+    }
     save(
         out,
         "sources.json",
-        &json!({"sources": sources, "derivations": derivations}),
+        &json!({"discovery": {"inputs": discovered}, "derivations": derivations}),
     )?;
     let runtime = out.join("runtime");
     fs::create_dir_all(&runtime).map_err(|e| e.to_string())?;

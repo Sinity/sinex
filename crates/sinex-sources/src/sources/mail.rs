@@ -26,13 +26,15 @@ use sinex_model::{Class, Timestamp};
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const MBOX: SourceSpec = SourceSpec {
     name: "communication.mbox",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -46,7 +48,9 @@ pub const MBOX: SourceSpec = SourceSpec {
 
 pub const MAILDIR: SourceSpec = SourceSpec {
     name: "communication.maildir",
-    driver: Driver::DirSnapshot,
+    origin: Origin::Input(Shape::DirSnapshot),
+    expect: Expectation::cadence_hours(1),
+    expires_after: None,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -373,8 +377,6 @@ pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&MBOX],
@@ -410,8 +412,6 @@ pub const MAILDIR_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&MAILDIR],

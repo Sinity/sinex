@@ -5,7 +5,7 @@ use sinex_model::event_types::imported_text::TranscriptCue;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::Path;
 
@@ -48,12 +48,17 @@ type Frame = fn(&[u8]) -> (Vec<(usize, usize)>, usize);
 pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> SourceSpec {
     SourceSpec {
         name: "media.transcripts",
-        driver: Driver::ExportArchive,
+        origin: Origin::Input(Shape::ExportArchive),
+        expect: Expectation::Export,
+        expires_after: None,
         purpose: "imported timed speech text",
         class: Class::Guarded,
         parser,
         parser_version: 1,
         event_types: &["transcript.cue"],
+        framer: sinex_source_core::Framer::export(frame, framing),
+    }
+cue"],
         framer: sinex_source_core::Framer::export(frame, framing),
     }
 }

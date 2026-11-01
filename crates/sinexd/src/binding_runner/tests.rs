@@ -12,7 +12,7 @@ fn plans_present_inputs_without_source_enables() {
         std::fs::write(dir.path().join(name), b"x").unwrap();
     }
     let planned = plan(
-        &config(json!({"sources": {"media.spotify-history": {"paths": [dir.path()]}}})),
+        &config(json!({"discovery": {"inputs": {"spotify": [dir.path()]}}})),
         "h",
     )
     .unwrap();
@@ -31,7 +31,7 @@ fn exclusions_cover_every_binding_without_requiring_a_run() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.zip"), b"x").unwrap();
     let config = config(
-        json!({"sources":{"media.spotify-history":{"paths":[dir.path()]}},"exclude":{"media.spotify-history":{"reason":"fixture exclusion"}}}),
+        json!({"discovery":{"inputs":{"spotify":[dir.path()]}},"exclude":{"media.spotify-history":{"reason":"fixture exclusion"}}}),
     );
     assert!(plan(&config, "h").unwrap().is_empty());
     let found = discovery::discover(&config.context("h")).unwrap();
@@ -45,7 +45,7 @@ fn exclusions_cover_every_binding_without_requiring_a_run() {
 }
 
 #[devkit::test]
-fn rejects_unknown_names_invalid_formats_and_removed_source_enables() {
+fn rejects_unknown_names_input_formats_and_removed_source_settings() {
     assert!(
         plan(&config(json!({"sources":{"no.such":{}}})), "h")
             .unwrap_err()
@@ -53,23 +53,30 @@ fn rejects_unknown_names_invalid_formats_and_removed_source_enables() {
     );
     assert!(
         plan(
-            &config(json!({"sources":{"desktop.clipboard":{"format":"spotify"}}})),
+            &config(json!({"discovery":{"inputs":{"no-such-format":["/x"]}}})),
             "h"
         )
         .unwrap_err()
-        .contains("spotify")
+        .contains("no-such-format")
     );
-    assert!(
-        serde_json::from_value::<Config>(json!({"sources":{"desktop.clipboard":{"enable":true}}}))
-            .is_err()
-    );
+    // Where a source reads is found by discovery, never configured per source.
+    for removed in [
+        json!({"enable":true}),
+        json!({"paths":["/x"]}),
+        json!({"format":"spotify"}),
+    ] {
+        assert!(
+            serde_json::from_value::<Config>(json!({"sources":{"desktop.clipboard":removed}}))
+                .is_err()
+        );
+    }
 }
 
 #[devkit::test]
 fn replanning_adds_late_files_once_and_keeps_other_inputs_running() {
     let dir = tempfile::tempdir().unwrap();
     let config = config(
-        json!({"sources":{"media.spotify-history":{"paths":[dir.path()]},"terminal.atuin-history":{"paths":["/missing-sinex-fixture"]}}}),
+        json!({"discovery":{"inputs":{"spotify":[dir.path()],"atuin":["/missing-sinex-fixture"]}}}),
     );
     let mut bindings = Bindings::default();
     bindings.extend(&config, "h", &[], &mut Default::default());
@@ -142,7 +149,7 @@ async fn rediscovery_reuses_saved_alias_and_cursor_after_restart(db: devkit::pg:
     .await
     .unwrap();
     let config = config(
-        json!({"sources":{"terminal.zsh-history":{"paths":[real],"zone":"UTC","class":"guarded"}}}),
+        json!({"discovery":{"inputs":{"zsh":[real]}},"sources":{"terminal.zsh-history":{"zone":"UTC","class":"guarded"}}}),
     );
     for _ in 0..2 {
         let saved = saved(&mut conn, &db.url(None), "h").await.unwrap();
@@ -210,7 +217,7 @@ async fn rediscovery_keeps_location_admissions_and_progress(db: devkit::pg::Test
         .unwrap()
         .unwrap();
     context.close().await.unwrap();
-    let configuration = config(json!({"sources":{"terminal.zsh-history":{"paths":[history]}}}));
+    let configuration = config(json!({"discovery":{"inputs":{"zsh":[history]}}}));
     let mut context = ReaderContext::open(
         &url,
         &store,
@@ -271,7 +278,7 @@ fn conflicting_saved_aliases_leave_other_inputs_reading_and_retry_when_resolved(
                 .remove(0)
         })
         .collect();
-    let config = config(json!({"sources":{"terminal.zsh-history":{"paths":[input, independent]}}}));
+    let config = config(json!({"discovery":{"inputs":{"zsh":[input, independent]}}}));
     let mut bindings = Bindings::default();
     bindings.extend(&config, "h", &saved, &mut Default::default());
     assert_eq!(bindings.readers.len(), 1);

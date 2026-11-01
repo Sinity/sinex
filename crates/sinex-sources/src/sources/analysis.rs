@@ -6,12 +6,14 @@ use sinex_model::{
 };
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "analysis.request",
-    driver: Driver::ApiRequest,
+    origin: Origin::Request,
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "canonical analysis questions",
     class: Class::Open,
     parser: "analysis-request",
@@ -104,8 +106,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: true,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&REQUEST],

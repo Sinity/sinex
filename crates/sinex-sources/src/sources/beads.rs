@@ -17,14 +17,16 @@ use sinex_model::event_types::account::TaskRevised;
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::DriverError;
 use sinex_source_core::drivers::api_cursor::{Api, ApiCursor, Page};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "work.beads",
-    driver: Driver::ApiCursor,
+    origin: Origin::Input(Shape::ApiCursor),
+    expect: Expectation::cadence_hours(1),
+    expires_after: None,
     purpose: "the issues work was planned and tracked in, beside the commits and jobs that did it",
     class: Class::Open,
     parser: "beads-issues",
@@ -281,8 +283,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

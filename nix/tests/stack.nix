@@ -43,9 +43,7 @@ self: {
       exclude."media.mpris".reason = "The stack fixture tests file changes, not media players.";
       exclude."session.integrations".reason = "The stack fixture tests file changes, not editor and terminal integrations.";
       readAnyFile = true;
-      sources."terminal.zsh-history" = {
-        paths = [ "/home/alice/.zsh_history" ];
-      };
+      discovery.environment.ZSH_HISTFILE = "/home/alice/.zsh_history";
       backfills.books = [ "goodreads=/etc/sinex-test/library_export.csv" ];
       session = {
         user = "alice";

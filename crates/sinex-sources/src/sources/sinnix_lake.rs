@@ -6,7 +6,7 @@
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct LakeSource {
     pub spec: SourceSpec,
-    /// Directories relative to the lake root (`/realm`).
+    /// Directories relative to the lake root; `{host}` stands for the host
+    /// the binding reads on.
     pub dirs: &'static [&'static str],
     /// Accepted `lane` values; renamed lanes list both names.
     pub lane_values: &'static [&'static str],
@@ -29,7 +30,10 @@ const fn spec(
 ) -> SourceSpec {
     SourceSpec {
         name,
-        driver: Driver::AppendFile,
+        origin: Origin::Input(Shape::AppendFile),
+        // Every lane is written continuously while its capture runs.
+        expect: Expectation::continuous_days(2),
+        expires_after: None,
         purpose,
         // The class of each lane is the operator's to choose; floors raise it
         // without a code change.
@@ -37,6 +41,9 @@ const fn spec(
         parser,
         parser_version: 4,
         event_types,
+        framer: sinex_source_core::Framer::incremental(lines),
+    }
+s,
         framer: sinex_source_core::Framer::incremental(lines),
     }
 }
@@ -146,7 +153,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "machine state timeline",
             &["display.sampled", "capture.gap"],
         ),
-        dirs: &["device/sinnix-prime/monitor"],
+        dirs: &["device/{host}/monitor"],
         lane_values: &["monitor"],
     },
     LakeSource {
@@ -159,7 +166,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
                 &["lake.observed", "capture.gap"],
             )
         },
-        dirs: &["device/sinnix-prime/netflow"],
+        dirs: &["device/{host}/netflow"],
         lane_values: &["netflow"],
     },
     LakeSource {
@@ -170,9 +177,9 @@ const LAKE_SOURCES: &[LakeSource] = &[
             &["battery.sampled", "bluetooth_audio.sampled", "capture.gap"],
         ),
         dirs: &[
-            "device/sinnix-prime/peripheral/bt-audio",
-            "device/sinnix-prime/peripheral/bt-battery",
-            "device/sinnix-prime/peripheral/logitech",
+            "device/{host}/peripheral/bt-audio",
+            "device/{host}/peripheral/bt-battery",
+            "device/{host}/peripheral/logitech",
         ],
         lane_values: &["bt-audio", "bt-battery", "logitech"],
     },
@@ -314,12 +321,12 @@ pub fn source(lake_source: &'static LakeSource) -> DeclaredSource<EnvelopeParser
     }
 }
 
-/// The source's day files (`L-YYYYMMDD.jsonl`) under `root`, in name order. The
-/// index, sequence, lock and high-water files are not material.
-fn day_files(root: &Path, source: &LakeSource) -> Result<Vec<PathBuf>, String> {
+/// The source's day files (`L-YYYYMMDD.jsonl`) under `root` for `host`, in
+/// name order. The index, sequence, lock and high-water files are not material.
+fn day_files(root: &Path, host: &str, source: &LakeSource) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     for dir in source.dirs {
-        let path = root.join(dir);
+        let path = root.join(dir.replace("{host}", host));
         let entries = match std::fs::read_dir(&path) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -360,8 +367,8 @@ fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static La
         .ok_or_else(|| format!("{}: not a lake source", b.parser))
 }
 
-/// `--read sinnix-lake=ROOT`: every lane's day files under the lake root
-/// (`/realm`); each lane's directories are its configuration.
+/// `--read sinnix-lake=ROOT`: every lane's day files under the lake root;
+/// each lane's directories are its configuration.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "sinnix-lake",
@@ -374,8 +381,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
@@ -383,7 +388,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
             let mut bindings = Vec::new();
             for source in LAKE_SOURCES {
-                bindings.extend(day_files(input, source)?.into_iter().map(|file| {
+                bindings.extend(day_files(input, &settings.host, source)?.into_iter().map(|file| {
                     sinex_source_core::binding::Binding::of(&source.spec, &file, settings.clone())
                 }));
             }

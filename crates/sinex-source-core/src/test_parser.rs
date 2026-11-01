@@ -1,5 +1,8 @@
 use crate::drivers::export_archive::{Framing, frame_whole};
-use crate::{DeclaredSource, Driver, Framer, Parser, RecordContext, RecordError, SourceSpec};
+use crate::{
+    DeclaredSource, Expectation, Framer, Origin, Parser, RecordContext, RecordError, Shape,
+    SourceSpec,
+};
 use sinex_model::{Class, Timestamp, event_types::media::NoteDocument};
 pub(crate) struct NotesParser;
 impl Parser for NotesParser {
@@ -63,7 +66,9 @@ pub(crate) fn source() -> DeclaredSource<NotesParser> {
             name: "synthetic.notes",
             parser: "synthetic-notes",
             parser_version: 1,
-            driver: Driver::DirSnapshot,
+            origin: Origin::Input(Shape::DirSnapshot),
+            expect: Expectation::OnDemand,
+            expires_after: None,
             purpose: "test",
             class: Class::Open,
             event_types: &["note.document"],

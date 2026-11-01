@@ -18,14 +18,16 @@ use sinex_model::event_types::router::{
 };
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
 const fn spec(lane: &'static str, event_type: &'static [&'static str]) -> SourceSpec {
     SourceSpec {
         name: "network.router",
-        driver: Driver::AppendFile,
+        origin: Origin::Input(Shape::AppendFile),
+        expect: Expectation::continuous_hours(6),
+        expires_after: None,
         purpose: "which devices were on the home network, their traffic and the router's log",
         // Leases and clients name the household's devices, and the log
         // their addresses.
@@ -33,6 +35,9 @@ const fn spec(lane: &'static str, event_type: &'static [&'static str]) -> Source
         parser: lane,
         parser_version: 1,
         event_types: event_type,
+        framer: sinex_source_core::Framer::incremental(lines),
+    }
+vent_types: event_type,
         framer: sinex_source_core::Framer::incremental(lines),
     }
 }
@@ -486,8 +491,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || LANES.iter().map(|(spec, _)| spec).collect(),
