@@ -288,8 +288,10 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .connect(&o.database)
         .await
         .map_err(|e| format!("read pool: {e}"))?;
+    let read_failures = crate::binding_runner::ReadFailures::default();
     let reader_api = Api {
         source_config: Arc::new(sources.clone()),
+        read_failures: read_failures.clone(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
@@ -415,6 +417,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
                 host,
                 sources,
                 BINDINGS_EVERY,
+                read_failures,
                 s,
             )
             .await,

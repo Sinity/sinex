@@ -38,6 +38,8 @@ pub(crate) struct Api {
     /// This machine's name, for library requests and scans.
     pub host: String,
     pub source_config: std::sync::Arc<crate::binding_runner::Config>,
+    /// The bindings whose latest read attempt failed, kept by the binding runner.
+    pub read_failures: crate::binding_runner::ReadFailures,
     pub library_roots: Vec<std::path::PathBuf>,
 }
 
@@ -770,6 +772,15 @@ impl Api {
             tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
                 .await
                 .map_err(|error| error.to_string())??;
+        let read_failures: Vec<_> = self
+            .read_failures
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(binding, failure)| {
+                json!({"binding": binding, "error": failure.error, "since": failure.since})
+            })
+            .collect();
         let exclusions: std::collections::BTreeMap<_, _> = self
             .source_config
             .exclude
@@ -784,6 +795,9 @@ impl Api {
             },
             "schema_version": row.schema_version,
             "failures_24h": row.failures_24h,
+            // Inputs that cannot be read admit no records, so no record failure
+            // counts them; each binding failing now is listed here instead.
+            "read_failures": read_failures,
             "ingress_refusals_24h": refusals,
             "producer_errors": producer_errors,
             "writer": self.writer.is_some(),

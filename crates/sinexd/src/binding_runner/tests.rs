@@ -395,3 +395,16 @@ fn project_registry_reaches_the_versioned_derivation() {
         "example"
     );
 }
+
+#[devkit::test]
+fn read_failures_keep_their_start_until_a_read_succeeds() {
+    let failures = ReadFailures::default();
+    note(&failures, "b", Some("database is locked"));
+    let since = failures.lock().unwrap()["b"].since.clone();
+    note(&failures, "b", Some("attempt to write a readonly database"));
+    let failure = failures.lock().unwrap()["b"].clone();
+    assert_eq!(failure.error, "attempt to write a readonly database");
+    assert_eq!(failure.since, since);
+    note(&failures, "b", None);
+    assert!(failures.lock().unwrap().is_empty());
+}
