@@ -35,4 +35,5 @@ CREATE TABLE derivation.model_policies (policy_event uuid PRIMARY KEY, policy_ha
 INSERT INTO derivation.model_policies VALUES (uuidv7(), decode(repeat('02',32),'hex'), now());
 CREATE TABLE derivation.model_calls (entry_id uuid PRIMARY KEY, policy_event uuid NOT NULL, state text NOT NULL);
 INSERT INTO derivation.model_calls SELECT uuidv7(), policy_event, 'reserved' FROM derivation.model_policies;
-DELETE FROM sinex_schema.applied WHERE version = (SELECT max(version) FROM sinex_schema.applied);
+-- The database now stands where the removal step starts.
+UPDATE sinex_schema.applied SET version = version - 1 WHERE version = (SELECT max(version) FROM sinex_schema.applied);
