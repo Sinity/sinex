@@ -73,7 +73,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     let id = ack.admitted[0];
     for producer in ["replica", "near-prefix", "open-only", "unconfigured"] {
         let bytes = serde_json::to_vec(&FetchEvent { event: id }).unwrap();
-        let message = rpc(&h.client, h.subjects.fetch_event(producer), bytes.into())
+        let message = rpc(&h.client, h.subjects.fetch_event(producer), bytes)
             .await
             .unwrap();
         let reply: FetchEventReply = serde_json::from_slice(&message.payload).unwrap();
@@ -104,8 +104,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         &h.client,
         h.subjects.fetch_event("unconfigured"),
         serde_json::to_vec(&json!({"event":id,"producer":"replica"}))
-            .unwrap()
-            .into(),
+            .unwrap(),
     )
     .await
     .unwrap();
@@ -116,8 +115,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         &h.client,
         h.subjects.fetch_material("replica"),
         serde_json::to_vec(&FetchMaterial { material })
-            .unwrap()
-            .into(),
+            .unwrap(),
     )
     .await
     .unwrap();
@@ -247,7 +245,7 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     let command = "retained command";
     let (material, frame) = h.material_frame("erasure-race", b"retained command\n");
     assert_eq!(h.send("kitty", &frame).await.refusal, None);
-    let mut event = imported(material, 0, &command);
+    let mut event = imported(material, 0, command);
     event.payload["paths"] = json!(["--secret=synthetic-path", "--token=synthetic-value"]);
     let expected = event.payload.clone();
     event.class = sinex_model::Class::Guarded;

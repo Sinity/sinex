@@ -1167,7 +1167,7 @@ struct KeyComputation<'a> {
 
 impl KeyComputation<'_> {
     async fn compute(&mut self, work: Vec<KeyWork>, env: &Env) -> Result<(), String> {
-        sinex_store::query::initialize_calendar(&mut self.read)
+        sinex_store::query::initialize_calendar(self.read)
             .await
             .map_err(|error| error.to_string())?;
         let mut snapshot = self.read.begin().await.map_err(|error| error.to_string())?;

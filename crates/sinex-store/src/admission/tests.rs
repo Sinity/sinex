@@ -839,7 +839,7 @@ async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_in
 ) {
     let mut catalog = PgConnection::connect(&db.url(None)).await.unwrap();
     let kind = sinex_model::event_types::declarations()
-        .into_iter()
+        .iter()
         .find(|kind| kind.kind.name == "command.executed")
         .unwrap();
     let declarations =

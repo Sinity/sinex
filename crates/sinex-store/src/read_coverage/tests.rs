@@ -115,12 +115,12 @@ async fn optional_emergency_stamp_loses_certification_without_relaxing_required_
         "a valid stamp does not authenticate a changed outer position"
     );
     forged.coverage.as_mut().unwrap().required = false;
-    assert_eq!(validate(&mut conn, &forged).await.unwrap(), false);
+    assert!(!validate(&mut conn, &forged).await.unwrap());
     sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"changed\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
     assert!(validate(&mut conn, &mandatory).await.is_err());
-    assert_eq!(validate(&mut conn, &optional).await.unwrap(), false);
+    assert!(!validate(&mut conn, &optional).await.unwrap());
     let malformed = covered_frame(&claims, "bad-stamp".into(), false);
-    assert_eq!(validate(&mut conn, &malformed).await.unwrap(), false);
+    assert!(!validate(&mut conn, &malformed).await.unwrap());
     let malformed = covered_frame(&claims, "bad-stamp".into(), true);
     assert!(validate(&mut conn, &malformed).await.is_err());
     let mut unavailable = conn.begin().await.unwrap();

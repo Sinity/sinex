@@ -568,7 +568,7 @@ async fn apply_views(
     for view in &description.views {
         let name = &view.name;
         let existing: Vec<String> = sqlx::query_scalar("SELECT column_name FROM information_schema.columns WHERE table_schema='event_types' AND table_name=$1 ORDER BY ordinal_position")
-            .bind(&name).fetch_all(&mut *connection).await?;
+            .bind(name).fetch_all(&mut *connection).await?;
         let expected = &view.columns;
         let mut grants: Vec<(String, String, String)> = vec![];
         let mut owner: Option<String> = None;
@@ -576,14 +576,14 @@ async fn apply_views(
             owner = sqlx::query_scalar(
                 "SELECT viewowner FROM pg_views WHERE schemaname='event_types' AND viewname=$1",
             )
-            .bind(&name)
+            .bind(name)
             .fetch_optional(&mut *connection)
             .await?;
             grants = sqlx::query_as("SELECT grantee, privilege_type, is_grantable FROM information_schema.role_table_grants WHERE table_schema='event_types' AND table_name=$1")
-                .bind(&name).fetch_all(&mut *connection).await?;
+                .bind(name).fetch_all(&mut *connection).await?;
             // DROP refuses an outside dependency and names it; no CASCADE.
             connection
-                .execute(format!("DROP VIEW event_types.{}", quote_ident(&name)).as_str())
+                .execute(format!("DROP VIEW event_types.{}", quote_ident(name)).as_str())
                 .await?;
         }
         connection
@@ -598,7 +598,7 @@ async fn apply_views(
                 .execute(
                     format!(
                         "ALTER VIEW event_types.{} OWNER TO {}",
-                        quote_ident(&name),
+                        quote_ident(name),
                         quote_ident(&owner)
                     )
                     .as_str(),
@@ -615,7 +615,7 @@ async fn apply_views(
                 .execute(
                     format!(
                         "GRANT {privilege} ON event_types.{} TO {role}{}",
-                        quote_ident(&name),
+                        quote_ident(name),
                         if grantable == "YES" {
                             " WITH GRANT OPTION"
                         } else {
