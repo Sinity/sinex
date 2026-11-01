@@ -69,6 +69,7 @@
         # linker; linking was a third to a half of each test binary's build.
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
         shellHook = ''
+          export CARGO_TARGET_DIR="/realm/tmp/work/codex/r-devloop-2/shell-targets/sinex"
           # Optional host placement; an explicit CARGO_TARGET_DIR is left as is.
           if [ -z "''${CARGO_TARGET_DIR:-}" ] && command -v sinnix-cargo-target >/dev/null 2>&1; then
             if cargo_target="$(sinnix-cargo-target)"; then

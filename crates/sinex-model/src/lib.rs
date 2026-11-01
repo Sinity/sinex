@@ -37,3 +37,8 @@ pub mod __private {
     pub use schemars;
     pub use serde_json;
 }
+
+#[allow(dead_code)]
+fn build_measurement() -> u8 {
+    1
+}
