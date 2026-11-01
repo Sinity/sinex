@@ -13,6 +13,7 @@ use sinex_model::lifecycle::{MaterialStatus, OperationResult};
 use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod event_indexes;
 mod lifecycle;
 mod model_calls;
 mod owner_protocol;

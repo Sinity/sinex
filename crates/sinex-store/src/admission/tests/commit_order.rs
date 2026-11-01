@@ -56,7 +56,7 @@ async fn a_second_transaction_waits_for_the_first_to_commit(db: devkit::pg::Test
     }
     assert!(waited, "the second transaction did not wait for the first");
     assert!(!late.is_finished());
-    let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM core.commit_log")
+    let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut observer)
         .await
         .unwrap();
@@ -67,7 +67,7 @@ async fn a_second_transaction_waits_for_the_first_to_commit(db: devkit::pg::Test
     let (early_seq, late_seq) = (early.commit_seq.unwrap(), late.commit_seq.unwrap());
     assert!(late_seq.0 > early_seq.1, "{early_seq:?} then {late_seq:?}");
     let seqs: Vec<i64> =
-        sqlx::query_scalar("SELECT commit_seq FROM core.commit_log ORDER BY commit_seq")
+        sqlx::query_scalar("SELECT commit_seq FROM core.events ORDER BY commit_seq")
             .fetch_all(&mut observer)
             .await
             .unwrap();

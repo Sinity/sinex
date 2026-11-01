@@ -854,6 +854,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         "search_tsv_bytes": measurements::relation_size(&after, "search_text_tsv", "bytes"),
         "live_equivalence_bytes": measurements::relation_size(&after, "live_equivalence", "total_bytes"),
         "published_bytes": measurements::relation_size(&after, "published", "total_bytes"),
+        "stored_bytes": measurements::stored_bytes(&before, &after, events),
         "artifacts": out,
     });
     measurements::save(&out, "metrics.json", &metrics)?;

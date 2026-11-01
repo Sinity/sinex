@@ -121,10 +121,6 @@ async fn exact_targets_never_expand_to_unrequested_retained_position_siblings(
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES(3,NULL,NULL)")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
     tx.commit().await.unwrap();
     crate::privacy::projection::ensure_current(&mut conn)
         .await

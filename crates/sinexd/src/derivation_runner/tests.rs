@@ -574,10 +574,8 @@ async fn per_event_derivations_read_in_commit_order_and_keep_their_place(
     assert_eq!(
         w.count("SELECT commit_seq FROM derivation.positions WHERE derivation = 'test.echo'")
             .await,
-        w.count(
-            "SELECT max(commit_seq) FROM core.commit_log WHERE event_type = 'command.imported'"
-        )
-        .await
+        w.count("SELECT max(commit_seq) FROM core.events WHERE event_type = 'command.imported'")
+            .await
     );
 }
 
