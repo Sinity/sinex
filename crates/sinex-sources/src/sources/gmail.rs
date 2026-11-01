@@ -14,14 +14,17 @@ use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::api_cursor::ApiCursor;
 use sinex_source_core::drivers::held::HeldMaterial;
 use sinex_source_core::drivers::{Acquired, DriverError};
-use sinex_source_core::{DeclaredSource, Expectation, Origin, Parser, Reader, RecordContext, RecordError, Shape, SourceSpec};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Origin, Parser, Reader, RecordContext, RecordError, Shape,
+    SourceSpec,
+};
 use std::path::Path;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.gmail",
     origin: Origin::Input(Shape::ApiCursor),
     expect: Expectation::cadence_hours(1),
-    expires_after: Some(sinex_source_core::registry::days(7)),
+    expires_after: None,
     purpose: "mail and provider history",
     class: Class::Guarded,
     parser: "gmail",

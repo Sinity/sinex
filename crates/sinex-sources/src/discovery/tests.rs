@@ -366,10 +366,8 @@ fn invalid_capture_settings_do_not_disable_other_streams() {
         },
     );
     let inputs = discover(&context).unwrap();
-    assert!(
-        inputs.iter().any(|input| input.source == "session.media"
-            && input.availability == Availability::Unavailable(Cause::Failed))
-    );
+    assert!(inputs.iter().any(|input| input.source == "session.media"
+        && input.availability == Availability::Unavailable(Cause::Failed)));
     assert!(
         captures(&context, Owner::Session)
             .unwrap()
@@ -377,8 +375,10 @@ fn invalid_capture_settings_do_not_disable_other_streams() {
             .iter()
             .any(|(_, binding)| binding.source == "session.integrations")
     );
-    assert!(inputs.iter().any(|input| input.source == "library.request"
-        && input.availability == Availability::OnDemand));
+    assert!(
+        inputs.iter().any(|input| input.source == "library.request"
+            && input.availability == Availability::OnDemand)
+    );
 }
 
 #[devkit::test]
@@ -493,9 +493,10 @@ fn synthetic_home(root: &Path) -> DiscoveryContext {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, bytes).unwrap();
     }
-    context
-        .environment
-        .insert("ZSH_HISTFILE".into(), root.join(".zsh_history").display().to_string());
+    context.environment.insert(
+        "ZSH_HISTFILE".into(),
+        root.join(".zsh_history").display().to_string(),
+    );
     context
         .input_roots
         .insert("notes".into(), vec![root.join("notes")]);
@@ -521,7 +522,10 @@ fn default_total_on_a_fixture_host() {
         match input.availability {
             Availability::Capturing | Availability::OnDemand => {}
             Availability::Unavailable(_) | Availability::Excluded => assert!(
-                input.reason.as_deref().is_some_and(|reason| !reason.trim().is_empty()),
+                input
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty()),
                 "{} {:?} without a reason",
                 input.source,
                 input.availability
@@ -548,8 +552,12 @@ fn default_total_on_a_fixture_host() {
         );
     }
     // A source whose input the host lacks is unavailable, not empty.
-    assert!(inputs.iter().any(|input| input.source == "desktop.activitywatch"
-        && input.availability == Availability::Unavailable(Cause::NotPresent)));
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input.source == "desktop.activitywatch"
+                && input.availability == Availability::Unavailable(Cause::NotPresent))
+    );
 }
 
 /// law: sx.cap.no-host-coupling

@@ -37,7 +37,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "code.github",
     origin: Origin::Input(Shape::ApiCursor),
     expect: Expectation::cadence_hours(6),
-    expires_after: Some(sinex_source_core::registry::days(90)),
+    expires_after: None,
     purpose: "the outcome of work: pull requests, reviews, checks and CI runs beside the commits",
     class: Class::Open,
     parser: "github",

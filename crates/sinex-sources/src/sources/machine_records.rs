@@ -45,9 +45,6 @@ const fn line_spec(
         event_types,
         framer: sinex_source_core::Framer::incremental(lines),
     }
-s,
-        framer: sinex_source_core::Framer::incremental(lines),
-    }
 }
 
 pub const GENERATIONS: SourceSpec = line_spec(

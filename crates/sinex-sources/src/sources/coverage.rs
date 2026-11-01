@@ -3,7 +3,9 @@ use serde_json::{Map, Value, json};
 use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
 use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange};
 use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::{DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec,
+};
 
 pub const OBSERVATION: SourceSpec = SourceSpec {
     name: "source.observation",

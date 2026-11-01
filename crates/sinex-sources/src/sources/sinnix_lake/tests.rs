@@ -274,7 +274,9 @@ fn no_host_coupling_in_lake_machine_lanes() {
     .unwrap();
     assert_eq!(
         files,
-        [root.path().join("device/synthetic-host/netflow/netflow-20261001.jsonl")]
+        [root
+            .path()
+            .join("device/synthetic-host/netflow/netflow-20261001.jsonl")]
     );
 }
 
@@ -340,4 +342,20 @@ fn a_missing_lake_root_is_not_an_empty_lake() {
         .unwrap()
         .is_empty()
     );
+}
+
+/// law: sx.cap.no-host-coupling
+#[devkit::test]
+fn no_host_coupling_in_any_lake_lane_directory() {
+    for lake in LAKE_SOURCES {
+        for dir in lake.dirs {
+            assert!(!dir.starts_with('/'), "{dir}");
+            if let Some(machine) = dir.strip_prefix("device/") {
+                assert!(
+                    machine.starts_with("{host}/"),
+                    "{dir} names a machine instead of the binding's host"
+                );
+            }
+        }
+    }
 }

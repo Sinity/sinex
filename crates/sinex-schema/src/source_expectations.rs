@@ -3,7 +3,16 @@
 //! `registry.sources` from the build's declarations at every start.
 
 /// One row per source name, written from the source declarations.
-pub(crate) const SOURCES: &str = "CREATE TABLE registry.sources (
+pub(crate) fn sources() -> String {
+    let names = sinex_model::Expectation::NAMES
+        .iter()
+        .map(|name| format!("'{name}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    SOURCES.replace("{expectations}", &names)
+}
+
+const SOURCES: &str = "CREATE TABLE registry.sources (
   name text PRIMARY KEY,
   -- Input shapes of the declarations that read it; empty when its records
   -- are written only on request.
@@ -11,7 +20,7 @@ pub(crate) const SOURCES: &str = "CREATE TABLE registry.sources (
   version integer NOT NULL,
   event_types text[] NOT NULL,
   purpose text NOT NULL,
-  expectation text NOT NULL CHECK (expectation IN ('continuous', 'cadence', 'export', 'on_demand')),
+  expectation text NOT NULL CHECK (expectation IN ({expectations})),
   -- Continuous sources: no new record for longer than this is suspicious.
   silent_after interval CHECK (silent_after > interval '0'),
   -- Sources read on a schedule: no read for longer than this is suspicious.
@@ -36,14 +45,14 @@ const PREVIOUS_SOURCES: &str = "CREATE TABLE registry.sources (
 pub(crate) fn statements() -> Vec<String> {
     vec![
         "DROP TABLE registry.sources".into(),
-        SOURCES.into(),
+        sources(),
         crate::query_cursors::trigger("registry.sources"),
     ]
 }
 
 /// The statement as it was before this upgrade.
 pub(crate) fn previous(statement: &mut String) {
-    if statement == SOURCES {
+    if *statement == sources() {
         *statement = PREVIOUS_SOURCES.into();
     }
 }

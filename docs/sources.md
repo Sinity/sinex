@@ -56,7 +56,7 @@ Each source has one declaration in Rust, with its parser and event kinds beside 
 | `coverage_note` | which periods, accounts or products a material can and cannot contain, beyond `expect` |
 | `required_fields`, `probe`, `runaway_bytes_per_day` | fields every record must carry; an optional probe that checks the input is reachable; the volume above which a day is reported as a runaway |
 | search | `none`, `words` or `words_and_trigram` per event kind; a kind is kept out of the text index by declaring `search: none`, never by matching its name |
-| settings | a typed struct of what a deployment actually varies: input locations, accounts, capture devices and regions, poll intervals |
+| settings | a typed struct of what a deployment actually varies: accounts, capture devices and regions, poll intervals; never where the input is |
 | acceptance query | at least one question the source answers, written in the [query language](query.md); it is the source's acceptance test |
 
 Decided target (2026-11-01): `expect` and `expires_after` replace the separate health-expectation and coverage rows, because both answer one question, when this source should have something. The current `SourceSpec` fields `excisable` (excision is gone; the [lifecycle](lifecycle.md) is the one way to remove data) and the per-source privacy `class` (privacy is field hints plus the operator's output rules) are removed. Nothing in a declaration subsets capture: no filter, cap, debounce, MIME choice or field subset.

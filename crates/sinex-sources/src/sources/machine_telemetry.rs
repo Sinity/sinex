@@ -74,10 +74,6 @@ const fn spec(parser: &'static str, event_types: &'static [&'static str]) -> Sou
             sinex_source_core::drivers::append_file::lines,
         ),
     }
-r::incremental(
-            sinex_source_core::drivers::append_file::lines,
-        ),
-    }
 }
 
 /// The table a parser name reads.

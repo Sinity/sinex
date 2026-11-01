@@ -136,7 +136,10 @@ pub(crate) fn availability(path: &Path) -> (Availability, Option<String>) {
     }
 }
 
-pub(crate) fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn paths(
+    location: &Location,
+    context: &DiscoveryContext,
+) -> Result<Vec<PathBuf>, String> {
     let joined =
         |root: &Option<PathBuf>| root.iter().map(|root| root.join(location.path)).collect();
     Ok(match location.root {

@@ -58,9 +58,6 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
         event_types: &["transcript.cue"],
         framer: sinex_source_core::Framer::export(frame, framing),
     }
-cue"],
-        framer: sinex_source_core::Framer::export(frame, framing),
-    }
 }
 pub const JSON: SourceSpec = spec(
     "transcript-json",

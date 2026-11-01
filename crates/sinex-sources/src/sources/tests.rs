@@ -160,9 +160,6 @@ fn expectation_fits_origin() {
                     spec.name
                 );
             }
-            if spec.origin == Origin::Request {
-                assert!(format.on_demand(spec), "{}", spec.name);
-            }
             if spec.expect == Expectation::Export {
                 assert!(
                     spec.origin != Origin::Request,

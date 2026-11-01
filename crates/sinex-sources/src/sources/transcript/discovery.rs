@@ -46,9 +46,10 @@ pub(crate) fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<
                         let mut failed = input.clone();
                         failed.input = Some(binding.input.clone());
                         failed.settings = binding.settings.clone();
-                        failed.availability = sinex_source_core::discovery::Availability::Unavailable(
-                            sinex_source_core::discovery::Cause::Failed,
-                        );
+                        failed.availability =
+                            sinex_source_core::discovery::Availability::Unavailable(
+                                sinex_source_core::discovery::Cause::Failed,
+                            );
                         failed.reason = Some(reason);
                         failures.push(failed);
                         continue;

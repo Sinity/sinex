@@ -209,9 +209,10 @@ fn document_discovery_excludes_owned_subtrees_and_reports_symlink_roots() {
     };
     context.input_roots.insert("documents".into(), vec![alias]);
     context.input_roots.insert("notes".into(), vec![notes]);
-    context
-        .inputs
-        .insert(super::super::library::FORMAT.name.into(), vec![library.clone()]);
+    context.inputs.insert(
+        super::super::library::FORMAT.name.into(),
+        vec![library.clone()],
+    );
     for source in [
         super::super::notes::SPEC.name,
         super::super::library::SCAN.name,

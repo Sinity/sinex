@@ -37,9 +37,6 @@ const fn spec(lane: &'static str, event_type: &'static [&'static str]) -> Source
         event_types: event_type,
         framer: sinex_source_core::Framer::incremental(lines),
     }
-vent_types: event_type,
-        framer: sinex_source_core::Framer::incremental(lines),
-    }
 }
 
 /// One declaration per lane, each its own parser name, so a replay knows

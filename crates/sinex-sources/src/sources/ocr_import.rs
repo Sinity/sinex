@@ -33,9 +33,6 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
         event_types: &["ocr.text"],
         framer: sinex_source_core::Framer::export(frame, framing),
     }
-ext"],
-        framer: sinex_source_core::Framer::export(frame, framing),
-    }
 }
 pub const JSON: SourceSpec = spec(
     "ocr-json",

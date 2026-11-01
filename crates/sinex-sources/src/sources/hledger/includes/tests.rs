@@ -114,7 +114,8 @@ fn discovery_uses_finance_environment_home_and_text_history_inputs() {
         && i.bindings.len() == 1));
     assert!(found.iter().any(
         |i| i.input.as_ref() == Some(&dir.path().join(".hledger.journal"))
-            && i.availability == Availability::Unavailable(sinex_source_core::discovery::Cause::NotPresent)
+            && i.availability
+                == Availability::Unavailable(sinex_source_core::discovery::Cause::NotPresent)
     ));
     context
         .environment

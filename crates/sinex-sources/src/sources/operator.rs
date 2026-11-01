@@ -159,10 +159,6 @@ const fn steering_spec(parser: &'static str) -> SourceSpec {
             sinex_source_core::drivers::append_file::lines,
         ),
     }
-r::incremental(
-            sinex_source_core::drivers::append_file::lines,
-        ),
-    }
 }
 
 pub struct SteeringParser {

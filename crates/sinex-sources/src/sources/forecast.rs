@@ -6,7 +6,9 @@ use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
 use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::{DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec,
+};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",

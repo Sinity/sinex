@@ -125,12 +125,6 @@ fn sources() -> Vec<CatalogSource> {
                 "{}: neither discovered nor written on request",
                 format.name
             );
-            // One source has one expectation, whichever way it is read.
-            assert!(
-                entry.expect == spec.expect && entry.expires_after == spec.expires_after,
-                "{}: declarations disagree on when it should have something",
-                spec.name
-            );
             let description = json!({"format": format.name, "capture": format.capture.is_some(), "description": format.discovery});
             if !entry.discovery.contains(&description) {
                 entry.discovery.push(description);

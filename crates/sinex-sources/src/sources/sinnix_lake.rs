@@ -6,7 +6,7 @@
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
-use sinex_source_core::registry::{DeclaredSource, Origin, Shape, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
@@ -31,7 +31,7 @@ const fn spec(
     SourceSpec {
         name,
         origin: Origin::Input(Shape::AppendFile),
-        // Every lane is written continuously while its capture runs.
+        // Lanes sampled while their capture runs; event-driven lanes override it.
         expect: Expectation::continuous_days(2),
         expires_after: None,
         purpose,
@@ -41,9 +41,6 @@ const fn spec(
         parser,
         parser_version: 4,
         event_types,
-        framer: sinex_source_core::Framer::incremental(lines),
-    }
-s,
         framer: sinex_source_core::Framer::incremental(lines),
     }
 }
@@ -93,12 +90,16 @@ const LAKE_SOURCES: &[LakeSource] = &[
         lane_values: &["a11y"],
     },
     LakeSource {
-        spec: spec(
-            "desktop.idle-inhibitor",
-            "sinnix-lake:desktop.idle-inhibitor",
-            "presence and AFK evidence",
-            &["lake.observed", "capture.gap"],
-        ),
+        spec: SourceSpec {
+            // Written only when it changes, which can be weeks apart.
+            expect: Expectation::continuous_days(30),
+            ..spec(
+                "desktop.idle-inhibitor",
+                "sinnix-lake:desktop.idle-inhibitor",
+                "presence and AFK evidence",
+                &["lake.observed", "capture.gap"],
+            )
+        },
         dirs: &["activity/desktop/idle-inhibitor"],
         lane_values: &["idle-inhibitors"],
     },
@@ -137,12 +138,16 @@ const LAKE_SOURCES: &[LakeSource] = &[
         lane_values: &["browser-nav-edges"],
     },
     LakeSource {
-        spec: spec(
-            "reading.stack",
-            "sinnix-lake:reading.stack",
-            "reading queue",
-            &["reading_stack.changed", "capture.gap"],
-        ),
+        spec: SourceSpec {
+            // Written only when it changes, which can be weeks apart.
+            expect: Expectation::continuous_days(30),
+            ..spec(
+                "reading.stack",
+                "sinnix-lake:reading.stack",
+                "reading queue",
+                &["reading_stack.changed", "capture.gap"],
+            )
+        },
         dirs: &["activity/browser/reading"],
         lane_values: &["reading-stack"],
     },
@@ -388,9 +393,15 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
             let mut bindings = Vec::new();
             for source in LAKE_SOURCES {
-                bindings.extend(day_files(input, &settings.host, source)?.into_iter().map(|file| {
-                    sinex_source_core::binding::Binding::of(&source.spec, &file, settings.clone())
-                }));
+                bindings.extend(day_files(input, &settings.host, source)?.into_iter().map(
+                    |file| {
+                        sinex_source_core::binding::Binding::of(
+                            &source.spec,
+                            &file,
+                            settings.clone(),
+                        )
+                    },
+                ));
             }
             Ok(bindings)
         }),
