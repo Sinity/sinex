@@ -114,6 +114,18 @@ pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String
     Ok(inputs)
 }
 
+/// Every location a declared source reads on this host, resolved: the
+/// places an agent may stage from.
+pub fn declared_locations(context: &DiscoveryContext) -> Vec<PathBuf> {
+    let mut out = BTreeSet::new();
+    for format in sources::formats() {
+        for location in format.discovery.locations {
+            out.extend(paths(location, context).unwrap_or_default());
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// Available files are opened for reading; no input is created or changed.
 pub(crate) fn availability(path: &Path) -> (Availability, Option<String>) {
     let result = std::fs::metadata(path).and_then(|metadata| {

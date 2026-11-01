@@ -411,7 +411,13 @@ impl Api {
         let planned = request.clone();
         let config = self.source_config.clone();
         let host = self.host.clone();
+        // The operator's token stages any path the daemon can read; an
+        // agent's only under the declared and configured roots.
+        let operator = caller.actor == "operator";
         let plan = tokio::task::spawn_blocking(move || {
+            if !operator {
+                crate::stage::within_roots(&planned.items, &config.agent_stage_roots(&host))?;
+            }
             let plan = planned.plan()?;
             crate::stage::not_continuous(&plan, &crate::binding_runner::plan(&config, &host)?)?;
             Ok::<_, String>(plan)

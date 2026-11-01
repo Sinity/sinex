@@ -110,6 +110,31 @@ impl Drop for Claim {
     }
 }
 
+/// An agent stages only paths under `roots` (the declared source locations
+/// and the operator's staging roots); any other path needs the operator.
+/// The refusal names the roots.
+pub(crate) fn within_roots(items: &[Item], roots: &[PathBuf]) -> Result<(), String> {
+    let resolve =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved: Vec<PathBuf> = roots.iter().map(|root| resolve(root)).collect();
+    for item in items {
+        let path = resolve(&item.path);
+        if !resolved.iter().any(|root| path.starts_with(root)) {
+            let listed: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
+            return Err(format!(
+                "{} is outside the places an agent may stage from; staging it needs the operator. An agent may stage under: {}",
+                item.path.display(),
+                if listed.is_empty() {
+                    "nothing on this host".to_owned()
+                } else {
+                    listed.join(", ")
+                }
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Refuse a plan any of whose bindings the daemon reads continuously, by
 /// source and resolved input: that input is staged already, and a second
 /// reader would race its cursor.

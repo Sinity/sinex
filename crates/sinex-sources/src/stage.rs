@@ -260,7 +260,7 @@ fn detect(
                 } else {
                     &mut whole_file
                 };
-                if !list.contains(&format) {
+                if !list.iter().any(|known| std::ptr::eq(*known, format)) {
                     list.push(format);
                 }
             }

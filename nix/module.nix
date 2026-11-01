@@ -355,6 +355,15 @@ in
       };
     };
 
+    stagingRoots = mkOption {
+      type = types.listOf types.path;
+      default = [ ];
+      description = ''
+        Directories agents may stage files from, besides the declared source
+        locations. Staging any other path needs the operator.
+      '';
+    };
+
     backup = {
       dumpDir = mkOption { type = types.path; default = "${cfg.stateDir}/dumps"; };
       keysDir = mkOption { type = types.path; default = "${cfg.stateDir}/key-dumps"; };
@@ -472,6 +481,7 @@ in
           inputs = cfg.discovery.inputs;
         };
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
+        staging_roots = cfg.stagingRoots;
         inherit (cfg) tags activity project_attribution rhythm;
       };
 
