@@ -309,14 +309,13 @@ impl Description {
         }
         // The named data step fills the new counter from preserved rows.
         for statement in &mut before.tables {
-            if statement.starts_with("INSERT INTO core.counters") {
-                if let Some(initializer) = after
+            if statement.starts_with("INSERT INTO core.counters")
+                && let Some(initializer) = after
                     .tables
                     .iter()
                     .find(|current| current.starts_with("INSERT INTO core.counters"))
-                {
-                    statement.clone_from(initializer);
-                }
+            {
+                statement.clone_from(initializer);
             }
         }
         changes.extend(after.changes_from(&before, &[]));

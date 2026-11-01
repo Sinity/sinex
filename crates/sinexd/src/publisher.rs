@@ -443,10 +443,10 @@ async fn erase_tombstoned_in(
             .map_err(|error| error.to_string())?;
         for item in &pending {
             let seq = u64::try_from(item.stream_seq).map_err(|error| error.to_string())?;
-            if let Err(error) = stream.delete_message(seq).await {
-                if !error.to_string().contains("no message found") {
-                    return Err(format!("erase stream message {seq}: {error}"));
-                }
+            if let Err(error) = stream.delete_message(seq).await
+                && !error.to_string().contains("no message found")
+            {
+                return Err(format!("erase stream message {seq}: {error}"));
             }
         }
         let pairs: Vec<_> = pending

@@ -67,11 +67,11 @@ async fn continuation_keeps_its_field_types_when_another_version_registers(
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let d = register(&mut *conn, 9, json!({"type":"integer"})).await;
+    let d = register(&mut conn, 9, json!({"type":"integer"})).await;
     points(&mut conn, &d).await;
     let text = "events where event_type = example.point sort payload.value fields payload.value, payload.at";
     let first = ask_page(
-        &mut *conn,
+        &mut conn,
         text,
         Page {
             size: Some(1),
@@ -84,9 +84,9 @@ async fn continuation_keeps_its_field_types_when_another_version_registers(
         first.rows[0]["payload.at"],
         json!("2026-10-27T12:00:00+00:00")
     );
-    register(&mut *conn, 10, json!({"type":"string"})).await;
+    register(&mut conn, 10, json!({"type":"string"})).await;
     let next = ask_page(
-        &mut *conn,
+        &mut conn,
         text,
         Page {
             size: Some(1),

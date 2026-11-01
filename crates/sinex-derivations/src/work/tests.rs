@@ -154,7 +154,7 @@ fn complete_snapshots(parts: &[Event]) -> Vec<Event> {
             })
             .collect();
         if metadata.len() > 1 {
-            result.extend(metadata.into_iter().map(|event| event.clone()));
+            result.extend(metadata.into_iter().cloned());
             continue;
         }
         let mut snapshot: Event = (*metadata.first().copied().unwrap_or(parts[0])).clone();
@@ -872,7 +872,7 @@ fn empty_snapshot_and_newer_unsupported_reducer_do_not_fall_back_to_old_acts() {
     let outputs = Keyed::compute(
         &WorkActs,
         &json!({"session":"atomic"}),
-        &[empty.clone()],
+        std::slice::from_ref(&empty),
         &env,
     )
     .outputs;

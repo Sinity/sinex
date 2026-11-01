@@ -520,7 +520,7 @@ async fn admit_with_checkpoint(
     let mut tx = connection
         .begin()
         .await
-        .map_err(|error| store_error(error.into()))?;
+        .map_err(store_error)?;
     let begin_time = begin_started.elapsed();
     if let Some(expected) = checkpoint.and_then(|checkpoint| checkpoint.observed_seq) {
         let current = sinex_store::query::current_seq(&mut tx)
@@ -652,7 +652,7 @@ async fn admit_with_checkpoint(
             if let Err(error) = check() {
                 tx.rollback()
                     .await
-                    .map_err(|error| store_error(error.into()))?;
+                    .map_err(store_error)?;
                 return Err(WriteError::Refused(error));
             }
             if let Some(checkpoint) = checkpoint {
@@ -677,7 +677,7 @@ async fn admit_with_checkpoint(
             let started = std::time::Instant::now();
             tx.commit()
                 .await
-                .map_err(|error| store_error(error.into()))?;
+                .map_err(store_error)?;
             outcome.timings.insert("commit", started.elapsed());
             outcome.timings.insert("checks", checks_time);
             outcome.timings.insert("begin", begin_time);
@@ -686,7 +686,7 @@ async fn admit_with_checkpoint(
         Err(error) => {
             tx.rollback()
                 .await
-                .map_err(|error| store_error(error.into()))?;
+                .map_err(store_error)?;
             let recordable = record_refusals && content_error(&error);
             let error = store_error(error);
             if recordable
@@ -784,7 +784,7 @@ async fn replay_sequence(
         let mut scope_tx = connection
             .begin()
             .await
-            .map_err(|error| store_error(error.into()))?;
+            .map_err(store_error)?;
         if let Some(recorded) = crate::ingress::replay::recorded(&mut scope_tx, ingress)
             .await
             .map_err(crate::ingress::Check::write_error)?
@@ -792,7 +792,7 @@ async fn replay_sequence(
             scope_tx
                 .rollback()
                 .await
-                .map_err(|error| store_error(error.into()))?;
+                .map_err(store_error)?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check_scope(&mut scope_tx, ingress)
@@ -811,12 +811,12 @@ async fn replay_sequence(
         scope_tx
             .commit()
             .await
-            .map_err(|error| store_error(error.into()))?;
+            .map_err(store_error)?;
     }
     let mut tx = connection
         .begin()
         .await
-        .map_err(|error| store_error(error.into()))?;
+        .map_err(store_error)?;
     if let Some(ingress) = &sequence.ingress {
         if let Some(recorded) = crate::ingress::replay::recorded(&mut tx, ingress)
             .await
@@ -824,7 +824,7 @@ async fn replay_sequence(
         {
             tx.rollback()
                 .await
-                .map_err(|error| store_error(error.into()))?;
+                .map_err(store_error)?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check(&mut tx, ingress)
@@ -882,14 +882,14 @@ async fn replay_sequence(
     if sequence.compare {
         tx.rollback()
             .await
-            .map_err(|error| store_error(error.into()))?;
+            .map_err(store_error)?;
     } else {
         replay::sequence_done(&mut tx, sequence.operation, sequence.root)
             .await
             .map_err(store_error)?;
         tx.commit()
             .await
-            .map_err(|error| store_error(error.into()))?;
+            .map_err(store_error)?;
     }
     Ok((outcomes, diff))
 }
@@ -928,13 +928,13 @@ async fn lifecycle_step(
     let mut tx = connection
         .begin()
         .await
-        .map_err(|error| store_error(error.into()))?;
+        .map_err(store_error)?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
         Ok(step) => step,
         Err(error) => {
             tx.rollback()
                 .await
-                .map_err(|error| store_error(error.into()))?;
+                .map_err(store_error)?;
             return Err(store_error(error));
         }
     };
@@ -942,11 +942,11 @@ async fn lifecycle_step(
         Step::Refused(_) => tx
             .rollback()
             .await
-            .map_err(|error| store_error(error.into()))?,
+            .map_err(store_error)?,
         Step::Moved { remove, .. } => {
             tx.commit()
                 .await
-                .map_err(|error| store_error(error.into()))?;
+                .map_err(store_error)?;
             // Bytes left marked (no store here, or a failed punch) are
             // removed at the writer's next start.
             if !remove.is_empty()

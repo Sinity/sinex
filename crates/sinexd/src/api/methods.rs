@@ -608,7 +608,6 @@ impl Api {
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
         if text
-            .trim()
             .split_whitespace()
             .next()
             .is_some_and(|word| word.eq_ignore_ascii_case("recall"))
