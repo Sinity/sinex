@@ -59,6 +59,10 @@ pub(crate) struct Totals {
     failures: usize,
     dirty_keys: usize,
     admit_time: Duration,
+    poll_time: Duration,
+    parse_time: Duration,
+    queue_time: Duration,
+    service_time: Duration,
     wall: Duration,
     files_stored: u64,
     pass_decoded_bytes: u64,
@@ -285,7 +289,9 @@ pub(crate) async fn drive(
             .await
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
+        let poll_started = Instant::now();
         let mut acquired = reader.poll(&cursor).map_err(|e| e.to_string())?;
+        totals.poll_time += poll_started.elapsed();
         drivers::note_previous_through(&cursor, &mut acquired);
         let carry = material.carry(read_conn, binding, carry, &acquired).await?;
         if let Some(reason) = &acquired.observation.unavailable {
@@ -324,6 +330,11 @@ impl Totals {
         }
     }
 
+    pub(crate) fn parse(&mut self, elapsed: Duration) { self.parse_time += elapsed; }
+    pub(crate) fn writer(&mut self, queue: Duration, service: Duration) {
+        self.queue_time += queue;
+        self.service_time += service;
+    }
     pub(crate) fn batch(&mut self, events: usize, elapsed: Duration) {
         self.batches += 1;
         self.events_offered += events;
@@ -375,6 +386,10 @@ impl Totals {
             "dirty_keys": self.dirty_keys,
             "wall_s": self.wall.as_secs_f64(),
             "admission_s": self.admit_time.as_secs_f64(),
+            "poll_s": self.poll_time.as_secs_f64(),
+            "parse_s": self.parse_time.as_secs_f64(),
+            "queue_s": self.queue_time.as_secs_f64(),
+            "service_s": self.service_time.as_secs_f64(),
             "admission_events_per_s": per_s(self.events_offered, self.admit_time),
             "events_per_s": per_s(self.events_offered, self.wall),
             "mb_per_s": self.material_bytes as f64 / 1e6 / self.wall.as_secs_f64().max(1e-9),
@@ -399,6 +414,10 @@ impl Totals {
         self.failures += o.failures;
         self.dirty_keys += o.dirty_keys;
         self.admit_time += o.admit_time;
+        self.poll_time += o.poll_time;
+        self.parse_time += o.parse_time;
+        self.queue_time += o.queue_time;
+        self.service_time += o.service_time;
         self.wall += o.wall;
     }
 }
