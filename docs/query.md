@@ -5,13 +5,16 @@ fields, clocks, the logical day as Sinex uses it, units and fill, joins, read co
 paging and budgets, saved queries and kept results, citation forms, and `read`, `trace`
 and `related`. The grammar, spelling, AST semantics, three-valued logic, time
 expressions, sealed cursors and the shared query laws belong to the common
-[`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md)
+[`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md)
 crate; how the CLI, MCP and HTTP carry a query is in [interfaces](interfaces.md); what a
 record and a citation identify is in [events](events.md#identity).
 
 The same query text runs on every surface. An answer carries its rows, the total, the
 resolved read context (clock, zone, commit position), a continuation, and `read_as`, the
-question read back as a sentence:
+question read back as a sentence. A query over events with a time span also carries the
+**coverage facet** for the sources whose kinds it read, and a count over a span whose
+coverage is not complete is marked `lower bound` ([completeness](sources.md#completeness);
+decided target):
 
 ```sh
 sinexctl 'commands where cwd ^ /src/tide AND when in last 7d sort when desc'
@@ -33,14 +36,35 @@ through its registered bindings. The field list will be rendered into
 | `materials` | a stored material: `id`, `binding`, `parser`, `parser_version`, `hash`, `size`, `status` (`live`, `archived`, `tombstoned`), `origin_path`, `host`, `part`, `previous_part`, `events`, `first`, `last` |
 | `runs` | a producer execution: `id`, `producer`, `producer_version`, `host`, `started`, `ended`, `status`, `events`, `failed`, `refused` |
 | `operations` | a user act: `id`, `kind`, `author`, `via`, `scope`, `started`, `outcome`, `affected` |
-| `sources` | one source and binding, with the [status fields](interfaces.md#the-sources-relation) |
+| `sources` | one source and binding, with the [status fields](interfaces.md#the-sources-relation) and its [input state](sources.md#input-states) |
 | `inputs` | one input of a binding (a file, an export, an archive member): records read, events made, suppressed, matched to another input, record errors with the first unparsed form |
 | `gaps` | one gap interval of a binding: `binding`, `from`, `to`, `state` (`gap`, `unknown`, `estimated`), `reason`, `missing_count` (known or unknown) |
 | `shapes` | one observed payload shape of a binding over an interval: fields added, removed and retyped against the declaration and the previous shape |
 | `failures` | one refused or failed record: material, anchor, binding, source, reason |
-| `duplicates` | one ambiguous fusion pair and its judgment state ([fusion](derivations.md#fusion)) |
+| `duplicates` | one ambiguous fusion pair and its decision state ([fusion](derivations.md#fusion)) |
+| `coverage` | one source, input and hour in the [coverage vocabulary](sources.md#completeness) (decided target) |
+| `stages` | one stage operation with its inventory and accounting ([staging](materials.md#inventory-and-progress); decided target) |
+| `hosts` | one host and producer with contact, held data, spool and clock offset ([hosts](hosts.md); decided target) |
+| `answers` | one evaluation of a query; `answer:<id>`, and `@last` is the caller's latest |
 | `queries` | one saved query definition |
 | `result:<id>` | a kept result, read as a relation |
+
+Further units belong to the pages that own their concepts: `packs`, `notes`, `lanes` and
+`instruments` ([recall](recall.md)); `items`, `copies`, `encounters`, `captures`,
+`curation`, `collections`, `entries`, `comparisons`, `scales` and `tags`
+([library](library.md#surfaces)); `figures`, `metrics`, `constructs`, `studies`,
+`findings`, `forecasts`, `places`, `visits` and `intakes`
+([personal evidence](evidence.md#surfaces)); `signals`, `deliveries` and `prompts`
+([signals](interfaces.md#signals)). Every event row carries `stratum` (its kind's
+[stratum](recall.md#strata)) and `host`; act and span rows carry `agency`.
+
+Sinex's catalog extensions (decided target): `holding at T` and `holding during W`
+select interval rows whose span contains T or overlaps W, served by the span index (the
+order relation `containing` with an instant); `| lanes [L,…]` groups a result's rows into
+named lanes with per-lane counts and continuations; `compare A B` is the relation behind
+the compare recipe, rows of `(lane, measure, a, b, unit, a_coverage, b_coverage)`;
+`day_of_year(when)` and `anniversary(DATE)` match the same logical calendar day across
+years (29 February matches only 29 February and answers "no such day" in other years).
 
 Archived visibility is a relation and read-context choice: `events` excludes
 readings archived at the selected position; `archive` exposes archive history.
@@ -134,10 +158,11 @@ sinexctl 'commands where when in last 7d group by day(when), cwd count fill wher
 - The grouping needs one time-bucket key and a finite range on its time field. A lower
   bound is required; an omitted upper bound resolves to the answer's `now`. Calendar
   buckets use the logical day's zone and start.
-- Every bucket carries a coverage state from the one
-  [source-evidence path](interfaces.md#the-sources-relation): `observed`, `partial`,
-  `recorded_unknown_coverage`, or `missing` with its reason. Run lifetime alone never
-  establishes coverage.
+- Every bucket carries a coverage state in the shared vocabulary: `complete`,
+  `gap(reason)`, `unknown`, `outside_span`, `not_yet`, `excluded`, `unavailable(cause)`,
+  and Sinex's `held` ([completeness](sources.md#completeness)). Run lifetime alone never
+  establishes coverage. Decided target (2026-11-01): this vocabulary replaces the current
+  `observed`, `partial`, `recorded_unknown_coverage` and `missing`.
 - A zero is shown only where the opportunity to observe is established; otherwise the
   aggregates of an unrecorded bucket are unknown.
 - The answer states whether dimension combinations are the observed combinations in the
@@ -256,7 +281,11 @@ sinexctl 'queries'
 ## Citation forms
 
 Sinex citations always carry the `sinex:` prefix, so they never collide with Polylogue's
-references. What each identity means is in [events](events.md#citations); the forms are:
+references. They follow the one reference grammar of common
+[`references`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/references/README.md):
+the stored form is global, and inside Sinex a reference may be written in its local form
+(`input:<id>`, `mat:<id>`), normalized at input. `in:` is only the query membership
+condition. What each identity means is in [events](events.md#citations); the forms are:
 
 | Form | Names | Across replay |
 |---|---|---|
@@ -265,6 +294,7 @@ references. What each identity means is in [events](events.md#citations); the fo
 | `sinex:key/<source>/<type>/<key>` | the current reading under a source record key (the key encoded reversibly) | follows replay and re-import |
 | `sinex:at/<RFC3339>/<type>` | the live output of a registered spanning type that contains an instant | resolves to the current span; several matches are an error |
 | `sinex:window/<from>/<until>` | a bounded recall question over a half-open absolute window, not an event | a question; mutations and `trace` refuse it |
+| `sinex:sel/<hash>` | the canonical form of any recall [selection](recall.md#selections) (decided target) | a question |
 | `sinex:material/<id>[@<range>]` | a stored material and optionally a byte, page or record range, with its content hash | stable |
 | `sinex:query/<hash>` | a saved query | stable |
 | `sinex:result/<id>` | a kept result | stable |
@@ -278,8 +308,8 @@ references. What each identity means is in [events](events.md#citations); the fo
   `ambiguous` (with candidates), `withheld`, `unavailable` or `removed_at_source`. A
   known form that cannot be resolved reports its form and reason, never an empty result,
   and never falls back to searching other object types.
-- One resolver serves every user of these forms: Polylogue, the wiki, briefs, context
-  packs and the reader.
+- One resolver serves every user of these forms: Polylogue, its pages and briefs, packs
+  and the reader.
 
 ## Read, trace, related
 

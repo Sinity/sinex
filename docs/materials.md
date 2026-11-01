@@ -115,6 +115,10 @@ A continuous binding is a staged input declared in configuration: Sinex's own Ni
 | a SQLite database a declared live-database source reads (Atuin, browser history) | its rows, read in one read transaction, committed WAL frames included; never an image |
 | any other SQLite file | an imported original stored whole, with its rows read into a rows part |
 
+### Parser selection
+
+Parser selection is strict and declarative. A parser declares the exact structures it accepts: an export's member layout and header, a database's tables, a file's signature. For a canonical location, the location's source decides the parser and no detection runs. For `stage PATH`, detection tests the declared structures only: exactly one match assigns the parser; none, or several, store the material unparsed with the candidates listed. Detection never assigns a parser of another origin and never guesses from a file name.
+
 ### Staging before a parser exists
 
 When detection finds no parser, or more than one, the bytes are stored as material with no parser and the candidates listed. Nothing is guessed and nothing is refused. A parser is assigned later through replay (`replay "materials where parser is none and …" --parser NAME`), recorded on the material and on the operation. When a new parser version arrives, records with no live reading are read automatically ([parser versions](events.md#parser-versions)).
@@ -127,9 +131,39 @@ Live streams are always saved as material parts assembled as they arrive (the sp
 
 A re-stage of identical content is not imported twice, and it is still recorded. Byte-identical data staged again is a **new material**, not a replay; its records are suppressed against the live readings by their source record keys ([what admission does with a key](events.md#what-admission-does-with-a-key)). A one-shot file whose records have no identifying fields is keyed by its content digest and offset, so the re-stage is recognised whatever its path. Ruling, 2025-06-12: "no deduplication pls. just ensuring no double import … redundancy is fine" (cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae). Ruling, 2026-05-30: "it wil still be considered entirely new material -- this has nothign to do with replay" (cc:3c91049e-3702-4e99-be65-81620e1f7552:e73554d4-91ea-403d-ad9a-62f4d0bcf128).
 
-### Progress
+### One-shot inputs finish
 
-`stage list` shows recent staged materials and their progress: bytes parsed of the material's size, events admitted of parsed, rate, and what paces it. Materials stored without a parser show as stored, not interpreted.
+A staged export is `finished` once read and never polls again; a newer export of the same provider is a new stage. Absence of a record from the newer export is not deletion.
+
+### Inventory and progress
+
+Decided target (2026-11-01): staging shows what it holds before parsing finishes. Within about two seconds of `stage` on a multipart export (the archive's central directory is read first) it shows the **inventory**: every member or product, its record count, which parser reads it, what was handed to Polylogue by material reference, and what is stored but not interpreted, with candidate parsers. As parsing runs, each product's line carries its **accounting**: new, the same as an earlier export, revised, removed at source, and record failures with the first unreadable form. The accounting is the identity of [completeness](sources.md#completeness), so every number is a sum over it.
+
+```
+stage op:01J9…  takeout-20261101 (3 parts, 4.7 GiB, stored as received)
+  products  27 found · 21 with parsers · 6 stored, not interpreted
+  ├ My Activity/Search      130,412 records  parsing 41%   new 2,410 · same 127,1xx · revised 3,1xx
+  ├ YouTube/watch-history     88,020 records  queued
+  ├ Keep                       2,311 notes   done          new 37 · same 2,274
+  ├ Gemini Apps Activity    handed to Polylogue (same material references)
+  └ Travel, Wallet, …       stored, not interpreted (no parser; candidates: none)
+  covers 2010-01-04 … 2026-10-31 · paced by: writer (derivations have priority)
+```
+
+- `stage PATH… [--parser NAME] [--account NAME] [--export-date DATE] [--follow]` returns the operation and the inventory; `--follow` prints the live inventory and ends with the operation's outcome. `stage list [--active]` and `stage show OP` read it later; the web Stage page is a drop zone plus the same list.
+- Every status-like answer names what holds work back (`paced by: writer serving derivations`, `paced by: provider backoff until 10:42`) and shows no estimate unless the rate has held steady for 30 s.
+- Materials stored without a parser are a queue with a visible size.
+
+### The parser workbench
+
+Decided target (2026-11-01). Materials come first and parsers whenever, so an agent can add a source without the original file:
+
+1. stage the file: it is stored as material with no parser and listed as stored, not interpreted;
+2. write the parser in the Sinex repository against a synthetic fixture shaped like the file; private bytes never enter tests;
+3. `parser try PARSER mat:… [--limit N]` parses stored bytes as a dry run: it prints the events it would admit, record failures, time quality and keys, and admits nothing;
+4. ship the parser. A passive notice says how many stored materials it can read ("parser google.travel 1 can read 6 stored materials (2 exports)"), and `replay "materials where parser is none and candidates contain P" --parser P` reads them.
+
+`parsers [--unread]` lists parsers, their versions and the stored-unparsed materials per candidate. `replay QUERY --compare` shows, per field, how many readings change, with a sample of before and after pairs, and writes nothing ([replay](lifecycle.md#replay)). Over MCP, `stage` and `replay` are rows of `sinex_act` (replay compares by default) and `parser try` is a row of `sinex_read`.
 
 ## Laws
 
@@ -141,3 +175,8 @@ A re-stage of identical content is not imported twice, and it is still recorded.
 - **stage-without-parser**: staging with no matching parser stores the material with no parser and the candidates; a later replay with `--parser` reads it.
 - **restage-two-materials-one-live-reading**: staging byte-identical content twice from two paths yields two materials and one live reading per record.
 - **streams-stored-before-commit**: a live stream's bytes are in material parts before their events commit.
+- **stage.strict-detection**: a file matching no declared structure is stored unparsed with no candidates; one matching two is stored unparsed with both; detection never assigns a parser of another origin. *(property over synthetic structures; decided target)*
+- **stage.inventory-total**: for an export, every member appears in the inventory exactly once, as parsed, handed off, failed or stored and not interpreted. *(export fixtures; decided target)*
+- **stage.idempotent-progress**: killing a stage at any point and running it again reaches the same live readings and the same accounting. *(crash test; decided target)*
+- **parser.arrival-reads-backlog**: after a parser for candidate materials ships, `replay … --parser` reads exactly the stored-unparsed materials it matches, and that parser's backlog count drops to zero. *(integration; decided target)*
+- **parser.try-admits-nothing**: `parser try` over any material leaves the commit position unchanged. *(integration; decided target)*

@@ -2,14 +2,16 @@
 
 Every way to reach Sinex: the operation table and its transports, callers and their
 powers, the `sinexctl` CLI, MCP, status, signals and stall alerts, `follow`, and the
-latency budgets. The query catalog and its behaviour are in [query](query.md); recall,
-the brief and agent arrival in [recall](recall.md); Today and the reader in
+latency budgets. The query catalog and its behaviour are in [query](query.md); recall
+and agent arrival in [recall](recall.md); Today and the reader in
 [web](web.md). The shared mechanics (the `Operation` trait, request and answer
 envelopes, the failure-to-exit-and-HTTP table, latency classes and deadlines, SSE
 framing, the status figure format) are the common
-[`command-surface`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/command-surface.md)
-crate's; the signal rule schema and evaluator are common
-[signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md).
+[`command-surface`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/command-surface/README.md)
+crate's, including the answer contract every surface uses (envelope, section status,
+value states, budget fitting, errors); the signal rule schema, evaluator and route
+function are common
+[signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md).
 
 ## Principles
 
@@ -47,7 +49,7 @@ crate's; the signal rule schema and evaluator are common
   reason not to, but CLI itself is supposed to be disciplined"
   (cc-queued:d6f4b0c3-840b-47b6-bd57-5f1bd6c9c7d4@2026-07-29T01:12Z).
 - **The write path.** Handlers hold only the read pool. Every write (stage, `record`,
-  note, mark, judgment, saved query, signal rule, archive request) goes to the one
+  note, duplicate decision, curation, saved query, signal rule, archive request) goes to the one
   [admission function](admission.md) as a request material plus events.
 - The command list will be rendered into [planned reference/commands.md](reference/README.md#planned-pages).
 
@@ -110,7 +112,7 @@ more affordances" (cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:
 | Act | Rule | Reason |
 |---|---|---|
 | confirming a tombstone's cascade preview | any caller requests and previews; the operator confirms interactively (default; open operator question) | tombstoning is the one irreversible deletion ([tombstone](lifecycle.md#tombstone)) |
-| `same`/`distinct` judgments that govern fusion | every caller records judgments; the operator's govern, and a per-rule setting admits others' | fusion judgments shape every fused record ([fusion](derivations.md#fusion)) |
+| `same`/`distinct` duplicate decisions that govern fusion | every caller records them; the operator's govern, and a per-rule setting admits others' | duplicate decisions shape every fused record ([fusion](derivations.md#fusion)) |
 
 ### Computed authorship
 
@@ -135,7 +137,7 @@ more affordances" (cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:
 - Status lists the last week's agent writes by session and kind.
 - **`undo --session S [--dry-run]`** reverts every write one session made, listing it
   first and recording each reversal with its own author. It archives the session's
-  notes, marks, judgments, saved queries, signal rules and `record` outputs; archives
+  notes, duplicate decisions, curation, saved queries, signal rules and `record` outputs; archives
   what the session's stages admitted; and undoes the session's replays by the ordinary
   [replay undo](lifecycle.md#undo), possible at any later time. A tombstone confirmed in
   the session is listed as not revertible. A second undo restores what the first
@@ -143,7 +145,7 @@ more affordances" (cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:
 
 ### Derived conclusions: `record`
 
-`record KIND PAYLOAD --parent REF…` (MCP `sinex_record`) writes an agent's derived
+`record KIND PAYLOAD --parent REF…` (a `sinex_write` row over MCP) writes an agent's derived
 conclusion: a registered kind, a payload matching its schema, at least one parent
 citation, the computed author, and the producer `agent:<session>` with its model as
 producer version. It passes ordinary admission and is withdrawn by its author's archive
@@ -182,13 +184,16 @@ tho...? I mean, it's part of the system, its UI"
   `REF trace`, `REF related`.
 - **There is no `query`, `search` or `timeline` command.** Bare words in a signalled
   query already search, and a timeline is the default rendering of an event query
-  sorted by time. `recall`, `context` and `brief` are commands because each assembles
-  several queries into one answer ([recall](recall.md)).
-- **Groups, not hyphens:** `library add|item|tag|untag|set|collect|uncollect|collection|rate|compare|rank|open|viewed|preview|import`,
-  `privacy rules|rule|class|verify`, `forecast issue|resolve|report`,
-  `analysis catalog|run|panel|why`, `signal add|list|enable|disable|remove`,
-  `sources [NAME]`, `kinds [KIND]`, `store verify`. MCP tool names join the words with
-  `_` (`sinex_library_add`).
+  sorted by time. `recall` is a command because it assembles several queries into one
+  answer ([recall](recall.md)); the current `context` and `brief` verbs fold into it.
+- **Groups, not hyphens:** `library add|import|save` (curation acts on a query or
+  reference: `QUERY tag add`, `QUERY judge SCALE`; [library](library.md#surfaces)),
+  `privacy rules|rule|class|verify`, `study`, `experiment`, `forecast`, `place`
+  ([personal evidence](evidence.md#surfaces)), `sources [NAME] | discover`,
+  `stage list|show`, `parser try`, `parsers`, `hosts`, `placement`, `kinds [KIND]`,
+  `store verify`. Rules, saved queries and lanes are authored records written through
+  `write` (`write signal:NAME …`). Decided target (2026-11-01): this replaces the
+  current `library tag|untag|set|…`, `analysis` and `signal add|…` groups.
 - **Export is `read --to`.** `QUERY read --to DIR` writes the bundle atomically with its
   manifest: the question, its resolved read context, the selected records, references to
   the material bytes they came from, what was left out, and the replay recipe.
@@ -215,22 +220,27 @@ Each product's concepts are its own; the CLI mechanics are shared through
 - space-separated command groups, and MCP names joined with `_`;
 - the same words for the same mechanical acts: `read` (one thing rendered), `follow`
   (a stream of new rows), `trace`, `changes --since POS`, `explain`, `sql`, `status`,
-  `recall`, `brief`, `keep`, `save`, `verify`, `mcp`, `completions`, `setting`, and
-  `read --to` for writing out. A vocabulary check compares both products' tables.
+  `keep`, `save`, `judge` (write an evaluative record), `compare` (a read), `verify`,
+  `mcp`, `completions`, `setting`, and `read --to` for writing out. A vocabulary check
+  compares both products' tables.
 
 Not shared, because they are Sinex's own concepts: the lifecycle verbs (archive,
-restore, replay, tombstone, stage), library curation, privacy rules, forecasts and
-briefs. Where both products have a brief or a recall, they are different things.
+restore, replay, tombstone, stage), library curation, privacy rules and personal
+evidence. **Recall** means the same act in both products: build a pack about a subject
+from what is already held. Sinex's verb is `recall SUBJECT`; Polylogue's is its `recall`
+recipe. **Brief** is only Polylogue's session-start recipe; Sinex's part of it is the
+here pack.
 
 ### Lifecycle and staging verbs
 
 The semantics are [lifecycle](lifecycle.md)'s and [staging](materials.md#staging)'s;
 the surfaces are:
 
-- `stage PATH | DIR | DB [--parser NAME] [--export-date DATE] [--account NAME]`, ending
-  with an account by event type (admitted, suppressed with example references, failed)
-  and `stopped_early` when it did not finish; `stage list` shows progress and what paces
-  it, and gives no estimate while the rate varies;
+- `stage PATH | DIR | DB [--parser NAME] [--export-date DATE] [--account NAME] [--follow]`,
+  showing its inventory at once and ending with an account by event type (admitted,
+  suppressed with example references, failed) and `stopped_early` when it did not
+  finish; `stage list` and `stage show OP` show progress and what paces it, and give no
+  estimate while the rate varies ([inventory](materials.md#inventory-and-progress));
 - `archive REF | QUERY | --material ID… | --run ID | --source S [--after T] [--before T]`
   and `restore` over the same scopes or `--operation OP` (the chains that operation
   archived), each refusing when any part cannot move; `--compare` prints the cascade and
@@ -239,7 +249,7 @@ the surfaces are:
   archived, for an archive, a restore, a replay or an undo;
 - `resume OPERATION` continues an archive, restore, tombstone, undo or replay that ended
   `stopped_early` or whose daemon stopped mid-run;
-- `replay QUERY [--compare]` and its undo; `recompute DERIVATION [--compare]` and
+- `replay QUERY [--parser NAME] [--compare]` and its undo, with `--compare` showing per-field changes; `recompute DERIVATION [--compare]` and
   `recompute DERIVATION --switch` ([versions](derivations.md#versions));
 - `tombstone` over the same scopes as `restore`, only on archived chains; `--compare`
   previews the cascade, and the act is reserved to the operator
@@ -256,8 +266,8 @@ one irreversible deletion; a refused material is read again by replay.
 
 - Typed printers per operation, from its answer type. Modes: a table (default on a
   terminal), `--json` (one complete document), `--jsonl` (rows streamed after a
-  documented metadata frame), `--ids`. An answer rendered as text (the brief, a panel,
-  `analysis-why`) prints that text once by default; its JSON document is printed only
+  documented metadata frame), `--ids`. An answer rendered as text (a pack, a panel,
+  `explain missing`) prints that text once by default; its JSON document is printed only
   with `--json`.
 - Colour only on a terminal with `NO_COLOR` unset. Colour and weight encode status only
   (ok, stale, missing, provisional, error), never source identity. Provisional rows look
@@ -311,13 +321,32 @@ autocomplete, fuzzyfingind where appropiate"
 
 ## MCP
 
-- `sinexctl mcp` (stdio, on `rmcp`) advertises every operation the table marks for MCP,
-  with strict argument schemas and `outputSchema`. The tool list is generated, so it has
-  no fixed size.
-- Query, recall, context, read, trace, related, brief, sources, kinds, status, `record`,
-  notes, marks, judgments, saved queries, signal rules and the lifecycle requests are
-  available; an agent needs no CLI fallback for anything the table marks for MCP.
-- `follow` is available as a resumable subscription with the same positions as SSE.
+- `sinexctl mcp` (stdio, on `rmcp`) advertises the operations the table marks for MCP,
+  with strict argument schemas and `outputSchema`, grouped into tools by the common
+  grouping rule.
+- **Eight tools** (decided target, 2026-11-01). Agents bypass a long flat tool list by
+  reaching for raw SQL, so Sinex groups its rows into eight tools named like
+  Polylogue's:
+
+| Tool | Rows |
+|---|---|
+| `sinex_status` | daemon, sources summary, hosts, attention, budget |
+| `sinex_query` | every unit (sources, inputs, coverage, items, encounters, figures, studies, …), `sort by rank(scale)`, `judge next`, `signal:NAME backtest`, the `wait` option |
+| `sinex_read` | any reference: an event, a material range, an item, a pack's expand handle, a study result; `parser try` (a dry run that admits nothing) |
+| `sinex_trace` | the provenance walk |
+| `sinex_recall` | every recipe: resume, moment, day, period, here, project, compare, today, study, experiment |
+| `sinex_write` | notes, curation, comparisons, scales, rules and watches, saved queries and lanes, instruments, studies, forecasts, places |
+| `sinex_act` | stage, replay (compare by default), archive, restore, tombstone, undo, library add, import, save, open and viewed, experiment acts, notify, ack, snooze |
+| `sinex_explain` | syntax, units, fields, a query's reading, metrics, methods, missing cells |
+
+  `sinex_sql` stays a local operator tool, not an agent tool. The deployed flat tools
+  (`sinex_brief`, `sinex_hide`, `sinex_unhide`, the `sinex_library-*`, `sinex_analysis-*`,
+  `sinex_forecast-*` and `sinex_privacy-*` tools and `sinex_comparisons`) fold into these
+  rows; hide and unhide are the lifecycle's archive and restore.
+- Every answer uses the common answer contract: the text part is the rendering, rows
+  appear as JSON only with `format: json`, and a budget cuts whole lines with counts of
+  what was left out and expand handles.
+- `follow` is available as a resumable subscription of `sinex_query`, with the same positions as SSE.
 - Output rules, the data notice and per-row delimiting apply exactly as on HTTP and the
   CLI. `@N` and `since last_seen` are per agent session; one client's state never
   affects another's.
@@ -351,7 +380,8 @@ domain fields keep their own values beside it, each with a stated mapping to the
 |---|---|
 | `last_run` | `new`, `repeats`, `nothing`, `not_run` |
 | gap state | `gap`, `unknown`, `estimated` |
-| coverage cell | `observed`, `partial`, `recorded_unknown_coverage`, `missing` (with reason) |
+| input state | `capturing`, `backlogged`, `quiet`, `stalled`, `held`, `unavailable(cause)`, `excluded(reason)`, `finished` ([input states](sources.md#input-states)) |
+| coverage | `complete`, `gap(reason)`, `unknown`, `outside_span`, `not_yet`, `excluded`, `unavailable(cause)`, `held` ([completeness](sources.md#completeness)) |
 
 A run that found only repeats is healthy; a staged export is never stale; a missing cell
 carries its reason. Status reads self-observation events, so nothing is recounted on the
@@ -367,8 +397,8 @@ holder through the reader role while the daemon is down.
   ([tables](query.md#tables)), read and paged like any query, so there are no separate
   gap, continuity, drift or readiness commands.
 - Fields: `source`, `binding`, `driver`, `version`, `event_types`, `purpose`,
-  `exclusion` and its reason, `last_run`, `quiet` (against the declared `expect` cadence
-  and the operator's active time), `stale_after`, `coverage`, `behind`, `rate`,
+  `exclusion` and its reason, `state`, `last_run`, `expect`, `silent_after`,
+  `expires_after` and the remaining margin, `coverage`, `behind`, `rate`,
   `refused_rate`, `shape_changed`, `days_with_data_30d`, `gaps_30d`, `last_success`,
   `last_error`.
 - **One source-evidence path** classifies sources for fill, panels, recall, status and
@@ -380,15 +410,19 @@ holder through the reader role while the daemon is down.
 - `sources NAME` gives per-input accounting: records read, events made, suppressed,
   matched to another input, record errors with the first unparsed form. An input whose
   records did not become events shows as such instead of reading as complete.
+- `sources [FILTER] [--days N] [--host H]` renders the Sources grid: one row per source,
+  one cell per day in the coverage vocabulary, and the state with its reason ("STALLED
+  since Tue 12:28 · database busy on every poll"). Its footer names derivation lag,
+  failures, stored-unparsed materials and disk runway.
 
 ### The status bar
 
 `status --bar` emits one JSON line on change, for a desktop bar or dashboard to
 consume:
 
-- the **privacy stripe**, coloured by the most invasive capture running now: green for
+- the **capture stripe**, coloured by the most invasive capture running now: green for
   files only, amber for screen, red for keyboard and screen; audio and accessibility
-  count with screen;
+  count with screen. It is a capture indicator, part of capture status;
 - the count of quiet sources;
 - passive signals not yet seen;
 - per binding, `producing_now` (an event admitted in the last 5 s).
@@ -402,87 +436,116 @@ never success ([Polylogue primary mode](https://github.com/Sinity/polylogue/blob
 
 ## Signals
 
-A **signal** is a standing query or standing analysis with a declared delivery rule. It
-is the only way Sinex surfaces anything unasked. The rule schema, the evaluator and its
-laws, the interrupt budget and desktop notifications are common
-[signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md);
+A **signal** is a standing query with a declared delivery rule. It is the only way Sinex
+surfaces anything unasked. The rule schema, the evaluator and its laws, the route
+function, the interrupt budget, inhibition, outcomes, `wait`, `backtest` and desktop
+notifications are common
+[signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md);
 its conformance cases run in Sinex. What Sinex supplies:
 
-- a rule's `query` may be a standing query or `analysis:<recipe>`;
-- `value` targets are a file or a loopback URL, and `action` names a command already in
+- its catalog for rule queries;
+- `value` targets (a file or a loopback URL) and `action` commands, named in
   configuration;
-- occurrences are keyed by citation (record coordinates, source record key or derived
-  key, never the reading), so replay and re-import never fire a rule again.
+- occurrences keyed by citation (record coordinates, source record key or derived key,
+  never the reading), so replay and re-import never fire a rule again;
+- the attention inputs: presence, focus with the window-to-session join, deep work and
+  breakpoints from the [higher layer](higher-layer.md).
 
-### Delivery
+### Rules, deliveries and acts
 
-- **Declared, never inferred.** A rule is written explicitly by the operator or an agent
-  and runs as written. Status lists agent rules with their authors; `signal disable`
-  withdraws one.
-- **Passive by default:** a delivery appears in the next brief, Today, the status bar
-  and the reader's Signals view.
-- **Interrupting** only for rules marked so, under the one interrupt budget. Sinex is
-  the one deliverer on a host where Polylogue runs on it: Polylogue's interrupting
-  notices arrive with its other deliveries and are shown under the same budget and
-  quiet hours, which are Sinex settings there.
+- **Declared, never inferred.** A rule is an authored record written by the operator or
+  an agent through `write` (`write signal:NAME …`, or `QUERY watch`) and runs as
+  written. Status lists rules written by others since the operator last looked;
+  disabling one is an authored revision.
+- **Passive by default:** a delivery appears in the inbox, Today's Signals pane, the
+  status bar and the day pack. **Interrupting** only for rules marked so, under the
+  one interrupt budget.
+- **Three event kinds** (decided target, 2026-11-01): `signal.rule`, `signal.delivery`
+  and `signal.outcome`, plus `notice.submitted` from producers and `instrument.defined`
+  for elicitation. The evaluator checkpoint is daemon state, not events. Every delivery
+  stores its route decision and reason, so "why did this fire" and "why didn't it
+  interrupt" are both queries.
+- **Acts:** `delivery:ID open|ack|snooze 1h`, `quiet until 14:00 | quiet off`.
+  `QUERY wait [--for D] [--timeout T] [--until-empty]` blocks until the query first
+  matches or empties, recording nothing; `signal:NAME backtest since:30d` replays a rule
+  over stored history with the route decisions it would have received, and writes
+  nothing.
 - **Three deliveries, one mechanism:** a notice, a value, an action. An action names
   only a command already in configuration, runs outside `sinexd` with the triggering
   citation as its last argument, and its result returns as ordinary events.
-- **Desktop delivery** is the common freedesktop notification design, outside the
-  writer, with the optional configured command as a second route; a slow notification
-  server never holds the writer.
-- **Every delivery is a self-observation event** naming the rule revision and its
-  triggering rows, so "why did this fire" is a query.
 
-### Rule records and configured outlets
+### The host deliverer
 
-`signal add --rule JSON` records the complete shared rule. `signal list` pages through visible authored revisions; `signal enable`, `signal disable` and `signal remove` take a rule name. Every change records the authenticated caller and a new revision. A query runs under its recorded grants intersected with the author's current access. A missing grant, unavailable projection or ambiguous threshold sample is incomplete evidence, with a recorded reason. An `on_threshold` query supplies one numeric result cell.
+Decided target (2026-11-01). Sinex is the one deliverer on its host. Polylogue on Sinex
+writes its deliveries as `polylogue.delivery` facts through the producer path with
+their interrupt request and urgency; Sinex's deliverer routes them under the host's
+attention with its own, and a `cleared` outcome closes a current-state notice. Polylogue
+shows only its own "Sinex blocked" notice directly, because the path to the deliverer is
+what is broken.
 
-Standing event queries retain native record or derived-key identity through field projection. Grouped answers retain their exact group keys and cite a stored evaluation of the complete query. Reading IDs, ranks, row numbers and page boundaries never become occurrence identities. Signal observations and their own run, material and source metadata are excluded before aggregation, so a delivery cannot manufacture another source match.
-
-The deployment's `signals` object in `sources.json` supplies `interrupt_budget_per_hour`, `quiet_hours`, private intervals, `outlet_timeout_ms`, optional `notifications`, and named `values` and `actions`. A value destination is `{ "kind": "file", "path": "/absolute/path" }` or `{ "kind": "loopback", "url": "http://127.0.0.1:PORT/path" }`. An action names an absolute program and an argument vector. Sinex appends the triggering citation as its final argument. A notification route is `dbus`, `command` or `both`; its optional command is an absolute program and argument vector. An explicit private bus address permits an isolated desktop fixture. No outlet is inferred from a rule's text.
-
-Forwarding a signal does not confer operator or shipped authorship. The authenticated producer's deployment grant may install an `author_attestation` with an explicit `operator` permission and a `shipped` list of exact rule IDs, revisions and fingerprints. Elevated forwarded intents include their frozen typed `active_rule`. Its version, author, channel, scope, current-condition requirement, quiet hours and rate limit must match the intent; shipped rules must also match the configured fingerprint. The fingerprint uses the canonical JSON identity of the rule version, rule definition and live-state declaration. Current authority is checked again before each actual outlet handoff. An unrecognized claimed rule-author reference is refused; a reference and canonical publishing authority alone grant no exemption. The compiled emergency completion uses its separately configured capability and owner-issued context proof.
-
-Minimal acquisition, handoff and actual receipt facts remain source events. Full copied decisions and their evidence are derived readings with exact canonical input parents. Product read references remain separate from those parent IDs. A fresh proof can replace a reading of the same frozen occurrence only when the original settings, semantic intent and native input lineage still agree. It preserves the original handoff time, budget use, consumed identity and per-route attempt outcomes. Native replay cannot certify old copied bytes under a new input policy. Original outside signal frames remain retained; public raw and range reads require the material's output authorization.
-
-The compiled offline outage alert additionally requires an owner-signed desktop capability cached before its invocation. Recovery checks the authenticated producer's frozen `invoked_at` against that capability's exclusive lease and cached quiet hours, and retains the separate `completed_at` receipt observation. A slow notification may complete after its valid invocation lease expires. These timestamps are authenticated producer observations; the signature attests deployment permission. The ordinary temporal context has no expiry. Missing offline permission grants no local emergency effect, and the desktop exception grants no command execution.
-
-
-One private host checkpoint holds the shared evaluator, attention policy, pending handoffs and notification state. The writer commits it with ordinary signal observations. An outlet's unknown attempt commits before the effect starts; a returned result changes that recorded outcome. An unknown result survives restart without an automatic resend. Fresh effect authorization reads the rule, grants and query in one active privacy-epoch snapshot immediately before the platform call. Its short admission fence ends before platform I/O. Later policy changes govern later operations; an unanswered notification or command does not block a policy update or the writer.
-
-Each configured `outlet_timeout_ms` is one end-to-end attempt budget, minted at owner dispatch before unknown persistence, policy checks or platform preparation. The same absolute deadline, capped by any parent deadline, and the daemon's actual cancellation apply throughout that attempt. A policy-lock retry cannot renew either. Only a typed serialization or deadlock error from the first policy lock can retry, after acknowledged rollback and before that snapshot reads checkpoint, grant or query state. Each retry refreshes the peer condition outside the SQL fence under the same attempt lifetime. Every fresh snapshot must still match the original known policy epoch, settings, frozen intent and cited input authority. Checkpoint revisions may advance for unrelated receipts and budget counters without invalidating unchanged authority.
-
-An operationally unavailable or interrupted authorization is distinct from a definitive policy rejection. Before possible I/O it records `not_sent` with a static unavailable, deadline or cancellation reason; missing authorization members are incomplete. Only an explicit authoritative rejection records `cancelled`. After a notification, process spawn, file publication or HTTP request may have occurred, interruption preserves `unknown` and does not retry the effect. An already submitted unknown write is acknowledged even after interruption, solely to preserve custody, followed by minimal outcome bookkeeping. These acknowledgements and rollback cleanup grant no new work authority. Value POSTs retain certificate validation, bypass proxies, follow no redirects and perform no automatic protocol retries. A definitive successful status acknowledges the value; its response body has no delivery meaning.
+- **Any producer may notify.** A credentialed producer submits a `notice.submitted` fact
+  (title, body, reference or URL, an interrupt request, a `key` for grouping and
+  replacement, an optional `clears` key); it is a delivery of the implicit rule
+  `producer:<name>` with author class `producer`, inside the budget and passive unless
+  it asks to interrupt. `sinexctl notify --title T [--body B] [--ref REF|--url U]
+  [--key K] [--clears K] [--interrupt]` is the CLI for scripts, so a host's scripts, job
+  runners and CI reports share one budget, grouping, quiet hours and inbox instead of
+  calling a notification command themselves.
+- **Own notifications are excluded.** A notification captured by Sinex's D-Bus source
+  whose hints carry a product's delivery identifier is marked as a signal origin, and no
+  rule reads it.
+- `sinexctl attention` prints presence, quiet, the budget, held notices and the last 24
+  hours of interruptions.
+- Decided target: the current build's authorization layer for forwarded signals (author
+  attestations, the offline emergency lease and its signed capability, per-attempt
+  policy re-authorization) and its seven further signal event kinds go; the handoff
+  rechecks of the common host policy are one function, and with one deliverer per host
+  no attempt changes owner.
 
 ### Shipped rules
 
-| Condition | Ships |
-|---|---|
-| the daemon stalled | enabled, interrupting |
-| Sinex blocked (admission cannot accept producer input) | enabled, interrupting |
-| a source unreadable | enabled, interrupting |
-| capture stalled: `source-quiet` ([stall alerts](#stall-alerts)) | enabled, interrupting |
-| a kind whose every material is refused | enabled, interrupting |
-| the resume digest: operator activity returns after a gap, and the [resume card](recall.md#recall-and-context) is delivered as a notice | disabled; passive when enabled |
+| Condition | Ships | Inhibits (host scope) |
+|---|---|---|
+| the daemon stalled | enabled, interrupting | capture stalled, source unreadable, runaway volume, refusal-rate spike |
+| Sinex blocked (admission cannot accept producer input) | enabled, interrupting | |
+| a source unreadable | enabled, interrupting | |
+| capture stalled ([completeness](sources.md#completeness)) | enabled, interrupting; `critical` only where captured data is being lost now | |
+| expiry race | enabled; interrupting when the margin is below one poll period | |
+| a host out of contact past its deadline; spool runway under one day ([hosts](hosts.md)) | enabled, interrupting | |
+| a kind whose every material is refused; refusal-rate spike | enabled, interrupting | |
+| disk runway below 14 days | enabled, passive (a warning in status) | |
+| disk runway below 3 days | enabled, interrupting | runaway volume |
+| new input, parser arrival, stage finished, spool runway under the out-of-contact deadline, link rot on a saved item | enabled, passive | |
+| the resume digest: operator activity returns after a gap and the resume pack is delivered as a notice | disabled; passive when enabled | |
 
-Everything else is passive. Tripwires, prospective memory and the hyperfocus guard are
-rules the operator or an agent declares; none is enabled by shipping an example.
-Elicitation prompts are deliveries of declared rules ([elicitation](higher-layer.md)).
+Everything else is passive. Tripwires and prospective memory are [notes](recall.md#notes)
+with triggers; none is enabled by shipping an example. An inhibiting rule folds the
+notices of the rules it names into its own notification while it is open. A late fact
+(older than the rule's `fresh_within`) is delivered passively. "Digest" is not a rule
+kind: the day pack and Today's Signals pane are the digest.
 
 No rule starts or resumes an agent session (default; open operator question): there is
 no agent-starting delivery, and the deployment's action commands include none that
 start or resume an agent, because a run would spend quota with no one acting.
 
+### Elicitation
+
+Self-report prompts are deliveries of rules with `deliver: ask` and an instrument
+([elicitation](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md#elicitation)).
+The answer is a [note](recall.md#notes) with the delivery as parent and its latency;
+`sinexctl delivery:ID answer 4` and `sinexctl note --value mood=3` answer from the CLI,
+and notification actions answer with one click. Nothing is asked until the operator
+decides which prompts may be sent (default; open operator question).
+
 ### Stall alerts
 
-- `source-quiet` fires from the binding's declared `expect` and `stale_after` and its
+- The stall rule fires from the binding's declared `expect` and `silent_after` and its
   durable poll outcomes. It tells apart an unchanged successful poll, an event-driven
   source with no recent events, an unavailable input, a parser rejection, an excluded
-  source, source lag and an actual missed expected read. It never fires from low counts
-  alone.
+  source, source lag, a host out of contact within its deadline, and an actual missed
+  expected read. It never fires from low counts alone.
 - An alert carries its evidence, the last success, the affected interval and a concrete
-  next action, and stays visible in status and the brief until recovery clears it.
+  next action, and stays visible in status and the day pack until recovery clears it.
 
 ## Follow
 
@@ -524,13 +587,13 @@ Journey budgets on top:
 
 - the morning view (bare `sinexctl`, Today) renders in under 1 s;
 - resuming work takes at most two commands or interactions to reach evidence;
-- `recall` answers in under 2 s on a year of data;
-- `mark` commits in under 1 s;
+- a prepared pack is read in ≤ 20 ms, a moment pack on request in ≤ 250 ms, a closed day in ≤ 100 ms, a week in ≤ 400 ms and a month in ≤ 1 s;
+- `note` commits in under 1 s;
 - the machine section answers within Polylogue's 100 ms deadline;
 - confirmed delivery to `follow` and outside handlers arrives under 5 s after a row is
   queryable;
-- a stall alert arrives within the binding's `stale_after` plus measured evaluation and
-  delivery delay.
+- a stall alert arrives within the binding's `silent_after` plus one evaluator tick and
+  measured delivery delay.
 
 A miss is recorded with its measurement, never met by relaxing the number. Measurement
 is paired benchmark runs with hardware-independent figures (rows scanned, bytes encoded,

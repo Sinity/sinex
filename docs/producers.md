@@ -16,15 +16,18 @@ A producer sends typed frames on its own ingress subject and receives typed repl
 
 | Frame | Carries | Sinex does |
 |---|---|---|
-| kind registration | the producer's kind declarations | validates them against the kind registry; see [kind registration](#kind-registration) |
+| `hello` and kind registration | protocol version, producer identity, the producer's kind declarations and versions (each with its [stratum](recall.md#strata)); decided target: a clock sample `{wall, monotonic}` | refuses mismatches here; validates the kinds against the registry ([kind registration](#kind-registration)); replies with its receive and send times, which give the [clock offset](hosts.md#time-across-hosts) |
 | material | material bytes and their description (input, observation, digest), in as many frames as the material needs | checks the bytes against their digest, stores them and records the material; acknowledges |
 | events | readings anchored at records of acknowledged materials, with producer version and keys | admits them through the one admission function; replies with each event's outcome |
-| progress | the producer's position in its own inputs | records it with the work it covers |
+| progress | the producer's position in its own inputs; decided target: a capture report per input (`captured_through`, held records and bytes, free spool space, capture state) and the same clock timestamps as `hello` | records it with the work it covers; the capture report feeds [contact and held coverage](hosts.md#contact-held-data-and-coverage) |
+| gap | a `capture.gap` interval the producer knows it missed | admits it as a gap of that input |
 | `have` | a list of frame identities | replies which of them are recorded, with their outcomes |
 | producer replay | a replay scope and the new readings for it | see [producer replay](#producer-replay) |
 | lifecycle request | archive, restore, undo or tombstone over a scope | see [lifecycle requests](#lifecycle-requests) |
 
 **Material before events.** A producer sends a material's bytes and waits for their acknowledgment before it sends events that cite them. Admission therefore never waits for material, and a refused events frame never loses bytes (see [refusals](#refusals)). How a material is described (inputs, observations, revisions, record anchors) is in [materials](materials.md); how a reading is identified (record coordinates, source record keys, reading order, record hash) is in [events](events.md#identity).
+
+Decided target (2026-11-01): encoded custody and extent read authority (the next three paragraphs) go. Producers fetch materials by ID through the producer client, and one framing for spooled frames is enough; exposing the segment layout to producers couples them to Sinex's storage.
 
 **Encoded custody.** Producers prepare material bytes, oversized frame JSON and durable fact journals through the shared framed codec. Logical names and lengths still identify the decoded source bytes. A location-free descriptor binds the codec, frame index, encoded digest and decoded identity. Chunk offsets and totals count encoded bytes. The owner checks every identity before append and checks the encoded digest again while appending; plaintext never needs a staging file. A local hardlink of an owned frozen inode is an optimization, and cross-filesystem custody copies only encoded bytes. A server request never names a client-selected path. Parser snapshots copy encoded bytes and expose a bounded decoded reader.
 
@@ -43,7 +46,7 @@ Producer positions and unacknowledged journals use the same encoding and one syn
 
 ### Producer identity and credentials
 
-Each producer identity has its own credential and its own frame namespace. A product running on several hosts is several producer identities (one per host) under one kind family; convergence through stable source record keys holds whichever host sends a reading. A producer credential may publish to its own ingress subject and read its own acknowledgment subject and inboxes; it cannot read another producer's subjects.
+Each producer identity has its own credential and its own frame namespace. A product running on several hosts is several producer identities (one per host) under one kind family; convergence through stable source record keys holds whichever host sends a reading. Decided target (2026-11-01): an identity is the pair (component, host), its credential is an NATS nkey whose private half never leaves the host and whose public half is in configuration, and a frame's host is its credential's host; a host named inside a payload is a claim ([hosts](hosts.md#producer-identity-credentials-and-sending)). This replaces per-producer passwords and the separate attested-host option. A producer credential may publish to its own ingress subject and read its own acknowledgment subject and inboxes; it cannot read another producer's subjects.
 
 ### The ingress stream
 
@@ -66,6 +69,9 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 - **Remove only what is settled.** Spooled bytes and frames are removed only once acknowledged and behind the producer's committed position.
 - **Positions follow commits.** A producer's position in its own inputs is saved only for rows Sinex has committed; an empty fetch is not "caught up".
 - **Fetch by reference and by event ID.** The client fetches material bytes and ranges, fields carried as references, and fields marked withheld on the confirmed stream, each under the caller's grants ([privacy](privacy.md#output-parity)).
+- **Transfer classes and connect on demand** for producers on metered or battery-powered hosts ([hosts](hosts.md#producer-identity-credentials-and-sending)).
+
+**One client, one conformance kit** (decided target, 2026-11-01). The client lives in `sinex-transport` with an API of wire types only; Polylogue uses it and keeps no producer client of its own. The contract's test is a conformance kit in devkit: any producer in any language runs it against a test Sinex, and it covers resend, crash at every step, refusal, outage and `have`. Sinex's own producers, Polylogue and any third-language producer (a phone app through a generated binding) pass it.
 
 ## Refusals
 
@@ -91,6 +97,7 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 - **Changes**: every committed event, and every lifecycle change: archived, restored, tombstoned, and material status changes ([the lifecycle](lifecycle.md)).
 - **Each data message carries its global commit position**, the event ID and the change. Archive change IDs identify rows; they are never consumer watermarks. Events precede lifecycle changes within one position, with lifecycle rows ordered by their stable change IDs.
 - **Completion is explicit.** `PositionComplete { commit_seq: P }` says every change through P has been acknowledged. It is cumulative and includes empty positions. Consumers durably stage partial positions, expose them and advance their scalar watermark only on this barrier. Transfer pages can divide any position; page budgets never cap its changes. An empty store emits position zero to signal readiness.
+- Decided target (2026-11-01): the confirmed stream carries each event's open fields inline, with fields a rule withholds marked withheld and fetched by event ID; the reference-only stream below goes, because it makes every consumer fetch every payload, so a Polylogue rebuild becomes millions of point reads.
 - **Every event travels by reference.** `EventReference { commit_seq, event }` contains only the event ID and its original commit position. Payloads, source keys and other metadata are fetched under the consumer's current policy and grants ([privacy](privacy.md#output-parity)). The shared stream retains no inline event metadata or payload, including for the open class. A large stored payload or parent list uses the same bounded fetch path as a small event.
 - **Routing uses the active transformed class.** A pending policy projection makes publication unavailable; raw admission classes and source keys are never substituted. Fetch keeps the canonical source identity separate from the returned projected payload identity.
 - **Subjects express the configured scope.** Events use `confirmed.event.<class>.<kind>`, lifecycle notices use `confirmed.lifecycle.<class>.<kind>`, and global completion and gap controls use `confirmed.control`, under the configured root. The daemon provisions each durable's class and kind filters.
@@ -139,7 +146,7 @@ It then behaves as follows:
 
 A kind declaration has the same shape for an outside producer as for Sinex's own kinds: name, version, payload fields, [field hints](privacy.md#field-hints) per field, keying, and search participation (`none`, `words` or `words_and_trigram`). Admission checks every event against its registered kind, so an outside kind gets the same checks, read models and output rules as a built-in one. The per-kind typed views are generated from the registry over live readings.
 
-**Polylogue registers the `polylogue.*` kinds.** Their declarations live in Polylogue's own code and will be listed in Polylogue's [planned Sinex kinds reference](https://github.com/Sinity/polylogue/blob/master/docs/reference/README.md#planned-pages); Sinex's [planned kinds reference](reference/README.md#planned-pages) will list only Sinex's own kinds. A change to a `polylogue.*` kind ships with Polylogue's generated owner artifact; the operator installs that artifact before its producers register the new definitions.
+**Polylogue registers the `polylogue.*` kinds**, declared in its `hello` with each kind's stratum: `polylogue.session`, `polylogue.prompt`, `polylogue.tool_call`, `polylogue.live_interval`, `polylogue.commit_link`, `polylogue.delivery` and `polylogue.assertion`. Sinex knows none of them by name; recall, agency and episodes read them through their declarations. Their declarations live in Polylogue's own code and will be listed in Polylogue's [planned Sinex kinds reference](https://github.com/Sinity/polylogue/blob/master/docs/reference/README.md#planned-pages); Sinex's [planned kinds reference](reference/README.md#planned-pages) will list only Sinex's own kinds. A change to a `polylogue.*` kind ships with Polylogue's generated owner artifact; the operator installs that artifact before its producers register the new definitions.
 
 ## Lifecycle requests
 
@@ -168,6 +175,7 @@ Producer replay frames are described under [the ingress](#producer-replay).
 - **kind-conflict-refused**: a kind registration that conflicts with the registry is refused and changes nothing.
 - **lifecycle-request-matches-cli**: a lifecycle request on the wire gives the same cascade, outcome and refusals as the same operation through the CLI, and records the producer as actor.
 - **no-producer-deletion-route**: the ingress has no subject or frame that removes materials or events outside the lifecycle.
+- **prod.conformance**: Sinex's own producers and Polylogue pass the conformance kit: save before send, retry forever, remove only settled data, the same answer to a resend, a refusal that advances the binding, and only adding. *(the kit, run by both repositories; decided target)*
 
 ### Confirmed position boundaries and authenticated fetches
 
@@ -191,7 +199,7 @@ A native durable resumes only when its exact acknowledged position-complete barr
 
 An authenticated credential has no write authority until the operator configures its logical family, write kind prefixes and offered classes. Read grants confer no registration or write rights. Kind declarations name the configured family, so two hosts can register the same immutable definition idempotently; conflicting same-version definitions refuse. The welcome returns the authoritative family and whether the credential is the configured canonical publisher.
 
-Canonical summary prefixes belong to one explicitly configured publisher credential in each family. Other hosts may capture their allowed raw facts and register identical declarations, but cannot publish those summaries. No election is performed. Host and frame identity remain in the ingress history and run; material input hosts, part chains and record locations retain source copies when `Event.source` uses the logical family. Raw reading keys include their source-copy identity; canonical tool-call and turn keys converge under the configured publisher.
+Decided target (2026-11-01): the canonical publisher and its summary prefixes go; with stable keys and per-host producers no host publishes summaries for the others ([hosts](hosts.md#polylogue-on-several-hosts)). Canonical summary prefixes belong to one explicitly configured publisher credential in each family. Other hosts may capture their allowed raw facts and register identical declarations, but cannot publish those summaries. No election is performed. Host and frame identity remain in the ingress history and run; material input hosts, part chains and record locations retain source copies when `Event.source` uses the logical family. Raw reading keys include their source-copy identity; canonical tool-call and turn keys converge under the configured publisher.
 
 New ingress frames retain their configured family and capture kind prefixes in the admission transaction. Historical frames without that evidence remain unknown and require an explicit mapping decision before family-based replay or material access. Current credential configuration does not retroactively assign their ownership.
 
@@ -211,7 +219,7 @@ Optional kind, definition-hash and class expectations are checked under the curr
 
 ### Public temporal and attention context
 
-An authenticated producer requests `PublicContext` on its own `public_context` subject through the framed reply transport. The deployment grants this capability explicitly with `public_context: true`; registration, write authority and event read grants do not grant it. The request contains no producer or host identity. Unknown request fields are refused, and NATS permissions restrict the subject and reply inbox to the authenticated identity.
+Decided target (2026-11-01): `PublicContext` with its owner tokens, the offline emergency assertion and its lease, and the coverage proofs on this subject go with the deferred work-snapshot path they serve; Polylogue shows "Sinex blocked" itself, its deliveries travel as ordinary facts, and Polylogue on Sinex reads the day setting and resumes from its confirmed-stream position like any consumer. Until then: an authenticated producer requests `PublicContext` on its own `public_context` subject through the framed reply transport. The deployment grants this capability explicitly with `public_context: true`; registration, write authority and event read grants do not grant it. The request contains no producer or host identity. Unknown request fields are refused, and NATS permissions restrict the subject and reply inbox to the authenticated identity.
 
 An available snapshot carries the shared `DaySettingWire`, a settings identity, the actual committed host-policy revision, quiet hours, the interrupt budget's configured limit and observed use, and its observation time. The identity covers the configured logical day, physical host and public attention settings. Private intervals, commands, paths, notification state and keys are excluded. An unconfigured host returns `unavailable`; an uninitialized policy or a checkpoint under different settings returns `pending`. A client retains these states and resolves the named zone explicitly at its operation boundary. One resolved snapshot serves query, rendering and signals for that operation; a cached older snapshot is identified as cached rather than substituted for current availability.
 
