@@ -51,7 +51,7 @@ Sources are explicit in a development run: `--sources FILE` selects daemon bindi
 
 `cargo xtask history explain RUN` shows resolved arguments, stages and slow tests. `history compare BEFORE AFTER` compares passed runs with matching command, exact arguments, host and toolchain; `history compare-days DATE DATE` groups UTC days by those same fields. Parallel test durations are separate from wall time. Recorded overlap does not by itself establish resource contention. `NEXTEST_TEST_THREADS` selects test concurrency unless explicit nextest options override it, and the resolved setting is recorded with the run.
 
-Crash cases share a four-slot nextest group, which bounds the backfills competing for the test PostgreSQL while the rest of the suite runs beside them. The group changes scheduling only; per-test deadlines stay fixed.
+Crash cases share a two-slot nextest group, which bounds the space their backfills take on the test PostgreSQL's tmpfs while the rest of the suite runs beside them. The group changes scheduling only; per-test deadlines stay fixed.
 
 The daemon shutdown law reads the supervisor's actual task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness retain their own bounded deadlines.
 
