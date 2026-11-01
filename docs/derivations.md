@@ -96,7 +96,7 @@ The states, archive, restore, replay and tombstone are defined in [the lifecycle
 ## Time
 
 - **Derived event time is the derivation's to declare.** Each derivation defines its outputs' `ts_orig` from its inputs, never "now". A pure mapping keeps its parent's time quality, unknown included. Processing time stays separate ([time](events.md#time)).
-- **One logical day.** Every day-grain product uses the one logical-day setting shared with Polylogue ([`DaySetting`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md); key and default in [operations](operations.md#logical-day)). Day- and hour-grain records state the boundary and zone they were cut with. Changing the setting is a version change of every day-grain derivation and recomputes them all under the one new setting.
+- **One logical day.** Every day-grain product uses the one logical-day setting shared with Polylogue ([`DaySetting`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md); key and default in [operations](operations.md#logical-day)). Day- and hour-grain records state the boundary and zone they were cut with. Changing the setting is a version change of every day-grain derivation and recomputes them all under the one new setting.
 - **Periods are half-open UTC instants.** The two instances of a repeated autumn hour are distinct periods; a nonexistent spring hour is not invented.
 - **The wake view sits beside the logical day.** `day.wake` events ([rest and the wake view](higher-layer.md#rest-and-the-wake-view)) let Today, the brief and narratives offer "since you woke" and a wake-to-wake view. They never redefine the logical day, never partition calculation and never change `group by day`. The logical day is shown first; the wake view is offered beside it.
 - A malformed negative duration is a failed input with its evidence, never clamped to zero.
@@ -136,7 +136,7 @@ Five things are kept apart:
 - **Across sources**, readings never replace each other. Two readings of one field-keyed record from different sources or export families (a calendar event in two exports, a contact in two accounts) are separate records unless a defined family groups them.
 - A family gets association only once its definition is written: what counts as one item, the scope that keeps hosts and accounts apart, exact shared identifiers first, and time-window matching only where nothing better exists, labelled as inference. Where capture can carry a shared token (one execution ID seen by both the shell and the terminal), capture it instead of matching.
 - Matches do not chain: A~B and B~C does not make A~C. A resolved output's key identifies its group under its policy, not a lasting occurrence.
-- Association is idempotent: recomputing it over the same live records and judgments gives the same groups.
+- Association is idempotent: recomputing it over the same live records and duplicate decisions gives the same groups.
 
 ### What fusion is not
 
@@ -164,15 +164,15 @@ Five things are kept apart:
 - Unknown-time observations stay queryable and are ineligible for time matching.
 - Unbounded spans use [overlap reads](#reads-outside-a-keys-period), not a fixed margin.
 
-### Basis, ambiguity and judgment
+### Basis, ambiguity and duplicate decisions
 
 Ambiguity is never silently resolved; the operator decides what a rule cannot.
 
-- **Every fused event records its basis**: `identifier` (an exact shared ID), `rule` (which rule and strategy matched, with the time distance) or `operator` (a judgment decided it); plus `ambiguous: n` when it chose among n candidates, and the stable references of the competitors.
-- **Ambiguous pairs become rows of the `duplicates` read model**, written by the fusion pass in the same transaction as its outputs. A row holds the pair's stable references (record or source-record-key citations, never reading IDs), the rule and strategy, the candidate count, the time distance, and the judgment state (`undecided`, `same`, `distinct`, with its author). It is queryable as the `duplicates` table ([planned query tables](reference/README.md#planned-pages)).
-- **`same A B` and `distinct A B` are authored records**: a request material plus a `fusion.judgment` event naming both sides by stable reference, the decision and the computed author. Fusion reads judgments as inputs. Because they cite records rather than readings, a judgment survives replay of either side and changes to the rules, and it never archives a member.
-- A judgment is withdrawn by its own authored act, which archives the judgment's reading; fusion then recomputes the pair.
-- **The operator's judgments govern.** Agents' judgments are recorded with their evidence and shown in `duplicates`; they govern only for rules where the precedence configuration admits agent judgments. The configuration is the same for every caller, and every caller can record a judgment ([callers](interfaces.md#callers)).
+- **Every fused event records its basis**: `identifier` (an exact shared ID), `rule` (which rule and strategy matched, with the time distance) or `operator` (a duplicate decision decided it); plus `ambiguous: n` when it chose among n candidates, and the stable references of the competitors.
+- **Ambiguous pairs become rows of the `duplicates` read model**, written by the fusion pass in the same transaction as its outputs. A row holds the pair's stable references (record or source-record-key citations, never reading IDs), the rule and strategy, the candidate count, the time distance, and the decision state (`undecided`, `same`, `distinct`, with its author). It is queryable as the `duplicates` table ([planned query tables](reference/README.md#planned-pages)).
+- **`same A B` and `distinct A B` are duplicate decisions**, authored records: a request material plus an event naming both sides by stable reference, the decision and the computed author. Fusion reads them as inputs. Because they cite records rather than readings, a decision survives replay of either side and changes to the rules, and it never archives a member. Decided target (2026-11-01): the kind is the one `duplicate` kind the library's duplicate review also writes, replacing `fusion.judgment`, because "judgment" means a verdict on one revision ([vocabulary](vocabulary.md)).
+- A duplicate decision is withdrawn by its own authored act, which archives its reading; fusion then recomputes the pair.
+- **The operator's decisions govern.** Agents' decisions are recorded with their evidence and shown in `duplicates`; they govern only for rules where the precedence configuration admits agent decisions. The configuration is the same for every caller, and every caller can record one ([callers](interfaces.md#callers)).
 - Status reports ambiguity per rule: undecided pairs, decided pairs, and fused events with `ambiguous > 1`.
 
 ### The fused kinds
@@ -184,9 +184,11 @@ Two families are defined and built (default; open operator question):
 | `command.fused` | Atuin and zsh history; other shells' histories and terminal reports join only when defined against their actual sources | exact command text after outer trimming, host, start, optional cwd, session, duration and exit, observed sources, all parents |
 | `mail.fused` | IMAP, mbox and account exports of one account | scoped provider message identity, headers, content fields |
 
-- Commands match closest first within 2 s, and within 60 s only when the match is unique. They carry basis, `duplicates` rows and judgments.
+- Commands match closest first within 2 s, and within 60 s only when the match is unique. They carry basis, `duplicates` rows and duplicate decisions. A command carrying an execution token joins the others with the same token with basis `identifier`, whatever their time distance; time windows remain for history without tokens.
 - Mail fused on Message-ID within its account scope is the unambiguous automatic case; no Date-header agreement is required.
 - A fused record's hour is the hour of its first supported start.
+**Shared execution tokens** (decided target, 2026-11-01). Sinex's Home Manager module ships a shell integration (zsh `preexec` and `precmd`, bash and fish equivalents, Kitty's shell-integration socket) that mints a UUIDv7 per command execution and emits it with the start, the working directory with its git common directory and root commit, the host, and the exit status. The token goes into an OSC 133 extension, so the terminal records it, and into the `command.reported` record that session capture reads; Atuin's hook records its own row ID beside the token. Fusion then matches new commands by identifier. A token minted where the event originates and captured by every observer is the model for every future family: capture the shared identity instead of matching on time.
+
 - Every other family is built once it is defined against its actual sources. Until then window focus, page visits, media plays, clipboard copies and notifications are separate source records.
 
 ## Intervals
@@ -309,8 +311,10 @@ Targets are stated as hardware-independent figures (rows read per key, invalidat
 - **producer-versions**: every derived event carries its producer version; a new version recomputes no history until switched (only new and dirty keys, with the mix disclosed); `--compare` reports exactly what the switch then writes; `keep_history` keeps old outputs and `recompute` replaces them; daemon start never recomputes history.
 - **stable-ties**: equal-time inputs with permuted IDs and commit order give identical fusion groups, intervals, sessions and episodes.
 - **fusion-basis**: only defined families produce fused events and none has one member; every fused event has a basis; every choice among n > 1 candidates records `ambiguous: n` and produces a `duplicates` row; mail with equal Message-ID in one account fuses without Date agreement.
-- **judgments-survive**: a `same` or `distinct` judgment still governs after both sides are replayed and the rule file changes; withdrawing it recomputes the pair.
+- **judgments-survive**: a `same` or `distinct` duplicate decision still governs after both sides are replayed and the rule file changes; withdrawing it recomputes the pair.
 - **fusion-scope**: two hosts, two desktops, two browser profiles or two accounts never fuse through time alone, and one fused group never holds two observations from one source.
+- **fus.defined-only**: the rule file holds only families with a written definition (`command`, `mail`); fusion refuses to start with an undefined family. *(start-up test)*
+- **fus.token-exact**: two command readings that share an execution token associate with basis `identifier`, whatever their time distance. *(property; decided target)*
 - **materialize-at-admission**: an `at_admission` derivation's outputs are committed before any request asks for them, and an `on_request` derivation names its reason.
 - **day-settings**: changing the logical-day boundary is a version change that recomputes every day-grain product under one setting; each output records the boundary and zone it used; `day.wake` never changes `group by day`.
 - **range-citation**: a day figure over two million inputs cites its read ranges, writes one `event_children` row per range, resolves to exactly the live inputs at the cited position, and is archived when one of those inputs is archived.

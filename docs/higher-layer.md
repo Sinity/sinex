@@ -1,13 +1,13 @@
 # The higher layer
 
-The higher layer answers the question an operator or an agent has on returning to work: what was I doing, on which project, what changed, what failed, what is still open, and which records establish that? The answer connects commands, windows, pages, files, git, tasks and Polylogue sessions, and every claim in it resolves to stored evidence. This page owns the products that answer it: presence, agency, activity, attention, project attribution, work episodes and the resume card, figures, answers, findings, forecasts, experiments, context packs and narratives, and the remaining derived products. Every product here is a derivation and follows [the derivation model](derivations.md) (keys, versions, time, the common payload, the lifecycle). How recall, context and the brief assemble these products for a caller is in [recall](recall.md); the synthetic world that exercises them end to end is in [testing](testing.md#the-synthetic-world).
+The higher layer answers the question an operator or an agent has on returning to work: what was I doing, on which project, what changed, what failed, what is still open, and which records establish that? The answer connects commands, windows, pages, files, git, tasks and Polylogue sessions, and every claim in it resolves to stored evidence. This page owns the products that answer it: presence, agency, activity, attention, project attribution, work episodes and the resume card, figures, descriptions, packs and narratives, and the remaining derived products. Constructs, studies, experiments and forecasts are [personal evidence](evidence.md). Every product here is a derivation and follows [the derivation model](derivations.md) (keys, versions, time, the common payload, the lifecycle). How recall assembles these products for a caller is in [recall](recall.md); the synthetic world that exercises them end to end is in [testing](testing.md#the-synthetic-world).
 
 ## Purpose
 
 These products carry the purposes Lynchpin served as a stopgap, rebuilt on primary data. Ruling, 2026-08-16: "it is literally a stopgap for sinex, but … it is crystallized intelligence regarding how higher layers of sinex should funciton" (cc:ec60fadc-f448-407d-baab-ce3741265a67:3f5eec78-a742-429f-b9e8-6078dbb6b172).
 
 - **Purposes are ported; formats are not.** Lynchpin's NDJSON products, DuckDB snapshots, graph nodes and hard-coded scores are evidence of intent. Sinex never reads them as input and rebuilds each purpose on the original source data. Ruling, 2026-07-07: "Not copied 1-to-1 (since, agin, lynchpin was just a stopgap) - but sinex should >>= lynchpin in basically all kinds of ways" (cc:cce07895-09a1-4d90-9313-3017a899291d:2cd02fc1-4978-4b92-8707-3bae0794d7ad).
-- **Results reach the operator in ordinary work**: agent session start, resumption, the brief, Today and signals. A product that needs a new daily ritual to be useful does not count.
+- **Results reach the operator in ordinary work**: agent session start, resumption, the day pack, Today and signals. A product that needs a new daily ritual to be useful does not count.
 - **No prescriptions.** No streaks, productivity scores, nudges, or actions taken on the operator's behalf from a narrative. The products describe; they do not grade.
 - **Operator time and agent time are separate measures** everywhere. Agent work runs beside operator work, not instead of it.
 
@@ -139,7 +139,7 @@ Anchors are structured objectives only, in order: an explicit task reference nam
 
 ### The resume card
 
-The resume card is an activity trail: a stored [`context.pack`](#context-packs-and-narratives) for one episode, with these sections in order:
+The resume card is the boxed rendering of an episode's resume pack, an activity trail: a stored [`context.pack`](#packs-and-narratives) for one episode, with these sections in order:
 
 1. **Where**: the episode label and its source, anchor, project, state; when last worked on and for how long, operator and agent time apart.
 2. **Goal**: the objective as recorded, cited; unknown if none.
@@ -152,53 +152,48 @@ The resume card is an activity trail: a stored [`context.pack`](#context-packs-a
 
 Asked with no argument, the answer is the top three candidate episodes, ranked by most recent operator act, then open failures and waits, then interruptions from an agent or an external source; one line each, with the full card for the first. Asked with a project, task, session, episode or time, it returns that episode's card.
 
-Polylogue supplies work as an atomic `polylogue.work_snapshot` (kind version 4, reducer version 2), keyed by logical session and reducer version. WorkActs reads only this complete set of typed human message metadata, calls and turns. Tool-call entry IDs identify individual source definitions independently of reused native or display call references. Ambiguous outcomes remain unknown, with partial coverage, and never become a negative failure result. The highest explicit reducer controls a session; older retained reducers stay citable, while an unsupported newer reducer prevents fallback. Each act cites the exact snapshot as its sole parent. Replacing a snapshot archives its previous derived chain before recomputation; an empty replacement retires omitted calls, turns and episodes. The adapter does not combine old per-entry work records with the snapshot.
+Polylogue's work arrives as ordinary kinds through the producer contract: `polylogue.session`, `polylogue.prompt`, `polylogue.tool_call`, `polylogue.live_interval` (waiting, working, stalled, idle) and `polylogue.commit_link`, declared in Polylogue's producer `hello` with each kind's [stratum](recall.md#strata) ([producers](producers.md#kind-registration)). The agency, attribution and episode derivations read them like any kind, and Sinex knows no Polylogue kind by name. Decided target (2026-11-01): the current build's atomic `polylogue.work_snapshot` with its reducer versions, `work.coverage`, and the owner-signed coverage path it rides on go; Polylogue resumes from its confirmed-stream position like any consumer. Unknown outcomes stay unknown with partial coverage, never a negative result.
 
-`work.coverage` records complete, partial or unavailable interpretation, with eligible, timed and untimed entry counts and reason codes. Snapshot positions are commit positions, never wall times. Entries without a recorded start remain readable in the snapshot and contribute an explicit unknown-time count. Unsupported reducers produce unavailable coverage and no fallback to an older reducer's acts. Source time quality, precision and bounds stay explicit. A period's start does not become an action instant; selected sparse source copies keep coverage partial. A retired snapshot contains no session metadata or entries and withdraws the preceding chain with complete zero-entry retirement coverage.
-
-Cards are recomputed on suspension and on new evidence. The session-start hook reads a prepared card; a stale or missing card returns the episode's reference and age, never a synchronous rebuild or a model call (deadline and request shape: [agent arrival](recall.md#agent-arrival)). Polylogue's session-start brief embeds the card by reference with its budget share; Sinex owns presence, agency, attribution, episodes and the machine-side trail, and Polylogue owns its own half ([Polylogue agents](https://github.com/Sinity/polylogue/blob/master/docs/agents.md)).
+Resume packs are recomputed on suspension and on new evidence. The session-start hook reads a prepared pack; a stale or missing pack returns the episode's reference and age, never a synchronous rebuild or a model call (deadline and request shape: [agent arrival](recall.md#agent-arrival)). Polylogue's session-start brief embeds the here pack by reference with its budget share; Sinex owns presence, agency, attribution, episodes and the machine-side trail, and Polylogue owns its own half ([Polylogue agents](https://github.com/Sinity/polylogue/blob/master/docs/agents.md)).
 
 ## Figures
 
 - `metric.figure` and `health.figure`: a metric declares its input kinds, its measure (event count, interval-union seconds, ratio, typed numeric or map sum), units, dimensions and observing sources.
 - Hourly figures hold period and day, metric and dimension identity, a nullable value, numerator and denominator, counted and supporting rows, and exact parents. **Daily figures read hourly figures only.** Ruling, 2026-10-11: "yes things are supposed to be hierharhical like that to scale sensibly" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
 - Counts are attributed once, at original starts; durations clip the interval union into every overlapping hour. Daily ratios sum numerators and denominators; averages derive from sums and known counts, never means of hourly means. Distinct sources per day come from dimension identities. Overlap reads include every interval that began before the period.
-- Coverage per cell is `observed`, `partial`, `recorded_unknown_coverage`, or `missing` with a reason. Sparse positive-event exports never turn silent days into observed zeros.
+- Every cell has a state and no default ([figure cells](evidence.md#figure-cells)). Sparse positive-event exports never turn silent days into observed zeros.
+- Each metric declares the construct it operationalizes, its role and validity ([the metric catalog](evidence.md#constructs-and-the-metric-catalog)).
 - Biological health figures and component status are separate kinds.
 
-## Answers and findings
+## Descriptions, not insights
 
-- **Every analysis answer is admitted before it is returned.** `recipe.answer` holds recipe and method versions, normalized typed parameters and settings, the logical-day setting, the period, the event and visibility positions read, the coverage evidence and its hash (including run identities, because a run can end without advancing the commit position), typed estimates or typed not-estimable reasons, denominators and diagnostics, findings and caveats, and its figure or request parents. It is keyed `query:<hash>` ([identity](derivations.md#identity-of-derived-records)).
-- Reusing an answer requires the same normalized question, method, grant-sensitive selection and evidence snapshot. Changed evidence marks it dirty, and an exact historical answer stays readable. A computation racing a change either produces a correctly bound historical answer or leaves the key dirty.
+The higher layer describes the past; it never produces "insights" as objects. Every statement Sinex makes unasked is exactly one of:
+
+1. **a fact** with its citation ("cargo test failed at 23:31, exit 101");
+2. **a measure** with unit, numerator, denominator and coverage ("typing time 1 h 10 min; 19 of the prior 28 days observed");
+3. **a comparison** between two named selections with its method ("below the prior 28 days' range");
+4. **a co-occurrence** labelled as such (`pattern.match`: "a failing test, an edit, then a passing test within 9 minutes; pattern, not cause").
+
+What appears in "Worth a look" is chosen by **selection rules declared in the recipe** (a failure with no later pass; a deviation outside the prior range; an episode resumed after more than two days; a stall), each line naming the rule that chose it. There is no insight kind, no priority, no score, no dismissal lifecycle and no model in the loop. Narratives are prose over a pack, bound to its slots, and stay off with the model features; the template rendering is the shipped narrative.
+
+- **Studies, findings, experiments and forecasts** are [personal evidence](evidence.md). A computed analysis is a `study.result`, keyed by the study revision and its evidence identity; reusing it requires the same question, method, grant-sensitive selection and evidence, and an exact historical result stays readable. Decided target: this replaces the current `recipe.answer`, because a recipe is a list of sections and an answer is one query evaluation ([vocabulary](vocabulary.md)).
 - **A finding** declares its evidence class (authorship class, epistemic role, claim status), period, unit, denominator, method and settings, estimability, estimate and uncertainty, caveats, and supporting and contradicting references. Association is never presented as causation.
-- **Methods** (correlation, trend, change-point with false-discovery control, effective sample size and refusals) are pure code in `sinex-analysis`; their results are stored events.
 - **`rhythm.deviation`** is a stored event per day and measure, computed from a prior-only window (default 28 calendar days with at least 14 observed days, in settings). Too little evidence is not estimable, never a zero deviation. Retrospective baselines are not stored. Rhythm's default input measures are daily physical key presses and typing seconds from `input.workload`; only days with complete recorded input coverage enter the baseline, and fewer than 200 presses leaves typing seconds not estimable. `rhythm.window_days` and `rhythm.minimum_days` configure the window and required sample.
 - **`pattern.match`** finds configured sequences: kinds, ordered predicates, maximum gap and scope. It stores the template version, ordered parents and actual gaps, labelled as co-occurrence. Build, fix and test cycles, AI work followed by file overlap and a commit, and deep work followed by a commit are templates. Every valid match is stored; a top N is presentation.
 - **Relationships are typed reference events and joins**, not a stored graph: mention, about, same resource, explicit task or commit closure, membership; each endpoint is checked at admission. Time, project and containment relations are ordinary joins. Corroboration lists its sources, never a weighted score.
 - Agent annotations keep author, session, target, rubric and check state; an unchecked claim is never promoted into a measured fact.
+- **Operator time and agent time are never summed** in any pack, lane or figure.
+- **Compare is a verb.** Any two selections (this week and the prior four, this day a year ago, before and after a configuration change) compare lane by lane as figures with both sides' units, denominators and coverage; a side with insufficient coverage is not estimable. "On this day" is a compare across years, and a year without coverage is labelled unobserved.
 
-## Forecasts and experiments
+## Packs and narratives
 
-- **`forecast.issued`** records the question, resolution rule, horizon, probability or distribution, information cutoff, author and method. Citations of the information it was based on must be recorded before the cutoff.
-- **`forecast.resolved`** records the outcome (`true`, `false` or `unknown`), the live evidence that resolves it, and when the outcome happened; without that time, it stays unknown.
-- **Scoring is a stored `recipe.answer`**: the Brier score over known outcomes and calibration in ten bins. Two conflicting known resolutions of one forecast make the score not estimable until one is archived; an archived forecast leaves the score.
-- **An experiment** is a set of authored records: protocol, assignment, exposure and outcomes. A causal estimand is reported only when assignment was recorded; otherwise results are associations. Planning and running benchmarks belong to the devkit; Sinex analyses their manifests.
+### Packs
 
-An **estimand** is the quantity the experiment asks to estimate, fixed by its
-protocol: the target population, intervention and comparison, outcome, and time
-horizon. It is distinct from the estimator used to calculate a value. A reported
-association is not a causal estimand merely because its inputs share a time
-window; missing assignment leaves causal interpretation unavailable.
+The resume pack, the here pack (the machine section of an agent's brief), the day pack, period and project packs and narratives are all built by the one deterministic assembly ([recipes and packs](recall.md#recipes-and-packs)) from named queries and stored findings, at one read snapshot with a fixed evaluation instant and settings. Each result is a stored product:
 
-## Context packs and narratives
-
-### Context packs
-
-The resume card, the agent machine section, context packs, the daily brief, daily, weekly and monthly narratives and project retrospectives are all built by the one deterministic assembly ([the one assembly](recall.md#one-assembly)) from named queries and stored findings, at one read snapshot with a fixed evaluation instant and settings. Each result is a stored product:
-
-- **`context.pack`** and **`narrative.period`** hold the specification and its version; selectors (project, objective, episode, period); the evaluation instant; settings; the event and visibility positions and coverage identity; ordered sections with typed status and reason, findings, supporting and contradicting citations, and denominators; and complete item counts. The key is the specification, selectors, settings, evidence identity and assembly version.
+- **`context.pack`** and **`narrative.period`** hold the recipe and its version; selectors (project, objective, episode, period); the evaluation instant; settings; the event and visibility positions and coverage identity; ordered sections with typed status and reason, findings, supporting and contradicting citations, and denominators; and complete item counts. The key is the recipe, selectors, settings, evidence identity and assembly version.
 - The stored product is complete. Budgeted renderings (in bytes or tokens, whole items only, with omission counts and continuation) are presentations ([interfaces](interfaces.md)); they never replace or truncate the stored product, and no fixed day, project or item count truncates it.
-- **Resume and context packs are task-scoped**, one episode each, never one global memory; their section order is the [resume card's](#the-resume-card). Day narratives are lists of episode cards plus the presence and agency composition.
+- **Resume packs are task-scoped**, one episode each, never one global memory; their section order is the [resume card's](#the-resume-card). Day narratives are lists of episode packs plus the presence and agency composition.
 - Sections: data quality first (daily and weekly); activity composition with unallocated and unknown time; projects, objectives and last actions; outcomes and open work; rest, rhythm and deviations when their evidence exists; machine incidents; notable patterns; caveats and counterevidence. A missing source has its section status and reason; a day without evidence reports coverage and the absence of supported findings, never a story about inactivity.
 
 ### Narratives
@@ -233,7 +228,7 @@ Each is a derivation with its inputs, output kind, key and time rule.
 | Plan versus actual | authored plans (todos, calendar, task estimates) and episodes → `plan.comparison` | descriptive; no score |
 | Consumption episodes | plays, visits, reading → `consumption.episode` | grouped by resource and session |
 | Communication threads | mail, chat → `thread.membership`, `thread.span` | identity from provider or account IDs or actual reply links, never subject text alone |
-| Mark links | `operator.mark` and nearby records → `reference.about` | delayed linking by stable keys and containing time |
+| Note links | a [note](recall.md#notes) anchored at an instant, and nearby records → `reference.about` | delayed linking by stable keys and containing time |
 | Paste attribution | clipboard and later text → `reference.pasted_from` | exact content identity |
 | Machine episodes and incidents | machine metrics, journal, unit intervals → `machine.episode`, `machine.incident` | thresholds from configuration; signatures as declared templates |
 | Component reports | typed component observations → `component.report` | requires an actual observation feed and an expected-component set; silence and run rows never imply a healthy status |
@@ -245,8 +240,7 @@ Exact mention records (`resource.mention`) are built. Merging identities beyond 
 
 ### Self-reports
 
-- Self-reports are authored records: a request material plus an event per answer (mood, energy, what I am doing, a rating of a card), with the computed author and, when there was one, the prompt that elicited it as a parent.
-- Elicitation prompts are deliveries of declared signal rules ([signals](interfaces.md#signals)), so any elicitation design is configuration. No prompts are sent until the operator designs them; spontaneous self-reports and an optional monthly rating of resume cards are accepted (default; open operator question).
+Self-reports are [notes](recall.md#notes) whose body carries an instrument value, with the prompt that elicited them, when there was one, as parent and its latency recorded. Elicitation prompts are deliveries of declared signal rules ([elicitation](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md#elicitation)), so any elicitation design is configuration. No prompts are sent until the operator decides which may be (default; open operator question); spontaneous self-reports are accepted. The instruments personal evidence uses are in [personal evidence](evidence.md#self-reports-and-intake).
 
 ### Model suggestions
 
@@ -254,19 +248,7 @@ Exact mention records (`resource.mention`) are built. Merging identities beyond 
 
 ## What Lynchpin's purposes become
 
-Sinex's coverage of Lynchpin is judged by purpose, not by module. The purposes and the products that serve them:
-
-| Purpose | Sinex products |
-|---|---|
-| day panel and rollups | [figures](#figures), [context packs](#context-packs), Today ([web](web.md)) |
-| cross-source correlations (weather, mood, substances, sleep and productivity), load index, life phase, readiness forecasts | [findings](#answers-and-findings), `rhythm.deviation`, [forecasts](#forecasts-and-experiments) |
-| sleep and rest | [rest](#rest-and-the-wake-view) |
-| activity, input and terminal | [presence](#presence), [agency](#agency), [activity](#activity-windows-and-sessions), [attention](#attention) |
-| projects, code and work: velocity, campaign and current state | [attribution](#project-attribution), [episodes](#work-episodes), [the resume card](#the-resume-card) |
-| machine incidents and quota advice | [other products](#other-products) |
-| evidence graph and presentation: references, corroboration, patterns, packs, narratives | [answers and findings](#answers-and-findings), [context packs and narratives](#context-packs-and-narratives) |
-
-Lynchpin's MCP tools and actions map onto Sinex's ordinary surfaces: status, the analysis catalog, the query language, findings, recipes and the brief ([interfaces](interfaces.md)). Nothing needs a separate operations tool for materializing or pruning, because every product is a maintained derivation. Lynchpin's lessons kept: title normalisation and heartbeat re-merging belong in source parsers; agency is modelled and used; the attention parameters are a named profile.
+Sinex's coverage of Lynchpin is judged by purpose, not by module, one purpose at a time, each switched off only when its replacement passes its named check ([retiring Lynchpin](evidence.md#retiring-lynchpin)). Lynchpin's MCP tools and actions map onto Sinex's ordinary surfaces: status, the query language, recall and the evidence units ([interfaces](interfaces.md)). Nothing needs a separate operations tool for materializing or pruning, because every product is a maintained derivation. Lynchpin's lessons kept: title normalisation and heartbeat re-merging belong in source parsers; agency is modelled and used; the attention parameters are a named profile; deep work and fragmentation are descriptive products shown in period and compare views with their numerators and denominators, never on Today and never as a score of the operator.
 
 ## Performance
 
@@ -274,7 +256,7 @@ Targets follow [the derivation performance rules](derivations.md#performance).
 
 | Concern | Target |
 |---|---|
-| Resume and context | a prepared card is read within the hook deadline ([agent arrival](recall.md#agent-arrival)); an on-demand card is warm p95 < 2 s for a 30-day project; the first evidence page arrives in < 1 s |
+| Resume and recall | a prepared pack is read within the hook deadline ([agent arrival](recall.md#agent-arrival)); an on-demand card is warm p95 < 2 s for a 30-day project; the first evidence page arrives in < 1 s |
 | Figures | daily figures read hourly figures, verified by rows read; 30-, 365- and 730-day histories measured with selection, computation, admission and rendering apart |
 
 ## Laws
@@ -285,6 +267,9 @@ Targets follow [the derivation performance rules](derivations.md#performance).
 - **path-components**: `/work/app` never owns `/work/apple`, and a renamed root attributes history by its effective date.
 - **exact-over-inferred**: an inferred tier never displaces an exact owner, and conflicting exact owners stay unallocated.
 - **episodes-persist**: an episode resumed after five days is one episode; dormancy never closes it; two tasks in one repository are two episodes.
-- **stored-hierarchy**: every answer, finding, pack, card and narrative returned by any surface is a stored event whose citation resolves, and daily figures read only hourly figures.
+- **stored-hierarchy**: every study result, finding, pack and narrative returned by any surface is a stored event whose citation resolves, and daily figures read only hourly figures.
 - **narrative-grounding**: a narrative with an unbound number, a nonexistent citation or a dropped caveat is refused.
 - **complete-products**: sessions beyond 10,000 windows, traces beyond 100 levels, and packs over all projects and days are complete.
+- **hl.no-insight-kind**: no registered kind carries an insight, priority, importance or score field, and every "Worth a look" line names the declared selection rule that chose it. *(schema lint and pack test; decided target)*
+- **hl.agent-time-apart**: operator time and agent time are never summed in any pack, lane or figure. *(property over all measure kinds; decided target)*
+- **hl.compare-denominators**: every compare row carries both sides' units, denominators and coverage, and a side with insufficient coverage is not estimable. *(query test; decided target)*

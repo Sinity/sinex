@@ -1,6 +1,6 @@
 # Sources
 
-How Sinex captures: what a source is, how it is declared, which inputs it reads and which materials it stores, how capture survives everything downstream of it, how gaps and source health are recorded, and the rules every source's records follow. The material model and staging as a concept are in [materials](materials.md); records, readings and identity in [events](events.md); the base-layer streams and their spools in [streams](streams.md); each source family and the catalog of sources in [source families](source-families.md); the producer wire contract in [producers](producers.md); privacy in [privacy](privacy.md); status presentation in [interfaces](interfaces.md#status).
+How Sinex captures: what a source is, how it is declared, which inputs it reads and which materials it stores, how capture survives everything downstream of it, how gaps, input states and coverage make completeness visible, and the rules every source's records follow. The material model and staging as a concept are in [materials](materials.md); records, readings and identity in [events](events.md); the base-layer streams and their spools in [streams](streams.md); each source family and the catalog of sources in [source families](source-families.md); the producer wire contract in [producers](producers.md); privacy in [privacy](privacy.md); capture from other hosts and devices in [hosts](hosts.md); status presentation in [interfaces](interfaces.md#status).
 
 ## Purpose
 
@@ -12,7 +12,9 @@ Scope is every input that is not an AI session: shell and terminal, desktop stat
 
 `services.sinex.enable = true` captures every source whose canonical input exists on the host. There is no per-source enable option and no opt-in feature: a source that is built is on. Ruling, 2025-06-27: "I didn't have all these event sources, features written to then have them disabled. Defaults should be ~full-featured." (cc:57547e40-5ef5-4e62-b089-a09820967865:e0902901-9329-4f3f-a320-461eca10109c). Ruling, 2026-05-24: "should not have optins to be clear" (cc-queued:67eb2417-f1d1-4623-a652-ceb0e4c653e3@2026-05-24T10:09:42Z).
 
-**Discovery** finds applicable inputs at canonical locations: the host layout registry, XDG locations, each tool's own configuration and the configured accounts. It runs at start and during operation, so a new browser profile, mail folder, device, journal namespace or repository is captured when it appears, without a restart. Existing roots expand by their provider's own rules (browser profiles, ledger includes, note attachments, archive members, git worktrees, device channels). There is no recursive search of the whole host; inputs are found where their programs put them.
+**Discovery** finds applicable inputs at canonical locations: the host layout registry, XDG locations, each tool's own configuration and the configured accounts. It runs at start and during operation, so a new browser profile, mail folder, device, journal namespace or repository is captured when it appears, without a restart, and a passive notice names the new input. Existing roots expand by their provider's own rules (browser profiles, ledger includes, note attachments, archive members, git worktrees, device channels). There is no recursive search of the whole host; inputs are found where their programs put them.
+
+**Discovery dry run** (decided target): `sources discover` prints what Sinex would capture on this host, what it is capturing, what is excluded with reasons, what awaits credentials, and which catalog entries apply to the host but have no implementation, so the catalog's floor is measurable and source work can be ordered by what the host actually has.
 
 **Exclusion is the only per-source setting:** `exclude.<source> = { reason = "…"; }`, optionally narrowed to one input. Status lists every exclusion with its reason. No answer means everything; a subset needs a recorded reason. Content that should not be shown is handled by output rules in [privacy](privacy.md), which never limit capture.
 
@@ -46,12 +48,15 @@ Each source has one declaration in Rust, with its parser and event kinds beside 
 | time quality | per event kind: which clock each time comes from, and its precision |
 | field hints | per payload field, from the [hint vocabulary](privacy.md#field-hints) |
 | correlation identifiers | window, process, session, request and other identifiers the source records; derivations join only on declared identifiers or on time |
-| coverage | which periods, accounts or products a material can and cannot contain; for an export, the period it covers (an export is never "stale"); for a continuous source, its health expectation |
-| expiry | `expires_after`, where the provider expires its own records (Chromium history: 90 days) |
-| health expectation | `expect` (event-driven with `stale_after`, or a cadence), `required_fields`, an optional `probe` that checks the input is reachable, and `runaway_bytes_per_day`, above which a day's volume is reported as a runaway |
+| `expect` | when the source should have something: `continuous { silent_after }` (a live stream whose silence past `silent_after` is a stall), `cadence { every }` (a poll), `export { products }` (an export-only provider, whose coverage is the span each export covers; an export is never "stale"), or `on_demand` |
+| `expires_after` | where the provider expires its own records (Chromium history: 90 days; recently-played windows; CI logs); drives the [expiry race](#completeness) |
+| `coverage_note` | which periods, accounts or products a material can and cannot contain, beyond `expect` |
+| `required_fields`, `probe`, `runaway_bytes_per_day` | fields every record must carry; an optional probe that checks the input is reachable; the volume above which a day is reported as a runaway |
 | search | `none`, `words` or `words_and_trigram` per event kind; a kind is kept out of the text index by declaring `search: none`, never by matching its name |
 | settings | a typed struct of what a deployment actually varies: input locations, accounts, capture devices and regions, poll intervals |
 | acceptance query | at least one question the source answers, written in the [query language](query.md); it is the source's acceptance test |
+
+Decided target (2026-11-01): `expect` and `expires_after` replace the separate health-expectation and coverage rows, because both answer one question, when this source should have something. The current `SourceSpec` fields `excisable` (excision is gone; the [lifecycle](lifecycle.md) is the one way to remove data) and the per-source privacy `class` (privacy is field hints plus the operator's output rules) are removed. Nothing in a declaration subsets capture: no filter, cap, debounce, MIME choice or field subset.
 
 - **Settings are what a deployment varies.** Per-process plumbing (resource limits, instance counts, batch sizes, bind mounts) is not a setting; it is fixed in the code or the module. Source options are typed and reject unknown fields at start.
 - **Per-user facts are configuration; vendor facts are declaration.** Account names and personal paths come from the deployment's configuration, never from source code. How a vendor writes its data belongs to the declaration: Wykop's timestamps are Warsaw local time because that is how Wykop writes them. Machine-independent setup (units, the access bridge, spool layout, journal capture, device rules) lives in Sinex's own module ([operations](operations.md#deployment)); a deployment supplies only host values.
@@ -150,6 +155,7 @@ Every interval in which a stream may have missed data is one `capture.gap` event
 | `encoder` | an encoder dropped frames or samples |
 | `provider` | an expired sync token, a failed or partial page, a history 404 |
 | `sequence` | a gap in the source's own sequence numbers |
+| `stalled` | a continuous source silent past its `silent_after` (decided target) |
 
 - Sequence numbers are assigned before enqueueing, so omissions stay countable. `bus.connection` events hold connection start and end only.
 - Numbered lake envelopes compare valid records of the same host, lane and declared boot or session generation. A proven gap is an ordinary `capture.gap` event with reason `sequence`, anchored at the later source record. `sequence.first_missing` and `sequence.last_missing` are inclusive; their difference plus one is the missing count. A parse failure makes the interval through the next valid record unknown. An unqualified decrease leaves the generation unknown; an explicit generation change starts a new baseline. Committed parser carry preserves comparisons across restarts of the binding. A new rotated binding begins with unknown continuity rather than inferring loss before its first record.
@@ -160,20 +166,49 @@ Every interval in which a stream may have missed data is one `capture.gap` event
 
 Status keeps these facts per source; [interfaces](interfaces.md#status) presents them as one `sources` relation, with gaps, inputs and shape history as further relations:
 
-- state: discovered, excluded (with reason), unavailable (with cause), capturing, backlogged, failed, unread;
+- the input state ([input states](#input-states));
 - parser version; last attempt and its outcome; last record captured and last admitted; cursor; oldest backlog;
 - raw records and bytes against admitted events; failures and the refusal rate; sampled counts and exemptions; gaps;
 - "ran, only repeats" distinct from "did not run".
 
 A registered command or a live process does not establish capture; only admitted records do.
 
-- **Read outcomes are one current coverage reading per binding.** Each binding on each host, and each input discovery finds unreadable, has one live `source.coverage` reading: observed, partial, recorded with unknown coverage, or missing with the error. A read admits a newer reading only when the state or its reason differs from the current one, so an unchanged binding read every few seconds writes nothing, and the time of the current reading is when that state began. Earlier readings stay in history as archived readings. A restarted daemon continues from the stored readings. An explicit one-time read (`backfill`, `stage`) records its own outcome.
+- **Read outcomes are one current coverage reading per binding.** Each binding on each host, and each input discovery finds unreadable, has one live `source.coverage` reading: observed, partial, recorded with unknown coverage, or missing with the error. A read admits a newer reading only when the state or its reason differs from the current one, so an unchanged binding read every few seconds writes nothing, and the time of the current reading is when that state began. Earlier readings stay in history as archived readings. A restarted daemon continues from the stored readings. An explicit one-time read (`backfill`, `stage`) records its own outcome. These readings are inputs of the [coverage read model](#completeness), which states coverage in the shared vocabulary.
 - **Not present yet is not missing.** An input that does not exist yet (an export never staged, a device never attached) is waiting for input: status shows it as such, and it writes no coverage reading. An input that exists but cannot be read is missing, with the reason; once it can be looked at again, a newer reading replaces the missing one.
 - **One run per source while it is read.** The daemon holds one source run per source, parser version and host for as long as it reads that source, and one run for the coverage readings, ending them when it stops; a read round starts no runs.
-
-- **Stalls.** A continuous source silent past its declared `expect`/`stale_after` is shown as quiet. A stalled source writes a self-observation event and raises an interrupting notice; delivery follows the [signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md) contract.
 - **Runaways.** A day's volume above `runaway_bytes_per_day` is reported as a runaway, so noise is found and fixed at its source.
 - **Disk runway.** Status always shows free space and the days remaining at the measured write rate, with a warning below 14 days. Nothing is refused for space; capture pauses only on a truly full filesystem.
+
+### Input states
+
+Decided target (2026-11-01). An input has exactly one state at any time, and that state is the vocabulary of status:
+
+| State | Meaning |
+|---|---|
+| `capturing` | reading and keeping up |
+| `backlogged` | reading, with records waiting behind the cursor |
+| `quiet` | nothing new, within its expectation |
+| `stalled` | a continuous source silent past `silent_after`, or a reader that fails on every attempt while its process lives |
+| `held` | a remote producer that was capturing has not reported past a point while out of contact ([hosts](hosts.md#contact-held-data-and-coverage)) |
+| `unavailable(cause)` | `not_present`, `permission_denied(grant)`, `awaiting_credentials` or `not_applicable` |
+| `excluded(reason)` | the operator's exclusion |
+| `finished` | a one-shot stage that read everything |
+
+The state is computed from facts already stored (cursor, last record, expectation, last attempt and its outcome, the producer's capture report); nothing stores the state itself, so it cannot drift from them.
+
+## Completeness
+
+Decided target (2026-11-01). Three questions always have an exact answer: what does Sinex hold, how is it known to be complete, and how did each fact get here. A quiet source and a dead one look different everywhere, and missing data is visible as missing in every answer, not only on a status page.
+
+**Coverage** is, for each `(source, input, interval)`, one of `complete`, `gap(reason)`, `unknown`, `outside_span`, `not_yet` (its next opportunity has not come), `excluded`, `unavailable(cause)`, or `held` ([hosts](hosts.md)). The vocabulary is shared with Polylogue and with `fill` ([query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md)). It is computed from expectations, cursors, material time spans, export spans, gaps and producers' capture reports.
+
+- **The coverage read model** is maintained from the commit log with a consumer position, like search, at hour grain per input, so a day grid or a minute lookup is an index read. It is never a second source of truth: resetting its position rebuilds it from events. Source health, recall's coverage header, fill, Lynchpin-retirement parity and the Sources grid all read it, so they agree.
+- **A coverage facet on every timed answer.** A query over events with a time span returns, beside its rows, `coverage: [{source, complete_fraction, gaps, unknown}]` for the sources whose kinds it read. A count over a span with any coverage that is not complete is marked `lower bound`. An empty answer over an unobserved interval never reads as "nothing happened".
+- **Accounting identity.** Per material and per input: records framed = admitted + repeats + revisions + removed at source + failures + accounted headers. Every number on the inputs board is a sum over this identity, and a mismatch is a defect, not a status.
+- **Silence has a deadline.** A continuous source silent past `silent_after` becomes `stalled`, records a `capture.gap` with reason `stalled`, and raises one interrupting notice per stall, with its evidence, the last success and a next action: "Shell history (Atuin) stopped: no record since Tue 3 Mar 09:14 although zsh history recorded 212 commands since; the reader reports `database busy` on every poll." Recovery clears it, and a later catch-up read never deletes the gap. An unchanged successful poll is never a stall, and low counts alone never raise one.
+- **Expiry race.** For a source with `expires_after`, status shows the margin between its last capture and the provider's expiry, and a notice fires before data is lost at the provider (interrupting when the margin is below one poll period). Placing such pollers on an always-on host is the structural fix ([placement](hosts.md#placement)).
+- **Export freshness.** For export-only providers, status shows the newest covered day per product and how old the newest export is, so "take a new export" is a prompt with a reason.
+- **Signals.** Stall (interrupting), expiry race, runaway volume, refusal-rate spike, disk runway below 14 days, new input, parser arrival and stage finished (passive) are shipped rules ([signals](interfaces.md#signals)).
 
 ## Retention and redundancy
 
@@ -204,6 +239,7 @@ Targets are stated per event and per byte so any host can check them: raw record
 - **Freshness.** Discrete live records are visible within 5 s at p95; media within one closed segment plus 5 s; polling sources within their declared interval plus 5 s. A catch-up drains at a net positive rate while live capture continues.
 - **Admission on real shapes.** Throughput is verified on dense, real-shaped records (fitness points, audit records, telemetry, journal entries), not only on a synthetic count.
 - **Memory** scales with read buffers, parser carry and the largest record being parsed, never with the input or its history. File, archive and media bytes stream into storage; no whole-file byte buffer is required.
+- **Coverage reads.** The Sources grid over 7 days and all sources answers in ≤ 100 ms from the coverage read model (one row per input-hour); the coverage facet adds ≤ 10 ms to a query; stall detection follows `silent_after` within one evaluator tick (≤ 60 s).
 - **Upstream page limits** are paged to exhaustion, and a limit the provider imposes is recorded as its coverage.
 - Performance is measured as paired benchmark runs ([testing](testing.md)); no test asserts elapsed time.
 
@@ -240,7 +276,13 @@ Every implemented source passes the common checks: acquire two records including
 - **gap-reasons-recorded**: overflow, disconnected, encoder, provider and sequence gaps each produce a `capture.gap` with stream, interval, reason and missing count, and status never shows such an interval as empty.
 - **coverage-on-change**: a hundred read rounds of an unchanged binding admit one coverage reading, one material and no more than one source run and one coverage run; a failure replaces the current reading, and a restarted reader writes nothing for an unchanged binding.
 - **waiting-input-is-not-missing**: an input that does not exist yet writes no coverage reading; an unreadable input writes one missing reading, which a newer reading replaces once the input can be looked at.
-- **stall-notice**: a continuous source silent past `stale_after` is shown quiet and raises the configured notice.
+- **stall-notice**: a continuous source silent past `silent_after` changes to `stalled` and raises exactly one interrupting notice per stall; recovery clears it, and an unchanged successful poll never raises one.
+- **cap.no-subset-by-default**: no source declares a filter, cap, debounce, MIME choice or field subset at capture. *(registry lint; decided target)*
+- **cap.no-host-coupling**: no source, test or default contains a host path, account name, zone or day start. *(lint over the repository; decided target)*
+- **acct.identity**: for every material, records framed = admitted + repeats + revisions + removed + failures + headers. *(property over every parser; decided target)*
+- **cov.no-false-empty**: a query over an interval in which a source is not `complete` never reports zero for that source without the `lower bound` mark. *(query test; decided target)*
+- **cov.expiry-race**: when the margin between a source's last capture and its `expires_after` falls below one poll period, a signal fires. *(clock-driven test; decided target)*
+- **gap.never-filled**: a gap is never deleted or overwritten; a later catch-up read is a new reading, and the gap stays. *(integration; decided target)*
 - **sampling-keeps-raw**: with sampling declared, raw bytes stay complete, discrete and typed-view packets are never sampled, counts are reported, and replay at stride 1 restores every event.
 - **no-retention**: no code path deletes a material, spool segment, gap or self-observation event by age.
 - **no-plausible-defaults**: a record missing a field yields a record failure or an absent value, never a zero, empty string or current timestamp.

@@ -1,6 +1,6 @@
 # Media library
 
-The media library is how the operator adds, describes, organizes, finds, compares and uses media of any kind inside Sinex: items and their copies, revisions and renditions, tags and properties, notes, collections, sets and fixed selections, ratings, comparisons and rankings, the library's view of saved and visited pages, and exact opening. This page owns the library's model, its features and its laws. Neighbouring pages own the mechanisms it rests on: [materials](materials.md) and [admission](admission.md) store and admit every library input; [the lifecycle](lifecycle.md) archives and tombstones them; [sources](sources.md) owns acquisition (scans, imports, page capture); [derivations](derivations.md) owns the runner that computes items and shown values; [the query surface](query.md) and [interfaces](interfaces.md) own the query language, the operation table and the CLI and MCP spelling of the library operations.
+The library is how the operator and agents keep, describe, organize, find, judge and use anything they have seen, saved or made, inside Sinex: files, web pages, documents, images, videos, books and tracks, and catalog objects such as a video or a paper. It covers items and their locators, encounters, copies, revisions and renditions, page captures, tags and properties, notes, collections, ratings, comparisons and rankings, the link to Polylogue's sessions, and exact opening. This page owns the library's model, its features and its laws. Neighbouring pages own the mechanisms it rests on: [materials](materials.md) and [admission](admission.md) store and admit every library input; [the lifecycle](lifecycle.md) archives and tombstones them; [sources](sources.md) owns acquisition (scans, imports, page capture); [derivations](derivations.md) owns the runner that computes items and shown values; [the query surface](query.md) and [interfaces](interfaces.md) own the query language, the operation table and the CLI and MCP spelling of the library operations.
 
 ## Purpose
 
@@ -16,11 +16,13 @@ The principles that shape every feature below:
 - **Missing content, uncertainty and conflicts are reported, never hidden.** A successful command or an imported catalog is not evidence of a useful library.
 - **Nothing expires.** There is no media tiering or retention: media is kept until the operator archives it.
 
+Decided target (2026-11-01). The current build is a file library whose curation kinds replace each other by newer readings with a `withdrawn_at` field, writes every caller's curation at the operator's level, positions collection entries as floating-point numbers and stores pairwise comparisons only. The decided design keeps this page's behaviour and changes four things: an item is anything with a native locator; encounters link every event to the item it touched; curation records share their revision rules with Polylogue's assertions through common's `authored` crate; and page capture, ranking and the Polylogue link are specified. Sections marked as decided target describe what is not built; their laws are the acceptance.
+
 ## Curation as authored input
 
 ### Requests and authorship
 
-Every library change (add, tag, set, collect, rate, compare, note, withdraw) is a **request**. The request is stored as a material, and its records are admitted through the one writer with that material as their origin, like every other input ([admission](admission.md)).
+Every library change (add, tag, property set, collect, rate, judge, note, withdraw) is a **request**. The request is stored as a material, and its records are admitted through the one writer with that material as their origin, like every other input ([admission](admission.md)).
 
 - The **author** of each record (the operator, a named agent, a named producer) is computed by the daemon from the caller's token and is never supplied by the caller ([callers](interfaces.md#callers)).
 - A curation record cites its subject (an item, revision, rendition, part, collection or another record) as a **typed reference in its payload**. It is never a derived event of the reading it describes or corrects, so replaying the subject does not break it; the reference resolves to the subject's new reading by its key.
@@ -30,7 +32,7 @@ Every library change (add, tag, set, collect, rate, compare, note, withdraw) is 
 
 Untag, unset, uncollect, rating withdrawal, dismissal reversal and undo are each a **withdrawal record**: its own authored act that names the record and revision it withdraws, with its author.
 
-- The withdrawn record stays live as history. The current value is a **view** computed from all live records: a record counts unless a live withdrawal names it.
+- The withdrawn record stays live as history. The current value is a **view** computed from all live records by the descendant rule of common [`authored`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md): a revision is current when it is not withdrawn and no descendant through `revises` is current. Withdrawing a middle revision of a chain therefore leaves the newest one current.
 - Withdrawing a withdrawal restores the earlier record's effect.
 - **Undo** is a new withdrawal of the named action's effects. It never restores a snapshot. If a later record depends on those effects, undo reports a conflict and changes nothing.
 - A withdrawal is not deletion and does not use the lifecycle. Archiving and tombstoning remain the operator's deletion of materials and readings, and they apply to library request materials like to any other material ([the lifecycle](lifecycle.md)).
@@ -38,11 +40,34 @@ Untag, unset, uncollect, rating withdrawal, dismissal reversal and undo are each
 
 ### Revisions and conflicts
 
-Every curation record has a stable opaque ID (independent of digests, paths, labels and event IDs), a revision, and the revision it replaces, or none. A revision's payload never changes.
+Every curation act is one record with common's authored-record header (decided target; the current build carries `replace = newer` and `withdrawn_at` instead):
 
-- These revisions are **domain data in the payload**. They are not a link between readings: the core keeps no column or table pointing from one reading to another.
-- A request that changes a value carries `expects: {record, revision}`. The writer checks it against the live view inside the admission transaction. Of two clients replacing the same value from the same revision, the first succeeds and the second receives a structured conflict naming the current revision. No policy picks a winner by timestamp.
-- An action that writes several records (tag plus collect, assign plus insert, a bulk action over an explicit selection) commits all its records or none.
+```
+{ root, rev, revises?: [rev…], withdraws?: [rev…],
+  kind, target: reference (item, revision, rendition, part, collection, or any Sinex or Polylogue reference),
+  key?, value?, origin: authored | imported(source citation) | proposed(method, version),
+  author (computed), via, at }
+```
+
+Its reference is `sinex:curation/<root>@<rev>`. A revision's payload never changes, and these revisions are domain data in the payload, not a link between readings.
+
+| Kind | `key` / `value` | Uniqueness slot (a write into an occupied slot revises it) |
+|---|---|---|
+| `tag` | tag ID / optional value | target, tag, author |
+| `property` | property ID / typed value, or an explicit empty | target, property, author |
+| `note` | — / text, optional selector | none (Sinex's one [note](recall.md#notes) kind, with the target as `about`) |
+| `rating` | scale / number or choice | target, scale, author |
+| `comparison` | scale / an ordered list of k ≥ 2 targets, ties as groups, a `blind` flag | none: every comparison counts |
+| `entry` | collection / order key, pinned target | none: repeats allowed |
+| `collection`, `scale`, `property-definition`, `tag-definition` | name / declaration | name (labels are revisable; identity is the root) |
+| `tag-relation` | `alias` or `implies` / the two tag IDs | the pair and relation |
+| `duplicate` | — / `same` or `distinct` over a pair | the unordered pair, author |
+| `dismissal` | collection or saved query revision / — | target, scope |
+
+- **Stale base.** A request that changes a value carries `expects: <revision>`. The writer checks it against the current records inside the admission transaction. Of two clients replacing the same value from the same revision, the first succeeds and the second receives a structured conflict naming the current revision and its author. No policy picks a winner by timestamp; two current heads in one slot are a conflict.
+- **Atomic requests.** One request carries several writes, numbered `<request>.<n>`, committed together or not at all (tag plus collect, a bulk act over an explicit selection).
+- **Computed authorship.** The author comes from the caller's token; no surface accepts one.
+- Uniqueness is enforced in the admission transaction, never by a read before the write.
 
 ### Shown values
 
@@ -57,15 +82,35 @@ The default order is the operator's authored value (an explicit empty included),
 - An explicit empty stops fallback to lower levels; withdrawing it permits fallback again.
 - A tag applies while at least one live, non-withdrawn assignment supports it: withdrawing the operator's assignment leaves an agent's. Reads show every supporting assignment and its author, even when the values agree.
 - Rejecting an imported or proposed value is its own explicit record, not a reserved leading character in a tag label.
+- Shown-value precedence is the library's own: Polylogue's assertions have no imported level to rank, while booru imports, catalog sidecars and reading-service tags make imported values the library's common case.
+- **The shown-value projection** (`library_shown`: item, field, value, level, state, supporters) is maintained by the writer in the admission transaction for the targets a request touches, through the common currency function, so reads never recompute currency over the archive.
 - Proposals (classifier or model output) are the lowest level and never overwrite an authored value. Model execution follows [the model-calling contract](derivations.md#model-calling); imported model outputs are captured regardless.
 
-## Items and copies
+## Items, locators and copies
 
-An **item** is the continuing object the operator curates. A **revision** fixes an item's content. A **rendition** supplies original or transformed bytes of a revision. A **copy** is an observed location of bytes: each keeps host, root, path, observation, content digest, size, optional file time, format and source record.
+An **item** is the continuing thing the operator curates. A **revision** fixes an item's content. A **rendition** supplies original or transformed bytes of a revision. A **copy** is an observed location of bytes: each keeps host, root, path, observation, content digest, size, optional file time, format and source record.
 
 - Equal bytes share storage, while separately curated items stay separate.
 - A digest supplied by another catalog is distinguished from a digest Sinex calculated.
 - Unknown times and dimensions stay unknown.
+
+### Locators
+
+Decided target (2026-11-01). An item is anything with a native **locator**, the native address of a thing at first sight, canonicalized by a declared rule and kept as the key forever:
+
+| Locator | Canonical form | Where the address comes from |
+|---|---|---|
+| `file:` | `file:<host>/<root-id>/<relative path at first sight>` (the item key below) | library scans, `library add`, file drops |
+| `url:` | scheme and host lowercased, default port dropped, path normalized (RFC 3986 §6), query parameters sorted, the fragment removed and kept as a part selector, declared tracking parameters removed | visits, bookmarks, reading services, page captures |
+| catalog | `youtube:<video-id>`, `spotify:track:<id>`, `doi:<doi>`, `isbn:<isbn-13>`, `arxiv:<id>`, `booru:<site>/<post-id>`, `github:<owner>/<repo>`, `wikipedia:<lang>/<title>` | declared URL patterns, provider exports, reference managers, sidecars |
+| `part:` | `part:<source>/<native message id>/<part path>` | mail and chat attachments; files uploaded to or generated in AI sessions, through Polylogue |
+
+- A URL that matches a catalog pattern canonicalizes to the catalog locator: every URL form of one video and the export record of watching it name one item. This is exact normalization of one identifier, not fusion: no time window and no similarity.
+- The canonicalizers are versioned data and small pure functions in common [`references`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/references/README.md), so Polylogue keys its URLs byte-identically. A canonicalizer version change is a recomputation of the item derivation by replay, never an edit in place.
+- The original address is kept on every encounter and copy; the canonical form decides identity only.
+- **Items never merge.** Two locators that no declared rule connects (a page mirrored on two domains; a file downloaded from a URL) stay two items, related by a [correspondence](#correspondences). An authored `same` decision links them for display and query without moving any curation.
+- Every locator an encounter rule produces makes an item, so every visited URL is one. The library's default view shows *kept* items (files, saved, curated, made), and a toggle shows everything; this is a default filter of the `items` unit, not a scope limit.
+- A web item's revisions are its captures' main-body digests in capture order; an old highlight stays on the revision it was made on and is re-anchored by its quote where the text still matches. A catalog item may have no bytes at all; its availability is `reference-only`, a normal state.
 
 ### Item identity
 
@@ -96,6 +141,31 @@ A file, directory, archive member or outside-producer acquisition goes through t
 - Explicit selection never silently excludes a valid file because of its suffix or a hidden name. Partial scans, unreadable entries, symlinks, changing files and sidecar recognition report their actual coverage. A scan of one file neither reads its siblings nor reports them removed.
 - Intake resumes from committed progress after an interruption between preparation and admission.
 
+### Encounters
+
+Decided target (2026-11-01). An **encounter** is a derived reading linking an event to the item it touched: `{item, relation, actor, at, until?, attention?, via (the event's citation), locator as seen}`. Encounter rules are declarations over event types, versioned data over a closed set of extraction forms (take field F as a locator of kind K; take the span from fields G and H; take attention from field A when present).
+
+| Relation | Typical events | Actor |
+|---|---|---|
+| `seen` | browser visits, pages displayed (extension), image viewer focus, `library.view` | operator |
+| `played` | tracks played, videos watched, media sessions, views of audio or video | operator |
+| `read` | reading sessions from e-readers and the reader | operator |
+| `saved` | bookmarks and reading-service saves, the extension's save | operator |
+| `downloaded` | browser downloads, file drops | operator |
+| `made` | screenshots, camera photos, recordings, files the operator wrote, images generated in AI sessions | operator, or the session's agent or model |
+| `fetched` | agent web fetches (through Polylogue), the crawler | agent, or `producer:crawler` |
+| `mentioned` | a URL or file in a message, mail or chat | its author |
+
+- **Attention is honest.** `attention` is a known duration only when the source measured it (active-tab time from the extension, the player's playback position, an e-reader's page time). Otherwise it is unknown, and sums over unknowns are marked `lower bound`. An open tab is not attention.
+- Encounters are readings, so replay recomputes them and archiving a visit's material archives its encounters. Curation never depends on an encounter.
+- **Item statistics** (`first_seen`, `last_seen`, `seen_count`, known attention and the count of unknown, `saved_in`, `made_by`) are views over encounters, kept in the item projection.
+- Imported aggregate view counts are encounters with `count: N` and their original scope, never expanded into invented individual events.
+- "Pages I read while that build failed" and "the track playing when I wrote this commit" are each one query, because encounters are events with a time and an item.
+
+### Correspondences
+
+A typed, derived relation between two items with its evidence: `same-bytes` (equal content digest), `downloaded-from` (a download record names the URL and the resulting path and digest), `rendition-of`, `canonical` (a page's `rel=canonical`), `looks-like` (perceptual-hash distance). Correspondences show on the item page and in queries (`items where corresponds(same-bytes, REF)`). They never move curation; copying curation from one item to another is an explicit act whose records the caller authors.
+
 ### Compound artifacts
 
 A compound rendition lists its members, each member's role, relative path, order and exact extent or byte reference. A video with its subtitles, an HTML page with its assets and a multi-file document stay usable together after the source directory is unavailable. Missing members are listed individually. Paths inside an artifact keep their meaning without imposing the library's classification.
@@ -105,7 +175,7 @@ A compound rendition lists its members, each member's role, relative path, order
 Every original, crop, preview or transcode fixes the item revision, its exact content, media type, optional dimensions or duration, its parent rendition, and the tool, settings and version that made it.
 
 - An original request resolves only the original.
-- A **part** names one exact rendition and declares its units: a half-open time range, or an image region checked against known bounds. Changed item bytes do not move old regions or time ranges, so an old crop stays attached to the earlier bytes.
+- A **part** names one exact rendition and declares its units: a half-open time range, or an image region checked against known bounds. Selectors use W3C Media Fragments (`#t=start,end`, `#xywh=`) and W3C Web Annotation text selectors (a quote with its position), parsed by common [`references`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/references/README.md); an out-of-range selector is invalid, never clamped. `item:<id>@<rev>#t=95,140` names a clip that tags, notes, entries and Polylogue assertions can target. Changed item bytes do not move old regions or time ranges, so an old crop stays attached to the earlier bytes.
 - Rendering uses existing decoders and players. A render request records its fixed input before execution and publishes a successful stored output through admission. Transformations are derivations over stored evidence, with the external output recorded when a renderer cannot be rerun deterministically.
 - Unsupported decoder, corrupt input, unavailable original, cancellation and incomplete output are distinct outcomes. Partial temporary files are never usable renditions. Rendering progress and extraction failures stay visible.
 - Repeated work reuses an output for the same content and settings; an output made for a different request is never silently substituted.
@@ -113,7 +183,8 @@ Every original, crop, preview or transcode fixes the item revision, its exact co
 ## Tags and properties
 
 - **Property definitions** declare type, cardinality, allowed choices where applicable (a single-choice property allows exactly one) and the selection rule used for shown values.
-- **Tags** have stable identity, labels, namespaces and aliases. Renaming a tag keeps its assignments. Real labels that begin with punctuation are ordinary labels.
+- **Tags** have stable identity, labels and namespaces. Renaming a tag is a label revision that keeps its assignments. Any non-empty label is an ordinary label, including one that begins with or consists of punctuation.
+- **Tag relations** (decided target): `alias` makes two tag IDs one shown tag, so merging two tags is an alias; `implies` adds the implied tag to the shown set, marked `implied by <tag>`, at the implying assignment's level. A cycle is refused at write. `tag:x` matches direct and implied assignments; `tag_direct:x` matches direct ones only.
 - **Assignments** target an item, a fixed revision, a rendition or a validated part, and carry author, level, source evidence, stable ID, immutable revision and the revision they replace. Two assignments to two distinct regions of one rendition are two assignments.
 - Rescanning, reimporting and rerunning a classifier keep the operator's corrections, because those are authored records ranked above imported and proposed values.
 - Filters and queries read shown values with selectable provenance and conflict states; raw assignment search stays separately available.
@@ -130,18 +201,18 @@ A **collection** is an ordered list of entries with a stable ID independent of i
 
 - Every insertion creates an **entry** with its own ID, even for an item already in the collection, so A, B, A has three entries.
 - Each entry fixes the revision and rendition selected at insertion and can include a part. Editing the source item does not change what an existing entry opens.
-- Order is explicit and deterministic, and its representation supports repeated insertion between neighbours without silently tying positions.
+- Order is explicit and deterministic. Entry positions are common `authored` order keys: base-62 fractions with a key between any two, ties broken by the entry's root, so repeated insertion between neighbours never ties or runs out of precision (decided target; the current build's floating-point positions tie after about fifty halvings). A reorder is a revision of one entry's position.
 - Insert, reorder, rename, remove one entry, remove explicitly selected entries and inspect withdrawn entries are all operations; removal addresses entries, not items.
 - Concurrent inserts and reorders compare against the observed collection revision, succeed atomically or report a conflict, and keep every successful insertion.
 - Looking a collection up by name reports ambiguity rather than picking the first match.
 
-## Sets and fixed selections
+## Saved queries and kept results
 
-- A **live set** is a saved query plus arguments, evaluated in the one query language and cited by its query identity ([saved queries](query.md#saved-queries)). Updating its query text creates a new revision, even when the label stays the same. Setting a property on items is a different operation and is not a set.
-- A **fixed selection** (`library.selection`) is its own record, not a kind of collection: the query text and revision, its arguments, the evaluation time, and the ordered references with the revisions they resolved to, including unavailable ones with their reasons. A selection has no entry edits, suggestions or dismissals; a collection can take entries from it.
-- Set membership and collection entries mean different things. A collection can hold entries taken from a set and keeps its own order and multiplicity.
+- A **live set** or reading list is a [saved query](query.md#saved-queries) plus arguments, evaluated in the one query language and cited by its query identity. Updating its query text creates a new revision, even when the label stays. Setting a property on items is `property set`, a different operation. The shipped saved queries include `query:reading` (over the `status` property, ordered by the `reading` collection when one exists), `query:uncurated` (new items nobody has curated) and `query:resurface` (saved or highly rated items not encountered for a year, one or two a day in Today).
+- A **fixed selection** is a [kept result](query.md#kept-results) (`QUERY keep` → `result:<id>`): the query, its read context and the ordered references it resolved to, with unavailable ones and their reasons. Decided target: this replaces the separate `library.selection` record, which was the same object. A collection can take entries from it (`collect --from result:<id>`).
+- Set membership and collection entries mean different things. A collection keeps its own order and multiplicity.
 - A saved query offers **suggestions** to a collection without changing it. Accepting a suggestion creates an ordinary entry; refreshing adds, removes or reorders no existing entry. A **dismissal** is scoped to the collection, the target and the saved query's revision, so it does not carry over to a new revision.
-- Paging and the language's set operations apply before a bulk action, and no hidden maximum truncates a valid selection. A failed member of a bulk action is reported per member.
+- Paging and the language's set operations apply before a bulk action, and no hidden maximum truncates a valid selection. A failed member of a bulk action is reported per member. A single-valued property set over more than one target needs `--each`, so one pass cannot silently overwrite many operator values; many-valued tags and notes need no flag.
 
 ## Ratings
 
@@ -153,17 +224,15 @@ A **collection** is an ordered list of entries with a stable ID independent of i
 
 ## Comparisons and ranking
 
-A **ranking** orders a chosen set of eligible items on a named scale from attributed comparison records.
+A **scale** declares its name and the question a judge answers on it (shown on every comparison card and stored with each comparison's scale revision), and a numeric range or choices. A **ranking** orders a chosen set of eligible items on one scale from attributed comparison records. A ranking is a computed answer, never stored as a record.
 
-- Every comparison records its judge, the daemon-computed author, and its target revisions where fixed. Judgments can be withdrawn and corrected; repeated legitimate judgments are all kept, while a retried action is not another vote.
-- A comparison may carry an ordered list of k items (a ranking of k), which the fit expands into its implied pairs. A scale is one dimension; several scales over the same set are several rankings.
-- A ranking is computed per scale and per selected judge set: the operator, a named agent, or all judges. The default is the operator's judgments only, which keeps the operator's ranking his own while agents' judgments stay usable.
-- The default method is a finite regularized Bradley–Terry fit. Results carry support counts, the method and its version, and the fit status, enough to tell weak support from a settled order. A convergence allowance may stop computation with a reported incomplete result; it never turns an unfinished fit into a completed one or drops input comparisons.
-- Empty and one-item sets are valid. Uncompared items stay in the chosen set and can be proposed for their first comparison. Contradictory cycles and disconnected groups are shown as they are. A stable display tie-break does not imply a known preference.
-- A proposed next pair is advisory, names its selection rule, and includes eligible items not yet compared.
-- Direct ratings and comparisons are separate inputs unless an explicit method combines them. An explicit method can bin a fitted ranking into discrete levels on a named scale; its output is a derived rating attributed to the method and its version, never the operator's own rating.
-- Preference is not truth or objective quality, and the library does not present it as such.
-- Rebuilding from the same comparisons yields the same ranking.
+- A **comparison** is an ordered list of k ≥ 2 targets with optional tie groups, on one scale, by one computed judge, optionally `blind` (no existing ratings, tags or authors shown). A pair is the case k = 2. `judge` is the verb that writes it; `compare` is only the read. Comparisons are withdrawn and corrected like any curation record; repeated legitimate comparisons are all kept, while a retried request is not another vote.
+- **The fit** is common [`ranking`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/ranking/README.md)'s Plackett–Luce model (decided target, replacing the current pairwise Bradley–Terry fit). It reduces exactly to Bradley–Terry for pairs and uses a k-ordering as one observation, without the bias of expanding it into independent pairs. A weak symmetric prior keeps the fit finite for unbeaten items and disconnected groups. Each item reports its score, an interval, its rank range, its support (comparisons involving it) and its component; the answer reports the fit status and the judge set.
+- **Judge sets** are a query parameter: the operator (default), a named author, a lens, or all judges. The operator's ranking stays his own; agents' comparisons are usable through their own judge set and never mixed in unless asked.
+- **Next set** (`judge next`) proposes the pair or k-set with the largest expected reduction in ranking uncertainty within the chosen set, falling back to an uncompared item against its nearest neighbour. Every proposal names its rule, and `rule: random` and `rule: uncompared-first` are available. Uncompared items stay in the chosen set and are listed as unranked, never hidden.
+- Empty and one-item sets are valid. Contradictory cycles and disconnected groups are shown as they are. A stable display tie-break does not imply a known preference.
+- Direct ratings and comparisons are separate inputs unless a named method combines them. A method such as quantile levels can bin a fitted ranking into discrete levels on a derived scale; its output is a proposed rating attributed to the method and version, never the operator's own rating.
+- Preference is not truth or objective quality, and the library does not present it as such. Rebuilding from the same comparisons yields the same ranking.
 
 ## Imports and catalog metadata
 
@@ -180,7 +249,7 @@ Imports bring in both content and curation from declared original formats. galle
 
 ### Duplicate review
 
-Similarity (perceptual-hash distance for images and video, audio fingerprints) is a derived evidence reading that offers candidate pairs; it is never identity. The operator's or an agent's `same` or `distinct` decision on a pair is an authored library record, attributed and withdrawable, and never an automatic merge. A `same` decision links the items for display and query, and their separate curation stays inspectable.
+Similarity (64-bit dHash and pHash for images and sampled video keyframes, audio fingerprints) is a derived evidence reading that offers candidate pairs; it is never identity. It is deterministic and needs no model, and the ranking atom `looks_like:REF` sorts by it. Candidate pairs appear in the same judging queue as comparisons, with `same`, `distinct` and `skip`. The operator's or an agent's `same` or `distinct` decision on a pair is an authored library record, attributed and withdrawable, and never an automatic merge. A `same` decision links the items for display and query, and their separate curation stays inspectable.
 
 ## Filename hints and extracted text
 
@@ -192,20 +261,37 @@ Similarity (perceptual-hash distance for images and video, audio fingerprints) i
 
 ## Saved and visited pages
 
-The library keeps the content of pages the operator visited or saved, including existing page archives, rather than relying on a new crawl to recreate history; an old page is not recreated by fetching today's URL. Acquisition (browser profiles, the extension, the crawler, archive readers) belongs to [sources](sources.md); the library owns the view of pages as items, their correspondence and their opening.
+The library keeps the content of pages the operator visited or saved, including existing page archives, rather than relying on a new crawl to recreate history; an old page is not recreated by fetching today's URL. Acquisition (browser profiles, the extension, the crawler, archive readers) belongs to [sources](sources.md); the library owns the view of pages as items, their correspondence to visits, and their reading.
 
-- A visit, a bookmark or save, a network fetch and an archived page revision are distinct facts. They are linked by typed correspondence with its evidence (URL normalization, redirects, exact content). Unknown correspondence between a visit and content stays unknown, and a visit with no content carries an explicit missing-content reason.
-- One stored response can support several visits without inventing independent confirmations of its content. A later crawl does not establish what the operator saw earlier.
-- A captured fetch keeps the requested URL, final URL and redirect chain, response metadata, body, fetch time, body completeness or error state, and members and assets when captured. Extracted text cites those bytes. Successive versions of a page are all kept.
-- The target is comprehensive visited and saved page content, with visible, reasoned exclusions. A fixed domain allow-list never silently replaces that target. Excluded, unsupported and blocked URLs are reported; failed and incomplete fetches are retried; an operator-chosen limit is a resumable selection, never a permanent success mark.
-- The crawler captures only what is reachable without the operator's credentials; pages that need a logged-in browser, private origins and cross-origin redirects are recorded as missing content with the reason (default; open operator question). Credentials never cross origins.
+- A visit, a bookmark or save, a network fetch and an archived page revision are distinct facts, linked by typed correspondence with its evidence.
+- A **capture** is one stored copy of a web item: an extension snapshot (DOM serialization with resources), a response the extension observed, a crawler fetch, an imported page archive member (HTML, MHTML, WARC, WACZ, PDF, SingleFile), or an archive-index response. Each keeps the requested and final URL, the redirect chain, response metadata, the exact body, fetch time and completeness, and lists its members. Successive versions of a page are all kept.
+- **Capture scope** (decided target): the extension captures every page the operator displays, deduplicated by digest at every level, so an unchanged page re-displayed stores no new body and shared assets are stored once across all pages. Snapshots are stored as WARC-shaped records inside materials. Serialization runs when the browser is idle and is cancelled by navigation, so it never blocks the page. Saving a page (a key in the browser, or `library save URL`) makes it an item with status `unread`, adds it to the `reading` collection, and captures exactly what was on screen.
+- The crawler covers visited and saved URLs not already captured during a visit, reachable without the operator's credentials; pages that need a logged-in browser, private origins and cross-origin redirects are recorded as missing content with the reason (default; open operator question). Credentials never cross origins. Excluded, unsupported and blocked URLs are reported; failed and incomplete fetches are retried.
+
+### What was seen
+
+Decided target (2026-11-01). For each visit or save of a web item, the library derives one **grade** for the nearest capture:
+
+| Grade | Meaning |
+|---|---|
+| `during` | captured by the browser within this visit (same tab and document, or the extension's snapshot at save time) |
+| `same-body` | a capture at another time whose main-body digest equals a capture `during` another visit of the same item |
+| `after (Δ)`, `before (Δ)` | the nearest capture outside the visit, with the time difference; content may differ |
+| `archive (Δ)` | a third-party archive copy (Memento-style), with the difference from the visit |
+| `none` | no capture; the visit's title is all there is |
+
+The grade is shown wherever content stands in for a visit: search hits, the reader header, recall and MCP answers. A later crawl never establishes what was seen earlier; it can only be `after (Δ)`.
+
+- **Extraction.** Readable text (main content extracted, the full DOM kept), PDF text, EPUB chapters, subtitles and imported OCR are derivations over stored bytes; each block cites its rendition and a selector, so a search hit opens at its place.
+- **The reader** shows a capture in a sandboxed frame with scripts disabled and all network access blocked, or the extracted text; imported highlights are re-anchored on the text; `[` and `]` step through captures of one item with a text diff between revisions.
+- **Link rot** (decided target): saved web items are rechecked on a slow schedule; when one starts answering 404 or a different body, a passive notice says the item is gone at its URL and that its capture is intact.
 
 ## Browsing and bulk use
 
 - The library offers a scrolling thumbnail grid and a list view, showing previews, labels, shown tags and properties, ratings, view statistics, collection membership, revision and availability ([the reader web](web.md)).
 - Search covers titles, tags, properties and extracted content; results sort by declared metadata or by a fitted ranking; exact provenance is inspectable without leaving the library.
 - Paging reaches every matching item, and an explicit selection is kept across pages. A query or page refresh never silently changes a fixed selection, and a delayed thumbnail or playback result never replaces the current selection.
-- Keyboard navigation, selection, bulk tagging, rating and collecting, side-by-side comparison and video playback through the exact-target handoff are part of the interface. Audio plays on explicit request, not on hover, because hover audio is noisy while scrolling.
+- Keyboard navigation, selection, bulk tagging, rating and collecting, side-by-side judging and video playback through the exact-target handoff are part of the interface. Audio plays on explicit request, not on hover, because hover audio is noisy while scrolling.
 - **Use over time.** Library views, opens and file-change events on an item's copies resolve to the item ID, so a query returns an item's tags together with its usage timeline (items with a tag joined to `library.view` and `file.changed` on their copies), and the activity timeline shows which library item was in use.
 
 ## Opening and views
@@ -218,10 +304,20 @@ Opening resolves the item revision, rendition, member or part, and the requested
 - Accepted, loaded, usable, failed and stopped are tracked separately where the player reports them. A process launch or an `xdg-open` exit alone establishes neither a view nor attention.
 - A **view** fixes the opened target, start, optional end, duration or count, author, player and the origin of those facts. Durations are finite and nonnegative; negative or non-finite values from a caller are refused. Unknown duration is not zero, and known viewing time is never synthesized from absent reports. Imported aggregate view counts and time keep their original scope.
 - A remote client receives a content reference, never a daemon-local path.
+- **Resume anywhere** (decided target). Opening a video or audio item in mpv goes through its JSON IPC, which reports load, position and end, so a view records what was watched and where it stopped, and the next open offers to resume there. A document resumes at the reader's scroll anchor and an e-book at its page. The position is stored as a part selector on the view, so it survives renames and moves. If the player crashes, the view records what it knew and marks the rest unknown.
+
+## The link to Polylogue
+
+Decided target (2026-11-01). Agents fetch pages, sessions mention URLs and files, and models generate images; one mechanism shows that reading beside the operator's.
+
+- **Polylogue exposes a unit `locators`**: one row per URL, path or attachment in a message or tool call, with `session`, `message`, `at`, `kind` (`mentioned`, `fetched`, `search-result`, `attachment`, `generated`, `file-written`, `file-read`), the canonical `locator` from the same common canonicalizer, `digest` when the bytes are known, and `by` (`human`, `model`, `tool`).
+- **The library reads it by federation, never by copying** ([mixed queries](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md)). The item page's *In AI sessions* panel is `pl.locators where locator = <item locator>`, and `encountered_by:` and `mentioned_in:` accept `pl.` relations. With Polylogue unreachable, that panel shows unavailable with the reason and every other panel is unchanged.
+- **The reverse direction.** Polylogue's reader decorates a URL or path with its library state (saved, captured, rated, tags) through one batched federated lookup per rendered page of messages; with Sinex unreachable the decoration is omitted with a footnote, never guessed.
+- Generated images and uploaded attachments become `part:` items whose bytes stay in Polylogue as a reference-only rendition opened through Polylogue's content handoff.
 
 ## Agents
 
-Agents have every library power the operator has: add, import, open, preview, curate, compare. No library operation is operator-only, and every one is exposed over MCP; only the daemon-computed authorship differs, and with it the precedence of shown values. CLI, MCP and web compile the same typed request, so curation rules exist once ([interfaces](interfaces.md)). Responses return stable subject and action references, the state and revision used, progress and completeness where applicable, and structured conflict, unsupported and unavailable outcomes.
+Agents have every library power the operator has: add, import, open, preview, curate, judge. No library operation is operator-only, and every one is exposed over MCP; only the daemon-computed authorship differs, and with it the precedence of shown values. CLI, MCP and web compile the same typed request, so curation rules exist once ([interfaces](interfaces.md)). Responses return stable subject and action references, the state and revision used, progress and completeness where applicable, and structured conflict, unsupported and unavailable outcomes.
 
 ## Sources, derivations and the lifecycle
 
@@ -231,6 +327,46 @@ Agents have every library power the operator has: add, import, open, preview, cu
 - Archiving one scan's material archives the item and availability readings derived from it and removes only that scan's support; another live scan can still support the item. Authored curation stays live and shows "target lacks live support" until support returns. Restoring or replaying the scan reads it again normally.
 - Tombstoning an item's original material removes its bytes only when no other material or rendition reads them, so equal-byte items are untouched.
 - Withdrawing a curation act is not deletion ([withdrawals](#withdrawals)).
+
+## Surfaces
+
+Decided target (2026-11-01). Verbs follow a query or a reference, as everywhere in `sinexctl`; `library` keeps only the intake verbs, so curation is never an island command.
+
+```
+sinexctl library add PATH… [--reference] [--root NAME]
+sinexctl library import PATH… [--format gallery-dl|hydrus|raindrop|pocket|zotero|calibre|netscape|warc|wacz|singlefile]
+sinexctl library save URL… [--collection C]
+sinexctl QUERY|REF tag add|remove TAG… [--part SEL] [--expects REV]
+sinexctl QUERY|REF property set PROP VALUE|--empty [--each] [--expects REV]
+sinexctl QUERY|REF note "TEXT" [--part SEL]
+sinexctl QUERY|REF rate SCALE VALUE
+sinexctl QUERY|REF collect COLLECTION [--after ENTRY|--before ENTRY|--at end] [--from result:ID]
+sinexctl ENTRY… uncollect | move --after ENTRY
+sinexctl QUERY judge SCALE [--k N] [--judges SET] [--blind] [--rule information|random|uncompared-first]
+sinexctl REF,REF… judge SCALE --order A,B,C | --tie
+sinexctl QUERY rank SCALE [--judges SET] [--levels N]        # QUERY | sort by rank(SCALE)
+sinexctl QUERY duplicates [--distance N]
+sinexctl REF open [--player mpv|xdg|web] [--resume|--at SEL]
+sinexctl REF read [--to DIR]
+sinexctl CURATION withdraw | undo OP
+sinexctl tag define NAME [--namespace NS] | tag alias A B | tag implies A B
+sinexctl scale define NAME --question "…" (--range 0..5 | --choices a,b,c)
+sinexctl collection create NAME [--suggest-from QUERY]
+```
+
+Every write prints the request ID, the records written with their revisions, and conflicts with the current revision and its author; exit 3 is refused, 5 is partial in a bulk act.
+
+Over MCP, intake (`add`, `import`, `save`), `open` and `viewed` are rows of `sinex_act`; every curation act is one atomic request through `sinex_write` (`writes: [{act, target or query, …, expects?}]`); `judge next` and `rank` are rows of `sinex_query`; items and collections are read through `sinex_query` and `sinex_read`. The deployed `sinex_library-*` tools fold into these rows.
+
+| Unit | Rows |
+|---|---|
+| `items` | items, default filter `kept` (`everything` lifts it): `kind` (`file`, `web`, `catalog`, `part`), `locator`, `domain`, `media_type`, `title`, dimensions, `duration`, `pages`, `size`, `availability`, encounter statistics, `status`, `in:collection:<ref>` |
+| `copies`, `encounters`, `captures` | copies, encounters and captures with their grades |
+| `curation`, `collections`, `entries`, `comparisons`, `scales`, `tags` | curation records and their views |
+
+Curation predicates: `tag:x`, `tag_direct:x`, `tag_by:(operator|agent|import)`, `prop(name) = v`, `rating(scale) >= 4`, `rank(scale) <= 10` with `judges:`, `conflict:any`, `value_state(prop) = unknown|empty|conflict|withheld`. Relations: `encountered_by:ACTOR`, `encountered during(Q)`, `corresponds(rel, REF)`, `captured: during|after|archive|none`. Bare words search titles, tags, notes and extracted content, and hits carry their rendition and selector, so `@1 open` lands at the hit. References: `sinex:item/<id>[@<rev>][#selector]`, `sinex:collection/<id>[@<rev>]`, `sinex:scale/<name>`, `sinex:content/<blake3>`, `sinex:curation/<root>@<rev>`; a pasted URL resolves to its item through the canonicalizer.
+
+Web views come from common `web-shell` and print the CLI and MCP call that reproduces them: the **grid** over any `items` query (`/q?q=…&layout=grid`, thumbnails loaded only for visible tiles, video tiles scrubbing sprite sheets, audio only on explicit request, facets including the origin of shown values); the **item** page (preview, values with level and supporters, the encounter strip, captures with grades, copies and availability, correspondences, collections, *In AI sessions*, notes, history); the **reader** (`/item/<id>/read`); **judge** (`/judge?q=…&scale=…`, two-up or up to six-up with the scale's question on top, `←`/`→` or `1`–`6`, `=` tie, `s` skip, `u` undo, `b` blind, the ranking panel updating after each comparison); **collection** and **duplicates**.
 
 ## Privacy
 
@@ -248,31 +384,36 @@ The library is private. Ruling, 2026-10-11: "a media stashbox is not supposed to
 - The library benchmark ([benchmarks](testing.md#benchmarks)) runs one recorded synthetic corpus scaled in both file count and bytes: small files, an unchanged repeat, one changed file, one very large file, mixed media, independent sidecars, a large collection and many comparisons. It reports scan, hash, store, admission and derivation time separately; bytes read and written; files hashed; peak memory; cold and warm first-page, item-read and open latency; ranking time and fit status; cancellation latency; captured page bytes per day and retry backlog. Its baseline comparisons are a configured source binding against an explicit add, a first against an unchanged or restarted scan, 1× against 10× file size, and 1× against 10× item count.
 - No cap on items, bodies or comparisons stands in for this.
 
+Budgets (p95, warm, decided target): grid first page of 60 tiles over 1 M items and 10 M curation records ≤ 100 ms; facet counts for one field ≤ 20 ms; a warm thumbnail tile ≤ 5 ms and immutable by digest; an item page with 10,000 encounters ≤ 100 ms; a curation write visible ≤ 30 ms of writer time; a bulk tag of 10,000 items ≤ 2 s; a warm-started ranking fit over 10,000 items and 200,000 comparisons ≤ 150 ms; `judge next` over 10,000 items ≤ 50 ms; content search over 50 GB of extracted text ≤ 250 ms; open to player launch ≤ 150 ms. They rest on the item projection (one row per item with its encounter statistics, maintained from the commit log), the shown-value projection, roaring value bitmaps per shown tag and closed-set value (facets are bitmap intersections), a rank cache warm-started from the previous scores, and perceptual hashes in a radius index.
+
 ## Records
 
 Kind fields will be listed in [the planned kinds reference](reference/README.md#planned-pages); until then this table is the record model.
 
 | Record | Holds |
 |---|---|
-| item | key (host, root identity, relative path at first sight), deterministic ID |
+| item | first locator (for files: host, root identity, relative path at first sight), deterministic ID |
+| encounter | item, relation, actor, at, optional end, attention, the event's citation, locator as seen, rule version |
+| capture | requested and final URL, redirect chain, response metadata, body, fetch time, completeness, members; grade per visit |
 | revision | item, content digest; a byte revision is reused when bytes return |
 | copy observation | host, root, path, observation, digest (calculated or supplied), size, optional file time, format, source record, availability state |
 | rendition | revision, exact content, media type, optional dimensions or duration, parent rendition, tool, settings, version; members with role, relative path, order, extent or byte reference for compound renditions |
 | part | rendition, units, half-open time range or bounded image region |
 | property definition | type, cardinality, allowed choices, selection rule, agent level policy |
 | tag | stable ID, label, namespace, aliases |
-| assignment | target (item, revision, rendition or part), property or tag, value, author, origin, source evidence, ID, revision, replaced revision |
-| note | target, text, author, ID, revision, replaced revision |
-| withdrawal | withdrawn record and revision, author |
+| assignment | target (item, revision, rendition or part), property or tag, value, author, origin, source evidence, root, revision, revised and withdrawn revisions |
+| note | Sinex's one note kind, with the target as `about` |
+| withdrawal | withdrawn revisions or roots, author |
+| tag relation | `alias` or `implies`, the two tags |
 | collection | stable ID, name, revision |
 | collection entry | entry ID, collection, pinned revision and rendition, optional part, position |
 | saved query | query text, arguments, revision, label |
-| fixed selection (`library.selection`) | query text and revision, arguments, evaluation time, ordered references with resolved revisions, unavailable references with reasons |
+| fixed selection | a kept result (`result:<id>`) |
 | suggestion dismissal | collection, target, saved query revision |
 | scale | name, meaning, range or choices, units |
 | rating | rater, target, scale, value, origin |
-| comparison | judge, scale, two or k ordered targets with fixed revisions |
-| derived rating | method and version, scale, value, source ranking |
+| comparison | judge, scale, k ordered targets with tie groups and fixed revisions, `blind` |
+| derived rating | method and version, scale, value, source ranking; origin `proposed` |
 | duplicate decision | pair, `same` or `distinct`, author |
 | caption, OCR text, face candidate | rendition part, content, producer, model, run |
 | filename hint | copy path evidence, author, title, year, external ID |
@@ -302,8 +443,35 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 - **lifecycle-support**: archiving a scan removes only its support, curation shows "target lacks live support", restoring brings support back, and tombstoning an original removes bytes only when no other material reads them.
 - **exact-use**: opening revision A, changing the item to B and exiting records a view of A, played from A's bytes.
 - **unknown-is-not-zero**: an unknown view duration, rating or dimension is never shown or summed as 0.
-- **rankings**: A > B > C, cycles, disconnected groups, unbeaten items, two uncompared items and zero judgments each give a deterministic result with fit status and support; the judge set changes the result only through its judgments, and rebuilding from the same comparisons gives the same ranking.
+- **rankings**: A > B > C, cycles, disconnected groups, unbeaten items, two uncompared items and zero comparisons each give a deterministic result with fit status and support; the judge set changes the result only through its comparisons, and rebuilding from the same comparisons gives the same ranking.
 - **derived-ratings-attributed**: a rating produced from a ranking is attributed to its method and version, never to the operator.
 - **import-preserves-unknown-fields**: fields an importer does not interpret survive in the stored sidecar bytes, and reimporting the same record changes nothing.
 - **privacy-parity**: with one rule configured, item reads, search, previews, thumbnails and handoffs apply it identically; with none, nothing is hidden.
 - **agent-parity**: every library operation is callable over MCP with an agent token, and returns the same values and errors as the CLI and web.
+
+Decided target (2026-11-01):
+
+- **lib.currency.shared**: the library's current-record view equals common `authored` currency on generated histories, including withdrawal of a middle revision; this is the shared law `authored.currency.middle-withdrawal`, which the library runs.
+- **lib.projection.equals-function**: the shown-value projection equals recomputation from all live records after any sequence of writes, withdrawals, archives and replays.
+- **lib.tag.implies-acyclic**: an `implies` write that would close a cycle is refused, and shown tags under implication equal the transitive closure at the implying level.
+- **lib.tag.any-label**: any non-empty label, including one that starts with or consists of punctuation, is an ordinary tag.
+- **lib.bulk.single-valued-needs-each**: a property set over a query of more than one row without `--each` is refused with the `--each` form.
+- **lib.order.dense**: 10,000 successive insertions between the same two neighbours give distinct, ordered positions.
+- **lib.locator.shared-module**: Sinex and Polylogue produce byte-identical canonical locators for a generated corpus of URLs, paths and catalog identifiers.
+- **lib.locator.catalog-folds**: every declared URL form of a catalog object, and its export record, yields one item.
+- **lib.locator.no-guess**: two URLs differing only in a parameter not on the declared tracking list are two items.
+- **lib.locator.version-replays**: changing a canonicalizer's version and replaying yields the new item set, and curation on items whose locator canonicalizes the same keeps its target.
+- **lib.encounter.from-rules-only**: every encounter cites one event and one declared rule version; deleting the rule and replaying removes exactly its encounters.
+- **lib.attention.unknown-not-zero**: an item with one measured and one unmeasured encounter shows the measured sum marked `lower bound`.
+- **lib.capture.later-is-not-during**: a crawler fetch after a visit never grades that visit `during`, even with an equal body, unless another visit's `during` capture has that body.
+- **lib.capture.dedup**: re-displaying an unchanged page stores no new body bytes, and an asset shared by 1,000 pages is stored once.
+- **lib.reader.inert**: the reader never executes captured script and makes no network request.
+- **lib.rank.pl-reduces-to-bt**: on pair-only comparisons the Plackett–Luce fit equals the Bradley–Terry fit within tolerance.
+- **lib.rank.k-not-expanded**: one 4-ordering and its six implied pairs submitted as pairs give different supports, and the answer reports the comparisons actually submitted.
+- **lib.rank.judge-isolation**: adding an agent's comparisons changes the operator's ranking not at all.
+- **lib.rank.deterministic**: the same comparisons in any arrival order give the same scores, intervals and order.
+- **lib.rank.next-includes-unseen**: over a set with uncompared items, `judge next` proposes one within the first ⌈n/k⌉ proposals under every rule.
+- **lib.pl.federated-only**: the library holds no copy of Polylogue rows; with Polylogue down, the *In AI sessions* panel shows unavailable with the reason and every other panel is unchanged.
+- **lib.pl.split-equals-oracle**: mixed library queries equal the federation oracle of the shared query suite.
+
+Stored with the scope `sx.`.
