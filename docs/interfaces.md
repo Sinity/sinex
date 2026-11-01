@@ -112,7 +112,7 @@ more affordances" (cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:
 | Act | Rule | Reason |
 |---|---|---|
 | confirming a tombstone's cascade preview | any caller requests and previews; the operator confirms interactively (default; open operator question) | tombstoning is the one irreversible deletion ([tombstone](lifecycle.md#tombstone)) |
-| `same`/`distinct` duplicate decisions that govern fusion | every caller records them; the operator's govern, and a per-rule setting admits others' | fusion judgments shape every fused record ([fusion](derivations.md#fusion)) |
+| `same`/`distinct` duplicate decisions that govern fusion | every caller records them; the operator's govern, and a per-rule setting admits others' | duplicate decisions shape every fused record ([fusion](derivations.md#fusion)) |
 
 ### Computed authorship
 
@@ -346,7 +346,7 @@ autocomplete, fuzzyfingind where appropiate"
 - Every answer uses the common answer contract: the text part is the rendering, rows
   appear as JSON only with `format: json`, and a budget cuts whole lines with counts of
   what was left out and expand handles.
-- `follow` is available as a resumable subscription with the same positions as SSE.
+- `follow` is available as a resumable subscription of `sinex_query`, with the same positions as SSE.
 - Output rules, the data notice and per-row delimiting apply exactly as on HTTP and the
   CLI. `@N` and `since last_seen` are per agent session; one client's state never
   affects another's.
@@ -513,6 +513,7 @@ what is broken.
 | expiry race | enabled; interrupting when the margin is below one poll period | |
 | a host out of contact past its deadline; spool runway under one day ([hosts](hosts.md)) | enabled, interrupting | |
 | a kind whose every material is refused; refusal-rate spike | enabled, interrupting | |
+| disk runway below 14 days | enabled, passive (a warning in status) | |
 | disk runway below 3 days | enabled, interrupting | runaway volume |
 | new input, parser arrival, stage finished, spool runway under the out-of-contact deadline, link rot on a saved item | enabled, passive | |
 | the resume digest: operator activity returns after a gap and the resume pack is delivered as a notice | disabled; passive when enabled | |

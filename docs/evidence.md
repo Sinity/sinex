@@ -18,7 +18,7 @@ Five jobs:
 
 ## An example, on the synthetic world
 
-Iris's Today shows last night on the rest lane: `6 h 12 min asleep (band) · usual 6 h 40 – 7 h 55 (prior 28 nights, 24 observed)`, with a thinner bar for the phone app's session of the same night and the standing agreement between the two instruments (`bias −7 min, 95% of nights within −31 to +18 min, 211 paired nights`). Nothing calls the night poor.
+Iris's Today shows last night on the rest lane: `5 h 58 min asleep (band) · usual 6 h 30 – 7 h 40 (prior 28 nights, 25 observed)`, with a thinner bar for the phone app's session of the same night and the standing agreement between the two instruments (`bias −5 min, 95% of nights within −28 to +20 min, 180 paired nights`). Nothing calls the night poor.
 
 She asks whether late screen time goes with shorter sleep:
 
@@ -28,19 +28,19 @@ sinexctl study new late-screen --x 'activity.operator_seconds{hours 22-02}' --y 
 
 ```
 late-screen · exploratory · lagged association, Spearman (rest.duration is skewed)
-  units: logical nights 2026-03-02 … 2026-10-31 (244)
-  used 171 · excluded 73: band not worn 41, activity partial 19, no opportunity 13
-  ρ = −0.19   95% interval −0.33 … −0.04   effective n 128 (autocorrelation)
+  units: logical nights 2026-02-01 … 2026-09-30 (242)
+  used 168 · excluded 74: band not worn 40, activity partial 20, no opportunity 14
+  ρ = −0.21   95% interval −0.35 … −0.06   effective n 126 (autocorrelation)
   smallest detectable |ρ| at 80% power: 0.25
-  across 12 reasonable specifications: −0.27 … −0.09                 [specification band]
-  reverse lag (sleep before → screen after): ρ = −0.05 (−0.20 … 0.10)   [placebo]
+  across 12 reasonable specifications: −0.29 … −0.10                 [specification band]
+  reverse lag (sleep before → screen after): ρ = −0.04 (−0.19 … 0.11)   [placebo]
   both series trend over the period: no
-  test 38 of 412 associations on these nights; q across this study's family 0.04
-  association, not cause.                       [result e:91c2 · readset · 171 nights]
+  test 31 of 380 associations on these nights; q across this study's family 0.03
+  association, not cause.                       [result e:91c2 · readset · 168 nights]
   ▸ confirm on future nights
 ```
 
-She confirms it: the study gains a registered twin whose outcome period starts tonight, labelled confirmatory, while the first stays exploratory forever. Later she runs a 40-night experiment comparing a supplement with a placebo in coded containers; Today shows `night 17 of 40 · tonight: container K3`, her morning guesses are recorded, and at the end the result reports the difference with its interval, the randomization p-value, units analysed, adherence and whether the blind held.
+She confirms it: the study gains a registered twin whose outcome period starts tonight, labelled confirmatory, while the first stays exploratory forever. Later she runs a 40-night experiment comparing a supplement with a placebo in coded containers; Today shows `night 12 of 40 · tonight: container K7`, her morning guesses are recorded, and at the end the result reports the difference with its interval, the randomization p-value, units analysed, adherence and whether the blind held.
 
 ## Model
 
@@ -264,7 +264,7 @@ Stored with the scope `sx.`; tested on the synthetic world extended with a month
 - **ev.washout-excluded**: washout units are excluded from the primary estimand and counted.
 - **ev.randomization-valid**: under a null world, the randomization test's p-values are uniform across 10,000 simulated experiments of each assignment type.
 - **ev.forecast-before-outcome**: a forecast counts in a track record only if issued before its target period and before any resolving evidence was committed.
-- **ev.unknown-not-scored**: an outcome whose coverage stays missing resolves `unknown` and is excluded from every score.
+- **ev.missing-resolves-unknown**: a forecast whose resolving coverage stays missing resolves `unknown`, never true, false or a value; scoring then leaves it out under common scoring's `unknown-not-scored`.
 - **ev.backtest-as-of**: a backtest origin at time t reads only readings live at the commit position Sinex had at t.
 - **ev.skill-shown**: every rendering of a track record includes skill against climatology and persistence on the same resolved set.
 - **ev.gap-not-stay**: a location gap longer than the dwell never extends a visit.

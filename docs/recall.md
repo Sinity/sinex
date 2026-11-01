@@ -129,7 +129,7 @@ A **note** is an authored statement anchored in time or on events. It is the one
 - `note ["TEXT"] [--at TIME] [--about REF…] [--value INSTRUMENT=V] [--when QUERY|here] [--revises NOTE]`. It commits in under 1 s, so it sits on a hotkey; a client may supply native command and focus record keys.
 - Links from an `at`-anchored note to what it was about arrive later as derived `reference.about` events, by source record keys and containing time.
 - `recall note N` orders notes by noted time, newest first, with the ID as a stable tie-break.
-- A note is withdrawn by its author's archive act. A tripwire fires once per period its trigger holds, under the signals evaluator's laws. Notes are records about the substrate, never a second model of it, and they obey the [authored-record rules](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md).
+- A note is withdrawn by a withdrawal record, as every authored record is. A tripwire fires once per period its trigger holds, under the signals evaluator's laws. Notes are records about the substrate, never a second model of it, and they obey the [authored-record rules](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md).
 - Instruments are declared data (`instruments [list | show NAME]`). Prompts for them are signal rules; none is sent until the operator decides which may be (default; open operator question). Personal evidence's instruments are in [personal evidence](evidence.md#self-reports-and-intake).
 
 ## Agent arrival
@@ -184,7 +184,7 @@ Pending before past, every line cited:
 - **note.client-context-only**: a note written at an instant stores only what the client read, never event references; `reference.about` links appear after the evidence is admitted and survive replay by key.
 - **note.backdate-kept**: `recall note N` orders by noted time with a stable tie-break, and a backdated note keeps its time.
 - **note-revision-keeps-text**: revising a note leaves the earlier note readable, and the revision names it.
-- **note.prompt-parent**: an answer to a prompt has the delivery as parent and records its latency; an unanswered prompt is a delivery with no answer, never an imputed value.
+- **note.prompt-latency**: an answer to a prompt records its latency from the delivery. That an answer cites its prompt and that a missed prompt is never imputed are the shared laws `elicit.answer-cites-prompt` and `elicit.missed-is-recorded`.
 - **note.tripwire-once**: a tripwire note fires once per period its trigger holds, under the signals evaluator's laws.
 - **agent.handles-consistent**: expanding a handle returns rows at the original answer's read context, even after new admissions. *(MCP test)*
 

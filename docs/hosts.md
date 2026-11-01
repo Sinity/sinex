@@ -12,11 +12,11 @@ Every machine and device is a capture point into one record, and the record says
 
 ## A week, as an example
 
-On the synthetic world's hosts `desk` (runs `sinexd`), `server` (always on) and `phone`:
+On example hosts `kestrel` (a workstation that runs `sinexd`), `server` (always on) and `phone`:
 
 - **Monday, leaving.** The phone goes into airplane mode. Its producer keeps spooling notifications, usage, location, sensors and audio. Its spool screen reads "held 14 h · 1.1 GB · runway 23 days at this rate".
 - **Monday evening, a flaky network.** The phone reconnects. Discrete records go first (transfer class `immediate`); audio and sensor chunks wait for an unmetered network. Its Sources rows switch from `held` to `capturing`.
-- **Wednesday, `desk`'s database is down for an upgrade.** `server` and the phone keep spooling; nothing is lost and the coverage grid shows no gap, because nothing was missed: the records were held and arrived late.
+- **Wednesday, `kestrel`'s database is down for an upgrade.** `server` and the phone keep spooling; nothing is lost and the coverage grid shows no gap, because nothing was missed: the records were held and arrived late.
 - **Thursday, no signal for 30 hours.** On reconnection the producer's `hello` measures the phone's clock offset (+2.3 s, round trip 40 ms). Readings with instant precision carry `clock offset +2.3 s (measured)`; cross-host views align on the corrected time and say so; the stored `ts_orig` stays what the phone's clock read.
 - **Saturday, a reboot loop.** The phone's wall clock starts years in the past until the network sets it. Records framed then carry monotonic anchors; a later good anchor on the same boot re-anchors them on replay, labelled `captured (re-anchored from monotonic clock)`.
 - **Back home.** The Day view for Wednesday has one lane per host plus an operator lane, and a query over Wednesday's notifications answers completely, its coverage facet saying the rows arrived 31 hours late. Day packs were provisional while data was held and recomputed when it landed. No interrupting notice fired for the late notifications, and no "phone stalled" notice fired during the flight, because the phone's out-of-contact deadline is 48 hours; one fired only when the phone's last report said its capture service had died.
@@ -94,7 +94,7 @@ The time rules stand ([time](events.md#time)): time is decided once, at framing;
 |---|---|---|
 | the Sinex host | `sinexd`, PostgreSQL, NATS, `sinex-session`, Polylogue on Sinex | — |
 | server | `sinex-capture` with every source declaration that applies to a headless host (journal, shell histories, units, files, netlink, audit), the account pollers placed on it, Polylogue on Sinex as producer and consumer | a database, a replica, derivations, a deliverer |
-| laptop | as a server, plus `sinex-session` for its desktop streams | the same |
+| laptop (kind `workstation`) | as a server, plus `sinex-session` for its desktop streams | the same |
 | phone | its capture app as the phone's producer | anything but capture and its own interface |
 
 Which host runs `sinexd` is a configuration value, so moving it is a deployment change. A source declaration runs unchanged on any host: there is no capture-node-specific or phone-specific source code where a format is shared.
@@ -150,7 +150,7 @@ sinex-capture status                 # on the host: spool, held per input, last 
 
 ```
 host     kind         producer   contact       held             spool / runway   clock
-desk     workstation  sinexd     —             —                —                reference
+kestrel  workstation  sinexd     —             —                —                reference
                       session    live          0                12 MiB / —       +0.000 s
 server   server       capture    live          0                0 / 412 d        −0.004 s ±0.011
 phone    phone        app        2 h 14 m ago  1.3 GB · 9 in.   1.3 GB / 21 d    +2.31 s ±0.04
@@ -181,4 +181,4 @@ Stored with the scope `sx.`.
 - **mh.relay-stateless**: the phone relay keeps no bytes after it replies and replies success only after Sinex's material acknowledgement. *(relay test with Sinex stopped)*
 - **mh.root-visible**: every root source on a host without root shows `unavailable(permission_denied(root))`. *(instrumentation test)*
 
-Late facts are delivered passively by the common signals law `late-is-passive`. The laws `fus.scope-partitions`, the producer laws, `cov.no-false-empty` and `cap.no-host-coupling` ([sources](sources.md#laws)) also hold across hosts.
+Late facts are delivered passively by the common signals law `late-is-passive`. The fusion law `fusion-scope` ([derivations](derivations.md#laws)), the producer laws, `cov.no-false-empty` and `cap.no-host-coupling` ([sources](sources.md#laws)) also hold across hosts.

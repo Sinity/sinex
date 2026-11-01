@@ -16,7 +16,8 @@ forms; writes are POSTs of operation-table requests. The shared TypeScript shell
 `web-shell` handles keys, the palette, copy, SSE fragment swaps, one event connection per
 browser, and the timeline element, which draws lanes in the client from typed series
 rows that Sinex bins server-side (at most one mark per pixel); live updates arrive as server-rendered fragments over SSE with the commit
-position as the event ID, so the browser never assembles a view from JSON. The web is
+position as the event ID, so the browser never assembles a view from JSON; the timeline
+element is the one exception, drawing typed series rows (decided target). The web is
 the one graphical surface: there is no native application, because an installed web
 app reaches the desktop's notification and shortcut services while keeping URLs as
 citations and one shell shared with Polylogue; desktop integration goes through the
@@ -169,6 +170,8 @@ The firehose is a query into the event stream, which is why it lives in Sinex. R
 - **web.zoom-parent-closure**: at every timeline zoom, each item links to its parent at
   the next level, and the children's supported seconds sum to the parent's. *(property
   on the tiles read model; decided target)*
+Laws with the `joint.` scope are the shared joint suite that both products run; they are stored under `joint.`, not `sx.`.
+
 - **joint.counterpart-total**: every view returns a counterpart URL in Polylogue or a
   stated reason, and every counterpart URL resolves in the other product's test stack.
   *(decided target)*

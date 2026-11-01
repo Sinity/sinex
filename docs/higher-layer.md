@@ -256,7 +256,7 @@ Targets follow [the derivation performance rules](derivations.md#performance).
 
 | Concern | Target |
 |---|---|
-| Resume and recall | a prepared pack is read within the hook deadline ([agent arrival](recall.md#agent-arrival)); an on-demand card is warm p95 < 2 s for a 30-day project; the first evidence page arrives in < 1 s |
+| Resume and recall | a prepared pack is read within the hook deadline ([agent arrival](recall.md#agent-arrival)); an on-demand pack is warm p95 < 2 s for a 30-day project; the first evidence page arrives in < 1 s |
 | Figures | daily figures read hourly figures, verified by rows read; 30-, 365- and 730-day histories measured with selection, computation, admission and rendering apart |
 
 ## Laws

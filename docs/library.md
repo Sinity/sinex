@@ -451,7 +451,6 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 
 Decided target (2026-11-01):
 
-- **lib.currency.shared**: the library's current-record view equals common `authored` currency on generated histories, including withdrawal of a middle revision; this is the shared law `authored.currency.middle-withdrawal`, which the library runs.
 - **lib.projection.equals-function**: the shown-value projection equals recomputation from all live records after any sequence of writes, withdrawals, archives and replays.
 - **lib.tag.implies-acyclic**: an `implies` write that would close a cycle is refused, and shown tags under implication equal the transitive closure at the implying level.
 - **lib.tag.any-label**: any non-empty label, including one that starts with or consists of punctuation, is an ordinary tag.
@@ -474,4 +473,4 @@ Decided target (2026-11-01):
 - **lib.pl.federated-only**: the library holds no copy of Polylogue rows; with Polylogue down, the *In AI sessions* panel shows unavailable with the reason and every other panel is unchanged.
 - **lib.pl.split-equals-oracle**: mixed library queries equal the federation oracle of the shared query suite.
 
-Stored with the scope `sx.`.
+Stored with the scope `sx.`. The library also runs the shared law `authored.currency.middle-withdrawal` against its current-record view.
