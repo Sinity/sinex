@@ -245,8 +245,8 @@ fn detect(
 ) -> Result<Vec<StagedFile>, String> {
     let (container, listed) = listing(path)?;
     let archive = is_archive(container);
-    let mut whole_file = Vec::new();
-    let mut archive_formats = Vec::new();
+    let mut whole_file: Vec<&'static InputFormat> = Vec::new();
+    let mut archive_formats: Vec<&'static InputFormat> = Vec::new();
     for format in formats.iter().copied().filter(|f| f.plan.is_some()) {
         for structure in format.accepts {
             let matched = if structure.is_archive_layout() {
@@ -260,7 +260,7 @@ fn detect(
                 } else {
                     &mut whole_file
                 };
-                if !list.iter().any(|known| std::ptr::eq(*known, format)) {
+                if !list.iter().any(|known| known.name == format.name) {
                     list.push(format);
                 }
             }
