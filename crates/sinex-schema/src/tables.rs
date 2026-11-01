@@ -123,10 +123,6 @@ pub(crate) const QUERY_CURSOR_KEY: &str = "CREATE TABLE core.query_cursor_key (
 )";
 pub(crate) const QUERY_CURSOR_KEY_INIT: &str = "INSERT INTO core.query_cursor_key (id, secret) VALUES (true, decode(replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''), 'hex'))";
 
-/// Coverage probes one source and run for its last recorded time.
-pub(crate) const COVERAGE_RUNS: &str =
-    "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
-
 /// One edge per exact parent. Chain walks do not scan compressed payloads.
 pub(crate) const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
   parent uuid NOT NULL,
@@ -213,14 +209,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   completed_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (operation_id, first_part)
 )".into(),
-        // Commit order, read by derivations inside the daemon and by the publisher.
-        "CREATE TABLE core.commit_log (
-  commit_seq bigint PRIMARY KEY,
-  event_id uuid,
-  event_type text,
-  persisted_at timestamptz DEFAULT now(),
-  CHECK ((event_id IS NULL) = (event_type IS NULL))
-)".into(),
+        // Positions without an event; events carry their own.
+        crate::event_indexes::COMMIT_LOG.into(),
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
         "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0), ('tombstoned', 0)".into(),
@@ -582,10 +572,8 @@ pub(crate) fn after_tables() -> Vec<String> {
     for table in ["core.events"] {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",
-            "CREATE INDEX ON $T (ts_orig)",
-            "CREATE INDEX ON $T (source, ts_orig)",
             "CREATE INDEX ON $T (event_type, ts_orig)",
-            "CREATE INDEX ON $T (material_id, anchor)",
+            crate::event_indexes::RECORD_LOCATION,
             // Only derived events have parents. Without the pending list a
             // search never scans an unsorted backlog of bulk inserts (which
             // made each probe cost 0.6 ms after a backfill).
@@ -599,7 +587,6 @@ pub(crate) fn after_tables() -> Vec<String> {
         }
     }
     out.extend(blob_changes());
-    out.push(COVERAGE_RUNS.into());
     out
 }
 

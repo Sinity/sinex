@@ -1424,7 +1424,7 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
     let sample_readings = "SELECT count(*) FROM core.events WHERE event_type = 'sinex.telemetry'";
     assert_eq!(scalar(&mut c, samples).await, 3);
     assert_eq!(scalar(&mut c, sample_readings).await, 3);
-    let committed = "SELECT count(*) FROM core.commit_log c JOIN core.events e ON e.id = c.event_id WHERE e.event_type = 'sinex.telemetry'";
+    let committed = "SELECT count(DISTINCT commit_seq) FROM core.events WHERE event_type = 'sinex.telemetry' AND commit_seq > 0";
     assert_eq!(scalar(&mut c, committed).await, 3);
 
     // A reread repeats the samples; replay replaces their readings.

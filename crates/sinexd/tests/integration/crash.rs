@@ -1097,9 +1097,9 @@ async fn publisher_survives(between_pages: bool) {
     daemon.wait().unwrap();
     consistent(&target).await;
 
-    let committed = scalar(&mut c, "SELECT count(*) FROM core.commit_log").await;
+    let committed = scalar(&mut c, "SELECT count(*) FROM core.events").await;
     let expected: std::collections::BTreeMap<sinex_model::EventId, i64> =
-        sqlx::query_as::<_, (uuid::Uuid, i64)>("SELECT event_id,commit_seq FROM core.commit_log")
+        sqlx::query_as::<_, (uuid::Uuid, i64)>("SELECT id,commit_seq FROM core.events")
             .fetch_all(&mut c)
             .await
             .unwrap()

@@ -481,11 +481,6 @@ async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
     let missing = executed("missing", "gone", 2, Class::Open);
     let missing_id = missing.id;
     admit(&mut conn, batch(vec![first, missing])).await;
-    sqlx::query("DELETE FROM core.commit_log WHERE event_id = $1")
-        .bind(missing_id.0)
-        .execute(&mut conn)
-        .await
-        .unwrap();
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
     lifecycle(&mut conn, Act::Archive, vec![first_id]).await;
     publish_pending(&mut conn, &js, &subjects).await.unwrap();

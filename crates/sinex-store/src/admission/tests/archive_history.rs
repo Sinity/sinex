@@ -227,10 +227,15 @@ async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits(db: devkit:
     )
     .await;
     assert!(commit_log::after(&mut conn, 0, 0, i64::MAX).await.is_err());
-    sqlx::query!("DELETE FROM core.commit_log WHERE commit_seq>=2")
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    // Positions whose events are gone (tombstoned) are covered without events.
+    sqlx::raw_sql(
+        "SELECT set_config('sinex.tombstone_operation', gen_random_uuid()::text, false);
+         DELETE FROM core.events WHERE commit_seq >= 2;
+         RESET sinex.tombstone_operation",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
     let first = commit_log::after(&mut conn, 0, 1, i64::MAX).await.unwrap();
     assert_eq!(first.up_to, Some(1));
     assert_eq!(first.events.len(), 1);

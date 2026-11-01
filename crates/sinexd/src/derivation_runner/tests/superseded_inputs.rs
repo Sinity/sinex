@@ -150,7 +150,7 @@ async fn a_per_event_output_of_an_input_archived_meanwhile_is_dropped(
     replay(&w, &first).await;
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let position: i64 =
-        sqlx::query_scalar("SELECT max(commit_seq) FROM core.commit_log WHERE event_id = ANY($1)")
+        sqlx::query_scalar("SELECT max(commit_seq) FROM core.events WHERE id = ANY($1)")
             .bind(vec![first.id.0, other.id.0])
             .fetch_one(&mut conn)
             .await
