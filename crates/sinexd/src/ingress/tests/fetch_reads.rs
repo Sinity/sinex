@@ -103,8 +103,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     let forged = rpc(
         &h.client,
         h.subjects.fetch_event("unconfigured"),
-        serde_json::to_vec(&json!({"event":id,"producer":"replica"}))
-            .unwrap(),
+        serde_json::to_vec(&json!({"event":id,"producer":"replica"})).unwrap(),
     )
     .await
     .unwrap();
@@ -114,8 +113,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     let message = rpc(
         &h.client,
         h.subjects.fetch_material("replica"),
-        serde_json::to_vec(&FetchMaterial { material })
-            .unwrap(),
+        serde_json::to_vec(&FetchMaterial { material }).unwrap(),
     )
     .await
     .unwrap();
