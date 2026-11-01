@@ -172,7 +172,7 @@ separate command" (cc-queued:065c511c-e336-4e59-825b-eeefc71cdaae@2026-03-12T00:
 Throughput is a product requirement ([architecture.md](architecture.md)), so
 performance is measured, never asserted: no test checks elapsed time.
 
-- `cargo xtask bench` backfills a fixed sample of real inputs and runs the
+- `cargo xtask bench` stages a fixed sample of real inputs and runs the
   derivations over it, reporting input bytes, stored bytes per source,
   database and blob store size, timings, and sampled memory and load.
   Estimates for full inputs assume time grows linearly with input bytes.

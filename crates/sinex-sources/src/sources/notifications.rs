@@ -223,11 +223,12 @@ pub fn capture(
     dbus::capture(MATCHES, &[], spool, stop)
 }
 
-/// `--read notifications=SPOOL`: desktop notifications on the session
+/// `stage --parser notifications SPOOL`: desktop notifications on the session
 /// bus, captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "notifications",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],

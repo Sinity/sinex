@@ -106,7 +106,11 @@ A continuous binding is a staged input declared in configuration: Sinex's own Ni
 
 ### One-shot staging
 
-`stage <path | directory | live database> [--parser NAME] [--export-date DATE] [--account NAME]` is the imperative form. It is an [operation](lifecycle.md#operations-and-actors) and a [run](events.md#producer-versions-runs-and-manifests). The CLI form and its output are in [the CLI](interfaces.md#cli).
+`stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow]` is the imperative form. It is an [operation](lifecycle.md#operations-and-actors), and each source it reads has its [run](events.md#producer-versions-runs-and-manifests). The daemon runs it for `sinexctl stage`; with the daemon stopped, `sinexd admin stage` runs the same command with its own writer. Paths are absolute, because the daemon reads them and the operation records them. The CLI form and its output are in [the CLI](interfaces.md#cli).
+
+- **One parser for every path, or one per path.** `--parser` once names the format for every path; given once per path, the n-th names the n-th path's; without it, each file is recognised by [parser selection](#parser-selection). A directory staged without `--parser` stages each file in it, in name order; a directory a named format reads as one input (a notes vault, a Maildir) is that format's one input.
+- **The account and the export date** are recorded in the operation's scope and on every material stored with no parser; the account is also recorded with each binding as its `account` option.
+- **A staged input finishes.** It is read to its end and is then `finished`: staging the same unchanged path again reads nothing new, and a newer export of the same provider is a new path and a new stage. A path the daemon already reads continuously from its canonical location is refused: it is staged already.
 
 | Staged | Material |
 |---|---|
@@ -117,11 +121,36 @@ A continuous binding is a staged input declared in configuration: Sinex's own Ni
 
 ### Parser selection
 
-Parser selection is strict and declarative. A parser declares the exact structures it accepts: an export's member layout and header, a database's tables, a file's signature. For a canonical location, the location's source decides the parser and no detection runs. For `stage PATH`, detection tests the declared structures only: exactly one match assigns the parser; none, or several, store the material unparsed with the candidates listed. Detection never assigns a parser of another origin and never guesses from a file name.
+Parser selection is strict and declarative. A format declares the exact structures it accepts: a database's table and columns (Atuin's `history`), a text file's first line (an extended zsh history's `: <start>:<elapsed>;`), an archive's member layout (Google Takeout's `Takeout/` directory). Detection tests only these declarations. Exactly one match assigns the parser; none, or several, store the file with no parser and the matching formats listed as candidates. Detection never assigns a parser of another origin and never guesses from a file name, and a format that declares no structure (a plain shell history, a CSV) is read only when named with `--parser` or found at its canonical location.
+
+An archive is decided member by member. Every format whose layout an archive has plans its bindings on it, and each member is read by the one source whose binding selects it. A member that two sources would both read is read by neither: both are listed as its candidates and neither source reads anything from that archive, so nothing is read under a contested interpretation.
+
+### Inventory and accounting
+
+A stage records what it holds before any record is parsed: its **inventory**. Every member of every staged file appears in it exactly once, read the archive's own listing (a ZIP's central directory is read without decompressing any member), with its disposition:
+
+| Disposition | Meaning |
+|---|---|
+| read | read by the named source's binding |
+| failed | the binding that would read it failed; the bytes stay stored |
+| stored, not interpreted | kept in the stored original and read by nothing; when several sources would read it, they are listed as candidates |
+
+As each staged file is read, each product's line carries its **accounting**: the records the driver framed and what the parser made of them (read into readings, headers with no reading, failures with the first unreadable form), and the readings and what admission made of them (new, the same as an earlier export, revised, older, superseded), with the records the input no longer holds that were archived as removed at the source. Two identities hold for every product, every file and the whole stage, each side counted at a different point of the pipeline: records framed = read + headers + failures, and readings offered = new + same + revised + older + superseded. A product whose accounting does not balance ends the stage `stopped_early`, because a mismatch is a defect, not a status.
+
+```
+stage 0190…  ok
+/exports/takeout-20300101T000000Z-001.zip  5 member(s)  read by takeout-chrome, takeout
+  browser.takeout-chrome-history  read  records 2 (read 2, headers 0, failures 0)  readings 2: new 2, same 0, …
+  google.keep  read  records 2 (read 1, headers 0, failures 1)  readings 1: new 1, same 0, …; first unreadable: …
+  stored, not interpreted: 2 member(s): Takeout/archive_browser.html, Takeout/Travel/Trips.json
+/exports/takeout-20300101T000000Z-003.zip  1 member(s)  stored, not interpreted (no parser)
+```
+
+`stage` answers with the operation and the inventory as soon as the stage is recorded and reads on in the daemon; with `--follow` it answers when the stage ends, with the final inventory and accounting. `stage-list [--unfinished]` and `stage-show OPERATION` read them later. A stage that stopped early, or whose daemon stopped while it read, is read again with `resume OPERATION`: it plans the recorded scope again and each binding continues from its committed cursor, so it reaches the same readings and the same accounting.
 
 ### Staging before a parser exists
 
-When detection finds no parser, or more than one, the bytes are stored as material with no parser and the candidates listed. Nothing is guessed and nothing is refused. A parser is assigned later through replay (`replay "materials where parser is none and …" --parser NAME`), recorded on the material and on the operation. When a new parser version arrives, records with no live reading are read automatically ([parser versions](events.md#parser-versions)).
+When detection finds no parser, or more than one, the file is stored byte for byte as material with no parser, its candidates listed in its manifest. Nothing is guessed and nothing is refused. Each stage of such a file is a new material of the same input; replay reads no material that has no parser. A parser is assigned later through replay (`replay "materials where parser is none and …" --parser NAME`), recorded on the material and on the operation. When a new parser version arrives, records with no live reading are read automatically ([parser versions](events.md#parser-versions)).
 
 ### Stage as you go
 
@@ -154,6 +183,8 @@ stage op:01J9…  takeout-20261101 (3 parts, 4.7 GiB, stored as received)
 - Every status-like answer names what holds work back (`paced by: writer serving derivations`, `paced by: provider backoff until 10:42`) and shows no estimate unless the rate has held steady for 30 s.
 - Materials stored without a parser are a queue with a visible size.
 
+`stage-list` shows recent stages with each file's products and their accounting so far; files stored without a parser show as stored, not interpreted.
+
 ### The parser workbench
 
 Decided target (2026-11-01). Materials come first and parsers whenever, so an agent can add a source without the original file:
@@ -171,12 +202,13 @@ Decided target (2026-11-01). Materials come first and parsers whenever, so an ag
 - **replay-reads-stored-copy**: replay after the original file is deleted reads the stored bytes and produces the same records.
 - **no-material-per-poll**: no poll makes its own material; a growing input's parts rotate only at their declared bounds.
 - **metadata-exhaustive**: an observation records every readable metadata item, and an unreadable one is recorded unavailable with a reason; GNU tar is the restore oracle for directory captures.
-- **stage-shapes**: `stage` of a file, a directory, a live SQLite database and a SQLite export each produce the material shape in [one-shot staging](#one-shot-staging), an operation row and a run.
-- **stage-without-parser**: staging with no matching parser stores the material with no parser and the candidates; a later replay with `--parser` reads it.
-- **restage-two-materials-one-live-reading**: staging byte-identical content twice from two paths yields two materials and one live reading per record.
+- **stage.shapes**: `stage` of a file, a directory, a live SQLite database and an archive each produce the material shape in [one-shot staging](#one-shot-staging), an operation row and a run.
+- **stage.strict-detection**: a file matching no declared structure is stored with no parser and no candidates; one matching two is stored with no parser and both listed; detection never assigns a parser of another origin; a member two sources would read is read by neither.
+- **stage.inventory-total**: for a staged export, every member appears in the inventory exactly once, as read, failed or stored and not interpreted.
+- **stage.idempotent-progress**: killing a stage at any point and running it again reaches the same live readings and the same cursors.
+- **acct.identity**: for every product of a stage, records framed = read + headers + failures, and readings offered = new + same + revised + older + superseded.
+- **stage.without-parser**: staging with no matching parser stores the material byte for byte with no parser and the candidates; a later replay with `--parser` reads it.
+- **stage.restage-two-materials-one-live-reading**: staging byte-identical content twice from two paths yields two materials and one live reading per record; staging the same unchanged path again reads nothing new.
 - **streams-stored-before-commit**: a live stream's bytes are in material parts before their events commit.
-- **stage.strict-detection**: a file matching no declared structure is stored unparsed with no candidates; one matching two is stored unparsed with both; detection never assigns a parser of another origin. *(property over synthetic structures; decided target)*
-- **stage.inventory-total**: for an export, every member appears in the inventory exactly once, as parsed, handed off, failed or stored and not interpreted. *(export fixtures; decided target)*
-- **stage.idempotent-progress**: killing a stage at any point and running it again reaches the same live readings and the same accounting. *(crash test; decided target)*
 - **parser.arrival-reads-backlog**: after a parser for candidate materials ships, `replay … --parser` reads exactly the stored-unparsed materials it matches, and that parser's backlog count drops to zero. *(integration; decided target)*
 - **parser.try-admits-nothing**: `parser try` over any material leaves the commit position unchanged. *(integration; decided target)*

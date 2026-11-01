@@ -17,8 +17,8 @@ self: {
       enable = true;
       database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
-      exclude."machine.journald".reason = "The restore fixture captures only its synthetic backfill.";
-      exclude."machine.udev".reason = "The restore fixture captures only its synthetic backfill.";
+      exclude."machine.journald".reason = "The restore fixture captures only its synthetic stage.";
+      exclude."machine.udev".reason = "The restore fixture captures only its synthetic stage.";
       backup = {
         repo = "/backup/sinex";
         keysRepo = "/backup/sinex-keys";
@@ -39,9 +39,9 @@ self: {
         return events, blobs
 
     machine.wait_for_unit("sinexd.service")
-    # A backfill takes the writer, so the daemon stops for it.
+    # A local stage takes the writer, so the daemon stops for it.
     machine.succeed("systemctl stop sinexd.service")
-    machine.succeed(f"{sinex} sinexd backfill --database '{url}' --store /var/lib/sinex/store --read zsh=/var/lib/sinex/zsh_history")
+    machine.succeed(f"{sinex} sinexd admin stage /var/lib/sinex/zsh_history --parser zsh --database '{url}' --store /var/lib/sinex/store")
     machine.succeed("systemctl start sinexd.service")
     machine.wait_for_unit("sinexd.service")
     # This cold restore drill copies one stopped-writer boundary. The two

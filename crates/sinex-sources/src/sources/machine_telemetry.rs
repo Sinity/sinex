@@ -260,9 +260,10 @@ fn tables(path: &Path) -> Option<Vec<String>> {
         .ok()
 }
 
-/// `--read machine-telemetry=PATH`: the collector's databases.
+/// `stage --parser machine-telemetry PATH`: the collector's databases.
 pub const FORMAT: InputFormat = InputFormat {
     name: "machine-telemetry",
+    accepts: &[],
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
         locations: &[

@@ -467,12 +467,13 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--read router=PATH`: every lane day file under PATH (the router
+/// `stage --parser router PATH`: every lane day file under PATH (the router
 /// directory, one lane's directory or one day file), read in the binding's
 /// zone, recorded when it is planned.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "router",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[

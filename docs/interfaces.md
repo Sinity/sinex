@@ -236,19 +236,20 @@ here pack.
 The semantics are [lifecycle](lifecycle.md)'s and [staging](materials.md#staging)'s;
 the surfaces are:
 
-- `stage PATH | DIR | DB [--parser NAME] [--export-date DATE] [--account NAME] [--follow]`,
-  showing its inventory at once and ending with an account by event type (admitted,
-  suppressed with example references, failed) and `stopped_early` when it did not
-  finish; `stage list` and `stage show OP` show progress and what paces it, and give no
-  estimate while the rate varies ([inventory](materials.md#inventory-and-progress));
+- `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow]`,
+  answering with the operation and the inventory of every staged member at once, and
+  with `--follow` ending with each product's accounting and `stopped_early` when it did
+  not finish ([staging](materials.md#inventory-and-accounting)); `stage-list
+  [--unfinished]` and `stage-show OPERATION` read stages later. With the daemon stopped,
+  `sinexd admin stage` runs the same command with its own writer;
 - `archive REF | QUERY | --material ID… | --run ID | --source S [--after T] [--before T]`
   and `restore` over the same scopes or `--operation OP` (the chains that operation
   archived), each refusing when any part cannot move; `--compare` prints the cascade and
   what would refuse and changes nothing;
 - `undo OPERATION [--compare]` archives what the operation made live and restores what it
   archived, for an archive, a restore, a replay or an undo;
-- `resume OPERATION` continues an archive, restore, tombstone, undo or replay that ended
-  `stopped_early` or whose daemon stopped mid-run;
+- `resume OPERATION` continues an archive, restore, tombstone, undo, replay or stage that
+  ended `stopped_early` or whose daemon stopped mid-run;
 - `replay QUERY [--parser NAME] [--compare]` and its undo, with `--compare` showing per-field changes; `recompute DERIVATION [--compare]` and
   `recompute DERIVATION --switch` ([versions](derivations.md#versions));
 - `tombstone` over the same scopes as `restore`, only on archived chains; `--compare`

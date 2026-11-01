@@ -73,7 +73,6 @@ fn missing_and_unknown_arguments_are_refused() {
 #[devkit::test]
 fn unadvertised_requests_keep_wire_decoding_and_explicit_write_access() {
     for value in [
-        json!({"method":"stage", "path":"/synthetic/input"}),
         json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
         json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
     ] {

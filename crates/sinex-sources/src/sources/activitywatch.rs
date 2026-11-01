@@ -300,10 +300,11 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--read activitywatch=PATH`: `aw-server-rust`'s database.
+/// `stage --parser activitywatch PATH`: `aw-server-rust`'s database.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "activitywatch",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

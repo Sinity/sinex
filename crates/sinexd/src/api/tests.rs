@@ -169,6 +169,7 @@ async fn world_with_config(
     let api = Api {
         source_config: Arc::new(source_config),
         read_failures: Default::default(),
+        running_stages: Default::default(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs,
@@ -860,6 +861,7 @@ async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatab
 }
 
 mod discovery;
+mod staging;
 
 mod recall;
 

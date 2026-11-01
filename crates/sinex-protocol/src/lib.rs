@@ -22,6 +22,7 @@ pub use replay::{
     ReplayContinuation, ReplayQuery, ReplayReply,
 };
 pub mod signals;
+pub mod stage_report;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{

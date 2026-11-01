@@ -286,10 +286,11 @@ fn capture(
     live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::from_secs(1))
 }
 
-/// `--read hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.
+/// `stage --parser hyprland SPOOL`: Hyprland's event socket, captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "hyprland",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],

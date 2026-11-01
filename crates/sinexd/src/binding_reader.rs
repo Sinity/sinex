@@ -1,6 +1,6 @@
 //! A binding owns its parser and cursor; bindings of the same stored file share one pass over it.
-use crate::backfill::{self, Totals};
 use crate::material_access::Sink;
+use crate::stage::{self, Totals};
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, RunId};
@@ -242,7 +242,7 @@ pub(crate) async fn read(
         };
         let init = async {
             if !b.remembered {
-                backfill::record(conn, &b.binding).await?;
+                stage::record(conn, &b.binding).await?;
                 restore(conn, blobs, b, access, &stop).await?;
                 b.remembered = true;
             }
@@ -320,7 +320,7 @@ pub(crate) async fn read(
                 results.add(&b.binding, Some(run), Ok(Totals::default()));
                 continue;
             }
-            let result = backfill::drive(
+            let result = stage::drive(
                 conn,
                 writer,
                 run,

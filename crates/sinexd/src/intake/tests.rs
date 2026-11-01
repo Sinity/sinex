@@ -428,6 +428,7 @@ async fn synchronous_storage_does_not_stop_other_runtime_tasks() {
             batch,
             elapsed: started.elapsed(),
             material_length: Some(prepared.material_len()),
+            framed: None,
             permit,
         });
         Ok(())

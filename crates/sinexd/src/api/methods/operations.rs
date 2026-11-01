@@ -61,6 +61,10 @@ impl Api {
         };
         match kind.as_deref() {
             None => refused(format!("no operation {}", operation.0)),
+            Some(sinex_store::stages::KIND) => {
+                drop(conn);
+                self.resume_stage(caller, operation).await
+            }
             Some("replay") => {
                 drop(conn);
                 self.replay(
@@ -331,5 +335,173 @@ fn answer(result: Result<crate::lifecycle::Answer, String>) -> Reply {
             Reply::StoppedEarly { reason, result }
         }
         Err(e) => refused(e),
+    }
+}
+
+impl Api {
+    /// Stage `paths`, each with the parser named for it or recognised by
+    /// detection, in the background; with `follow`, answer when it ends.
+    pub(super) async fn stage(
+        &self,
+        caller: &Caller,
+        paths: &[String],
+        parsers: &[String],
+        account: Option<String>,
+        export_date: Option<String>,
+        follow: bool,
+    ) -> Reply {
+        let items = match crate::stage::items(paths, parsers) {
+            Ok(items) => items,
+            Err(e) => return refused(e),
+        };
+        let request = crate::stage::Request {
+            items,
+            account,
+            export_date,
+            host: self.host.clone(),
+            zone: self.zone.iana_name().map(str::to_owned),
+        };
+        self.start_stage(caller, OperationId::new(), request, false, follow)
+            .await
+    }
+
+    /// Read a stage that did not end again, from its recorded plan and its
+    /// bindings' cursors, and answer when it ends.
+    async fn resume_stage(&self, caller: &Caller, operation: OperationId) -> Reply {
+        let mut conn = match self.acquire(caller).await {
+            Ok(c) => c,
+            Err(e) => return refused(e.to_string()),
+        };
+        let stored = match sinex_store::stages::show(&mut conn, operation).await {
+            Ok(Some(stored)) => stored,
+            Ok(None) => return refused(format!("no stage operation {}", operation.0)),
+            Err(e) => return refused(e.to_string()),
+        };
+        drop(conn);
+        if let Some(result) = stored.result {
+            return refused(format!("stage {} already ended {result}", operation.0));
+        }
+        match crate::stage::Request::from_scope(&stored.scope) {
+            Ok(request) => {
+                self.start_stage(caller, operation, request, true, true)
+                    .await
+            }
+            Err(e) => refused(e),
+        }
+    }
+
+    async fn start_stage(
+        &self,
+        caller: &Caller,
+        operation: OperationId,
+        request: crate::stage::Request,
+        resume: bool,
+        follow: bool,
+    ) -> Reply {
+        let Some(writer) = self.writer.clone() else {
+            return refused("this daemon has no writer; writes go through `sinexd run`");
+        };
+        let planned = request.clone();
+        let config = self.source_config.clone();
+        let host = self.host.clone();
+        let plan = tokio::task::spawn_blocking(move || {
+            let plan = planned.plan()?;
+            // A path this daemon reads continuously is already staged; a
+            // second reader of the same binding would race its cursor.
+            let continuous = crate::binding_runner::plan(&config, &host)?;
+            for (_, binding) in plan.bindings() {
+                if continuous.iter().any(|(_, b)| b.name == binding.name) {
+                    return Err(format!(
+                        "{} is read continuously as {}; it needs no stage",
+                        binding.input.display(),
+                        binding.name
+                    ));
+                }
+            }
+            Ok::<_, String>(plan)
+        })
+        .await;
+        let plan = match plan {
+            Ok(Ok(plan)) => plan,
+            Ok(Err(e)) => return refused(e),
+            Err(e) => return refused(e.to_string()),
+        };
+        if !crate::stage::claim(&self.running_stages, operation) {
+            return refused(format!("stage {} is being read now", operation.0));
+        }
+        let unlock = if caller.actor == "operator" {
+            self.unlock
+                .lock()
+                .await
+                .as_ref()
+                .filter(|session| session.unlock.check().is_ok())
+                .map(|session| session.unlock.clone())
+        } else {
+            None
+        };
+        let reads = self.reads.clone();
+        let blobs = self.blobs.clone();
+        let running = self.running_stages.clone();
+        let actor = caller.actor.to_owned();
+        let (begun, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let outcome = async {
+                let mut conn = reads.acquire().await.map_err(|e| e.to_string())?;
+                let mut staging = crate::stage::Staging {
+                    read_conn: &mut conn,
+                    blobs: &blobs,
+                    writer: &writer,
+                    access: crate::material_access::Access {
+                        recipient: None,
+                        unlock: unlock.as_ref(),
+                    },
+                };
+                if resume {
+                    staging.resume(operation, &request, plan, begun).await
+                } else {
+                    staging.run(operation, &actor, &request, plan, begun).await
+                }
+            }
+            .await;
+            crate::stage::release(&running, operation);
+            outcome
+        });
+        if !follow && let Ok(started) = started.await {
+            return Reply::Ok { result: started };
+        }
+        match task.await {
+            Ok(Ok(outcome)) if outcome.failures.is_empty() => Reply::Ok {
+                result: outcome.report,
+            },
+            Ok(Ok(outcome)) => Reply::StoppedEarly {
+                reason: format!(
+                    "stage {} stopped early; `resume {}` reads it again once the cause is cleared: {}",
+                    outcome.operation.0,
+                    outcome.operation.0,
+                    outcome.failures.join("; ")
+                ),
+                result: outcome.report,
+            },
+            Ok(Err(e)) => refused(e),
+            Err(e) => refused(e.to_string()),
+        }
+    }
+
+    async fn stage_show(&self, caller: &Caller, operation: &str) -> Reply {
+        let operation = match uuid("operation", operation) {
+            Ok(id) => OperationId(id),
+            Err(e) => return refused(e),
+        };
+        let mut conn = match self.acquire(caller).await {
+            Ok(c) => c,
+            Err(e) => return refused(e.to_string()),
+        };
+        match sinex_store::stages::show(&mut conn, operation).await {
+            Ok(Some(stage)) => Reply::Ok {
+                result: json!(stage),
+            },
+            Ok(None) => refused(format!("no stage operation {}", operation.0)),
+            Err(e) => refused(e.to_string()),
+        }
     }
 }

@@ -134,10 +134,23 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--read atuin=PATH`: Atuin's history database.
+/// `stage --parser atuin PATH`: Atuin's history database.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "atuin",
+        accepts: &[sinex_source_core::stage::Structure::SqliteTable {
+            table: "history",
+            columns: &[
+                "id",
+                "timestamp",
+                "duration",
+                "exit",
+                "command",
+                "cwd",
+                "session",
+                "hostname",
+            ],
+        }],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

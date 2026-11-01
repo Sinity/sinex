@@ -151,6 +151,7 @@ pub fn source() -> DeclaredSource<FreedomParser> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "freedom",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

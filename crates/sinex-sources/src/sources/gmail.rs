@@ -304,6 +304,7 @@ impl<T: api::Transport + 'static> Reader for GmailReader<T> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "gmail",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

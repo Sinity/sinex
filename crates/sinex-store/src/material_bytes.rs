@@ -43,6 +43,9 @@ pub async fn reference(
             "material {material}: invalid persisted length or version"
         ))
     };
+    let (Some(parser), Some(parser_version)) = (row.parser, row.parser_version) else {
+        return Err(unparsed(material.0));
+    };
     Ok(Some(sinex_model::MaterialRef {
         id: MaterialId(row.id),
         input: row.input_id.map(sinex_model::InputId),
@@ -50,11 +53,19 @@ pub async fn reference(
         length: u64::try_from(row.length).map_err(|_| invalid())?,
         part_index: u32::try_from(row.part_index).map_err(|_| invalid())?,
         previous_part: row.previous_part_id.map(MaterialId),
-        parser: row.parser,
-        parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
+        parser,
+        parser_version: u32::try_from(parser_version).map_err(|_| invalid())?,
         manifest: serde_json::from_value(row.manifest)
             .map_err(|e| crate::Error::Invalid(format!("material {material}: manifest: {e}")))?,
     }))
+}
+
+/// A material stored with no parser is not part of any parsed sequence and
+/// has no reader yet.
+fn unparsed(material: uuid::Uuid) -> crate::Error {
+    crate::Error::Invalid(format!(
+        "material {material} is stored without a parser; no parser has been assigned to read it"
+    ))
 }
 
 /// Up to `count` parts of a sequence, newest first: `newest` and the parts before
@@ -90,6 +101,9 @@ pub async fn parts_from(
                     row.id
                 ))
             };
+            let (Some(parser), Some(parser_version)) = (row.parser, row.parser_version) else {
+                return Err(unparsed(row.id));
+            };
             Ok((
                 sinex_model::MaterialRef {
                     id: MaterialId(row.id),
@@ -98,8 +112,8 @@ pub async fn parts_from(
                     length: u64::try_from(row.length).map_err(|_| invalid())?,
                     part_index: u32::try_from(row.part_index).map_err(|_| invalid())?,
                     previous_part: row.previous_part_id.map(MaterialId),
-                    parser: row.parser,
-                    parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
+                    parser,
+                    parser_version: u32::try_from(parser_version).map_err(|_| invalid())?,
                     manifest: serde_json::from_value(row.manifest).map_err(|e| {
                         crate::Error::Invalid(format!("material {}: manifest: {e}", row.id))
                     })?,
@@ -139,7 +153,7 @@ pub async fn lengths(
 /// any transforming rule for a contributing source withholds the whole body.
 /// Capture and native parser replay read the bytes through their private path.
 pub async fn authorize_raw(conn: &mut PgConnection, material: MaterialId) -> Result<()> {
-    let row: Option<(String, serde_json::Value)> =
+    let row: Option<(Option<String>, serde_json::Value)> =
         sqlx::query_as("SELECT parser,manifest FROM raw.materials WHERE id=$1")
             .bind(material.0)
             .fetch_optional(&mut *conn)
@@ -147,7 +161,7 @@ pub async fn authorize_raw(conn: &mut PgConnection, material: MaterialId) -> Res
     let Some((parser, manifest)) = row else {
         return Err(crate::Error::Invalid("material is missing".into()));
     };
-    if parser == "signals"
+    if parser.as_deref() == Some("signals")
         && manifest.get("media_type").and_then(|value| value.as_str())
             == Some("application/x-sinex-signals-frame")
     {

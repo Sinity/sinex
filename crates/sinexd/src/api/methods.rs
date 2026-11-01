@@ -40,6 +40,9 @@ pub(crate) struct Api {
     pub source_config: std::sync::Arc<crate::binding_runner::Config>,
     /// The bindings whose latest read attempt failed, kept by the binding runner.
     pub read_failures: crate::binding_runner::ReadFailures,
+    /// The stages this daemon is reading now, so one is never read twice
+    /// at once.
+    pub running_stages: crate::stage::Running,
     pub library_roots: Vec<std::path::PathBuf>,
 }
 
@@ -559,9 +562,36 @@ impl Api {
             | Request::AnalysisWhy { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
-            Request::Stage { .. } => not_built(
-                "stage needs the staging path of the source framework, which this daemon does not run yet",
-            ),
+            Request::Stage {
+                path,
+                parser,
+                account,
+                export_date,
+                follow,
+            } => {
+                self.stage(
+                    caller,
+                    &path,
+                    &parser,
+                    account,
+                    export_date,
+                    follow.unwrap_or(false),
+                )
+                .await
+            }
+            Request::StageList { unfinished } => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match sinex_store::stages::list(&mut conn, unfinished.unwrap_or(false)).await {
+                    Ok(stages) => Reply::Ok {
+                        result: json!({ "stages": stages }),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::StageShow { operation } => self.stage_show(caller, &operation).await,
             Request::Same { .. } | Request::Distinct { .. } => not_built(
                 "duplicate decisions need the fusion derivation's decision records, not built yet",
             ),

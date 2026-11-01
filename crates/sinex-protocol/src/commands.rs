@@ -574,8 +574,59 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        name: "stage",
+        summary: "Hand Sinex files, directories or databases to read once. Each file is read by the parser named, or by the one parser whose declared structure it has; with none or several it is stored with no parser and the candidates listed. Returns the operation and the inventory of every member at once.",
+        args: &[
+            pos(
+                "path",
+                ArgKind::List,
+                "absolute paths the daemon can read; a directory without --parser stages each file in it",
+            ),
+            opt(
+                "parser",
+                ArgKind::List,
+                "the format the paths are read with, instead of detection: once for every path, or once per path in order",
+            ),
+            opt(
+                "account",
+                ArgKind::Text,
+                "the account the staged export belongs to",
+            ),
+            opt(
+                "export-date",
+                ArgKind::Text,
+                "when the staged export was taken",
+            ),
+            opt(
+                "follow",
+                ArgKind::Bool,
+                "wait for the stage to end and return its final inventory and accounting",
+            ),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "stage-list",
+        summary: "Stage operations, newest first, with each one's files, accounting and result.",
+        args: &[opt(
+            "unfinished",
+            ArgKind::Bool,
+            "only stages that have not ended: running, or interrupted and waiting for resume",
+        )],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "stage-show",
+        summary: "One stage: its inventory with every member's disposition, each product's accounting, and how it ended.",
+        args: &[pos("operation", ArgKind::Text, "the stage's operation")],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
         name: "resume",
-        summary: "Continue an operation that stopped early (archive, restore, tombstone, undo or replay) from its saved position.",
+        summary: "Continue an operation that stopped early (archive, restore, tombstone, undo, replay or stage) from its saved position.",
         args: &[pos("operation", ArgKind::Text, "the operation to continue")],
         access: Access::Agent,
         mcp: true,

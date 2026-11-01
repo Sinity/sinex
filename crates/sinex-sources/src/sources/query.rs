@@ -146,6 +146,7 @@ pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timest
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "query",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[],

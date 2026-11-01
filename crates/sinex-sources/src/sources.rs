@@ -151,7 +151,7 @@ use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::registry::{Source, SourceSpec};
 
 /// Every input format and the sources that read it: the one list the
-/// catalog, backfill, the binding runner, `sinex-session` and replay all
+/// catalog, staging, the binding runner, `sinex-session` and replay all
 /// work from.
 pub fn formats() -> &'static [&'static InputFormat] {
     #[cfg(not(feature = "full"))]
@@ -265,7 +265,7 @@ pub fn specs() -> Vec<&'static SourceSpec> {
     out
 }
 
-/// The format named `name` (`--read NAME=PATH`).
+/// The format named `name` (`stage --parser NAME`).
 pub fn format(name: &str) -> Option<&'static InputFormat> {
     formats().iter().copied().find(|k| k.name == name)
 }

@@ -206,10 +206,11 @@ pub fn capture(
     Ok(count)
 }
 
-/// `--read udev=SPOOL`: device events from udev, captured into SPOOL.
+/// `stage --parser udev SPOOL`: device events from udev, captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "udev",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

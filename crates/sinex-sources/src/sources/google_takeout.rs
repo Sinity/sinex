@@ -66,11 +66,20 @@ fn product(b: &Binding) -> Result<&'static Product, String> {
         .ok_or_else(|| format!("{}: not a Takeout product", b.source))
 }
 
-/// `--read takeout=PATH`: every product of each Takeout archive in PATH,
+/// Whether an archive member is laid out as Google Takeout writes it: every
+/// product under the archive's `Takeout/` directory.
+pub fn takeout_member(member: &str) -> bool {
+    member.starts_with("Takeout/")
+}
+
+/// `stage --parser takeout PATH`: every product of each Takeout archive in PATH,
 /// plus the calendars in it; each product its own binding, so each keeps its
 /// own cursor.
 pub const FORMAT: InputFormat = InputFormat {
     name: "takeout",
+    accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(
+        takeout_member,
+    )],
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
         locations: &[sinex_source_core::discovery::Location {

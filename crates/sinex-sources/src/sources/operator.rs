@@ -211,11 +211,12 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
     }
 }
 
-/// `--read raw-log=PATH`: the operator's raw log, read in the binding's
+/// `stage --parser raw-log PATH`: the operator's raw log, read in the binding's
 /// zone, recorded when it is planned.
 pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "raw-log",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -253,10 +254,11 @@ fn steering_table(b: &sinex_source_core::binding::Binding) -> Result<&'static st
         .ok_or_else(|| format!("{}: not a steering table", b.parser))
 }
 
-/// `--read steering=PATH`: the steering store's three tables.
+/// `stage --parser steering PATH`: the steering store's three tables.
 pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "steering",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

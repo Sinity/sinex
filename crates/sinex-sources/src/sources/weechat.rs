@@ -162,11 +162,12 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--read weechat=PATH`: each WeeChat log under PATH, read in the
+/// `stage --parser weechat PATH`: each WeeChat log under PATH, read in the
 /// binding's zone (WeeChat writes local times), recorded when it is planned.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "weechat",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

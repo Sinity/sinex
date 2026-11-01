@@ -456,6 +456,7 @@ macro_rules! input_format {
     ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
+            accepts: &[],
             discovery: discovery::spec(true),
             discover: discovery::discover,
             specs: || vec![&$spec],

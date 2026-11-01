@@ -4,7 +4,6 @@
 mod admin;
 mod analysis;
 mod api;
-mod backfill;
 mod binding_reader;
 mod binding_runner;
 mod build_identity;
@@ -27,6 +26,7 @@ mod reader_context;
 mod replay;
 mod screen_text;
 mod signals;
+mod stage;
 mod stored;
 mod telemetry;
 mod writer;
@@ -107,39 +107,6 @@ enum Command {
     Admin {
         #[command(subcommand)]
         command: admin::Admin,
-    },
-    /// Read sources once to the end, through the writer, and report counts and
-    /// rates. For first imports and measurement. Create the schema first
-    /// with `sinexd admin schema`.
-    Backfill {
-        #[arg(long)]
-        database: String,
-        /// Content store directory.
-        #[arg(long)]
-        store: PathBuf,
-        /// An input as `format=path`; repeatable. The formats are listed by
-        /// `sinexd admin catalog`: exports and directories (a file, or a
-        /// directory of them), databases, and live sources' spools.
-        #[arg(long = "read")]
-        reads: Vec<String>,
-        /// The zone sources with local times were written in (IANA name);
-        /// the system zone when unset. Recorded with each binding.
-        #[arg(long)]
-        zone: Option<String>,
-        #[arg(long, default_value = "04:00")]
-        day_start: String,
-        /// A source option as `key=value` (a clipboard spool's
-        /// `selection=primary`); repeatable.
-        #[arg(long = "option")]
-        options: Vec<String>,
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        /// One JSON object: totals per source and peak memory.
-        #[arg(long)]
-        json: bool,
-        /// Unlock stored sealed archive bytes for this backfill only.
-        #[arg(long)]
-        identity_file: Option<PathBuf>,
     },
     /// Run every derivation until nothing is dirty, through the writer, and
     /// report counts and rates. The daemon's runner, run to completion.
@@ -416,36 +383,6 @@ async fn main() -> std::process::ExitCode {
             .await
         }
         Command::Admin { command } => admin::run(command).await,
-        Command::Backfill {
-            database,
-            store,
-            reads,
-            zone,
-            day_start,
-            options,
-            host,
-            json,
-            identity_file,
-        } => {
-            backfill::run(backfill::Options {
-                time_settings: match effective_time_settings(zone.as_deref(), &day_start) {
-                    Ok(settings) => settings,
-                    Err(error) => {
-                        eprintln!("sinexd: {error}");
-                        return std::process::ExitCode::FAILURE;
-                    }
-                },
-                database,
-                store,
-                reads,
-                zone,
-                options,
-                host,
-                json,
-                identity_file,
-            })
-            .await
-        }
         Command::Derive {
             database,
             store,

@@ -334,10 +334,11 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--read samsung-health=PATH`: each Samsung Health export ZIP under PATH.
+/// `stage --parser samsung-health PATH`: each Samsung Health export ZIP under PATH.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "samsung-health",
+        accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(select)],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

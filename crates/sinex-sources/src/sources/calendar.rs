@@ -414,11 +414,12 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--read calendar=PATH`: each calendar export in PATH. Floating times are
+/// `stage --parser calendar PATH`: each calendar export in PATH. Floating times are
 /// read in the binding's zone, recorded when it is planned.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "calendar",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[

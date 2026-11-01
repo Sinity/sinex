@@ -345,12 +345,13 @@ pub fn source() -> DeclaredSource<SessionSocketParser> {
     }
 }
 
-/// `--read integration-socket=SPOOL`: lines the editor and terminal
+/// `stage --parser integration-socket SPOOL`: lines the editor and terminal
 /// integrations write to the integration socket (the `socket` option, or the default path),
 /// captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "integration-socket",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],

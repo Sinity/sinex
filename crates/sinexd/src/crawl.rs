@@ -1,7 +1,7 @@
 //! The `crawl` command: fetch pages from stored browser history whose host is
 //! on the allow list and that have not been fetched yet. The allow list is the
 //! opt-in: nothing is fetched without one.
-use crate::backfill::Totals;
+use crate::stage::Totals;
 use crate::writer::WriterHandle;
 use sinex_source_core::{Binding, Settings};
 use sinex_sources::sources;

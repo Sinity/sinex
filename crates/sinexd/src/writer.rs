@@ -1,5 +1,5 @@
 //! The writer task: the only database writer. It takes batches from three
-//! channels in priority order, live before derived before bulk, so a backfill
+//! channels in priority order, live before derived before bulk, so a stage
 //! never starves live capture, and runs admission for each batch in its own
 //! transaction.
 //!
@@ -79,6 +79,30 @@ enum WriterJob {
         scope: Value,
         refusals: Vec<Value>,
     },
+    Stage(StageWrite),
+}
+
+/// What a stage operation writes besides its batches: its record in the
+/// operations log, and the files it stores with no parser.
+pub(crate) enum StageWrite {
+    Begin {
+        operation: OperationId,
+        actor: String,
+        scope: Value,
+        inventory: Value,
+    },
+    Progress {
+        operation: OperationId,
+        inventory: Value,
+    },
+    End {
+        operation: OperationId,
+        result: sinex_model::lifecycle::OperationResult,
+        counts: Value,
+        inventory: Value,
+        refusals: Value,
+    },
+    Unparsed(Box<sinex_store::stages::Unparsed>),
 }
 
 enum Done {
@@ -206,6 +230,14 @@ impl WriterHandle {
             },
         )
         .await?;
+        Ok(())
+    }
+
+    /// Write a stage's log entry or one of its unparsed files, in its own
+    /// transaction.
+    pub(crate) async fn stage(&self, write: StageWrite) -> Result<(), WriteError> {
+        self.send(Priority::Derived, WriterJob::Stage(write))
+            .await?;
         Ok(())
     }
 
@@ -432,6 +464,9 @@ pub(crate) async fn run_notifying(
                 operation,
                 refusals,
             } => lifecycle_end(&mut connection, operation, &refusals)
+                .await
+                .map(Done::Admitted),
+            WriterJob::Stage(write) => stage_write(&mut connection, write)
                 .await
                 .map(Done::Admitted),
         };
@@ -887,6 +922,52 @@ async fn record_replay(
     tx.commit()
         .await
         .map_err(|error| store_error(error.into()))?;
+    Ok(Outcome::default())
+}
+
+async fn stage_write(
+    connection: &mut AdmissionContext,
+    write: StageWrite,
+) -> Result<Outcome, WriteError> {
+    use sinex_store::stages;
+    let mut tx = connection.begin().await.map_err(store_error)?;
+    let written = match &write {
+        StageWrite::Unparsed(unparsed) => tx.register_unparsed(unparsed).await,
+        StageWrite::Begin {
+            operation,
+            actor,
+            scope,
+            inventory,
+        } => stages::begin(tx.connection(), *operation, actor, scope, inventory).await,
+        StageWrite::Progress {
+            operation,
+            inventory,
+        } => stages::progress(tx.connection(), *operation, inventory).await,
+        StageWrite::End {
+            operation,
+            result,
+            counts,
+            inventory,
+            refusals,
+        } => {
+            stages::end(
+                tx.connection(),
+                *operation,
+                *result,
+                counts,
+                inventory,
+                refusals,
+            )
+            .await
+        }
+    };
+    match written {
+        Ok(()) => tx.commit().await.map_err(store_error)?,
+        Err(error) => {
+            tx.rollback().await.map_err(store_error)?;
+            return Err(store_error(error));
+        }
+    }
     Ok(Outcome::default())
 }
 

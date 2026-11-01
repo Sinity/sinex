@@ -1,7 +1,7 @@
 //! Bindings: one instance of a source on one input, with the settings it was
 //! read with. A source module declares a [`InputFormat`]: how to find its inputs,
 //! how to build its parser and its driver for one binding, and, for live
-//! sources, how to capture into a spool. Backfill, the daemon's binding runner,
+//! sources, how to capture into a spool. Staging, the daemon's binding runner,
 //! `sinex-session`, replay and the NixOS catalog all work from the formats, so
 //! adding a source touches only its own module (and one line in the registry
 //! list).
@@ -212,11 +212,15 @@ type ReaderFor = fn(&Binding) -> Result<Reading, String>;
 /// source ends; the number of captured lines or segments.
 pub type Capture = fn(&Binding, &crate::capture::CaptureStop) -> Result<u64, String>;
 
-/// An input format and the sources that read it: what `--read FORMAT=PATH`,
-/// `sources.json` and `sinex-session` name.
+/// An input format and the sources that read it: what `stage --parser
+/// FORMAT`, `sources.json` and `sinex-session` name.
 #[derive(Debug)]
 pub struct InputFormat {
     pub name: &'static str,
+    /// The structures `stage PATH` recognises as this format's input
+    /// ([`crate::stage`]). Empty for a format that is assigned only by name
+    /// or found at its canonical location.
+    pub accepts: &'static [crate::stage::Structure],
     pub discovery: crate::discovery::DiscoverySpec,
     pub discover: crate::discovery::Discover,
     pub specs: fn() -> Vec<&'static SourceSpec>,

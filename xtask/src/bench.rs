@@ -1,4 +1,4 @@
-//! `xtask bench`: backfill and derivation measured on a fixed sample of the
+//! `xtask bench`: staging and derivation measured on a fixed sample of the
 //! operator's real inputs instead of all of them.
 //!
 //! The inputs are listed, one per line, in `sources.tsv` under the project
@@ -16,16 +16,16 @@
 //!
 //! `bench sample` writes the manifest. `bench run` copies the sample once,
 //! starts its own PostgreSQL with TimescaleDB (on /realm for `disk`, on
-//! /dev/shm for `memory`), backfills each input separately with a memory cap
+//! /dev/shm for `memory`), stages each input separately with a memory cap
 //! (one process per input, so each has its own peak memory), runs every
 //! derivation once, and records periodic host-load observations. Full-input
 //! estimates explicitly assume linear work per input byte; one sample does
-//! not calibrate backfill or derivation. Failed commands remain in the output,
-//! but only complete runs enter benchmark history, under `completed-backfill`.
-//! Earlier `backfill` records did not check completeness. Every command it runs
-//! runs inside its AgentCTL job and holds the real-data lock.
+//! not calibrate staging or derivation. Failed commands remain in the output,
+//! but only complete runs enter benchmark history, under `completed-stage`.
+//! Every command it runs runs inside its AgentCTL job and holds the real-data
+//! lock.
 //!
-//! `bench synthetic` measures admission alone: it backfills a generated shell
+//! `bench synthetic` measures admission alone: it stages a generated shell
 //! history of small events into its own PostgreSQL and records the rate under
 //! `synthetic-admission`.
 mod cases;
@@ -67,14 +67,14 @@ pub enum Bench {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
-    /// Backfill and derive over the sample, and record it.
+    /// Stage and derive over the sample, and record it.
     Run {
         /// `disk` puts PostgreSQL and the content store on /realm like the
         /// deployment; `memory` puts them in /dev/shm.
         #[arg(long, default_value = "disk", value_parser = ["disk", "memory"])]
         storage: String,
-        /// Memory cap per backfill process (systemd `MemoryMax`). A backfill
-        /// that exceeds it is killed and reported, not the desktop.
+        /// Memory cap per stage process (systemd `MemoryMax`). A stage that
+        /// exceeds it is killed and reported, not the desktop.
         #[arg(long, default_value = "6G")]
         memory_max: String,
     },
@@ -511,8 +511,8 @@ impl Drop for Cluster {
     }
 }
 
-/// Runs `sinexd <args> --json` under a memory cap and the real-data lock
-/// inside the admitted AgentCTL job, and returns its JSON line.
+/// Runs `sinexd <args>` under a memory cap and the real-data lock inside the
+/// admitted AgentCTL job, and returns the JSON it prints.
 fn sinexd(binary: &Path, memory_max: &str, args: &[&std::ffi::OsStr]) -> Result<Value, String> {
     sinexd_recorded(binary, memory_max, args, None)
 }
@@ -535,17 +535,13 @@ fn sinexd_recorded(
     let output = command
         .arg(binary)
         .args(args)
-        .arg("--json")
         .output()
         .map_err(|e| e.to_string())?;
     if let Some(out) = out {
-        fs::write(out.join("backfill.stdout"), &output.stdout).map_err(|e| e.to_string())?;
-        fs::write(out.join("backfill.stderr"), &output.stderr).map_err(|e| e.to_string())?;
+        fs::write(out.join("stage.stdout"), &output.stdout).map_err(|e| e.to_string())?;
+        fs::write(out.join("stage.stderr"), &output.stderr).map_err(|e| e.to_string())?;
     }
-    let parsed = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .rev()
-        .find_map(|l| serde_json::from_str::<Value>(l).ok());
+    let parsed = serde_json::from_slice::<Value>(&output.stdout).ok();
     match parsed {
         Some(v) if output.status.success() => Ok(v),
         _ => Err(format!(
@@ -762,17 +758,18 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         )
     } else {
         let store = out.join("store");
-        let mut args: Vec<std::ffi::OsString> = ["backfill", "--database", &url, "--store"]
+        let mut args: Vec<std::ffi::OsString> = ["admin", "stage", "--database", &url, "--store"]
             .into_iter()
             .map(Into::into)
             .collect();
         args.push(store.into_os_string());
         args.extend(["--host".into(), "bench".into()]);
+        // One parser per path, in the order the paths are given.
         for input in &inputs {
-            args.extend([
-                "--read".into(),
-                format!("{}={}", input.format, input.path.display()).into(),
-            ]);
+            args.push(input.path.clone().into_os_string());
+        }
+        for input in &inputs {
+            args.extend(["--parser".into(), input.format.into()]);
         }
         let args: Vec<_> = args.iter().map(|s| s.as_os_str()).collect();
         sinexd_recorded(&binary, &memory_max, &args, Some(&out))
@@ -952,17 +949,19 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
     let mut inputs_out = serde_json::Map::new();
     let mut estimates = Vec::new();
     for input in &inputs {
-        let read = format!("{}={}", input.format, source_path(&home, input).display());
+        let path = source_path(&home, input);
         let args: Vec<&std::ffi::OsStr> = [
-            "backfill".as_ref(),
+            "admin".as_ref(),
+            "stage".as_ref(),
+            path.as_os_str(),
+            "--parser".as_ref(),
+            input.format.as_ref(),
             "--database".as_ref(),
             url.as_ref(),
             "--store".as_ref(),
             store_dir.as_os_str(),
             "--host".as_ref(),
             "bench".as_ref(),
-            "--read".as_ref(),
-            read.as_ref(),
         ]
         .to_vec();
         let scale = scale_of(&input.label);
@@ -992,6 +991,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         memory_max,
         &[
             "derive".as_ref(),
+            "--json".as_ref(),
             "--database".as_ref(),
             url.as_ref(),
             "--store".as_ref(),
@@ -1041,7 +1041,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
                 &store,
                 &checkout,
                 "sinex",
-                "completed-backfill",
+                "completed-stage",
                 &manifest.id(),
                 &out,
                 &load,
@@ -1098,7 +1098,7 @@ fn combined_estimate(parts: &[Value]) -> Value {
     };
     json!({"method": "sum_of_input_byte_linear_estimates", "calibrated": false,
         "estimated_seconds": seconds, "components": parts,
-        "scope": "Source backfill wall times plus derivation, excluding setup and teardown.",
+        "scope": "Source stage wall times plus derivation, excluding setup and teardown.",
         "limitation": "A missing or failed component makes the total unknown; input bytes do not measure decoded, hashed or physically written bytes."})
 }
 

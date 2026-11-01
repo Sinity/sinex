@@ -1,5 +1,5 @@
 //! How drivers store a material's bytes: plainly, or, for a sealed source,
-//! encrypted under a fresh data key per material. Every reading path (backfill,
+//! encrypted under a fresh data key per material. Every reading path (staging,
 //! the daemon's source tasks, replay) stores through one of these.
 mod unlock;
 use serde_json::Value;

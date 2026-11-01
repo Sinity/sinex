@@ -122,9 +122,24 @@ pub enum Request {
         query: String,
     },
     Stage {
-        path: String,
+        path: Vec<String>,
         #[serde(default)]
-        parser: Option<String>,
+        parser: Vec<String>,
+        #[serde(default)]
+        account: Option<String>,
+        #[serde(default, rename = "export-date")]
+        export_date: Option<String>,
+        #[serde(default)]
+        follow: Option<bool>,
+    },
+    #[serde(rename = "stage-list")]
+    StageList {
+        #[serde(default)]
+        unfinished: Option<bool>,
+    },
+    #[serde(rename = "stage-show")]
+    StageShow {
+        operation: String,
     },
     Replay {
         #[serde(default)]
@@ -464,6 +479,8 @@ impl Request {
             Request::Trace { .. } => "trace",
             Request::Follow { .. } => "follow",
             Request::Stage { .. } => "stage",
+            Request::StageList { .. } => "stage-list",
+            Request::StageShow { .. } => "stage-show",
             Request::Replay { .. } => "replay",
             Request::Recompute { .. } => "recompute",
             Request::Comparisons { .. } => "comparisons",
@@ -512,7 +529,7 @@ impl Request {
     /// panic.
     pub fn access(&self) -> Access {
         match self {
-            Self::Stage { .. } | Self::Same { .. } | Self::Distinct { .. } => Access::Agent,
+            Self::Same { .. } | Self::Distinct { .. } => Access::Agent,
             _ => {
                 command(self.method())
                     .expect("implemented request is in the command table")

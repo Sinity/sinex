@@ -22,7 +22,8 @@ pub fn subcommand(c: &Command) -> clap::Command {
                     "recall" | "mark" | "query-save" | "timeline"
                 )),
             (ArgKind::Bool, _) => arg.long(a.name).action(ArgAction::SetTrue).required(false),
-            (ArgKind::List, _) => arg.long(a.name).action(ArgAction::Append),
+            (ArgKind::List, true) => arg.num_args(1..).action(ArgAction::Append),
+            (ArgKind::List, false) => arg.long(a.name).action(ArgAction::Append),
             (ArgKind::Integer, false) => arg.long(a.name).value_parser(clap::value_parser!(u64)),
             (_, false) => arg.long(a.name),
             (_, true) => arg,

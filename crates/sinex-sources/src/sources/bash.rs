@@ -138,10 +138,11 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--read bash=PATH`: a bash history file.
+/// `stage --parser bash PATH`: a bash history file.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "bash",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

@@ -18,27 +18,49 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         ));
     }
 
-    let input = sqlx::query_scalar!(
+    for key in &p.data_keys {
+        crate::sealed::store_key(conn, key.material, &key.key_ref, &key.wrapped).await?;
+    }
+    let (input, revision) =
+        observed(conn, &p.binding, &p.input, &p.observation, p.revision).await?;
+
+    let Some(m) = &p.material else { return Ok(()) };
+    material(conn, input, revision, m).await?;
+
+    Ok(())
+}
+
+/// Upsert the input, record the observation, and open a revision when the
+/// content changed in a way that is not a plain append. Returns the input's
+/// and the current revision's IDs.
+pub(crate) async fn observed(
+    conn: &mut PgConnection,
+    binding: &str,
+    input: &sinex_model::InputRef,
+    observation: &sinex_model::ObservationFacts,
+    revision: RevisionChange,
+) -> Result<(Uuid, Uuid)> {
+    let input_id = sqlx::query_scalar!(
         r#"INSERT INTO raw.inputs (id, binding, kind, locator, host) VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (binding, locator, host) DO UPDATE SET kind = EXCLUDED.kind
            RETURNING id"#,
         InputId::new().0,
-        p.binding,
-        p.input.kind,
-        p.input.locator,
-        p.input.host,
+        binding,
+        input.kind,
+        input.locator,
+        input.host,
     )
     .fetch_one(&mut *conn)
     .await?;
 
-    let at = p.observation.observed_at.unwrap_or_else(Timestamp::now).0;
-    let o = &p.observation;
+    let at = observation.observed_at.unwrap_or_else(Timestamp::now).0;
+    let o = observation;
     if o.changed || o.unavailable.is_some() {
         sqlx::query!(
             r#"INSERT INTO raw.observations (id, input_id, observed_at, size, mtime_ns, ctime_ns, inode, device, unavailable, last_looked_at)
                VALUES ($1, $2, $3, $4::text::numeric, $5::text::numeric, $6::text::numeric, $7::text::numeric, $8::text::numeric, $9, $3)"#,
             ObservationId::new().0,
-            input,
+            input_id,
             at,
             o.size.map(|v| v.to_string()),
             o.mtime_ns.map(|v| v.to_string()),
@@ -53,7 +75,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         sqlx::query!(
             r#"UPDATE raw.observations SET unchanged_looks = unchanged_looks + 1, last_looked_at = $2
                WHERE id = (SELECT id FROM raw.observations WHERE input_id = $1 ORDER BY observed_at DESC LIMIT 1)"#,
-            input,
+            input_id,
             at,
         )
         .execute(&mut *conn)
@@ -62,14 +84,11 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
 
     let current = sqlx::query_scalar!(
         "SELECT id FROM raw.revisions WHERE input_id = $1 ORDER BY started_at DESC, id DESC LIMIT 1",
-        input
+        input_id
     )
     .fetch_optional(&mut *conn)
     .await?;
-    for key in &p.data_keys {
-        crate::sealed::store_key(conn, key.material, &key.key_ref, &key.wrapped).await?;
-    }
-    let revision = match (p.revision, current) {
+    let revision_id = match (revision, current) {
         (RevisionChange::Same | RevisionChange::Appended, Some(current)) => current,
         (change, previous) => {
             let kind = match change {
@@ -82,7 +101,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
             sqlx::query_scalar!(
                 "INSERT INTO raw.revisions (id, input_id, previous_id, kind) VALUES ($1, $2, $3, $4) RETURNING id",
                 RevisionId::new().0,
-                input,
+                input_id,
                 previous,
                 kind,
             )
@@ -91,10 +110,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         }
     };
 
-    let Some(m) = &p.material else { return Ok(()) };
-    material(conn, input, revision, m).await?;
-
-    Ok(())
+    Ok((input_id, revision_id))
 }
 
 /// Whether a registered material with this ID has these facts; `None` when no

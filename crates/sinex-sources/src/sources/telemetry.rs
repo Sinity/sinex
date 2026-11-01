@@ -80,11 +80,12 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// `--read sinex-telemetry=SPOOL`: the samples a daemon spooled into SPOOL.
+/// `stage --parser sinex-telemetry SPOOL`: the samples a daemon spooled into SPOOL.
 /// The daemon reads its own spool without configuration.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "sinex-telemetry",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[],

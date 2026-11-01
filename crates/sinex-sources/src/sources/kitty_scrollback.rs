@@ -316,10 +316,11 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `--read kitty-scrollback=DIR`: the lake's scrollback snapshots in DIR.
+/// `stage --parser kitty-scrollback DIR`: the lake's scrollback snapshots in DIR.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "kitty-scrollback",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

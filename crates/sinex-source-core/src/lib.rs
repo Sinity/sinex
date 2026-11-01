@@ -20,6 +20,7 @@ pub mod registry;
 pub mod sampling;
 #[cfg(feature = "archives")]
 pub mod shared_pass;
+pub mod stage;
 
 pub use binding::{Binding, InputFormat, Reader, Reading, Settings, StoredMaterial};
 pub use drain::{DrainInput, DrainOutput, Drainer, Limits, RecordContext, drain};

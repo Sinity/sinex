@@ -295,6 +295,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let reader_api = Api {
         source_config: Arc::new(sources.clone()),
         read_failures: read_failures.clone(),
+        running_stages: Default::default(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),

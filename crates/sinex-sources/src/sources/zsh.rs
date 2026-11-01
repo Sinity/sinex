@@ -152,10 +152,30 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--read zsh=PATH`: a zsh history file.
+/// Whether `line` is an extended zsh history record's header line
+/// (`: <start>:<elapsed>;<command>`): the structure `stage` recognises. A plain
+/// history has no structure of its own and is staged with `--parser zsh`.
+pub fn extended_line(line: &[u8]) -> bool {
+    let Some(header) = line.strip_prefix(b": ") else {
+        return false;
+    };
+    let digits = |field: &[u8]| !field.is_empty() && field.iter().all(u8::is_ascii_digit);
+    let Some(colon) = header.iter().position(|b| *b == b':') else {
+        return false;
+    };
+    let Some(semicolon) = header.iter().position(|b| *b == b';') else {
+        return false;
+    };
+    colon < semicolon && digits(&header[..colon]) && digits(&header[colon + 1..semicolon])
+}
+
+/// `stage --parser zsh PATH`: a zsh history file.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "zsh",
+        accepts: &[sinex_source_core::stage::Structure::FirstLine(
+            extended_line,
+        )],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

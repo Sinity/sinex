@@ -116,10 +116,11 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--read samsung-sms=PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
+/// `stage --parser samsung-sms PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "samsung-sms",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

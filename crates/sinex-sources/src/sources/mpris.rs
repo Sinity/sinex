@@ -202,10 +202,11 @@ pub fn capture(
     dbus::capture(MATCHES, &snapshot_until(stop), spool, stop)
 }
 
-/// `--read players=SPOOL`: media players (MPRIS), captured into SPOOL.
+/// `stage --parser players SPOOL`: media players (MPRIS), captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "players",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],

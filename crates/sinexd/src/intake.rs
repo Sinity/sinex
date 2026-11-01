@@ -1,5 +1,5 @@
 //! One path from an acquisition to the writer, for bindings and API requests.
-use crate::backfill::Totals;
+use crate::stage::Totals;
 use crate::writer::{AdmissionCheck, Priority, WriterHandle};
 use serde_json::Value;
 use sinex_model::{Class, EventPayload, MaterialId, RecordOutcome, RunId};
@@ -129,8 +129,12 @@ impl Intake<'_> {
                 if let Some(length) = parsed.material_length {
                     totals.poll(length);
                 }
+                if let Some((framed, removed)) = parsed.framed {
+                    totals.framed(framed, removed);
+                }
                 totals.parse(parsed.elapsed);
                 let batch = parsed.batch;
+                totals.records(&batch);
 
                 check()?;
                 let events = batch.event_count();
@@ -329,6 +333,10 @@ impl Preparation {
     ) -> Result<(), String> {
         let started = Instant::now();
         (self.check)()?;
+        let mut framed = acquired
+            .material
+            .as_ref()
+            .map(|m| (m.records.len() as u64, m.removed.len() as u64));
         let prepared = drivers::prepare(
             self.source.as_ref(),
             &self.binding,
@@ -380,6 +388,7 @@ impl Preparation {
                 batch,
                 elapsed,
                 material_length: material_length.take(),
+                framed: framed.take(),
                 permit,
             }) {
                 return Ok(());

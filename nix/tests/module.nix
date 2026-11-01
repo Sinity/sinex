@@ -27,16 +27,11 @@ let
         inputs.spotify = [ "/exports/current" ];
         environment.ZSH_HISTFILE = "/host-declared/history";
       };
-      backfills.spotify = [ "spotify=/exports/earlier" ];
     };
   };
   plan = builtins.fromJSON config.environment.etc."sinex/sources.json".text;
   fails = extra: !(builtins.tryEval (evaluate extra).system.build.toplevel.drvPath).success;
-  zoneScripts = extra:
-    let checked = evaluate (lib.recursiveUpdate {
-      services.sinex.backfills.zone = [ "zsh=/synthetic/history" ];
-    } extra);
-    in [ checked.systemd.services.sinexd.script checked.systemd.services.sinex-backfill-zone.script ];
+  zoneScripts = extra: [ (evaluate extra).systemd.services.sinexd.script ];
   producerGrants = extra: builtins.fromJSON (evaluate extra).environment.etc."sinex/producer-grants.json".text;
   configuredSessionGrant = (producerGrants {
     services.sinex = {
@@ -77,7 +72,8 @@ let
     (plan.exclude."desktop.clipboard".reason == "Synthetic operator exclusion")
     (plan.exclude."terminal.atuin-history" == null)
     (!(plan.sources."terminal.atuin-history" ? enable))
-    (plan.discovery.inputs.spotify == [ "/exports/current" "/exports/earlier" ])
+    (plan.discovery.inputs.spotify == [ "/exports/current" ])
+    (!(config.services.sinex ? backfills))
     (plan.discovery.home == "/home/alice")
     ((evaluate { }).services.sinex.session.stateDir == "/home/alice/.local/state/sinex-session")
     (!(builtins.hasAttr "/home/alice/.local/state/sinex-session" ((evaluate { }).systemd.tmpfiles.settings.sinex-session or { })))

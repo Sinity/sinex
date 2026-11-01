@@ -447,7 +447,7 @@ pub async fn producer_materials(
         ProducerMaterial,
         r#"SELECT f.number AS "number!", f.frame, m.id AS material_id, i.kind, i.locator, i.host,
                   m.blob, m.length AS length, m.part_index, m.previous_part_id AS previous_part,
-                  m.parser, m.parser_version, m.manifest, x.descriptor AS extent
+                  m.parser AS "parser!", m.parser_version AS "parser_version!", m.manifest, x.descriptor AS extent
            FROM core.ingress_frames f
            JOIN raw.materials m ON m.id = f.material_id
            JOIN raw.inputs i ON i.id = m.input_id

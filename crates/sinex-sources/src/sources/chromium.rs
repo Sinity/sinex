@@ -265,11 +265,12 @@ fn profiles(user_data: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     Ok(out)
 }
 
-/// `--read chromium=PATH`: every profile under a browser's user-data
+/// `stage --parser chromium PATH`: every profile under a browser's user-data
 /// directory, its visits and its URLs each a binding.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "chromium",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[

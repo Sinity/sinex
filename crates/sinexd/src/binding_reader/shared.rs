@@ -3,8 +3,8 @@
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
 use super::{BindingReader, Reading};
 mod acquisition;
-use crate::backfill::Totals;
 use crate::material_access::Access;
+use crate::stage::Totals;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};

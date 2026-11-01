@@ -5,6 +5,7 @@
 // The derives in `sinex-macros` name `::sinex_model`; this lets them work here too.
 extern crate self as sinex_model;
 
+pub mod accounting;
 pub mod batch;
 pub mod clock;
 pub mod event;
@@ -20,6 +21,7 @@ pub mod query;
 pub mod source;
 pub mod time_settings;
 
+pub use accounting::Accounting;
 pub use batch::{
     ArchiveReason, ArchiveRequest, Batch, BatchKind, DerivationHistory, FrameRefusal, IngressFrame,
     InputRef, MaterialRef, ObservationFacts, OwnerCoverage, ReaderMemory, RecordOutcome,

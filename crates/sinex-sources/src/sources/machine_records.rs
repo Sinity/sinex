@@ -519,11 +519,12 @@ pub fn experiment_driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `--read machine-records=PATH`: the machine root's record files and
+/// `stage --parser machine-records PATH`: the machine root's record files and
 /// experiment runs, one binding each.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "machine-records",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[

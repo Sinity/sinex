@@ -399,6 +399,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 
 pub const FORMAT: InputFormat = InputFormat {
     name: "hledger",
+    accepts: &[],
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
         locations: &[

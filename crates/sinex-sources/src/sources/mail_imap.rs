@@ -591,11 +591,12 @@ pub fn source() -> DeclaredSource<super::mail::MailParser> {
     }
 }
 
-/// `--read imap=CONFIG.json`: live mail from the account CONFIG describes,
+/// `stage --parser imap CONFIG.json`: live mail from the account CONFIG describes,
 /// the messages new since the last read.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "imap",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

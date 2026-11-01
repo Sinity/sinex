@@ -198,6 +198,7 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
 
 pub const FORMAT: InputFormat = InputFormat {
     name: "documents",
+    accepts: &[],
     discovery: DiscoverySpec {
         owner: Owner::System,
         locations: &[

@@ -266,12 +266,13 @@ fn media(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String
     }
 }
 
-/// `--read media=SPOOL`: screen stills (option `kind: screen`, every
+/// `stage --parser media SPOOL`: screen stills (option `kind: screen`, every
 /// `every` seconds, 60 by default) or audio segments (`kind: audio`,
 /// `segment` seconds each, 300 by default), captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "media",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],

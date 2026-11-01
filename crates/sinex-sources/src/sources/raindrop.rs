@@ -240,10 +240,11 @@ pub fn bookmark_file(path: &std::path::Path) -> bool {
     name.ends_with(".csv") || (name.starts_with("raindrops-") && name.ends_with(".jsonl"))
 }
 
-/// `--read raindrop=PATH`: each Raindrop export in PATH.
+/// `stage --parser raindrop PATH`: each Raindrop export in PATH.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "raindrop",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

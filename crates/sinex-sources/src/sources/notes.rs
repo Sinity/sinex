@@ -142,10 +142,11 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `--read notes=PATH`: the note vault at PATH, walked as one directory.
+/// `stage --parser notes PATH`: the note vault at PATH, walked as one directory.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "notes",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

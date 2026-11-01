@@ -170,11 +170,12 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--read outlook=PATH`: each `.pst` under PATH, converted with `readpst`
+/// `stage --parser outlook PATH`: each `.pst` under PATH, converted with `readpst`
 /// to one mbox per folder, each folder its own stable binding of the PST.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "outlook",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -193,10 +194,11 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         capture: None,
     };
 
-/// `--read outlook-csv=PATH`: each Outlook CSV export under PATH.
+/// `stage --parser outlook-csv PATH`: each Outlook CSV export under PATH.
 pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "outlook-csv",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

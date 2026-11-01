@@ -26,10 +26,9 @@ async fn daemon_samples_admission_and_failures_through_public_commands() {
             binary,
             &database,
             &store,
-            &["backfill", "--host", "fixture"],
+            &["admin", "stage", "--host", "fixture", "--parser", "zsh"],
         )
-        .arg("--read")
-        .arg(format!("zsh={}", history.display())),
+        .arg(&history),
     );
     let events = query(
         binary,

@@ -372,11 +372,12 @@ fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static La
         .ok_or_else(|| format!("{}: not a lake source", b.parser))
 }
 
-/// `--read sinnix-lake=ROOT`: every lane's day files under the lake root;
+/// `stage --parser sinnix-lake ROOT`: every lane's day files under the lake root;
 /// each lane's directories are its configuration.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "sinnix-lake",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

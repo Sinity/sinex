@@ -286,26 +286,28 @@ pub(super) fn source_totals(result: &Value) -> Value {
         return Value::Null;
     }
     let mut totals = serde_json::Map::new();
-    for key in [
-        "admitted",
-        "batches",
-        "events_offered",
-        "wall_s",
-        "admission_s",
-    ] {
+    for key in ["wall_s", "admission_s"] {
         let values: Option<Vec<f64>> = sources.values().map(|s| s[key].as_f64()).collect();
         if let Some(values) = values {
             totals.insert(key.into(), json!(values.iter().sum::<f64>()));
         }
     }
-    // Counts retain integer JSON representations for correctness checks.
-    for key in ["admitted", "batches", "events_offered"] {
-        let count: Option<u64> = sources
+    // Readings stored are the new and the revised ones. The counts keep
+    // integer JSON representations for correctness checks.
+    let count = |s: &Value, key: &str| s["accounting"][key].as_u64();
+    let sum = |each: &dyn Fn(&Value) -> Option<u64>| {
+        sources
             .values()
-            .try_fold(0u64, |n, s| n.checked_add(s[key].as_u64()?));
-        if let Some(count) = count {
-            totals.insert(key.into(), json!(count));
-        }
+            .try_fold(0u64, |n, s| n.checked_add(each(s)?))
+    };
+    if let Some(n) = sum(&|s| Some(count(s, "new")? + count(s, "revised")?)) {
+        totals.insert("admitted".into(), json!(n));
+    }
+    if let Some(n) = sum(&|s| count(s, "readings")) {
+        totals.insert("events_offered".into(), json!(n));
+    }
+    if let Some(n) = sum(&|s| s["batches"].as_u64()) {
+        totals.insert("batches".into(), json!(n));
     }
     if let (Some(n), Some(s)) = (
         totals.get("admitted").and_then(Value::as_f64),
@@ -778,7 +780,7 @@ pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
     let mut batches = Vec::new();
     let mut publishers = Vec::new();
     let mut search = Vec::new();
-    for name in ["daemon.log", "backfill.stderr", "source.stderr"] {
+    for name in ["daemon.log", "stage.stderr", "source.stderr"] {
         let path = out.join(name);
         match fs::read_to_string(&path) {
             Ok(text) => {

@@ -53,10 +53,6 @@ let
     StartLimitIntervalSec = 600;
   };
 
-  backfillInputs = lib.mapAttrs (_: inputs:
-    map (input: lib.concatStringsSep "=" (lib.tail (lib.splitString "=" input))) inputs
-  ) (lib.groupBy (input: lib.head (lib.splitString "=" input)) (lib.flatten (lib.attrValues cfg.backfills)));
-  discoveryInputs = lib.zipAttrsWith (_: values: lib.unique (lib.flatten values)) [ cfg.discovery.inputs backfillInputs ];
 
   sourceOption = spec: {
     class = mkOption {
@@ -359,21 +355,6 @@ in
       };
     };
 
-    backfills = mkOption {
-      type = types.attrsOf (types.listOf types.str);
-      default = { };
-      example = { takeout-2025 = [ "takeout=/data/takeout-2025.tgz" ]; };
-      description = ''
-        One-shot imports of large exports, each a `sinex-backfill-NAME`
-        service that is started by hand, never at activation. Each entry is a
-        list of `format=path` inputs (`sinexd admin catalog` lists the formats).
-        These paths also enter automatic discovery as provider inputs.
-        The database has one writer, so starting a backfill stops sinexd and
-        starts it again when the backfill ends; live captures spool meanwhile.
-        The inputs are mounted read-only for it.
-      '';
-    };
-
     backup = {
       dumpDir = mkOption { type = types.path; default = "${cfg.stateDir}/dumps"; };
       keysDir = mkOption { type = types.path; default = "${cfg.stateDir}/key-dumps"; };
@@ -488,7 +469,7 @@ in
         discovery = cfg.discovery // {
           spool = "${cfg.stateDir}/spool";
           watch = cfg.session.watch;
-          inputs = discoveryInputs;
+          inputs = cfg.discovery.inputs;
         };
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
         inherit (cfg) tags activity project_attribution rhythm;
@@ -767,45 +748,6 @@ in
           };
         })
       ];
-    })
-
-    # Declared backfills, apart from the attribute set above that names
-    # services one by one.
-    (mkIf cfg.enable {
-      systemd.services = lib.mapAttrs'
-        (name: inputs: lib.nameValuePair "sinex-backfill-${name}" {
-          description = "Sinex backfill ${name}";
-          after = [ "sinex-db-setup.service" "sinexd.service" ];
-          requires = [ "sinex-db-setup.service" ];
-          restartIfChanged = false;
-          path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
-          serviceConfig = {
-            Type = "oneshot";
-            User = cfg.user;
-            Group = cfg.group;
-            UMask = "0007";
-            ReadOnlyPaths = map (input: lib.last (lib.splitString "=" input)) inputs;
-            # The database has one writer: sinexd stops for the import and
-            # starts after it however it ends, stopped by hand included. A
-            # unit dependency (Conflicts) would cancel this start job when
-            # sinexd starts again.
-            ExecStartPre = "+${config.systemd.package}/bin/systemctl stop sinexd.service";
-            ExecStopPost = "+${config.systemd.package}/bin/systemctl start --no-block sinexd.service";
-          } // lib.optionalAttrs cfg.readAnyFile {
-            AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
-            CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
-          };
-          script = ''
-            exec ${cfg.package}/bin/sinexd backfill \
-              --database ${escapeShellArg dbUrl} \
-              --store ${escapeShellArg cfg.storeDir} \
-              --host ${escapeShellArg cfg.host} \
-              ${optionalString (zone != null) "--zone ${escapeShellArg zone}"} \
-              --day-start ${escapeShellArg cfg.dayStart} \
-              ${concatMapStringsSep " " (input: "--read ${escapeShellArg input}") inputs}
-          '';
-        })
-        cfg.backfills;
     })
 
     (mkIf node.enable {

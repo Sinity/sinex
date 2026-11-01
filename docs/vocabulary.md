@@ -20,6 +20,9 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **change model**: how a source learns that its input changed and what a change means.
 - **binding**: one configured instance of a source: the source, its input and its settings.
 - **stage**: to hand bytes to Sinex as material; the one way anything enters, whether once (`stage PATH`) or continuously (a binding) ([staging](materials.md#staging)).
+- **inventory**: what a stage holds, known before any record is parsed: every member of every staged file once, read, failed or stored and not interpreted ([inventory and accounting](materials.md#inventory-and-accounting)).
+- **accounting**: what became of every record a material framed and of every reading those records made; it balances by construction, and a mismatch is a defect ([inventory and accounting](materials.md#inventory-and-accounting)).
+- **stored, not interpreted**: bytes kept as material that no parser reads yet, with the candidate parsers when several would ([staging before a parser exists](materials.md#staging-before-a-parser-exists)).
 - **observation**: the recorded facts of one look at an input (size, time, whether it changed).
 - **revision**: an input's content as of an observation that found a change.
 - **spool**: a live capture's local directory of segment files, written before anything is sent; binary spools are pcapng ([streams](streams.md#spools)).

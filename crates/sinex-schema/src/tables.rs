@@ -341,11 +341,13 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   blob text NOT NULL REFERENCES core.blobs(hash),
   length bigint NOT NULL CHECK (length >= 0),
   manifest jsonb NOT NULL,
-  parser text NOT NULL,
-  parser_version integer NOT NULL,
+{parser_columns}
   status text NOT NULL DEFAULT 'live' {material_status},
-  status_operation uuid
-)", material_status = c.material_status),
+  status_operation uuid,
+  {parser_with_version}
+)", material_status = c.material_status,
+    parser_columns = crate::stage_without_parser::PARSER_COLUMNS,
+    parser_with_version = crate::stage_without_parser::PARSER_WITH_VERSION),
         "CREATE INDEX materials_input ON raw.materials (input_id, part_index)".into(),
         material_changes(c),
         MATERIAL_CHANGES_OPERATION.into(),

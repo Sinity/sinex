@@ -129,11 +129,12 @@ fn archive_file(path: &std::path::Path) -> bool {
         .is_some_and(|n| n == "comments.jsonl" || n == "submissions.jsonl")
 }
 
-/// `--read reddit-archive=PATH`: an Arctic Shift pull of the operator's
+/// `stage --parser reddit-archive PATH`: an Arctic Shift pull of the operator's
 /// items, a directory holding its two files.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "reddit-archive",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

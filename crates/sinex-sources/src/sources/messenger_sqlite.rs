@@ -92,10 +92,11 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--read messenger-sqlite=PATH`: an `fbmessengerexport` database.
+/// `stage --parser messenger-sqlite PATH`: an `fbmessengerexport` database.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "messenger-sqlite",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

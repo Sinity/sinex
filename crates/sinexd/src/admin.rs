@@ -181,8 +181,19 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         )
         .try_get_matches_from(&args)
         .map_err(|e| e.to_string())?;
-    let request =
+    let mut request =
         sinex_protocol::Request::from_args(name, sinex_protocol::cli::arguments(spec, &matches))?;
+    // The process ends with the command, so a local stage runs to its end;
+    // its paths are recorded as absolute paths.
+    if let sinex_protocol::Request::Stage { path, follow, .. } = &mut request {
+        *follow = Some(true);
+        for given in path.iter_mut() {
+            *given = std::path::absolute(&*given)
+                .map_err(|e| format!("{given}: {e}"))?
+                .display()
+                .to_string();
+        }
+    }
     let database: &String = matches.get_one("database").expect("required");
     let store: &PathBuf = matches.get_one("store").expect("required");
     let host: &String = matches.get_one("host").expect("defaulted");
@@ -199,9 +210,9 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
             sinex_protocol::Request::Replay {
                 sealed: Some(true),
                 ..
-            }
+            } | sinex_protocol::Request::Stage { .. }
         ) {
-            return Err("--identity-file requires replay --sealed".into());
+            return Err("--identity-file requires replay --sealed or stage".into());
         }
         let identity =
             std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -223,6 +234,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     let local = api::Api {
         source_config: Default::default(),
         read_failures: Default::default(),
+        running_stages: Default::default(),
         reads,
         writer: Some(ctx.writer.clone()),
         blobs: ctx.blobs.clone(),

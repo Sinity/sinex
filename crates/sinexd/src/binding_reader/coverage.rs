@@ -2,8 +2,8 @@
 //! on each host has one current coverage reading; a newer one is admitted only
 //! when the binding's state or its reason changes, so a binding read every few
 //! seconds writes when it starts failing or recovers, not on every read.
-use crate::backfill::Totals;
 use crate::material_access::Access;
+use crate::stage::Totals;
 use crate::writer::{Priority, WriterHandle};
 use sinex_model::event_types::coverage::{CoverageCompleteness, CoverageState, SourceCoverage};
 use sinex_model::{Class, RunId, Timestamp};
@@ -25,17 +25,17 @@ pub(super) fn outcome(
     result: &Result<Totals, String>,
 ) -> SourceCoverage {
     let (state, reason, events, failures) = match result {
-        Ok(totals) if totals.failures == 0 => (
+        Ok(totals) if totals.accounting.failures == 0 => (
             CoverageState::RecordedUnknownCoverage,
             Some(READ_SUCCEEDED.into()),
-            totals.events_offered as u64,
+            totals.accounting.readings,
             0,
         ),
         Ok(totals) => (
             CoverageState::Partial,
             Some("some source records failed to parse".into()),
-            totals.events_offered as u64,
-            totals.failures as u64,
+            totals.accounting.readings,
+            totals.accounting.failures,
         ),
         Err(error) => (CoverageState::Missing, Some(error.clone()), 0, 1),
     };

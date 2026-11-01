@@ -138,7 +138,7 @@ async fn rediscovery_reuses_saved_alias_and_cursor_after_restart(db: devkit::pg:
     let original = (format.plan.unwrap())(&alias, &Settings::new("h"))
         .unwrap()
         .remove(0);
-    crate::backfill::record(&mut conn, &original).await.unwrap();
+    crate::stage::record(&mut conn, &original).await.unwrap();
     let cursor = json!({"synthetic_offset":17});
     sqlx::query(
         "INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES($1,$2,'null',0)",
@@ -162,7 +162,7 @@ async fn rediscovery_reuses_saved_alias_and_cursor_after_restart(db: devkit::pg:
             planned[0].1.settings.class,
             Some(sinex_model::Class::Guarded)
         );
-        crate::backfill::record(&mut conn, &planned[0].1)
+        crate::stage::record(&mut conn, &planned[0].1)
             .await
             .unwrap();
         assert_eq!(

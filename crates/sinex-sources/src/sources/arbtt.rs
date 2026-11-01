@@ -268,10 +268,11 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--read arbtt=PATH`: each ARBTT `capture.log` under PATH.
+/// `stage --parser arbtt PATH`: each ARBTT `capture.log` under PATH.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "arbtt",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

@@ -96,7 +96,7 @@ fn text(value: &Value) -> Option<String> {
 }
 
 /// Units Sinex runs, as the NixOS module names them: the daemon, its
-/// `sinex-*` services (captures, NATS, database setup, dumps, backfills) and
+/// `sinex-*` services (captures, NATS, database setup, dumps) and
 /// the session service.
 fn sinex_unit(unit: &str) -> bool {
     unit == "sinexd.service" || (unit.starts_with("sinex-") && unit.ends_with(".service"))
@@ -527,13 +527,14 @@ fn spool_entries(
     Ok(count)
 }
 
-/// `--read journald=SPOOL`: the journal, captured into SPOOL. Options:
+/// `stage --parser journald SPOOL`: the journal, captured into SPOOL. Options:
 /// `directory` (archived journal files to read instead of the live journal),
 /// `since` (where a first capture starts, a `journalctl --since` expression;
 /// the whole journal otherwise) and `follow`.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "journald",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

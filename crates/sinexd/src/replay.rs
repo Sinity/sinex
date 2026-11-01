@@ -220,6 +220,13 @@ pub(crate) async fn run(
             }
         ));
     }
+    // A material stored with no parser has nothing to read it with.
+    if let Some(m) = stored
+        .iter()
+        .find(|m| in_scope.contains(&m.id) && m.parser.is_none())
+    {
+        return Err(m.parsed_with().unwrap_err());
+    }
     // A tombstoned part's bytes may be gone; the parts after it read on
     // from a fresh carry.
     let stored: Vec<Stored> = stored
@@ -381,7 +388,7 @@ async fn sources_of(
                     let b = sinex_source_core::Binding {
                         name: s.binding,
                         source: s.source,
-                        parser: m.parser.clone(),
+                        parser: m.parsed_with()?.0.to_owned(),
                         input: s.input.into(),
                         settings: serde_json::from_value(s.settings)
                             .map_err(|e| format!("binding {name}: settings: {e}"))?,
@@ -397,15 +404,14 @@ async fn sources_of(
         let host = stored_binding
             .as_ref()
             .map(|binding| binding.settings.host.clone());
+        let (parser, _) = m.parsed_with()?;
         let binding = match stored_binding {
             Some(b) => sinex_source_core::Binding {
-                parser: m.parser.clone(),
+                parser: parser.to_owned(),
                 ..b
             },
-            None => sources::binding_for_parser(&m.parser, m.host.as_deref().unwrap_or_default())
-                .ok_or_else(|| {
-                format!("material {}: no source has parser {}", m.id, m.parser)
-            })?,
+            None => sources::binding_for_parser(parser, m.host.as_deref().unwrap_or_default())
+                .ok_or_else(|| format!("material {}: no source has parser {parser}", m.id))?,
         };
         out.push(NativeReplaySource {
             source: sources::source_for(&binding).map_err(|e| format!("material {}: {e}", m.id))?,
@@ -549,8 +555,8 @@ fn read_sequence_into(
             part_index: u32::try_from(m.part_index)
                 .map_err(|_| format!("material {}: negative part", m.id))?,
             previous_part: m.previous.map(MaterialId),
-            parser: m.parser.clone(),
-            parser_version: u32::try_from(m.parser_version)
+            parser: m.parsed_with()?.0.to_owned(),
+            parser_version: u32::try_from(m.parsed_with()?.1)
                 .map_err(|_| format!("material {}: negative parser version", m.id))?,
             manifest: m.manifest.clone(),
         };

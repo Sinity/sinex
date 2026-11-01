@@ -313,6 +313,19 @@ async fn main() -> ExitCode {
             Err(e) => return fail(1, format!("{path}: {e}")),
         }
     }
+    // The daemon reads staged paths as given, so they go as absolute paths.
+    if name == "stage"
+        && let Some(Value::Array(paths)) = args.get_mut("path")
+    {
+        for given in paths.iter_mut() {
+            if let Value::String(text) = given {
+                match std::path::absolute(&*text) {
+                    Ok(path) => *text = path.display().to_string(),
+                    Err(e) => return fail(1, format!("{text}: {e}")),
+                }
+            }
+        }
+    }
     if name == "follow" {
         let query = args
             .get("query")
@@ -405,6 +418,12 @@ async fn main() -> ExitCode {
         if !paged {
             if json {
                 print_json(&result);
+            } else if matches!(name.as_str(), "stage" | "stage-show") {
+                print!("{}", sinex_protocol::stage_report::render(&result));
+            } else if name == "stage-list" {
+                for stage in result["stages"].as_array().into_iter().flatten() {
+                    print!("{}", sinex_protocol::stage_report::render(stage));
+                }
             } else if name == "sql" {
                 let rows = result["rows"].as_array().cloned().unwrap_or_default();
                 let columns: Vec<String> = rows

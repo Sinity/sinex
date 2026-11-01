@@ -466,10 +466,11 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
     }
 }
 
-/// `--read repository=PATH`: a local repository's commits and ref updates.
+/// `stage --parser repository PATH`: a local repository's commits and ref updates.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "repository",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

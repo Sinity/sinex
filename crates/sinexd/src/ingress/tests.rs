@@ -1930,6 +1930,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         derivations: Default::default(),
         source_config: Default::default(),
         read_failures: Default::default(),
+        running_stages: Default::default(),
         library_roots: Vec::new(),
         reads: h.reads.clone(),
         writer: Some(h.writer.clone()),

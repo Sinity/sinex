@@ -318,11 +318,12 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// `--read file-watch=SPOOL`: changes under the directories in the
+/// `stage --parser file-watch SPOOL`: changes under the directories in the
 /// `roots` option (and not under `skip` names), captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "file-watch",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],

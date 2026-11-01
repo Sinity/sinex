@@ -1087,11 +1087,12 @@ fn reader(binding: &sinex_source_core::binding::Binding) -> Result<ApiCursor<Git
     Ok(driver(github))
 }
 
-/// `--read github=PATH`: the GitHub repository of the local repository at
+/// `stage --parser github PATH`: the GitHub repository of the local repository at
 /// PATH.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "github",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {

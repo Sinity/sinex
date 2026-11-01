@@ -215,12 +215,13 @@ fn selection(b: &sinex_source_core::binding::Binding) -> &'static str {
     }
 }
 
-/// `--read clipboard=SPOOL`: the clipboard (or, with the option
+/// `stage --parser clipboard SPOOL`: the clipboard (or, with the option
 /// `selection: primary`, the primary selection), captured into SPOOL. The
 /// frame printer is this program's own `clipboard-frame` command.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "clipboard",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],
