@@ -1,11 +1,12 @@
 //! Executing requests: one function per command of the table, shared by every
 //! surface. Reads use the read pool; writes go to the writer as batches, so
 //! admission stays the only way anything is stored.
-use crate::writer::{Priority, WriterHandle};
+use crate::writer::WriterHandle;
 use serde_json::{Value, json};
 use sinex_model::event_types::telemetry::SinexTelemetry;
+use sinex_model::lifecycle::Act;
 use sinex_model::query::{self, Context, QueryError, Source};
-use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, EventPayload, OperationId, RunId};
+use sinex_model::{EventId, EventPayload, OperationId, RunId};
 use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
 use sinex_store::query::{Answer, Page};
 use sqlx::PgPool;
@@ -196,6 +197,7 @@ impl Api {
 
     async fn dispatch(&self, request: Request, caller: &Caller) -> Reply {
         let actor = caller.actor;
+        let method = request.method();
         match request {
             Request::ModelCall { operation: _ } => self.model_call_disabled(),
             Request::ModelPolicy { definition } => self.model_policy(caller, &definition).await,
@@ -362,32 +364,84 @@ impl Api {
                     Err(e) => refused(e.to_string()),
                 }
             }
-            Request::Hide { reference } => {
-                self.archive(caller, &reference, actor, |target, operation| {
-                    ArchiveRequest::Hide { target, operation }
-                })
-                .await
-            }
-            Request::Unhide { reference } => {
-                self.archive(caller, &reference, actor, |target, operation| {
-                    ArchiveRequest::Unhide { target, operation }
-                })
-                .await
-            }
-            Request::Excise {
-                reference,
+            Request::Archive {
+                target,
                 material,
-                dry_run,
+                run,
+                source,
+                after,
+                before,
+                compare,
             } => {
-                self.excise(
-                    caller,
-                    reference.as_deref(),
-                    material.as_deref(),
-                    dry_run.unwrap_or(false),
-                    actor,
-                )
-                .await
+                let scope = self
+                    .lifecycle_scope(
+                        caller,
+                        operations::ScopeArgs {
+                            target,
+                            material,
+                            run,
+                            source,
+                            after,
+                            before,
+                            operation: None,
+                        },
+                    )
+                    .await;
+                self.lifecycle(caller, Act::Archive, scope, compare.unwrap_or(false))
+                    .await
             }
+            Request::Restore {
+                target,
+                material,
+                run,
+                source,
+                after,
+                before,
+                operation,
+                compare,
+            }
+            | Request::Tombstone {
+                target,
+                material,
+                run,
+                source,
+                after,
+                before,
+                operation,
+                compare,
+            } => {
+                let act = if method == "restore" {
+                    Act::Restore
+                } else {
+                    Act::Tombstone
+                };
+                let scope = self
+                    .lifecycle_scope(
+                        caller,
+                        operations::ScopeArgs {
+                            target,
+                            material,
+                            run,
+                            source,
+                            after,
+                            before,
+                            operation,
+                        },
+                    )
+                    .await;
+                self.lifecycle(caller, act, scope, compare.unwrap_or(false))
+                    .await
+            }
+            Request::Undo { operation, compare } => {
+                let scope = uuid::Uuid::parse_str(&operation)
+                    .map(|id| sinex_model::lifecycle::Scope::Operation {
+                        operation: OperationId(id),
+                    })
+                    .map_err(|e| refused(format!("operation {operation}: {e}")));
+                self.lifecycle(caller, Act::Undo, scope, compare.unwrap_or(false))
+                    .await
+            }
+            Request::Resume { operation } => self.resume(caller, &operation).await,
             Request::Replay {
                 sealed,
                 material,
@@ -396,7 +450,6 @@ impl Api {
                 from,
                 until,
                 compare,
-                resume,
                 all,
             } => {
                 let scope = (|| -> Result<crate::replay::Scope, String> {
@@ -413,18 +466,14 @@ impl Api {
                         until: until.as_deref().map(timestamp).transpose()?,
                     })
                 })();
-                let resume = resume
-                    .as_deref()
-                    .map(|r| uuid::Uuid::parse_str(r).map(OperationId))
-                    .transpose();
-                match (scope, resume) {
-                    (Ok(scope), Ok(resume)) => {
+                match scope {
+                    Ok(scope) => {
                         self.replay(
                             caller,
                             crate::replay::Options {
                                 scope,
                                 compare: compare.unwrap_or(false),
-                                resume,
+                                resume: None,
                                 actor: actor.to_string(),
                                 unlock: None,
                             },
@@ -433,8 +482,7 @@ impl Api {
                         )
                         .await
                     }
-                    (Err(e), _) => refused(e),
-                    (_, Err(e)) => refused(format!("resume: {e}")),
+                    Err(e) => refused(e),
                 }
             }
             Request::Recompute {
@@ -643,48 +691,6 @@ impl Api {
         }
     }
 
-    /// Hide, unhide or excise the event a citation names, through the writer.
-    async fn archive(
-        &self,
-        caller: &Caller,
-        reference: &str,
-        actor: &str,
-        request: impl FnOnce(EventId, OperationId) -> ArchiveRequest,
-    ) -> Reply {
-        let Some(writer) = &self.writer else {
-            return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
-        let r = match query::parse_reference(reference) {
-            Ok(r) => r,
-            Err(e) => return query_refusal(reference, e),
-        };
-        let id = {
-            let mut conn = match self.acquire(caller).await {
-                Ok(c) => c,
-                Err(e) => return refused(e.to_string()),
-            };
-            match sinex_store::query::resolve(&mut conn, &r).await {
-                Ok(id) => id,
-                Err(e) => return refused(e.to_string()),
-            }
-        };
-        let operation = OperationId::new();
-        let batch = Batch {
-            run: RunId::new(),
-            kind: BatchKind::Api {
-                actor: actor.to_string(),
-            },
-            records: Vec::new(),
-            archive: vec![request(EventId(id), operation)],
-        };
-        match writer.submit(Priority::Live, batch).await {
-            Ok(_) => Reply::Ok {
-                result: json!({ "event": id, "operation": operation }),
-            },
-            Err(e) => refused(e.to_string()),
-        }
-    }
-
     async fn status(&self, caller: &Caller) -> Result<Value, String> {
         let mut conn = self.acquire(caller).await.map_err(|e| e.to_string())?;
         let row = sinex_store::diagnostics::positions(&mut conn)
@@ -765,7 +771,9 @@ impl Api {
             .await
         {
             Reply::Ok { result } => result.get("rows").cloned().unwrap_or(Value::Null),
-            Reply::Refused { reason, .. } => json!({ "unavailable": reason }),
+            Reply::Refused { reason, .. } | Reply::StoppedEarly { reason, .. } => {
+                json!({ "unavailable": reason })
+            }
         };
         let context = self.source_config.context(&self.host);
         let discovery =

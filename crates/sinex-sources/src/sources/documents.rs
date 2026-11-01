@@ -12,7 +12,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.documents",
     driver: Driver::DirSnapshot,
-    excisable: false,
     purpose: "configured document bytes for recall and text extraction",
     class: Class::Guarded,
     parser: "documents",

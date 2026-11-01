@@ -933,7 +933,8 @@ pub async fn head(conn: &mut PgConnection) -> Result<i64> {
     )
 }
 
-/// Dirty keys of `derivations`, oldest dirt first.
+/// Dirty keys of `derivations`, oldest dirt first. Keys a running lifecycle
+/// operation holds wait for its end.
 pub async fn dirty(
     conn: &mut PgConnection,
     derivations: &[String],
@@ -941,7 +942,8 @@ pub async fn dirty(
 ) -> Result<Vec<DirtyKey>> {
     let rows = sqlx::query!(
         r#"SELECT derivation, key, last_dirty_seq FROM derivation.dirty
-           WHERE derivation = ANY($1) ORDER BY first_dirty_seq, derivation LIMIT $2"#,
+           WHERE derivation = ANY($1) AND held_by IS NULL
+           ORDER BY first_dirty_seq, derivation LIMIT $2"#,
         derivations,
         limit,
     )

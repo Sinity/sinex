@@ -12,7 +12,6 @@ enum Classification {
     Repeat,
     Newer,
     Older,
-    Hidden,
     Superseded,
 }
 /// What classification decided for a batch's events, by their index (`ord`).
@@ -64,7 +63,6 @@ pub(super) async fn stage_and_classify(
            SELECT s.ord AS "ord!",
              CASE
                WHEN s.rank > 1 THEN 'superseded'
-               WHEN hk.id IS NOT NULL OR hl.id IS NOT NULL THEN 'hidden'
                WHEN coalesce(le.event_id, lc.event_id) IS NULL THEN 'new'
                WHEN coalesce(le.record_hash, lc.record_hash) = s.record_hash THEN 'repeat'
                -- The source dropping a record is a fact, not another
@@ -80,12 +78,6 @@ pub(super) async fn stage_and_classify(
              END AS "state!",
              coalesce(le.event_id, lc.event_id) AS live_id
            FROM s
-           LEFT JOIN core.hidden_records hk
-             ON s.equivalence_key IS NOT NULL AND hk.source = s.source
-             AND hk.event_type = s.event_type AND hk.equivalence_key = s.equivalence_key
-           LEFT JOIN core.hidden_records hl
-             ON s.equivalence_key IS NULL AND hl.material_id = s.material_id
-             AND hl.anchor = s.anchor AND hl.event_type = s.event_type AND hl.output_index = s.output_index
            LEFT JOIN core.live_equivalence le
              ON s.equivalence_key IS NOT NULL AND le.source = s.source
              AND le.event_type = s.event_type AND le.equivalence_key = core.encode_equivalence_key(s.equivalence_key)
@@ -108,7 +100,6 @@ pub(super) async fn stage_and_classify(
             "repeat" => Classification::Repeat,
             "newer" => Classification::Newer,
             "older" => Classification::Older,
-            "hidden" => Classification::Hidden,
             "superseded" => Classification::Superseded,
             other => return Err(Error::Invalid(format!("unknown admission state {other}"))),
         };
@@ -131,7 +122,6 @@ pub(super) async fn stage_and_classify(
                 outcome.older += 1;
                 resolved[at] = row.live_id;
             }
-            Classification::Hidden => outcome.hidden += 1,
             Classification::Superseded => outcome.superseded += 1,
         }
     }

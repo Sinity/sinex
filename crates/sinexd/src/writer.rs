@@ -3,16 +3,16 @@
 //! never starves live capture, and runs admission for each batch in its own
 //! transaction.
 //!
-//! Besides single batches it runs two kinds of work that need one
-//! transaction around more than one admission: a replay sequence (archive what
-//! is re-read, admit the new readings; in compare mode, read the difference
-//! and roll back), and an excision (rewrite bytes, remove readings; delete the
-//! freed blob extents after commit).
+//! Besides single batches it runs a replay sequence (archive what is re-read,
+//! admit the new readings; in compare mode, read the difference and roll
+//! back) in one transaction, and one batch of a lifecycle operation at a time
+//! (punching the extents of bytes a tombstone freed after commit), so live
+//! batches are admitted between an operation's batches.
 mod signal_batches;
 
 use serde_json::Value;
 use sinex_model::{Batch, OperationId};
-use sinex_store::excision::{self, Applied, Plan, Target};
+use sinex_store::lifecycle::{self, Progress, Refusal, Step};
 use sinex_store::replay::{self, Diff};
 use sinex_store::{AdmissionContext, Blobs, DirtyKeys, Outcome};
 use sqlx::{Connection, PgConnection};
@@ -58,24 +58,6 @@ pub(crate) struct ReplaySequence {
     pub ingress: Option<crate::ingress::replay::CheckedReplay>,
 }
 
-/// A planned excision.
-pub(crate) struct Excision {
-    pub target: Target,
-    pub plan: Plan,
-    pub operation: OperationId,
-    pub actor: String,
-    /// Where the freed blob extents are punched after commit.
-    pub blobs: Blobs,
-}
-
-/// What an excision did, and blob extents it could not punch after commit
-/// (no row refers to them; a later excision of the same bytes retries).
-#[derive(Debug)]
-pub(crate) struct Excised {
-    pub applied: Applied,
-    pub blobs_left: Vec<String>,
-}
-
 enum WriterJob {
     Admit(Batch),
     ModelCall {
@@ -87,7 +69,15 @@ enum WriterJob {
     Checked(Batch, AdmissionCheck),
     Source(Batch, AdmissionCheck),
     Replay(Box<ReplaySequence>),
-    Excise(Box<Excision>),
+    Lifecycle {
+        operation: Box<lifecycle::Operation>,
+        progress: Progress,
+        roots: i64,
+    },
+    LifecycleEnd {
+        operation: OperationId,
+        refusals: Vec<Refusal>,
+    },
     RecordReplay {
         operation: OperationId,
         actor: String,
@@ -100,7 +90,7 @@ enum Done {
     Admitted(Outcome),
     ModelCall(Box<sinex_model::model_calls::Outcome>),
     Replayed(Vec<Outcome>, Diff),
-    Excised(Excised),
+    Lifecycle(Step),
 }
 
 struct Job {
@@ -247,14 +237,44 @@ impl WriterHandle {
         Ok(())
     }
 
-    pub(crate) async fn excise(&self, excision: Excision) -> Result<Excised, WriteError> {
+    /// Run one batch of a lifecycle operation in its own transaction.
+    pub(crate) async fn lifecycle_step(
+        &self,
+        operation: &lifecycle::Operation,
+        progress: Progress,
+        roots: i64,
+    ) -> Result<Step, WriteError> {
         match self
-            .send(Priority::Live, WriterJob::Excise(Box::new(excision)))
+            .send(
+                Priority::Derived,
+                WriterJob::Lifecycle {
+                    operation: Box::new(operation.clone()),
+                    progress,
+                    roots,
+                },
+            )
             .await?
         {
-            Done::Excised(done) => Ok(done),
-            _ => unreachable!("an excision answers with what it removed"),
+            Done::Lifecycle(step) => Ok(step),
+            _ => unreachable!("a lifecycle batch answers with its step"),
         }
+    }
+
+    /// End an operation `stopped_early`, recording what refused it.
+    pub(crate) async fn lifecycle_stopped(
+        &self,
+        operation: OperationId,
+        refusals: Vec<Refusal>,
+    ) -> Result<(), WriteError> {
+        self.send(
+            Priority::Derived,
+            WriterJob::LifecycleEnd {
+                operation,
+                refusals,
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     async fn send(&self, priority: Priority, work: WriterJob) -> Result<Done, WriteError> {
@@ -350,7 +370,7 @@ pub(crate) async fn claim(connection: PgConnection) -> Result<AdmissionContext, 
 ///
 /// `store` is the content store the batches' bytes are in. The writer admits a
 /// batch only while every file it registers is there; it also deletes the
-/// files an excision freed. Both happen here, one after the other, so bytes
+/// bytes a tombstone freed. Both happen here, one after the other, so bytes
 /// checked before an admission cannot be deleted before it commits. A writer
 /// without a store admits only batches that register no bytes.
 pub(crate) async fn run(
@@ -449,9 +469,26 @@ pub(crate) async fn run_notifying(
             } => record_replay(&mut connection, operation, &actor, &scope, &refusals)
                 .await
                 .map(Done::Admitted),
-            WriterJob::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
+            WriterJob::Lifecycle {
+                operation,
+                progress,
+                roots,
+            } => lifecycle_step(
+                &mut connection,
+                &operation,
+                progress,
+                roots,
+                keys.as_ref(),
+                store,
+            )
+            .await
+            .map(Done::Lifecycle),
+            WriterJob::LifecycleEnd {
+                operation,
+                refusals,
+            } => lifecycle_end(&mut connection, operation, &refusals)
                 .await
-                .map(Done::Excised),
+                .map(Done::Admitted),
         };
         if matches!(
             &result,
@@ -486,7 +523,7 @@ pub(crate) async fn run_notifying(
                 serde_json::json!({"admission_batch": {
                     "events": events, "admitted": outcome.admitted,
                     "repeats": outcome.repeats, "replaced": outcome.replaced,
-                    "older": outcome.older, "hidden": outcome.hidden,
+                    "older": outcome.older,
                     "superseded": outcome.superseded, "failures": outcome.failures,
                     "timings_ms": timings
                 }})
@@ -935,38 +972,71 @@ async fn record_replay(
     Ok(Outcome::default())
 }
 
-async fn excise(
+async fn lifecycle_step(
     connection: &mut AdmissionContext,
-    e: &Excision,
+    operation: &lifecycle::Operation,
+    progress: Progress,
+    roots: i64,
     keys: &dyn DirtyKeys,
-) -> Result<Excised, WriteError> {
-    let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    store: Option<&Blobs>,
+) -> Result<Step, WriteError> {
     let mut tx = connection
         .begin()
         .await
         .map_err(|error| store_error(error.into()))?;
-    let applied =
-        match excision::apply(&mut tx, e.target, &e.plan, e.operation, &e.actor, keys).await {
-            Ok(applied) => {
-                tx.commit()
+    let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
+        Ok(step) => step,
+        Err(error) => {
+            tx.rollback()
+                .await
+                .map_err(|error| store_error(error.into()))?;
+            return Err(store_error(error));
+        }
+    };
+    match &step {
+        Step::Refused(_) => tx
+            .rollback()
+            .await
+            .map_err(|error| store_error(error.into()))?,
+        Step::Moved { remove, .. } => {
+            tx.commit()
+                .await
+                .map_err(|error| store_error(error.into()))?;
+            // Bytes left marked (no store here, or a failed punch) are
+            // removed at the writer's next start.
+            if !remove.is_empty()
+                && let Some(store) = store
+            {
+                lifecycle::remove_unreferenced(connection, store)
                     .await
-                    .map_err(|error| store_error(error.into()))?;
-                applied
+                    .map_err(store_error)?;
             }
-            Err(error) => {
-                tx.rollback()
-                    .await
-                    .map_err(|error| store_error(error.into()))?;
-                return Err(refuse(&error));
-            }
-        };
-    let (_, blobs_left) = excision::finish_deletions(connection, &e.blobs)
+        }
+    }
+    Ok(step)
+}
+
+async fn lifecycle_end(
+    connection: &mut PgConnection,
+    operation: OperationId,
+    refusals: &[Refusal],
+) -> Result<Outcome, WriteError> {
+    let mut tx = connection
+        .begin()
         .await
-        .map_err(|e| refuse(&e))?;
-    Ok(Excised {
-        applied,
-        blobs_left,
-    })
+        .map_err(|error| store_error(error.into()))?;
+    lifecycle::end(
+        &mut tx,
+        operation,
+        sinex_model::lifecycle::OperationResult::StoppedEarly,
+        refusals,
+    )
+    .await
+    .map_err(store_error)?;
+    tx.commit()
+        .await
+        .map_err(|error| store_error(error.into()))?;
+    Ok(Outcome::default())
 }
 
 #[cfg(test)]

@@ -231,12 +231,19 @@ the surfaces are:
   with an account by event type (admitted, suppressed with example references, failed)
   and `stopped_early` when it did not finish; `stage list` shows progress and what paces
   it, and gives no estimate while the rate varies;
-- `archive REF | QUERY | --source S --before T` and `restore REF | QUERY`, each printing
-  the cascade before it runs and refusing when any part cannot move;
+- `archive REF | QUERY | --material ID… | --run ID | --source S [--after T] [--before T]`
+  and `restore` over the same scopes or `--operation OP` (the chains that operation
+  archived), each refusing when any part cannot move; `--compare` prints the cascade and
+  what would refuse and changes nothing;
+- `undo OPERATION [--compare]` archives what the operation made live and restores what it
+  archived, for an archive, a restore, a replay or an undo;
+- `resume OPERATION` continues an archive, restore, tombstone, undo or replay that ended
+  `stopped_early` or whose daemon stopped mid-run;
 - `replay QUERY [--compare]` and its undo; `recompute DERIVATION [--compare]` and
   `recompute DERIVATION --switch` ([versions](derivations.md#versions));
-- `tombstone REF | QUERY | --material ID`, only on archived chains, with the cascade
-  preview and the operator's confirmation ([one command set](#one-command-set));
+- `tombstone` over the same scopes as `restore`, only on archived chains; `--compare`
+  previews the cascade, and the act is reserved to the operator
+  ([one command set](#one-command-set));
 - `backup hold` and `backup release HOLD`, called by the deployment's backup tool
   around a copy ([backup](operations.md#backup-and-restore));
 - each records an operation with its computed author, and the preview is shown on

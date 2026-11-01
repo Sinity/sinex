@@ -197,7 +197,7 @@ fn same_input_basis(
     original: &sinex_store::signals::MatchBasis,
     current: &sinex_store::signals::MatchBasis,
 ) -> bool {
-    // Global archive/excision watermarks are progress, not input identity.
+    // Global archive and tombstone watermarks are progress, not input identity.
     // Fresh parent reads still verify the actual liveness and policy below.
     original.read.policy_epoch.is_some()
         && current.read.policy_epoch == original.read.policy_epoch

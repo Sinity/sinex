@@ -215,7 +215,7 @@ async fn telemetry_uses_ordinary_admission_commit_order_and_visibility(
     )
     .unwrap();
     let event_id = event.id;
-    let mut batch = Batch {
+    let batch = Batch {
         run: RunId::new(),
         kind: BatchKind::Api {
             actor: "test".into(),
@@ -248,14 +248,13 @@ async fn telemetry_uses_ordinary_admission_commit_order_and_visibility(
             .await
             .unwrap();
     assert!(committed > 0);
-    batch.records.clear();
-    batch.archive.push(sinex_model::ArchiveRequest::Hide {
-        target: event_id,
-        operation: OperationId::new(),
-    });
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&batch, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![event_id],
+        &NoDerivations,
+    )
+    .await;
     assert_eq!(ask(&mut conn, "telemetry").await.total, 0);
     assert!(
         crate::telemetry::latest(&mut conn, "sinex.telemetry")

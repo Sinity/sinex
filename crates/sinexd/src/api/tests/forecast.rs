@@ -11,7 +11,7 @@ async fn score(w: &World, token: &str) -> Value {
     body["result"].clone()
 }
 #[devkit::test]
-async fn forecast_public_workflow_withdraws_hidden_and_excised_inputs(
+async fn forecast_public_workflow_withdraws_archived_and_tombstoned_inputs(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
@@ -43,37 +43,39 @@ async fn forecast_public_workflow_withdraws_hidden_and_excised_inputs(
     let (_,duplicate)=call(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"false","evidence":[evidence_id]})).await;
     assert_eq!(duplicate["outcome"], "refused");
     let resolution = resolved["result"]["citation"].as_str().unwrap();
-    let (_, hidden) = call(
+    let (_, archived) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"hide","reference":resolution}),
+        json!({"method":"archive","target":resolution}),
     )
     .await;
-    assert_eq!(hidden["outcome"], "ok", "{hidden}");
+    assert_eq!(archived["outcome"], "ok", "{archived}");
     assert!(score(&w, OPERATOR).await["report"]["brier"].is_null());
     let (_, restored) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"unhide","reference":resolution}),
+        json!({"method":"restore","target":resolution}),
     )
     .await;
     assert_eq!(restored["outcome"], "ok", "{restored}");
-    let (_, hidden_evidence) = call(
+    let (_, archived_evidence) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"hide","reference":evidence_id}),
+        json!({"method":"archive","target":evidence_id}),
     )
     .await;
-    assert_eq!(hidden_evidence["outcome"], "ok", "{hidden_evidence}");
+    assert_eq!(archived_evidence["outcome"], "ok", "{archived_evidence}");
     assert!(score(&w, OPERATOR).await["report"]["brier"].is_null());
-    let (_, excised) = call(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"excise","reference":issued_ref}),
-    )
-    .await;
-    assert_eq!(excised["outcome"], "ok", "{excised}");
-    assert_eq!(score(&w, OPERATOR).await["report"]["issued"], 0);
+    for method in ["archive", "tombstone"] {
+        let (_, removed) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":method,"target":issued_ref}),
+        )
+        .await;
+        assert_eq!(removed["outcome"], "ok", "{removed}");
+        assert_eq!(score(&w, OPERATOR).await["report"]["issued"], 0);
+    }
 }
 #[devkit::test]
 async fn forecast_public_commands_refuse_invalid_inputs_and_ungranted_authors(
@@ -89,18 +91,20 @@ async fn forecast_public_commands_refuse_invalid_inputs_and_ungranted_authors(
 }
 
 #[devkit::test]
-async fn forecast_new_authoring_continues_after_an_unrelated_forecast_is_excised(
+async fn forecast_new_authoring_continues_after_an_unrelated_forecast_is_tombstoned(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
     let first = issue(&w, "0.2").await;
-    let (_, body) = call(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"excise","reference":first["citation"]}),
-    )
-    .await;
-    assert_eq!(body["outcome"], "ok", "{body}");
+    for method in ["archive", "tombstone"] {
+        let (_, body) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":method,"target":first["citation"]}),
+        )
+        .await;
+        assert_eq!(body["outcome"], "ok", "{body}");
+    }
     let second = issue(&w, "0.7").await;
     assert_ne!(first["forecast"], second["forecast"]);
     assert_eq!(score(&w, OPERATOR).await["report"]["issued"], 1);

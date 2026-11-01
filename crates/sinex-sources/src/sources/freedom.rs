@@ -11,7 +11,6 @@ use sinex_source_core::{Parser, RecordContext, RecordError};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.freedom",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "domain usage reported by Freedom, for attention analysis",
     class: Class::Guarded,
     parser: "freedom-daily-domains",

@@ -15,7 +15,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "sinex.telemetry",
     driver: Driver::LiveStream,
-    excisable: false,
     purpose: "Sinex's sampled state",
     class: Class::Open,
     parser: "sinex-telemetry",

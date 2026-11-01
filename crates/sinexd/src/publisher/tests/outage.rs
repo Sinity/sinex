@@ -221,7 +221,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     ));
 
     // Before, during and after outages of different lengths: new events of
-    // two types, a newer reading and a hide.
+    // two types, a newer reading and an archive.
     let first = executed("1", "ls", 1, Class::Open);
     let first_id = first.id;
     for (round, outage_ms) in [(0, 0u64), (1, 300), (2, 1_500), (3, 0)] {
@@ -241,17 +241,14 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         if round == 0 {
             events.push(first.clone());
         }
-        let mut archive = vec![];
         if round == 1 {
             events.push(executed("1", "ls -la", 2, Class::Open));
         }
+        let archive_target = events[0].id;
+        admit(&mut conn, batch(events)).await;
         if round == 2 {
-            archive.push(ArchiveRequest::Hide {
-                target: events[0].id,
-                operation: OperationId::new(),
-            });
+            lifecycle(&mut conn, Act::Archive, vec![archive_target]).await;
         }
-        admit(&mut conn, batch(events, archive)).await;
         commits.send_modify(|n| *n += 1);
         if round == 0 {
             // The first broker is killed only after it acknowledged real events.
@@ -312,7 +309,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         changes[0],
         (first_id.0, sinex_model::ArchiveReason::NewerReading)
     );
-    assert_eq!(changes[1].1, sinex_model::ArchiveReason::Hide);
+    assert_eq!(changes[1].1, sinex_model::ArchiveReason::Archive);
 
     // References retain exact original positions and IDs, with no inline
     // payload, key or other source metadata surviving a later rule edit.

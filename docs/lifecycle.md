@@ -93,6 +93,8 @@ Undo, archive, restore and replay are ordinary, everyday features; tombstoning i
 
 An archive, restore or tombstone that spans many batches is one operation. Its saved position is its progress, not a workflow state.
 
+- Each batch takes the next roots of the scope in event ID order after the saved position, among readings committed by the operation's start, with their whole chains. Its size follows how long the previous batch held the writer. An undo runs as two phases in one operation: the archive of what the target made live, then the restore of what it archived.
+
 - Refusal checks run on every batch, at that batch's commit. A refusal before the first batch commits changes nothing. A refusal after it ends the operation `stopped_early`, never reported as ok: the answer names what moved and what refused. Once the cause is cleared, the operation resumes like a replay from its saved position, or it is undone by its inverse.
 - "The chains that left together" means the chains the same operation moved, across all its batches.
 - Keys dirtied by an operation in progress recompute after its last batch (or its `stopped_early` end), never between batches, so no aggregate reading is admitted between batches only to be archived by the next.
@@ -137,9 +139,12 @@ Archiving moves no data, so archiving years of data costs what its state rows co
 
 - One `core.events` table holds live and archived readings; archived rows stay where they are.
 - The live tables name the live reading of each record ([liveness](admission.md#liveness)).
-- `audit.archived` holds current state (commit position, reason, operation); `audit.archive_changes` holds every change into and out of the archive at its commit position.
-- Tombstones are their own table, with record identity.
-- Material status is a column of the material.
+- `audit.archived` holds current state (commit position, reason, operation); `audit.archive_changes` holds every change into and out of the archive at its commit position, a restore with reason `restore`.
+- Tombstones are their own table, `core.event_tombstones`, with record identity: the skeleton fields above, the key as a hash, and the tombstone's and the original commit positions.
+- Material status is a column of the material with the operation that last set it; `raw.material_changes` holds every status change at its commit position.
+- An operation is a row of `core.operations`: kind, actor, scope, counts, start and end commit positions, result, refusals, and its saved progress (phase, last root moved, batches committed). The first batch writes it; a refusal before that records nothing.
+- Keys an operation dirties are held (`derivation.dirty.held_by`) until it ends; the writer releases every hold when it starts, since no operation runs then.
+- A replay's new readings carry the replay operation as their run, so its undo finds what it admitted.
 
 ## As-of reads
 

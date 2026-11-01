@@ -1,3 +1,49 @@
+-- Undo the lifecycle upgrade.
+DROP TABLE raw.material_changes;
+ALTER TABLE raw.materials DROP COLUMN status, DROP COLUMN status_operation;
+ALTER TABLE core.operations DROP COLUMN start_seq, DROP COLUMN end_seq, DROP COLUMN result, DROP COLUMN counts, DROP COLUMN progress, DROP COLUMN refusals;
+ALTER TABLE derivation.dirty DROP COLUMN held_by;
+ALTER TABLE core.event_tombstones DROP COLUMN ts_quality, DROP COLUMN reason, DROP COLUMN material_id, DROP COLUMN anchor, DROP COLUMN output_index, DROP COLUMN key_hash;
+DROP INDEX audit.archived_operation, audit.archive_changes_restored;
+ALTER TABLE audit.archived DROP CONSTRAINT archived_reason_check;
+UPDATE audit.archived SET reason = CASE reason WHEN 'archive' THEN 'hide' ELSE 'recomputed' END WHERE reason IN ('archive', 'version_change');
+ALTER TABLE audit.archived ADD CONSTRAINT archived_reason_check CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed'));
+ALTER TABLE audit.archive_changes DROP CONSTRAINT archive_changes_reason_check, DROP CONSTRAINT archive_changes_check;
+UPDATE audit.archive_changes SET reason = CASE reason WHEN 'archive' THEN 'hide' WHEN 'restore' THEN 'unhide' ELSE 'recomputed' END WHERE reason IN ('archive', 'restore', 'version_change');
+ALTER TABLE audit.archive_changes ADD CONSTRAINT archive_changes_reason_check CHECK (reason IN ('replay', 'newer_reading', 'hide', 'recomputed', 'unhide')), ADD CONSTRAINT archive_changes_check CHECK (archived = (reason <> 'unhide'));
+ALTER TABLE core.blobs DROP CONSTRAINT blobs_status_check, ADD CONSTRAINT blobs_status_check CHECK (status IN ('present', 'deleting'));
+UPDATE core.counters SET name = 'excised' WHERE name = 'tombstoned';
+CREATE TABLE core.hidden_records (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source text NOT NULL,
+  event_type text NOT NULL,
+  equivalence_key text,
+  material_id uuid,
+  anchor bigint,
+  output_index bigint,
+  operation_id uuid NOT NULL,
+  hidden_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT output_index_in_range CHECK (output_index >= 0),
+  CONSTRAINT keyed_or_located CHECK ((equivalence_key IS NOT NULL AND material_id IS NULL AND anchor IS NULL AND output_index IS NULL) OR (equivalence_key IS NULL AND material_id IS NOT NULL AND anchor IS NOT NULL AND output_index IS NOT NULL))
+);
+CREATE UNIQUE INDEX hidden_by_key ON core.hidden_records (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL;
+CREATE UNIQUE INDEX hidden_by_location ON core.hidden_records (material_id, anchor, event_type, output_index) WHERE material_id IS NOT NULL;
+CREATE TABLE core.excised_materials (
+  material_id uuid PRIMARY KEY,
+  blob text NOT NULL,
+  operation_id uuid NOT NULL
+);
+CREATE INDEX excised_materials_blob ON core.excised_materials (blob);
+CREATE OR REPLACE FUNCTION core.event_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'event rows are immutable' USING ERRCODE = '23514';
+  END IF;
+  IF TG_OP = 'DELETE' AND nullif(current_setting('sinex.excise_operation', true), '') IS NULL THEN
+    RAISE EXCEPTION 'events are deleted only by an excision' USING ERRCODE = '23514';
+  END IF;
+  RETURN OLD;
+END $$;
 ALTER TABLE core.events DROP CONSTRAINT events_producer_frame;
 DROP TABLE registry.source_declarations;
 DROP FUNCTION registry.keep_source_declaration();

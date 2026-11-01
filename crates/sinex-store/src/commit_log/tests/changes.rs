@@ -1,8 +1,9 @@
 use super::*;
 use crate::commit_log::{Change, ChangeCursor, changes_page};
+use sinex_model::lifecycle::Act;
 use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Class, Event, MaterialId, OperationId, Origin, ReadingOrder,
-    RecordLocation, RecordOutcome, RunId, Timestamp,
+    Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
+    RecordOutcome, RunId, Timestamp,
 };
 
 fn event(command: &str, order: i64) -> Event {
@@ -37,11 +38,7 @@ fn event(command: &str, order: i64) -> Event {
     )
     .unwrap()
 }
-async fn admit(
-    conn: &mut crate::AdmissionContext,
-    events: Vec<Event>,
-    archive: Vec<ArchiveRequest>,
-) {
+async fn admit(conn: &mut crate::AdmissionContext, events: Vec<Event>) {
     let batch = Batch {
         run: RunId::new(),
         kind: BatchKind::Api {
@@ -51,7 +48,7 @@ async fn admit(
             location: None,
             events,
         }],
-        archive,
+        archive: vec![],
     };
     let mut tx = conn.begin().await.unwrap();
     tx.admit(&batch, &crate::NoDerivations).await.unwrap();
@@ -66,10 +63,10 @@ fn tuple(entry: &crate::commit_log::CommittedChange) -> Option<(i64, Uuid, &'sta
             if change.archive.archived {
                 "archived"
             } else {
-                "unhidden"
+                "restored"
             },
         )),
-        Change::Excised(change) => Some((entry.position, change.event_id, "excised")),
+        Change::Tombstoned(change) => Some((entry.position, change.event_id, "tombstoned")),
         Change::PositionComplete => None,
     }
 }
@@ -82,28 +79,19 @@ async fn canonical_reader_preserves_event_and_visibility_order_across_tiny_pages
         .unwrap();
     let first = event("first", 1);
     let first_id = first.id;
-    admit(&mut conn, vec![first], vec![]).await;
+    admit(&mut conn, vec![first]).await;
     let second = event("second", 2);
     let second_id = second.id;
-    admit(&mut conn, vec![second], vec![]).await;
-    admit(
-        &mut conn,
-        vec![],
-        vec![ArchiveRequest::Hide {
-            target: second_id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
-    admit(
-        &mut conn,
-        vec![],
-        vec![ArchiveRequest::Unhide {
-            target: second_id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    admit(&mut conn, vec![second]).await;
+    for act in [Act::Archive, Act::Restore] {
+        let ended =
+            crate::lifecycle::move_events(&mut conn, act, vec![second_id], &crate::NoDerivations)
+                .await;
+        assert!(
+            matches!(ended, crate::lifecycle::Ended::Ok { .. }),
+            "{ended:?}"
+        );
+    }
     let mut cursor = ChangeCursor::after(0);
     let mut tuples = vec![];
     let mut completed = vec![];
@@ -129,7 +117,7 @@ async fn canonical_reader_preserves_event_and_visibility_order_across_tiny_pages
             (2, second_id.0, "event"),
             (2, first_id.0, "archived"),
             (3, second_id.0, "archived"),
-            (4, second_id.0, "unhidden")
+            (4, second_id.0, "restored")
         ]
     );
     assert_eq!(completed, [1, 2, 3, 4]);
@@ -143,7 +131,7 @@ async fn tombstone_fixture(conn: &mut PgConnection, n: i64) {
         .unwrap();
     sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class) SELECT md5(i::text)::uuid,'fixture','command.executed',$2,$1+2,i,'open' FROM generate_series(1,$1) i")
         .bind(n).bind(Uuid::now_v7()).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason) SELECT i,md5(i::text)::uuid,$1+1,true,'hide' FROM generate_series(1,$1) i")
+    sqlx::query("INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason) SELECT i,md5(i::text)::uuid,$1+1,true,'archive' FROM generate_series(1,$1) i")
         .bind(n).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
 }
@@ -164,7 +152,7 @@ async fn pruning_retains_tombstone_order_and_unknown_history_is_a_named_gap(
     let id = Uuid::parse_str("c4ca4238-a0b9-2382-0dcc-509a6f75849b").unwrap();
     assert_eq!(
         page.entries.iter().filter_map(tuple).collect::<Vec<_>>(),
-        [(2, id, "archived"), (3, id, "excised")]
+        [(2, id, "archived"), (3, id, "tombstoned")]
     );
     assert_eq!(
         page.entries

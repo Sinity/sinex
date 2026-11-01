@@ -298,10 +298,10 @@ async fn recovery_finishes_catalog_deletion_after_an_earlier_punch_removed_its_e
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
     blobs.recover(&mut conn).await.unwrap();
-    let (deleted, left) = crate::excision::finish_deletions(&mut conn, &blobs)
+    let (removed, left) = crate::lifecycle::remove_unreferenced(&mut conn, &blobs)
         .await
         .unwrap();
-    assert_eq!(deleted, [name]);
+    assert_eq!(removed, [name]);
     assert!(left.is_empty());
 }
 

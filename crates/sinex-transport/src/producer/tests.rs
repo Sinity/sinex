@@ -434,23 +434,12 @@ async fn duplicate_broker_ack_with_unavailable_owner_never_becomes_an_admission_
 async fn duplicate_refusal_preserves_the_owned_terminal_disposition() {
     for kind in [
         sinex_model::FrameRefusal::Content,
-        sinex_model::FrameRefusal::Excised,
-        sinex_model::FrameRefusal::PartiallyExcised,
+        sinex_model::FrameRefusal::Conflict,
     ] {
         let mut fixture = Duplicate::new(true).await;
         let mut saved = receipt(&fixture.frame);
         saved.refusal = Some("synthetic owner refusal".into());
         saved.outcome["refusal_kind"] = serde_json::to_value(kind).unwrap();
-        if matches!(
-            kind,
-            sinex_model::FrameRefusal::Excised | sinex_model::FrameRefusal::PartiallyExcised
-        ) {
-            saved
-                .outcome
-                .as_object_mut()
-                .unwrap()
-                .remove("frame_content_hash");
-        }
         let expected = saved.clone();
         let mut requests = fixture
             .owner

@@ -158,8 +158,6 @@ pub enum Request {
         #[serde(default)]
         compare: Option<bool>,
         #[serde(default)]
-        resume: Option<String>,
-        #[serde(default)]
         all: Option<bool>,
     },
     Recompute {
@@ -191,19 +189,65 @@ pub enum Request {
         #[serde(default)]
         pause: Option<u64>,
     },
-    Hide {
-        reference: String,
+    Archive {
+        #[serde(default)]
+        target: Option<String>,
+        #[serde(default)]
+        material: Vec<String>,
+        #[serde(default)]
+        run: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        before: Option<String>,
+        #[serde(default)]
+        compare: Option<bool>,
     },
-    Unhide {
-        reference: String,
+    Restore {
+        #[serde(default)]
+        target: Option<String>,
+        #[serde(default)]
+        material: Vec<String>,
+        #[serde(default)]
+        run: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        before: Option<String>,
+        #[serde(default)]
+        operation: Option<String>,
+        #[serde(default)]
+        compare: Option<bool>,
     },
-    Excise {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reference: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        material: Option<String>,
-        #[serde(default, rename = "dry-run", skip_serializing_if = "Option::is_none")]
-        dry_run: Option<bool>,
+    Tombstone {
+        #[serde(default)]
+        target: Option<String>,
+        #[serde(default)]
+        material: Vec<String>,
+        #[serde(default)]
+        run: Option<String>,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        before: Option<String>,
+        #[serde(default)]
+        operation: Option<String>,
+        #[serde(default)]
+        compare: Option<bool>,
+    },
+    Undo {
+        operation: String,
+        #[serde(default)]
+        compare: Option<bool>,
+    },
+    Resume {
+        operation: String,
     },
     Same {
         a: String,
@@ -443,9 +487,11 @@ impl Request {
             Request::Recompute { .. } => "recompute",
             Request::Comparisons { .. } => "comparisons",
             Request::Crawl { .. } => "crawl",
-            Request::Hide { .. } => "hide",
-            Request::Unhide { .. } => "unhide",
-            Request::Excise { .. } => "excise",
+            Request::Archive { .. } => "archive",
+            Request::Restore { .. } => "restore",
+            Request::Tombstone { .. } => "tombstone",
+            Request::Undo { .. } => "undo",
+            Request::Resume { .. } => "resume",
             Request::Same { .. } => "same",
             Request::Distinct { .. } => "distinct",
             Request::Mark { .. } => "mark",
@@ -500,6 +546,13 @@ impl Request {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum Reply {
     Ok {
+        result: Value,
+    },
+    /// A multi-batch operation moved some batches and then met a refusal.
+    /// Never reported as ok: the result names what moved and what refused,
+    /// and `resume` continues it once the cause is cleared.
+    StoppedEarly {
+        reason: String,
         result: Value,
     },
     Refused {

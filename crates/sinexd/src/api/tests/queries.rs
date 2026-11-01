@@ -50,13 +50,13 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
         assert_eq!(answer["outcome"], "ok", "{answer}");
         assert_eq!(answer["result"]["recall"]["mark"]["payload"]["text"], note);
     }
-    let (_, hidden) = call(
+    let (_, archived) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"hide","reference":citations[1]}),
+        json!({"method":"archive","target":citations[1]}),
     )
     .await;
-    assert_eq!(hidden["outcome"], "ok", "{hidden}");
+    assert_eq!(archived["outcome"], "ok", "{archived}");
     let (_, answer) = call(
         &w,
         Some(OPERATOR),

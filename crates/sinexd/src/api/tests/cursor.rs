@@ -63,17 +63,7 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
         .enumerate()
         .map(|(i, text)| command(text, i as i64))
         .collect();
-    for (parent, text) in parents.iter().zip(["alpha", "beta", "gamma"]) {
-        crate::excision::tests::register(
-            &mut w.reads.acquire().await.unwrap(),
-            &w.blobs,
-            &sinex_sources::sources::clipboard::SPEC,
-            parent.location().unwrap().0.material,
-            format!("{text}\n").as_bytes(),
-        )
-        .await;
-    }
-    let excised = parents[0].id;
+    let removed_id = parents[0].id;
     let derived: Vec<_> = parents
         .iter()
         .map(|parent| {
@@ -103,13 +93,15 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
     admit_events(&w, parents).await;
     admit_events(&w, derived).await;
     let page = first(&w, READ, "commands sort when").await;
-    let (_, removed) = call(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"excise", "reference":excised.to_string()}),
-    )
-    .await;
-    assert_eq!(removed["outcome"], "ok", "{removed}");
+    for method in ["archive", "tombstone"] {
+        let (_, removed) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":method, "target":removed_id.to_string()}),
+        )
+        .await;
+        assert_eq!(removed["outcome"], "ok", "{removed}");
+    }
     let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"commands sort when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
         next["outcome"], "refused",

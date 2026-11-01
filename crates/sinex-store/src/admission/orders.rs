@@ -43,7 +43,7 @@ pub(super) async fn assign(
                 ));
             }
         };
-        // Only this digest survives excision; original record keys are not retained by the counter.
+        // Only this digest survives a tombstone; original record keys are not retained by the counter.
         let key = (
             event.source.clone(),
             event.event_type.clone(),

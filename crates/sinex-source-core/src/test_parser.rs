@@ -64,7 +64,6 @@ pub(crate) fn source() -> DeclaredSource<NotesParser> {
             parser: "synthetic-notes",
             parser_version: 1,
             driver: Driver::DirSnapshot,
-            excisable: false,
             purpose: "test",
             class: Class::Open,
             event_types: &["note.document"],

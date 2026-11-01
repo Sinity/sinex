@@ -21,8 +21,8 @@
 //! The producer is the one its subject names; per-producer credentials limit
 //! each producer to its own subjects. `<root>.recorded.<producer>` answers which
 //! frames Sinex recorded, `<root>.materials.<producer>` pages through the
-//! materials the producer registered, and `<root>.excise.<producer>` excises
-//! whole materials the producer registered.
+//! materials the producer registered, and `<root>.lifecycle.<producer>` takes
+//! a lifecycle request (archive, restore, undo) with the producer as actor.
 pub(crate) mod authority;
 mod bytes;
 mod confirmed_consumer;
@@ -42,8 +42,8 @@ use sinex_model::{
     ReadingOrder, RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp,
 };
 use sinex_protocol::{
-    Acknowledgment, Excise, ExciseReply, Ingress, MaterialFrame, Materials, ProducerEvent,
-    ProducerFailure, ProducerHello, ProducerMaterial, ProducerWelcome, RecordedQuery, Subjects,
+    Acknowledgment, Ingress, Lifecycle, MaterialFrame, Materials, ProducerEvent, ProducerFailure,
+    ProducerHello, ProducerMaterial, ProducerWelcome, RecordedQuery, Subjects,
 };
 use sinex_store::commit_log::{self, StoredFrame};
 use sinex_store::{Blobs, runs};
@@ -360,8 +360,6 @@ impl Ingest {
                     FrameRefusal::Content
                         | FrameRefusal::Bytes
                         | FrameRefusal::Configuration
-                        | FrameRefusal::Excised
-                        | FrameRefusal::PartiallyExcised
                         | FrameRefusal::Conflict
                 )
             )
@@ -1013,7 +1011,7 @@ fn acknowledgment(s: StoredFrame) -> Acknowledgment {
 const REQUESTS_AT_ONCE: usize = 4;
 
 /// What answers producer requests (recorded queries, material pages,
-/// excisions) beside the frame consumer, so a slow request never keeps the
+/// lifecycle requests) beside the frame consumer, so a slow request never keeps the
 /// consumer from reading its stream.
 #[derive(Clone)]
 pub(crate) struct Requests {
@@ -1038,7 +1036,7 @@ enum ResponseBody {
     Recorded(sinex_protocol::RecordedPage),
     Materials(sinex_protocol::MaterialsPage),
     Replay(sinex_protocol::ReplayReply),
-    Excise(ExciseReply),
+    Lifecycle(sinex_protocol::Reply),
     Error { refusal: String },
 }
 
@@ -1214,22 +1212,46 @@ impl Requests {
             .collect()
     }
 
-    /// Answer an excise request: excise whole materials `producer`
-    /// registered, or say why nothing was excised.
-    async fn excise(&self, producer: &str, request: &Excise) -> Result<ExciseReply, String> {
-        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
-        Ok(crate::excision::excise_for_producer(
+    /// Answer a lifecycle request exactly as the same CLI request is
+    /// answered, with the producer as the actor. Tombstoning is reserved to
+    /// the operator, as on the API.
+    async fn lifecycle(&self, producer: &str, request: Lifecycle) -> sinex_protocol::Reply {
+        use sinex_protocol::Reply;
+        if request.act == sinex_model::lifecycle::Act::Tombstone && !request.compare {
+            return Reply::Refused {
+                reason: "tombstoning is reserved to the operator; a producer may compare it".into(),
+                not_built: false,
+            };
+        }
+        let mut conn = match self.reads.acquire().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                return Reply::Refused {
+                    reason: e.to_string(),
+                    not_built: false,
+                };
+            }
+        };
+        let actor = format!("producer:{producer}");
+        match crate::lifecycle::run(
             &mut conn,
-            &self.blobs,
             &self.writer,
-            producer,
-            &request.materials,
+            request.act,
+            &actor,
+            request.scope,
+            request.compare,
         )
         .await
-        .unwrap_or_else(|refusal| ExciseReply {
-            refusal: Some(refusal),
-            ..ExciseReply::default()
-        }))
+        {
+            Ok(crate::lifecycle::Answer::Done(result)) => Reply::Ok { result },
+            Ok(crate::lifecycle::Answer::Refused(reason)) | Err(reason) => Reply::Refused {
+                reason,
+                not_built: false,
+            },
+            Ok(crate::lifecycle::Answer::StoppedEarly(reason, result)) => {
+                Reply::StoppedEarly { reason, result }
+            }
+        }
     }
 
     /// The reply to one request on `subject`, or `None` when it names no
@@ -1360,19 +1382,11 @@ impl Requests {
                 },
             }
         } else {
-            match serde_json::from_slice::<Excise>(payload) {
-                Ok(request) => {
-                    ResponseBody::Excise(self.excise(&producer, &request).await.unwrap_or_else(
-                        |error| ExciseReply {
-                            refusal: Some(error),
-                            ..Default::default()
-                        },
-                    ))
-                }
-                Err(error) => ResponseBody::Excise(ExciseReply {
-                    refusal: Some(error.to_string()),
-                    ..Default::default()
-                }),
+            match serde_json::from_slice::<Lifecycle>(payload) {
+                Ok(request) => ResponseBody::Lifecycle(self.lifecycle(&producer, request).await),
+                Err(error) => ResponseBody::Error {
+                    refusal: error.to_string(),
+                },
             }
         };
         Some(response)
@@ -1486,7 +1500,7 @@ async fn serve(
         subscribe(requests.subjects.confirmed_consumer_all()).await?,
         subscribe(requests.subjects.recorded_all()).await?,
         subscribe(requests.subjects.materials_all()).await?,
-        subscribe(requests.subjects.excise_all()).await?,
+        subscribe(requests.subjects.lifecycle_all()).await?,
         subscribe(requests.subjects.replay_scope_all()).await?,
         subscribe(requests.subjects.fetch_event_all()).await?,
         subscribe(requests.subjects.fetch_material_all()).await?,

@@ -401,7 +401,7 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
 }
 
 #[devkit::test]
-async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hidden(
+async fn every_polylogue_repeat_kind_is_replaced_atomically_and_an_archived_record_reads_again(
     db: devkit::pg::TestDatabase,
 ) {
     let declarations: Vec<_> = [
@@ -410,7 +410,7 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
         "note",
         "setting",
         "kept_result",
-        "excision",
+        "tombstone_notice",
     ]
     .into_iter()
     .map(|name| {
@@ -454,23 +454,26 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
         )
         .await;
     assert_eq!(first.admitted.len(), 6);
-    h.writer
-        .submit(
-            Priority::Live,
-            Batch {
-                run: RunId::new(),
-                kind: BatchKind::Api {
-                    actor: "test".into(),
-                },
-                records: vec![],
-                archive: vec![sinex_model::ArchiveRequest::Hide {
-                    target: first.admitted[0],
-                    operation: sinex_model::OperationId::new(),
-                }],
-            },
-        )
-        .await
-        .unwrap();
+    // Archive is not hiding: a replay reads the archived record again and
+    // its new reading is live beside the replaced ones.
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let archived = crate::lifecycle::run(
+        &mut conn,
+        &h.writer,
+        sinex_model::lifecycle::Act::Archive,
+        "agent:test",
+        sinex_model::lifecycle::Scope::Events {
+            events: vec![first.admitted[0]],
+            query: None,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(archived, crate::lifecycle::Answer::Done(_)),
+        "{archived:?}"
+    );
     for (round, order) in [0, 0, 20].into_iter().enumerate() {
         let replacement = format!("replacement-{round}");
         let body = serde_json::to_vec(&sinex_protocol::ReplayQuery::Materials {
@@ -521,9 +524,9 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_hidden_stays_hid
         };
         let ack = h.send("polylogue", &frame).await;
         assert_eq!(ack.refusal, None, "{ack:?}");
-        assert_eq!(ack.admitted.len(), 5);
+        assert_eq!(ack.admitted.len(), 6);
         assert_eq!(ack, h.send("polylogue", &frame).await);
-        assert_eq!(h.count(&format!("SELECT count(*) FROM core.events e WHERE e.source='polylogue' AND payload->>'text'='{replacement}' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)")).await,5);
+        assert_eq!(h.count(&format!("SELECT count(*) FROM core.events e WHERE e.source='polylogue' AND payload->>'text'='{replacement}' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)")).await,6);
     }
 }
 

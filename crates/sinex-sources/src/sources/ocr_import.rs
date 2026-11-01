@@ -24,7 +24,6 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
     SourceSpec {
         name: "media.ocr-imports",
         driver: Driver::ExportArchive,
-        excisable: false,
         purpose: "imported OCR text and geometry",
         class: Class::Guarded,
         parser,

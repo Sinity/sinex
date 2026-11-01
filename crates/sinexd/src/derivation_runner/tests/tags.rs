@@ -63,7 +63,7 @@ async fn a_per_event_version_removes_outputs_whose_rules_no_longer_match(
     new.catch_up().await.unwrap();
     assert!(w.live::<TagApplied>().await.is_empty());
     assert_eq!(
-        w.count("SELECT count(*) FROM audit.archived WHERE reason = 'recomputed'")
+        w.count("SELECT count(*) FROM audit.archived WHERE reason = 'version_change'")
             .await,
         1
     );
@@ -75,7 +75,7 @@ async fn a_per_event_version_removes_outputs_whose_rules_no_longer_match(
 }
 
 #[devkit::test]
-async fn hiding_an_input_removes_its_tags_and_unhiding_computes_them_again(
+async fn archiving_an_input_removes_its_tags_and_restoring_computes_them_again(
     db: devkit::pg::TestDatabase,
 ) {
     let w = World::new(db).await;
@@ -85,25 +85,11 @@ async fn hiding_an_input_removes_its_tags_and_unhiding_computes_them_again(
     runner.catch_up().await.unwrap();
     let tags = w.live::<TagApplied>().await;
     assert_eq!(tags.len(), 1);
-    w.batch(
-        vec![],
-        vec![ArchiveRequest::Hide {
-            target: event.id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    w.moved(Act::Archive, vec![event.id]).await;
     assert!(w.live::<TagApplied>().await.is_empty());
     runner.catch_up().await.unwrap();
     assert!(w.live::<TagApplied>().await.is_empty());
-    w.batch(
-        vec![],
-        vec![ArchiveRequest::Unhide {
-            target: event.id,
-            operation: OperationId::new(),
-        }],
-    )
-    .await;
+    w.moved(Act::Restore, vec![event.id]).await;
     runner.catch_up().await.unwrap();
     assert_eq!(w.live::<TagApplied>().await, tags);
 }

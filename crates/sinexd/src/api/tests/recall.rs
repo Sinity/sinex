@@ -712,13 +712,13 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
     let (_, ordinary) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(ordinary["outcome"], "ok", "{ordinary}");
     assert!(ordinary["result"]["context_pack"].is_string());
-    let (_, hidden) = call(
+    let (_, archived) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"hide","reference":format!("sinex:ev/{original}")}),
+        json!({"method":"archive","target":format!("sinex:ev/{original}")}),
     )
     .await;
-    assert_eq!(hidden["outcome"], "ok", "{hidden}");
+    assert_eq!(archived["outcome"], "ok", "{archived}");
     let packs: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='context.pack'")
             .fetch_one(&w.reads)

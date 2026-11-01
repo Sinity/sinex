@@ -14,7 +14,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.keep",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "notes and checklists kept in Keep",
     class: Class::Open,
     parser: "google-keep",

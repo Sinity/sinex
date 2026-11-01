@@ -112,7 +112,7 @@ pub enum Bench {
         #[arg(long)]
         mixed: bool,
     },
-    /// Exercise repeats, hidden readings, known-field replacements and derivations.
+    /// Exercise repeats, an archived reading read again, known-field replacements and derivations.
     Cases {
         #[arg(long, default_value_t = 10_000)]
         events: u64,

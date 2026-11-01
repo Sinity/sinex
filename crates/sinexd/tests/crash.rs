@@ -1,4 +1,4 @@
-//! The crash harness: kill `sinexd` at every admission, replay and excision
+//! The crash harness: kill `sinexd` at every admission, replay and tombstone
 //! step, start it again, and check that nothing was lost or doubled.
 //!
 //! No hook in the product binary: the harness takes a lock on the table the
@@ -7,7 +7,7 @@
 //! ends the backend and releases the lock. A run started afterwards must end
 //! in the same state as a run that was never interrupted: the same live
 //! readings, no reading twice, every event live or archived, the commit log
-//! dense, every stored material's bytes present.
+//! dense, every material that is not tombstoned has its bytes present.
 mod support;
 
 #[path = "crash/private_history.rs"]
@@ -205,8 +205,17 @@ impl Target {
         self.sinexd(&args)
     }
 
-    fn excise(&self, event: &str) -> Command {
-        self.sinexd(&["admin", "excise", event])
+    /// A lifecycle command (`archive`, `tombstone`, `resume`, ...) with its
+    /// arguments after the connection options, since a scope given as an
+    /// event reference takes the rest of the line.
+    fn lifecycle(&self, verb: &str, args: &[&str]) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
+        c.args(["admin", verb, "--database", &self.url, "--store"])
+            .arg(&self.store)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        c
     }
 
     fn backfill_clipboard(&self, spool: &Path) -> Command {
@@ -414,10 +423,11 @@ async fn consistent(target: &Target) {
         regressed_order, 0,
         "acquisition-based reading order never precedes the rows its cursor covers"
     );
-    let names: Vec<String> = sqlx::query_scalar("SELECT blob FROM raw.materials")
-        .fetch_all(&mut c)
-        .await
-        .unwrap();
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT blob FROM raw.materials WHERE status <> 'tombstoned'")
+            .fetch_all(&mut c)
+            .await
+            .unwrap();
     let blobs = sinex_store::Blobs::open(&target.store).unwrap();
     blobs.load(&mut c).await.unwrap();
     for name in names {
@@ -738,7 +748,6 @@ backfill_steps! { Inputs::first_transaction();
     backfill_killed_recording_synced_segment_end: None, lock("core.blob_segments");
     backfill_killed_loading_privacy_rules: None, read_lock("privacy.rules");
     backfill_killed_staging: None, lock("core.admission_stage");
-    backfill_killed_classifying: None, read_lock("core.hidden_records");
     backfill_killed_allocating_commit_seq: None, lock("core.counters");
     backfill_killed_inserting_events: None, lock("core.events");
     backfill_killed_writing_the_commit_log: None, lock("core.commit_log");
@@ -852,7 +861,7 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
             .fetch_one(&mut c)
             .await
             .unwrap();
-    let out = finish(&mut target.replay(&["--resume", &operation.to_string()]));
+    let out = finish(&mut target.lifecycle("resume", &[&operation.to_string()]));
     assert!(out.contains("sequences 1 (skipped as done: 1)"), "{out}");
     consistent(&target).await;
     assert_eq!(support::marker_count(&mut c).await, 2);
@@ -898,73 +907,117 @@ async fn clipboard_bytes(target: &Target, c: &mut PgConnection, nth: i64) -> Vec
     blobs.read(&blob).unwrap()
 }
 
-/// Kill an excision at a step; nothing is removed. Excising again removes the
-/// record and its material once; the other material is untouched.
-async fn excision_survives(lock_sql: &str) {
+/// Kill the tombstone of an archived material at a step. Each batch is one
+/// transaction, so the kill leaves all of a batch or none of it; resuming the
+/// operation, or starting it again when its first batch did not commit,
+/// tombstones the record and its material once and removes their bytes. The
+/// other material is untouched.
+async fn tombstone_survives(lock_sql: &str) {
     let inputs = Inputs::first_transaction();
     let target = Target::new(&inputs);
     let spool = clipboard_spool(&inputs.dir, 64);
     finish(&mut target.backfill_clipboard(&spool));
     let mut c = target.connect().await;
-    let event: uuid::Uuid =
-        sqlx::query_scalar("SELECT id FROM core.events WHERE payload->>'text' = 'copy 42'")
-            .fetch_one(&mut c)
-            .await
-            .unwrap();
+    let (event, material, blob): (uuid::Uuid, uuid::Uuid, String) = sqlx::query_as(
+        "SELECT e.id, e.material_id, m.blob FROM core.events e
+         JOIN raw.materials m ON m.id = e.material_id WHERE e.payload->>'text' = 'copy 42'",
+    )
+    .fetch_one(&mut c)
+    .await
+    .unwrap();
+    let material = material.to_string();
+    finish(&mut target.lifecycle("archive", &["--material", &material]));
     let before = state(&mut c).await;
     let neighbours = clipboard_bytes(&target, &mut c, 1).await;
     kill_at(
         &target,
-        &mut target.excise(&event.to_string()),
+        &mut target.lifecycle("tombstone", &["--material", &material]),
         None,
         lock_sql,
     )
     .await;
     consistent(&target).await;
-    assert_eq!(
-        state(&mut c).await,
-        before,
-        "a killed excision removed nothing"
-    );
-    finish(&mut target.excise(&event.to_string()));
+    let skeletons = scalar(&mut c, "SELECT count(*) FROM core.event_tombstones").await;
+    let killed = state(&mut c).await;
+    let recorded: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT id FROM core.operations WHERE kind = 'tombstone'")
+            .fetch_optional(&mut c)
+            .await
+            .unwrap();
+    match recorded {
+        None => {
+            assert_eq!(skeletons, 0);
+            assert_eq!(
+                killed, before,
+                "a tombstone killed in its first batch changed nothing"
+            );
+            finish(&mut target.lifecycle("tombstone", &["--material", &material]));
+        }
+        Some(operation) => {
+            assert_eq!(
+                (skeletons, killed.events),
+                (1, before.events - 1),
+                "the first batch committed whole"
+            );
+            finish(&mut target.lifecycle("resume", &[&operation.to_string()]));
+        }
+    }
     consistent(&target).await;
     let after = state(&mut c).await;
     assert_eq!(after.events, before.events - 1);
+    let skeleton: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.event_tombstones WHERE event_id = $1")
+            .bind(event)
+            .fetch_one(&mut c)
+            .await
+            .unwrap();
+    assert_eq!(skeleton, 1, "the record keeps one skeleton");
+    let operations: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT result FROM core.operations WHERE kind = 'tombstone'")
+            .fetch_all(&mut c)
+            .await
+            .unwrap();
     assert_eq!(
-        scalar(&mut c, "SELECT count(*) FROM core.event_tombstones").await,
-        1
+        operations,
+        [Some("ok".to_owned())],
+        "one tombstone, ended ok"
     );
+    let status: String = sqlx::query_scalar("SELECT status FROM raw.materials WHERE id = $1::uuid")
+        .bind(&material)
+        .fetch_one(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(status, "tombstoned");
+    let bytes: String = sqlx::query_scalar("SELECT status FROM core.blobs WHERE hash = $1")
+        .bind(&blob)
+        .fetch_one(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(bytes, "removed", "the record's material bytes are gone");
     assert_eq!(
-        scalar(
-            &mut c,
-            "SELECT count(*) FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id \
-             WHERE i.binding LIKE 'desktop.clipboard:%'"
-        )
-        .await,
-        1,
-        "the record's material is gone"
-    );
-    assert_eq!(
-        clipboard_bytes(&target, &mut c, 0).await,
+        clipboard_bytes(&target, &mut c, 1).await,
         neighbours,
         "the other material is untouched"
     );
 }
 
-macro_rules! excision_steps {
+macro_rules! tombstone_steps {
     ($($name:ident: $lock:expr;)*) => {$(
         #[devkit::test]
         async fn $name() {
-            excision_survives(&$lock).await;
+            tombstone_survives(&$lock).await;
         }
     )*};
 }
 
-excision_steps! {
-    excision_killed_recording_the_operation: lock("core.operations");
-    excision_killed_writing_tombstones: lock("core.event_tombstones");
-    excision_killed_deleting_events: lock("core.commit_log");
-    excision_killed_removing_the_material: lock("core.excised_materials");
+// The first four block the batch that tombstones the readings; the last
+// blocks the batch that tombstones the material, after the first committed.
+tombstone_steps! {
+    tombstone_killed_allocating_its_position: lock("core.commit_log");
+    tombstone_killed_writing_skeletons: lock("core.event_tombstones");
+    tombstone_killed_deleting_events: lock("core.events");
+    tombstone_killed_recording_the_operation: lock("core.operations");
+    tombstone_killed_tombstoning_the_material: lock("raw.material_changes");
 }
 
 /// Kill the daemon while it publishes to the confirmed stream; start it again

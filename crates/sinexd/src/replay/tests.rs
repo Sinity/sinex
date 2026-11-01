@@ -9,23 +9,26 @@ use sinex_store::positions;
 use sqlx::PgConnection;
 use std::path::{Path, PathBuf};
 
-/// Hide the record `target` was read from, as the API's `hide` does.
-async fn hide(writer: &crate::writer::WriterHandle, target: sinex_model::EventId) {
-    writer
-        .submit(
-            Priority::Live,
-            sinex_model::Batch {
-                run: sinex_model::RunId::new(),
-                kind: sinex_model::BatchKind::Api { actor: "t".into() },
-                records: Vec::new(),
-                archive: vec![sinex_model::ArchiveRequest::Hide {
-                    target,
-                    operation: sinex_model::OperationId::new(),
-                }],
-            },
-        )
-        .await
-        .unwrap();
+/// Archive the reading `target`, as the API's `archive` does.
+async fn archive(ctx: &mut ReaderContext, target: sinex_model::EventId) {
+    let scope = sinex_model::lifecycle::Scope::Events {
+        events: vec![target],
+        query: None,
+    };
+    let answer = crate::lifecycle::run(
+        &mut ctx.read_conn,
+        &ctx.writer,
+        sinex_model::lifecycle::Act::Archive,
+        "agent:test",
+        scope,
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(answer, crate::lifecycle::Answer::Done(_)),
+        "{answer:?}"
+    );
 }
 
 struct Fixture {
@@ -221,7 +224,7 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content(
 }
 
 #[devkit::test]
-async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden(
+async fn a_narrowed_replay_touches_only_its_window_and_reads_an_archived_record_again(
     db: devkit::pg::TestDatabase,
 ) {
     let mut f = fixture(db).await;
@@ -232,7 +235,7 @@ async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden(
             .fetch_one(&mut f.ctx.read_conn)
             .await
             .unwrap();
-    hide(&f.ctx.writer, sinex_model::EventId(two)).await;
+    archive(&mut f.ctx, sinex_model::EventId(two)).await;
     let report = run(
         &mut f.ctx.read_conn,
         &f.ctx.blobs,
@@ -247,12 +250,13 @@ async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden(
     )
     .await
     .unwrap();
-    // "two" is hidden, so only "three" was live in the window; the new
-    // reading of "two" is suppressed as hidden.
-    assert_eq!((report.archived, report.admitted), (1, 1));
+    // "two" is archived, so only "three" was live in the window and only it
+    // is replaced; archiving is not hiding, so the new reading of "two" is
+    // admitted live.
+    assert_eq!((report.archived, report.admitted), (1, 2));
     assert_eq!(
         live_commands(&mut f.ctx.read_conn).await,
-        vec!["one", "three"]
+        vec!["one", "two", "three"]
     );
 }
 

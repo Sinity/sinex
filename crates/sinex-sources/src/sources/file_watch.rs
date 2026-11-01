@@ -30,7 +30,6 @@ use std::time::{Duration, Instant};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.file-watch",
     driver: Driver::LiveStream,
-    excisable: true,
     purpose: "work episodes, project attribution and recall",
     // Paths name projects, people and documents.
     class: Class::Guarded,

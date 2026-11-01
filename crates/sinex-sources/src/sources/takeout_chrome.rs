@@ -13,7 +13,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "browser.takeout-chrome-history",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "browsing recall before live capture",
     class: Class::Open,
     parser: "takeout-chrome-history",

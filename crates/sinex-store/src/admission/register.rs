@@ -142,24 +142,9 @@ async fn material(
 ) -> Result<()> {
     let length =
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
-    let excised = sqlx::query_scalar!(
-        r#"SELECT EXISTS (SELECT 1 FROM core.excised_materials
-             WHERE material_id = $1 OR (blob = $2 AND $3::bigint > 0)) AS "excised!""#,
-        m.id.0,
-        m.blob,
-        length,
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    if excised {
-        return Err(Error::Invalid(format!(
-            "material {} holds bytes an excision removed; they are not stored again",
-            m.id
-        )));
-    }
     sqlx::query!(
         r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status IN ('deleting', 'removed')"#,
         m.blob,
         length,
     )
@@ -262,7 +247,6 @@ pub(crate) async fn recorded(
         repeats: count("repeats")?,
         replaced: count("replaced")?,
         older: count("older")?,
-        hidden: count("hidden")?,
         superseded: count("superseded")?,
         superseded_input: count("superseded_input")?,
         failures: count("failures")?,
@@ -406,7 +390,6 @@ impl Outcome {
             "repeats": self.repeats,
             "replaced": self.replaced,
             "older": self.older,
-            "hidden": self.hidden,
             "superseded": self.superseded,
             "failures": self.failures,
             "refusal_kind": frame.refusal_kind,

@@ -14,7 +14,7 @@ pub mod copy_text;
 pub mod coverage;
 pub mod derivations;
 pub mod diagnostics;
-pub mod excision;
+pub mod lifecycle;
 pub mod live;
 pub mod material_bytes;
 pub mod model_calls;

@@ -30,7 +30,6 @@ pub use scan::{Known, LibraryReader, LibraryScan, ScanParser, ScanState, scan_so
 pub const SCAN: SourceSpec = SourceSpec {
     name: "library.scan",
     driver: Driver::DirSnapshot,
-    excisable: false,
     purpose: "the media library",
     class: Class::Open,
     parser: "library-scan",
@@ -45,7 +44,6 @@ pub const SCAN: SourceSpec = SourceSpec {
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "library.request",
     driver: Driver::ApiRequest,
-    excisable: false,
     purpose: "the media library",
     class: Class::Open,
     parser: "library-request",

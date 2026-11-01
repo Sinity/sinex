@@ -10,9 +10,9 @@
 //! | `<root>.ack.<producer>` | `sinexd` | the [`Acknowledgment`] of each frame |
 //! | `<root>.recorded.<producer>` | the producer, as a request | [`RecordedQuery`]: what Sinex recorded for these frames |
 //! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
-//! | `<root>.excise.<producer>` | the producer, as a request | [`Excise`]: excise whole materials it registered |
+//! | `<root>.lifecycle.<producer>` | the producer, as a request | [`Lifecycle`]: archive, restore, undo or tombstone, with the producer as actor |
 //! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::EventReference`] |
-//! | `<root>.confirmed.lifecycle.<class>.<event type>` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Unhidden`] or [`Confirmed::Excised`] message |
+//! | `<root>.confirmed.lifecycle.<class>.<event type>` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Tombstoned`] message |
 //!
 //! Each producer's credentials allow only its own subjects
 //! ([`Subjects::producer_permissions`]), so the producer named in a subject is
@@ -147,15 +147,15 @@ impl Subjects {
         format!("{}.replay_scope.*", self.root)
     }
 
-    pub fn excise(&self, producer: &str) -> String {
-        format!("{}.excise.{producer}", self.root)
+    pub fn lifecycle(&self, producer: &str) -> String {
+        format!("{}.lifecycle.{producer}", self.root)
     }
 
-    pub fn excise_all(&self) -> String {
-        format!("{}.excise.*", self.root)
+    pub fn lifecycle_all(&self) -> String {
+        format!("{}.lifecycle.*", self.root)
     }
 
-    /// The producer an ingress, have, materials or excise subject names, if
+    /// The producer an ingress, have, materials or lifecycle subject names, if
     /// it is one of ours and a valid producer name.
     pub fn producer_of<'a>(&self, subject: &'a str) -> Option<&'a str> {
         let rest = subject
@@ -166,7 +166,7 @@ impl Subjects {
             .or_else(|| rest.strip_prefix("connect."))
             .or_else(|| rest.strip_prefix("recorded."))
             .or_else(|| rest.strip_prefix("materials."))
-            .or_else(|| rest.strip_prefix("excise."))
+            .or_else(|| rest.strip_prefix("lifecycle."))
             .or_else(|| rest.strip_prefix("replay_scope."))
             .or_else(|| rest.strip_prefix("public_context."))
             .or_else(|| rest.strip_prefix("fetch_event."))
@@ -197,7 +197,7 @@ impl Subjects {
     }
 
     /// What a producer's NATS user may publish and subscribe to: its own
-    /// ingress, have, materials and excise subjects, its acknowledgments, and
+    /// ingress, have, materials and lifecycle subjects, its acknowledgments, and
     /// reply inboxes.
     pub fn producer_permissions(
         &self,
@@ -209,7 +209,7 @@ impl Subjects {
             self.connect(producer),
             self.recorded(producer),
             self.materials(producer),
-            self.excise(producer),
+            self.lifecycle(producer),
             self.replay_scope(producer),
             self.public_context(producer),
             self.fetch_event(producer),
@@ -530,7 +530,7 @@ pub struct Acknowledgment {
     /// Events admitted as new or newer readings.
     pub admitted: Vec<EventId>,
     /// Counts by what admission did: admitted, repeats, replaced, older,
-    /// hidden, superseded.
+    /// superseded.
     pub outcome: Value,
     /// Why the whole frame was refused; a refusal is never an empty success.
     pub refusal: Option<String>,
@@ -682,25 +682,19 @@ pub struct ProducerMaterial {
     pub extents: Vec<Vec<u8>>,
 }
 
-/// A request on `<root>.excise.<producer>`: permanently delete whole
-/// materials this producer registered, every event read from them and every
-/// event derived from those, through Sinex's one excision with the producer
-/// as the actor. Each material goes whole, its bytes and its rows; only its
-/// digest is kept, so the same bytes are refused if they are sent again.
-/// Refused, with nothing changed, when a material was registered by anyone
-/// else, is sealed, or is followed by a later part not in the request. Sending it again finishes an interrupted one. The reply is an
-/// [`ExciseReply`].
+/// A request on `<root>.lifecycle.<producer>`: the same archive, restore,
+/// tombstone or undo a CLI or MCP caller makes, with the producer as the
+/// actor. Outside producers only add; this is how they take something out
+/// of the live set. The reply is a [`crate::Reply`]: ok with the cascade,
+/// refused naming what cannot move, or stopped early naming what moved.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Excise {
-    pub materials: Vec<MaterialId>,
-}
-
-/// What an [`Excise`] request removed, or why it removed nothing.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct ExciseReply {
-    pub materials: u64,
-    pub events: u64,
-    pub refusal: Option<String>,
+#[serde(deny_unknown_fields)]
+pub struct Lifecycle {
+    pub act: sinex_model::lifecycle::Act,
+    pub scope: sinex_model::lifecycle::Scope,
+    /// Return the cascade the operation would apply and change nothing.
+    #[serde(default)]
+    pub compare: bool,
 }
 
 /// One message on the confirmed stream.
@@ -721,11 +715,11 @@ pub enum Confirmed {
         event: EventId,
     },
     Archived(Archived),
-    /// A previously hidden reading is live again at a new position.
-    Unhidden(Unhidden),
-    /// The event was excised: its message has been erased from the stream,
+    /// An archived reading is live again at a new position.
+    Restored(Restored),
+    /// The event was tombstoned: its message has been erased from the stream,
     /// and a consumer drops anything it kept of it.
-    Excised {
+    Tombstoned {
         /// Historical tombstones may predate recorded commit boundaries.
         #[serde(default)]
         commit_seq: Option<i64>,
@@ -786,10 +780,10 @@ pub struct Archived {
 
 /// Restoration changes visibility; it does not admit a second Event.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Unhidden {
+pub struct Restored {
     pub change_seq: i64,
     pub event: EventId,
-    pub unhidden_seq: i64,
+    pub restored_seq: i64,
     pub operation: Option<sinex_model::OperationId>,
 }
 

@@ -21,9 +21,20 @@ fn tools_come_from_the_command_table() {
     }
     assert!(!names.contains(&"sinex_follow"), "follow streams");
     assert!(
-        !names.contains(&"sinex_excise"),
-        "excision is the operator's"
+        !names.contains(&"sinex_tombstone"),
+        "tombstoning is the operator's"
     );
+    for name in [
+        "sinex_archive",
+        "sinex_restore",
+        "sinex_undo",
+        "sinex_resume",
+    ] {
+        assert!(
+            names.contains(&name),
+            "agents archive, restore and undo: {name}"
+        );
+    }
     let query = tools.iter().find(|t| t.name == "sinex_query").unwrap();
     assert_eq!(query.input_schema["required"], json!(["query"]));
     let recall = tools.iter().find(|t| t.name == "sinex_recall").unwrap();
@@ -69,7 +80,7 @@ fn tool_effects_match_backend_command_access() {
         ("sinex_status", true),
         ("sinex_query", true),
         ("sinex_sql", true),
-        ("sinex_hide", false),
+        ("sinex_archive", false),
         ("sinex_forecast-issue", false),
         ("sinex_library-tag", false),
     ] {

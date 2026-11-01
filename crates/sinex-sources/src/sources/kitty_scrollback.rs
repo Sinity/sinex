@@ -24,7 +24,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.kitty-scrollback",
     driver: Driver::DirSnapshot,
-    excisable: false,
     purpose: "terminal recall: what kitty windows showed",
     // What terminals show includes what was typed into them.
     class: Class::Guarded,

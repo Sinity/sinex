@@ -17,7 +17,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.weechat-log",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "chat recall and correspondence history",
     class: Class::Open,
     parser: "weechat-log",

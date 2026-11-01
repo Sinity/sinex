@@ -36,7 +36,6 @@ use std::time::{Duration, Instant};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "code.github",
     driver: Driver::ApiCursor,
-    excisable: false,
     purpose: "the outcome of work: pull requests, reviews, checks and CI runs beside the commits",
     class: Class::Open,
     parser: "github",

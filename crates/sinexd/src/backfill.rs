@@ -55,7 +55,6 @@ pub(crate) struct Totals {
     repeats: usize,
     pub(crate) replaced: usize,
     older: usize,
-    hidden: usize,
     superseded: usize,
     pub(crate) failures: usize,
     dirty_keys: usize,
@@ -81,7 +80,7 @@ impl std::fmt::Display for Totals {
         };
         write!(
             f,
-            "polls {} | materials {} ({} bytes) | batches {} | events offered {} | admitted {} | repeats {} | replaced {} | older {} | hidden {} | superseded {} | failures {} | dirty keys {} | wall {:.2}s | admission {:.2}s | {:.0} events/s through admission, {:.0} events/s end to end",
+            "polls {} | materials {} ({} bytes) | batches {} | events offered {} | admitted {} | repeats {} | replaced {} | older {} | superseded {} | failures {} | dirty keys {} | wall {:.2}s | admission {:.2}s | {:.0} events/s through admission, {:.0} events/s end to end",
             self.polls,
             self.materials,
             self.material_bytes,
@@ -91,7 +90,6 @@ impl std::fmt::Display for Totals {
             self.repeats,
             self.replaced,
             self.older,
-            self.hidden,
             self.superseded,
             self.failures,
             self.dirty_keys,
@@ -313,7 +311,6 @@ impl Totals {
         self.repeats += out.repeats;
         self.replaced += out.replaced;
         self.older += out.older;
-        self.hidden += out.hidden;
         self.superseded += out.superseded;
         self.failures += out.failures;
         self.dirty_keys += out.dirty_keys;
@@ -347,7 +344,6 @@ impl Totals {
             "repeats": self.repeats,
             "replaced": self.replaced,
             "older": self.older,
-            "hidden": self.hidden,
             "superseded": self.superseded,
             "failures": self.failures,
             "dirty_keys": self.dirty_keys,
@@ -376,7 +372,6 @@ impl Totals {
         self.repeats += o.repeats;
         self.replaced += o.replaced;
         self.older += o.older;
-        self.hidden += o.hidden;
         self.superseded += o.superseded;
         self.failures += o.failures;
         self.dirty_keys += o.dirty_keys;

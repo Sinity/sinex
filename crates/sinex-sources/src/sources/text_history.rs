@@ -9,7 +9,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.text-history",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "explicit untimed command history",
     class: Class::Guarded,
     parser: "text-history",

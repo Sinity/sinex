@@ -1,9 +1,6 @@
 use super::*;
 use crate::{AdmissionContext, NoDerivations};
-use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, OperationId, RecordOutcome, RunId,
-    event_types::operator::LogEntry,
-};
+use sinex_model::{Batch, BatchKind, RecordOutcome, RunId, event_types::operator::LogEntry};
 fn document(text: &str) -> Event {
     Event::build(
         &LogEntry {
@@ -51,20 +48,13 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
     let mut tx = conn.begin().await.unwrap();
     tx.admit(&batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
-    let hide = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "fixture".into(),
-        },
-        records: vec![],
-        archive: vec![ArchiveRequest::Hide {
-            target: ids[0],
-            operation: OperationId::new(),
-        }],
-    };
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&hide, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![ids[0]],
+        &NoDerivations,
+    )
+    .await;
     crate::privacy::add_rule(
         &mut conn,
         &crate::privacy::NewRule {

@@ -19,7 +19,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.assistant",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "notes and lists kept through Google Assistant",
     class: Class::Open,
     parser: "google-assistant-notes",

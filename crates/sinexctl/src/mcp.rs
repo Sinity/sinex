@@ -128,6 +128,10 @@ impl ServerHandler for Sinex {
                 };
                 CallToolResult::error(vec![ContentBlock::text(format!("{prefix}{reason}"))])
             }
+            Ok((_, Reply::StoppedEarly { reason, result })) => CallToolResult::error(vec![
+                ContentBlock::text(format!("stopped early: {reason}")),
+                ContentBlock::text(result.to_string()),
+            ]),
             Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
         }
         .into())

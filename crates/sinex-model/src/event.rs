@@ -80,8 +80,8 @@ pub struct Event {
     pub record_hash: [u8; 32],
     pub record_state: RecordState,
     pub class: Class,
-    /// Stored bytes the payload owns beyond the material (excision deletes
-    /// them with the event). Set at build; not read back from the store.
+    /// Stored bytes the payload owns beyond the material (a tombstone of the
+    /// event removes them). Set at build; not read back from the store.
     pub owned_blobs: Vec<crate::OwnedBlob>,
 }
 

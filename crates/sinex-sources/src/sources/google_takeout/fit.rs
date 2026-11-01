@@ -17,7 +17,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.fit",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "steps, activity, heart and location samples Fit recorded",
     class: Class::Open,
     parser: "google-fit",

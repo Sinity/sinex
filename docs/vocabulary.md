@@ -55,7 +55,7 @@ day setting, operation, failure kind, deadline class) are named in common's
 - **replay**: read stored records again; each new reading becomes live and the reading it replaces is archived with its chain.
 - **undo**: archive what an operation made live and restore what it archived.
 - **tombstone**: the one irreversible deletion of an archived chain; a skeleton is kept.
-- **archive reason**: why a reading was archived (replay, a newer reading, the operator's archive, a recompute).
+- **archive reason**: why a reading was archived (an archive, a replay, a newer reading, a recompute, a version change).
 - **whole chain**: an event with everything derived from it; it moves between states together.
 - **operation**: something the operator or an agent did to Sinex, recorded with its computed **actor**.
 - **as-of read**: a read of what was live at a given commit position.

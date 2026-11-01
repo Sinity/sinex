@@ -25,7 +25,6 @@ const TRANSACTIONS: Framing = Framing::Custom {
 pub const SPEC: SourceSpec = SourceSpec {
     name: "finance.hledger",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "journal transactions and their postings",
     class: Class::Guarded,
     parser: "hledger",

@@ -369,14 +369,14 @@ fn frozen_basis_ignores_global_progress_but_rejects_relevant_authority_changes()
         parents: vec![sinex_model::EventId::new()],
         read: sinex_store::ReadMark {
             changes: 3,
-            excised: 4,
+            tombstoned: 4,
             policy_epoch: Some(0),
         },
         settings_identity: "configured-policy".into(),
     };
     let mut current = original.clone();
     current.read.changes += 5;
-    current.read.excised += 7;
+    current.read.tombstoned += 7;
     assert!(
         same_input_basis(&original, &current),
         "unrelated global progress is not a new input authority"

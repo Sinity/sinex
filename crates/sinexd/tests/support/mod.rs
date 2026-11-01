@@ -5,7 +5,7 @@ async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
 }
 
 /// Readings, erased skeletons and visibility changes share global positions.
-/// Excision keeps the original event slot and adds its lifecycle position.
+/// A tombstone keeps the original event slot and adds its lifecycle position.
 pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
     let events = count(
         conn,
@@ -19,7 +19,7 @@ pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
     .await;
     assert_eq!(
         logged, events,
-        "one original event-bearing commit row per retained reading or excised skeleton"
+        "one original event-bearing commit row per retained reading or tombstone skeleton"
     );
     let disagree = count(
         conn,
@@ -69,7 +69,8 @@ pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
         "WITH latest AS (SELECT DISTINCT ON(event_id) event_id,archived FROM audit.archive_changes
              ORDER BY event_id,commit_seq DESC)
          SELECT count(*) FROM latest l FULL JOIN audit.archived a USING(event_id)
-         WHERE coalesce(l.archived,false) <> (a.event_id IS NOT NULL)",
+         WHERE coalesce(l.archived,false) <> (a.event_id IS NOT NULL)
+           AND NOT EXISTS (SELECT 1 FROM core.event_tombstones t WHERE t.event_id = coalesce(l.event_id, a.event_id))",
     )
     .await;
     assert_eq!(

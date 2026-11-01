@@ -19,7 +19,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.messenger",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "conversations with people",
     class: Class::Open,
     parser: "facebook-messenger",

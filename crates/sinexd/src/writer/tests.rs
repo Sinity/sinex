@@ -250,7 +250,7 @@ async fn queued_checks_reject_a_revoked_unlock_and_roll_back_before_commit(
     writer.await.unwrap();
 }
 
-/// A capture that stored its bytes before an excision deleted the same bytes
+/// A capture that stored its bytes before a tombstone removed the same bytes
 /// is refused, rather than registering a material whose file is gone.
 #[devkit::test]
 async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatabase) {

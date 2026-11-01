@@ -77,7 +77,9 @@ async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Val
         .bind(sinex_schema::schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut rows = Vec::new();
     for (schema, table) in tables {
-        if schema == "registry" {
+        // The lifecycle upgrade drops the hidden records and excised digests.
+        if schema == "registry" || matches!(table.as_str(), "hidden_records" | "excised_materials")
+        {
             continue;
         }
         let name = format!(
@@ -102,11 +104,24 @@ async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Val
             )
         } else if table == "counters" {
             format!(
-                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','privacy_outputs','query_metadata') ORDER BY 1"
+                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','privacy_outputs','query_metadata') ORDER BY 1"
             )
         } else if table == "event_tombstones" {
             format!(
-                "SELECT to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class' FROM {name} t ORDER BY 1"
+                "SELECT to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'-'ts_quality'-'reason'-'material_id'-'anchor'-'output_index'-'key_hash' FROM {name} t ORDER BY 1"
+            )
+        } else if table == "materials" {
+            format!("SELECT to_jsonb(t)-'status'-'status_operation' FROM {name} t ORDER BY 1")
+        } else if table == "operations" {
+            format!(
+                "SELECT to_jsonb(t)-'start_seq'-'end_seq'-'result'-'counts'-'progress'-'refusals' FROM {name} t ORDER BY 1"
+            )
+        } else if table == "dirty" {
+            format!("SELECT to_jsonb(t)-'held_by' FROM {name} t ORDER BY 1")
+        } else if matches!(table.as_str(), "archived" | "archive_changes") {
+            // The lifecycle upgrade renamed hide and unhide.
+            format!(
+                "SELECT to_jsonb(t)||jsonb_build_object('reason',CASE reason WHEN 'hide' THEN 'archive' WHEN 'unhide' THEN 'restore' ELSE reason END) FROM {name} t ORDER BY 1"
             )
         } else if table == "published" {
             format!("SELECT to_jsonb(t)-'stream_instance' FROM {name} t ORDER BY 1")
@@ -201,12 +216,13 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
     newer.reading_order = ReadingOrder(2);
     newer.record_hash = [5; 32];
     admit_one(&mut conn, &batch(vec![newer])).await;
-    let mut hide = batch(vec![]);
-    hide.archive.push(ArchiveRequest::Hide {
-        target: events[1].id,
-        operation: OperationId::new(),
-    });
-    admit_one(&mut conn, &hide).await;
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![events[1].id],
+        &NoDerivations,
+    )
+    .await;
     crate::read_models::tests::catch_up_search_text(&mut conn)
         .await
         .unwrap();
@@ -367,12 +383,22 @@ async fn keyed_and_location_readings_stay_separate_when_the_text_matches(
         .await
         .unwrap();
     assert_eq!(stage, 0);
-    let mut hide = batch(vec![]);
-    hide.archive.push(ArchiveRequest::Hide {
-        target: located.id,
-        operation: OperationId::new(),
-    });
-    admit_one(&mut conn, &hide).await;
-    let outcome = admit_one(&mut conn, &b).await;
-    assert_eq!((outcome.hidden, outcome.repeats), (1, 1));
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![located.id],
+        &NoDerivations,
+    )
+    .await;
+    // Archiving the location's reading leaves the keyed reading live, and a
+    // new reading of the archived record is admitted live.
+    let mut read_again = located.clone();
+    read_again.id = EventId::new();
+    let outcome = admit_one(&mut conn, &batch(vec![read_again.clone(), keyed.clone()])).await;
+    assert_eq!((outcome.admitted, outcome.repeats), (1, 1));
+    let live: Vec<Uuid> = sqlx::query_scalar("SELECT event_id FROM core.live_locations")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(live, [read_again.id.0]);
 }

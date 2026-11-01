@@ -12,6 +12,7 @@ pub mod event_types;
 pub mod id;
 pub mod json_identity;
 pub mod kinds;
+pub mod lifecycle;
 pub mod manifest;
 pub mod media_effects;
 pub mod model_calls;

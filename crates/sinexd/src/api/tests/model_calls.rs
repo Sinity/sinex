@@ -174,13 +174,13 @@ async fn public_recorded_response_reuses_accounting_and_policy_authoring_require
         contradiction["result"]["model_call"]["refusal"]["reason"], "contradictory_response",
         "{contradiction}"
     );
-    let (_, hidden) = call(
+    let (_, archived_input) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"hide","reference":format!("sinex:ev/{}",input.id)}),
+        json!({"method":"archive","target":format!("sinex:ev/{}",input.id)}),
     )
     .await;
-    assert_eq!(hidden["outcome"], "ok", "{hidden}");
+    assert_eq!(archived_input["outcome"], "ok", "{archived_input}");
     let requests_before = sqlx::query_scalar!(
         "SELECT count(*) FROM core.visible_events WHERE event_type='model.request'"
     )

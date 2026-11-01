@@ -15,7 +15,7 @@ pub enum DerivedScope {
     /// was dirtied again since.
     Keys {
         keys: Vec<ComputedKey>,
-        /// How far archiving and excision had gone when the inputs were read.
+        /// How far archiving and tombstoning had gone when the inputs were read.
         read: ReadMark,
     },
     /// A per-event derivation's outputs for committed events up to `position`.
@@ -39,26 +39,26 @@ pub enum DerivedScope {
     },
 }
 
-/// How far archiving and excision had gone when a derivation read its
+/// How far archiving and tombstoning had gone when a derivation read its
 /// inputs: if neither has moved since, every input it read is still live and
 /// admission need not look.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReadMark {
     /// The newest visibility change (`audit.archive_changes`).
     pub changes: i64,
-    /// How many events excision had removed.
-    pub excised: i64,
+    /// How many readings had been tombstoned.
+    pub tombstoned: i64,
     /// Current transformed-input policy, captured in the input snapshot.
     #[serde(default)]
     pub policy_epoch: Option<i64>,
 }
 
 impl ReadMark {
-    /// Where archiving and excision stand now.
+    /// Where archiving and tombstoning stand now.
     pub async fn now(conn: &mut PgConnection) -> Result<Self> {
-        let (changes, excised, desired, active): (i64, i64, i64, i64) = sqlx::query_as(
+        let (changes, tombstoned, desired, active): (i64, i64, i64, i64) = sqlx::query_as(
             "SELECT (SELECT coalesce(max(change_seq),0) FROM audit.archive_changes),
-             (SELECT value FROM core.counters WHERE name='excised'),desired_epoch,active_epoch
+             (SELECT value FROM core.counters WHERE name='tombstoned'),desired_epoch,active_epoch
              FROM privacy.policy_state WHERE id",
         )
         .fetch_one(conn)
@@ -68,7 +68,7 @@ impl ReadMark {
         }
         Ok(Self {
             changes,
-            excised,
+            tombstoned,
             policy_epoch: Some(active),
         })
     }
@@ -124,16 +124,12 @@ pub(super) async fn apply_derived(
                 vec![]
             };
             let seq = super::archive::position(conn).await?;
-            let dirty = mark_archived_dirty(conn, &live, seq, keys, Some(batch), None).await?;
-            super::archive::archive_at(
-                conn,
-                &live,
-                seq,
-                sinex_model::ArchiveReason::Recomputed,
-                None,
+            let by = (
+                sinex_model::ArchiveReason::VersionChange,
                 Some(selection.operation),
-            )
-            .await?;
+            );
+            let dirty = mark_archived_dirty(conn, &live, seq, keys, Some(batch), by).await?;
+            super::archive::archive_at(conn, &live, seq, by.0, None, by.1).await?;
             remove_live(conn, &live).await?;
             sqlx::query("INSERT INTO registry.derivations (name,version,kind,inputs,outputs,build) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version,kind=EXCLUDED.kind,inputs=EXCLUDED.inputs,outputs=EXCLUDED.outputs,build=EXCLUDED.build")
                 .bind(derivation).bind(selection.version).bind(&selection.kind).bind(&selection.inputs).bind(&selection.outputs).bind(&selection.build)
@@ -194,7 +190,15 @@ pub(super) async fn apply_derived(
                 0
             } else {
                 let seq = super::archive::position(conn).await?;
-                let dirty = mark_archived_dirty(conn, &gone, seq, keys, Some(batch), None).await?;
+                let dirty = mark_archived_dirty(
+                    conn,
+                    &gone,
+                    seq,
+                    keys,
+                    Some(batch),
+                    (sinex_model::ArchiveReason::Recomputed, None),
+                )
+                .await?;
                 super::archive::archive_at(
                     conn,
                     &gone,
@@ -255,7 +259,15 @@ pub(super) async fn apply_derived(
             let mut dirty = 0;
             if !gone.is_empty() {
                 let seq = super::archive::position(conn).await?;
-                dirty += mark_archived_dirty(conn, &gone, seq, keys, Some(batch), None).await?;
+                dirty += mark_archived_dirty(
+                    conn,
+                    &gone,
+                    seq,
+                    keys,
+                    Some(batch),
+                    (sinex_model::ArchiveReason::Recomputed, None),
+                )
+                .await?;
                 super::archive::archive_at(
                     conn,
                     &gone,
@@ -320,7 +332,7 @@ pub(super) async fn apply_derived(
 
 /// A derived batch without the outputs that cite an input which stopped
 /// being live after the derivation read it: a replay or a newer reading
-/// archived it, or excision removed it, while the outputs were computed.
+/// archived or tombstoned it while the outputs were computed.
 /// Such outputs are never admitted. A key with one is left out whole, its
 /// previous outputs untouched and the key marked dirty, so it is computed
 /// again from the inputs live now; a per-event output is dropped alone, and
@@ -339,12 +351,12 @@ pub(super) async fn without_superseded_inputs(
         DerivedScope::Keys { read, .. } | DerivedScope::Position { read, .. } => *read,
         DerivedScope::Recompute { .. } | DerivedScope::Select { .. } => return Ok(None),
     };
-    // Nothing archived or excised since the inputs were read: all still live.
+    // Nothing archived or tombstoned since the inputs were read: all still live.
     let now = ReadMark::now(conn).await?;
     if read.policy_epoch.is_some() && read.policy_epoch != now.policy_epoch {
         return Err(Error::Invalid("derivation_policy_epoch_changed".into()));
     }
-    if now.changes <= read.changes && now.excised <= read.excised {
+    if now.changes <= read.changes && now.tombstoned <= read.tombstoned {
         return Ok(None);
     }
     let mut parents: Vec<Uuid> = batch
@@ -450,7 +462,7 @@ pub(super) async fn without_superseded_inputs(
     Ok(Some((kept, dropped)))
 }
 
-pub(super) async fn mark_dirty(
+pub(crate) async fn mark_dirty(
     conn: &mut PgConnection,
     dirty: Vec<(String, Value)>,
     seq: i64,
@@ -482,7 +494,7 @@ pub(super) async fn mark_dirty(
 
 /// Mark the keys read from these inputs, including existing outputs whose
 /// semantic range the input crosses. Both admission and archival use this path.
-pub(super) async fn mark_inputs_dirty(
+pub(crate) async fn mark_inputs_dirty(
     conn: &mut PgConnection,
     inputs: &[KeyInput<'_>],
     seq: i64,
@@ -558,7 +570,7 @@ pub(crate) async fn mark_archived_dirty(
     seq: i64,
     keys: &dyn DirtyKeys,
     recomputing: Option<&Batch>,
-    hidden_by: Option<sinex_model::OperationId>,
+    (reason, operation): (sinex_model::ArchiveReason, Option<Uuid>),
 ) -> Result<usize> {
     let descendants = sqlx::query_scalar!(
         r#"WITH RECURSIVE descendants(id) AS (
@@ -624,19 +636,7 @@ pub(crate) async fn mark_archived_dirty(
         seq,
     )
     .await?;
-    super::archive::archive_at(
-        conn,
-        &descendants,
-        seq,
-        if hidden_by.is_some() {
-            sinex_model::ArchiveReason::Hide
-        } else {
-            sinex_model::ArchiveReason::Recomputed
-        },
-        None,
-        hidden_by.map(|operation| operation.0),
-    )
-    .await?;
+    super::archive::archive_at(conn, &descendants, seq, reason, None, operation).await?;
     remove_live(conn, &descendants).await?;
     Ok(marked)
 }

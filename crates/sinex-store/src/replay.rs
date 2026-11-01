@@ -168,10 +168,14 @@ pub struct Stored {
     pub manifest: sinex_model::Manifest,
     pub binding: Option<String>,
     pub host: Option<String>,
+    /// `live`, `archived` or `tombstoned`. A tombstoned part's bytes may be
+    /// gone, so its sequence restarts after it.
+    pub status: String,
 }
 
-/// Materials in scope: the named ones, a binding's, or (when neither is
-/// given) those with readings of the given types in the given window.
+/// Materials in scope: the named ones, a binding's live ones, or (when
+/// neither is given) the live ones with readings of the given types in the
+/// given window. A named material that is not live is the caller's refusal.
 pub async fn select(
     conn: &mut PgConnection,
     materials: &[Uuid],
@@ -183,8 +187,8 @@ pub async fn select(
     Ok(sqlx::query_scalar!(
         r#"SELECT m.id FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
            WHERE m.id = ANY($1)
-              OR ($2::text IS NOT NULL AND i.binding = $2)
-              OR (cardinality($1) = 0 AND $2::text IS NULL AND EXISTS (
+              OR ($2::text IS NOT NULL AND i.binding = $2 AND m.status = 'live')
+              OR (cardinality($1) = 0 AND m.status = 'live' AND $2::text IS NULL AND EXISTS (
                     SELECT 1 FROM core.events e WHERE e.material_id = m.id
                       AND ($3::text[] IS NULL OR e.event_type = ANY($3))
                       AND ($4::timestamptz IS NULL OR e.ts_orig >= $4)
@@ -209,7 +213,7 @@ pub async fn materials_of(
 ) -> Result<Vec<Stored>> {
     sqlx::query!(
         r#"SELECT m.id, m.input_id, m.previous_part_id, m.part_index, m.blob, m.length, m.parser, m.parser_version,
-                  m.manifest, i.binding AS "binding?", i.host AS "host?"
+                  m.manifest, i.binding AS "binding?", i.host AS "host?", m.status
            FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
            WHERE m.input_id = ANY($1) OR m.id = ANY($2)
            ORDER BY m.input_id, m.part_index, m.id"#,
@@ -233,6 +237,7 @@ pub async fn materials_of(
             .map_err(|e| crate::Error::Invalid(format!("material {}: manifest: {e}", r.id)))?,
         binding: r.binding,
         host: r.host,
+        status: r.status,
         })
     })
     .collect()

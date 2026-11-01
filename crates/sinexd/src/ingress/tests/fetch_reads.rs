@@ -226,7 +226,7 @@ async fn accessible_empty_material_acknowledges_a_real_extent(db: devkit::pg::Te
 }
 
 #[devkit::test]
-async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_current_grants(
+async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_under_current_grants(
     db: devkit::pg::TestDatabase,
 ) {
     let grant = |classes| crate::ingress::fetch::Grants {
@@ -281,7 +281,7 @@ async fn an_event_received_before_excision_fetches_exact_erasure_evidence_under_
     assert!(received.projection.verifies(&received.payload));
     assert!(before.erased.is_none());
     assert_eq!(Some(received.commit_seq), receipt.commit_seq);
-    assert_eq!(h.excise("kitty", &[material]).await.refusal, None);
+    h.tombstone_materials(&[material]).await;
     let after: FetchEventReply = sinex_transport::replies::request_json(
         &h.client,
         h.subjects.fetch_event("replica"),

@@ -26,7 +26,6 @@ use std::path::{Path, PathBuf};
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.notifications",
     driver: Driver::LiveStream,
-    excisable: true,
     purpose: "recall and the day's interruptions",
     // Message bodies are anything any program chose to show.
     class: Class::Guarded,

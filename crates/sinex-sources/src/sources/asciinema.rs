@@ -18,7 +18,7 @@
 //! `SINNIX_CAPTURE_SESSION_ID`, else the directory name.
 //!
 //! The command boundaries come from the cast itself, not from `events.jsonl`:
-//! a span must be framed from its own material for replay and excision, and
+//! a span must be framed from its own material for replay, and
 //! the cast's start is whole seconds, too coarse to place a command's events
 //! by their clock time.
 //!
@@ -42,7 +42,6 @@ use std::path::PathBuf;
 pub const CAST: SourceSpec = SourceSpec {
     name: "terminal.asciinema",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "what terminals showed and what was typed, replayable",
     class: sinex_model::Class::Open,
     parser: "asciinema-cast",
@@ -54,7 +53,6 @@ pub const CAST: SourceSpec = SourceSpec {
 pub const EVENTS: SourceSpec = SourceSpec {
     name: "terminal.capture-events",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "shell commands around a terminal recording",
     class: sinex_model::Class::Open,
     parser: "terminal-capture-events",

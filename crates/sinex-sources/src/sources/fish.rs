@@ -23,7 +23,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.fish-history",
     driver: Driver::AppendFile,
-    excisable: false,
     purpose: "command fusion and shell recall",
     class: Class::Open,
     parser: "fish-history",

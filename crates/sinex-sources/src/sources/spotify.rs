@@ -18,7 +18,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "media.spotify-history",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "listening history and the attention stream",
     class: Class::Open,
     parser: "spotify-streaming-history",

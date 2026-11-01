@@ -62,7 +62,6 @@ const fn spec(parser: &'static str, event_types: &'static [&'static str]) -> Sou
         name: "machine.telemetry",
         driver: Driver::SqliteRows,
         // A sealed file repeats rows the active file's binding read.
-        excisable: false,
         purpose: "resource figures and what the machine was doing: power, temperatures, \
                   memory, IO and pressure per service and process, and OOM kills",
         class: Class::Open,

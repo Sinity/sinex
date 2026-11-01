@@ -49,7 +49,6 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
     SourceSpec {
         name: "media.transcripts",
         driver: Driver::ExportArchive,
-        excisable: false,
         purpose: "imported timed speech text",
         class: Class::Guarded,
         parser,

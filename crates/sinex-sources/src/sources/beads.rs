@@ -25,7 +25,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "work.beads",
     driver: Driver::ApiCursor,
-    excisable: false,
     purpose: "the issues work was planned and tracked in, beside the commits and jobs that did it",
     class: Class::Open,
     parser: "beads-issues",

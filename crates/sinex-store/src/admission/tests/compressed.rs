@@ -1,6 +1,6 @@
-//! Compressed history is never changed in place: a newer reading, a hide, a
-//! re-import and a replay over compressed chunks archive through the side
-//! tables, so no statement decompresses a chunk. Only excision deletes rows.
+//! Compressed history is never changed in place: a newer reading, an archive,
+//! a re-import and a replay over compressed chunks archive through the side
+//! tables, so no statement decompresses a chunk. Only a tombstone deletes rows.
 use super::*;
 use crate::query::{Page, run};
 use sinex_model::query::{Context, bind};
@@ -59,17 +59,20 @@ async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::Tes
     // A newer reading of k3 replaces the compressed one.
     let newer = admit_one(&mut conn, &batch(vec![keyed("s", 3, 2, 2)])).await;
     assert_eq!(newer.replaced, 1);
-    // Hide k5, then read it again: it stays hidden.
-    let hide = Batch {
-        archive: vec![ArchiveRequest::Hide {
-            target: history[5].id,
-            operation: OperationId::new(),
-        }],
-        ..batch(vec![])
-    };
-    admit_one(&mut conn, &hide).await;
+    // Archive k5, then read it again: the new reading is admitted live.
+    let archived = crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![history[5].id],
+        &NoDerivations,
+    )
+    .await;
+    assert!(
+        matches!(archived, crate::lifecycle::Ended::Ok { .. }),
+        "{archived:?}"
+    );
     let again = admit_one(&mut conn, &batch(vec![keyed("s", 5, 1, 1)])).await;
-    assert_eq!(again.hidden, 1);
+    assert_eq!(again.admitted, 1);
     // Re-import of the whole history admits nothing new.
     let reimport: Vec<Event> = (0..20).map(|k| keyed("s", k, 1, 1)).collect();
     let reimport = admit_one(&mut conn, &batch(reimport)).await;
@@ -130,7 +133,8 @@ async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::Tes
             "events where event_type = command.executed AND payload.native_id = \"k5\""
         )
         .await,
-        0
+        1,
+        "k5's new reading is live, its compressed reading archived"
     );
     assert_eq!(
         total(
@@ -139,7 +143,7 @@ async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::Tes
         )
         .await,
         1,
-        "read as of before the hide, k5 is there"
+        "read as of before the archive, k5's first reading is there"
     );
     assert_eq!(
         total(

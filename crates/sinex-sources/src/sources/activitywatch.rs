@@ -33,7 +33,6 @@ use time::format_description::well_known::Rfc3339;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.activitywatch",
     driver: Driver::SqliteRows,
-    excisable: false,
     purpose: "attention, presence and recall",
     class: Class::Guarded,
     parser: "activitywatch-events",

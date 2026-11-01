@@ -18,6 +18,21 @@ struct World {
     root: PathBuf,
 }
 
+/// Archive or restore one reading through the writer, as the operator does.
+async fn move_event(w: &mut World, act: sinex_model::lifecycle::Act, id: uuid::Uuid) {
+    let scope = sinex_model::lifecycle::Scope::Events {
+        events: vec![sinex_model::EventId(id)],
+        query: None,
+    };
+    let answer = crate::lifecycle::run(&mut w.conn, &w.writer, act, "operator", scope, false)
+        .await
+        .unwrap();
+    assert!(
+        matches!(answer, crate::lifecycle::Answer::Done(_)),
+        "{answer:?}"
+    );
+}
+
 async fn world(db: devkit::pg::TestDatabase) -> World {
     let url = db.url(None);
     let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
@@ -543,47 +558,6 @@ async fn copy(conn: &mut PgConnection, path: &Path) -> (uuid::Uuid, String) {
     row
 }
 
-async fn blob_row(conn: &mut PgConnection, blob: &str) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM core.blobs WHERE hash = $1)")
-        .bind(blob)
-        .fetch_one(conn)
-        .await
-        .unwrap()
-}
-
-/// A library scan reads its files again, so excising one of its records is
-/// refused before anything changes.
-#[devkit::test]
-async fn excision_of_a_scanned_file_is_refused(db: devkit::pg::TestDatabase) {
-    let mut w = world(db).await;
-    let file = w.root.join("c.png");
-    image(&file, "blue");
-    w.ok(Request::LibraryAdd {
-        path: w.root.display().to_string(),
-        reference: None,
-    })
-    .await;
-    let (event, bytes) = copy(&mut w.conn, &file).await;
-    let refused = crate::excision::excise(
-        &mut w.conn,
-        &w.blobs.clone(),
-        &w.writer,
-        sinex_store::excision::Target::Event(sinex_model::EventId(event)),
-        "operator",
-    )
-    .await
-    .unwrap_err();
-    assert!(refused.contains("cannot be excised"), "{refused}");
-    assert!(w.blobs.contains(&bytes).unwrap());
-    assert!(blob_row(&mut w.conn, &bytes).await);
-    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE id = $1")
-        .bind(event)
-        .fetch_one(&mut w.conn)
-        .await
-        .unwrap();
-    assert_eq!(left, 1);
-}
-
 #[devkit::test]
 async fn library_add_through_an_alias_keeps_one_copy(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
@@ -627,8 +601,8 @@ async fn library_add_through_an_alias_keeps_one_copy(db: devkit::pg::TestDatabas
 }
 
 #[devkit::test]
-async fn hiding_scans_recomputes_items_and_preview_renditions(db: devkit::pg::TestDatabase) {
-    use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
+async fn archiving_scans_recomputes_items_and_preview_renditions(db: devkit::pg::TestDatabase) {
+    use sinex_model::lifecycle::Act;
     let mut w = world(db).await;
     let file = w.root.join("a.png");
     image(&file, "red");
@@ -665,23 +639,7 @@ async fn hiding_scans_recomputes_items_and_preview_renditions(db: devkit::pg::Te
     .unwrap();
     runner.catch_up().await.unwrap();
     for (id, visible) in [(first, true), (second, false)] {
-        w.writer
-            .submit(
-                writer::Priority::Live,
-                Batch {
-                    run: RunId::new(),
-                    kind: BatchKind::Api {
-                        actor: "operator".into(),
-                    },
-                    records: vec![],
-                    archive: vec![ArchiveRequest::Hide {
-                        target: EventId(id),
-                        operation: OperationId::new(),
-                    }],
-                },
-            )
-            .await
-            .unwrap();
+        move_event(&mut w, Act::Archive, id).await;
         runner.catch_up().await.unwrap();
         assert_eq!(
             sinex_library::reads::item(&mut w.conn, &item)
@@ -699,23 +657,7 @@ async fn hiding_scans_recomputes_items_and_preview_renditions(db: devkit::pg::Te
                 == sinex_model::event_types::library::RenditionRole::Preview));
         }
     }
-    w.writer
-        .submit(
-            writer::Priority::Live,
-            Batch {
-                run: RunId::new(),
-                kind: BatchKind::Api {
-                    actor: "operator".into(),
-                },
-                records: vec![],
-                archive: vec![ArchiveRequest::Unhide {
-                    target: EventId(second),
-                    operation: OperationId::new(),
-                }],
-            },
-        )
-        .await
-        .unwrap();
+    move_event(&mut w, Act::Restore, second).await;
     runner.catch_up().await.unwrap();
     assert!(
         sinex_library::reads::item(&mut w.conn, &item)
@@ -826,8 +768,8 @@ async fn ambiguous_moves_preserve_both_items_curation(db: devkit::pg::TestDataba
 }
 
 #[devkit::test]
-async fn hiding_the_latest_change_falls_back_to_the_previous_copy(db: devkit::pg::TestDatabase) {
-    use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
+async fn archiving_the_latest_change_falls_back_to_the_previous_copy(db: devkit::pg::TestDatabase) {
+    use sinex_model::lifecycle::Act;
     let mut w = world(db).await;
     let file = w.root.join("a.txt");
     let add = Request::LibraryAdd {
@@ -870,36 +812,11 @@ async fn hiding_the_latest_change_falls_back_to_the_previous_copy(db: devkit::pg
     .await
     .unwrap();
     runner.catch_up().await.unwrap();
-    for (change, expected) in [
-        (
-            ArchiveRequest::Hide {
-                target: EventId(latest),
-                operation: OperationId::new(),
-            },
-            first_content,
-        ),
-        (
-            ArchiveRequest::Unhide {
-                target: EventId(latest),
-                operation: OperationId::new(),
-            },
-            second_content,
-        ),
+    for (act, expected) in [
+        (Act::Archive, first_content),
+        (Act::Restore, second_content),
     ] {
-        w.writer
-            .submit(
-                writer::Priority::Live,
-                Batch {
-                    run: RunId::new(),
-                    kind: BatchKind::Api {
-                        actor: "operator".into(),
-                    },
-                    records: vec![],
-                    archive: vec![change],
-                },
-            )
-            .await
-            .unwrap();
+        move_event(&mut w, act, latest).await;
         runner.catch_up().await.unwrap();
         let view = w.ok(Request::LibraryItem { item: item.clone() }).await;
         assert_eq!(view["content"], expected);
@@ -909,10 +826,9 @@ async fn hiding_the_latest_change_falls_back_to_the_previous_copy(db: devkit::pg
 }
 
 #[devkit::test]
-async fn an_unchanged_rescan_counts_each_item_once_after_hiding_a_move_removal(
+async fn an_unchanged_rescan_counts_each_item_once_after_archiving_a_move_removal(
     db: devkit::pg::TestDatabase,
 ) {
-    use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
     let mut w = world(db).await;
     let original = w.root.join("a.txt");
     let moved = w.root.join("b.txt");
@@ -935,23 +851,7 @@ async fn an_unchanged_rescan_counts_each_item_once_after_hiding_a_move_removal(
     .fetch_one(&mut w.conn)
     .await
     .unwrap();
-    w.writer
-        .submit(
-            writer::Priority::Live,
-            Batch {
-                run: RunId::new(),
-                kind: BatchKind::Api {
-                    actor: "operator".into(),
-                },
-                records: vec![],
-                archive: vec![ArchiveRequest::Hide {
-                    target: EventId(removed),
-                    operation: OperationId::new(),
-                }],
-            },
-        )
-        .await
-        .unwrap();
+    move_event(&mut w, sinex_model::lifecycle::Act::Archive, removed).await;
     let unchanged = w.ok(add).await;
     for count in [
         "files_described",

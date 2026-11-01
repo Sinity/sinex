@@ -6,12 +6,12 @@ pub(super) fn tuple(message: &Confirmed) -> Option<Tuple> {
     match message {
         Confirmed::EventReference { commit_seq, event } => Some((*commit_seq, *event, "event")),
         Confirmed::Archived(a) => Some((a.archived_seq, a.event, "archived")),
-        Confirmed::Unhidden(a) => Some((a.unhidden_seq, a.event, "unhidden")),
-        Confirmed::Excised {
+        Confirmed::Restored(a) => Some((a.restored_seq, a.event, "restored")),
+        Confirmed::Tombstoned {
             commit_seq: Some(position),
             event,
             ..
-        } => Some((*position, *event, "excised")),
+        } => Some((*position, *event, "tombstoned")),
         Confirmed::PositionComplete { .. } => None,
         other => panic!("unexpected incomplete history: {other:?}"),
     }
@@ -36,10 +36,10 @@ pub(super) async fn internal(conn: &mut PgConnection) -> Vec<Tuple> {
                     if a.archive.archived {
                         "archived"
                     } else {
-                        "unhidden"
+                        "restored"
                     },
                 )),
-                commit_log::Change::Excised(e) => Some((EventId(e.event_id), "excised")),
+                commit_log::Change::Tombstoned(e) => Some((EventId(e.event_id), "tombstoned")),
                 commit_log::Change::PositionComplete => None,
             };
             if let Some((event, change)) = data {
@@ -61,36 +61,16 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
         .unwrap();
     let first = executed("same", "pwd", 1, Class::Open);
     let first_id = first.id;
-    admit(&mut conn, batch(vec![first], vec![])).await;
+    admit(&mut conn, batch(vec![first])).await;
     let next = executed("same", "ls", 2, Class::Open);
     let next_id = next.id;
-    admit(&mut conn, batch(vec![next], vec![])).await;
-    admit(
-        &mut conn,
-        batch(
-            vec![],
-            vec![ArchiveRequest::Hide {
-                target: next_id,
-                operation: OperationId::new(),
-            }],
-        ),
-    )
-    .await;
-    admit(
-        &mut conn,
-        batch(
-            vec![],
-            vec![ArchiveRequest::Unhide {
-                target: next_id,
-                operation: OperationId::new(),
-            }],
-        ),
-    )
-    .await;
+    admit(&mut conn, batch(vec![next])).await;
+    lifecycle(&mut conn, Act::Archive, vec![next_id]).await;
+    lifecycle(&mut conn, Act::Restore, vec![next_id]).await;
     let expected = internal(&mut conn).await;
     assert_eq!(
         expected.iter().map(|t| t.2).collect::<Vec<_>>(),
-        ["event", "event", "archived", "archived", "unhidden"]
+        ["event", "event", "archived", "archived", "restored"]
     );
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
     assert_eq!(
@@ -136,7 +116,7 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class) VALUES($1,'atuin','command.executed',$2,5,1,'open')")
         .bind(first_id.0).bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
     assert_eq!(
-        erase_excised_in(&mut conn, &js, &subjects, &current)
+        erase_tombstoned_in(&mut conn, &js, &subjects, &current)
             .await
             .unwrap(),
         1
@@ -164,22 +144,12 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
         .unwrap();
     let parent = executed("parent", "pwd", 1, Class::Open);
     let id = parent.id;
-    admit(&mut conn, batch(vec![parent], vec![])).await;
+    admit(&mut conn, batch(vec![parent])).await;
     let mut child = executed("child", "ls", 2, Class::Open);
     child.origin = Origin::Derived { parents: vec![id] };
-    admit(&mut conn, batch(vec![child], vec![])).await;
+    admit(&mut conn, batch(vec![child])).await;
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
-    admit(
-        &mut conn,
-        batch(
-            vec![],
-            vec![ArchiveRequest::Hide {
-                target: id,
-                operation: OperationId::new(),
-            }],
-        ),
-    )
-    .await;
+    lifecycle(&mut conn, Act::Archive, vec![id]).await;
     let instance = instance(&js, &subjects).await;
     let consumer = consumer_for(&instance);
     let (before, _) = commit_log::consumer_position(&mut conn, &consumer)
@@ -235,9 +205,10 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
             .collect::<Vec<_>>(),
         expected
     );
+    let latest = sinex_store::query::current_seq(&mut conn).await.unwrap();
     assert!(matches!(
         read_wire_all(&js, &subjects).await.last(),
-        Some(Confirmed::PositionComplete { commit_seq: 3 })
+        Some(Confirmed::PositionComplete { commit_seq }) if *commit_seq == latest
     ));
 }
 
@@ -296,7 +267,7 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::p
         .unwrap();
     let parent = executed("metadata-parent", "pwd", 1, Class::Open);
     let parent_id = parent.id;
-    admit(&mut conn, batch(vec![parent], vec![])).await;
+    admit(&mut conn, batch(vec![parent])).await;
     // This valid stored parent list exceeds the broker's actual message budget.
     let count = js.client().server_info().max_payload / 36 + 1;
     let parents = vec![parent_id; count];
@@ -305,7 +276,7 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::p
     event.origin = Origin::Derived {
         parents: parents.clone(),
     };
-    admit(&mut conn, batch(vec![event], vec![])).await;
+    admit(&mut conn, batch(vec![event])).await;
     let page = commit_log::after(&mut conn, 1, 1, i64::MAX).await.unwrap();
     assert!(
         serde_json::to_vec(&page.events[0].parents).unwrap().len()
@@ -382,7 +353,7 @@ async fn references_expose_no_source_key_and_route_by_current_policy_class(
     let event = executed("route-secret", "ordinary command", 1, Class::Open);
     let original_key = event.equivalence_key.clone().unwrap().0;
     let id = event.id;
-    admit(&mut conn, batch(vec![event], vec![])).await;
+    admit(&mut conn, batch(vec![event])).await;
     assert!(
         publish_pending(&mut conn, &js, &subjects)
             .await

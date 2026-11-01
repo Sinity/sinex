@@ -15,7 +15,6 @@ use std::path::PathBuf;
 pub const PLAY_STORE: SourceSpec = SourceSpec {
     name: "google.play-store",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "apps installed, bought and reviewed",
     class: Class::Open,
     parser: "google-play-store",
@@ -30,7 +29,6 @@ pub const PLAY_STORE: SourceSpec = SourceSpec {
 pub const PURCHASES: SourceSpec = SourceSpec {
     name: "google.purchases",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "orders and reservations",
     class: Class::Open,
     parser: "google-purchases",

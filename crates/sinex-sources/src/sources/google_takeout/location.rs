@@ -16,7 +16,6 @@ use std::path::PathBuf;
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.location-history",
     driver: Driver::ExportArchive,
-    excisable: false,
     purpose: "where the operator was",
     class: Class::Open,
     parser: "google-location-history",

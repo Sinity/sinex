@@ -7,7 +7,7 @@
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{EventId, OperationId};
-use sinex_protocol::{Archived, Confirmed, Subjects, Unhidden};
+use sinex_protocol::{Archived, Confirmed, Restored, Subjects};
 use sinex_store::commit_log::{self, ArchiveChange};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
@@ -94,8 +94,8 @@ pub(crate) fn consumer_for(instance: &str) -> String {
 pub(crate) struct Published {
     pub events: u64,
     pub changes: u64,
-    /// Stream messages of excised events that were erased.
-    pub excised: u64,
+    /// Stream messages of tombstoned events that were erased.
+    pub tombstoned: u64,
 }
 
 /// One acknowledged page and the time spent reading, publishing and saving it.
@@ -193,7 +193,7 @@ pub(crate) async fn publish_pending_measured(
     let mut cursor = commit_log::ChangeCursor::after(position);
     let mut settled = position;
     let mut total = Published::default();
-    total.excised += erase_excised_in(conn, js, subjects, &instance).await?;
+    total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
         let started = Instant::now();
         let page = commit_log::changes_page(conn, cursor, PAGE, sinex_store::PAGE_BYTES)
@@ -294,7 +294,7 @@ pub(crate) async fn publish_pending_measured(
             .filter(|entry| {
                 matches!(
                     entry.change,
-                    commit_log::Change::Archive(_) | commit_log::Change::Excised(_)
+                    commit_log::Change::Archive(_) | commit_log::Change::Tombstoned(_)
                 )
             })
             .count();
@@ -361,10 +361,10 @@ async fn publish_chunk(
                 let message = if change.archived {
                     Confirmed::Archived(archived_message(change)?)
                 } else {
-                    Confirmed::Unhidden(Unhidden {
+                    Confirmed::Restored(Restored {
                         change_seq: change.change_seq,
                         event: EventId(change.event_id),
-                        unhidden_seq: entry.position,
+                        restored_seq: entry.position,
                         operation: change.operation_id.map(OperationId),
                     })
                 };
@@ -383,15 +383,15 @@ async fn publish_chunk(
                     None,
                 )
             }
-            commit_log::Change::Excised(change) => (
-                Confirmed::Excised {
+            commit_log::Change::Tombstoned(change) => (
+                Confirmed::Tombstoned {
                     commit_seq: Some(entry.position),
                     original_commit_seq: Some(change.original_commit_seq),
                     event: EventId(change.event_id),
                     operation: OperationId(change.operation_id),
                 },
                 subjects.confirmed_lifecycle(&change.class, &change.event_type),
-                format!("excised-{}-{}", entry.position, change.event_id),
+                format!("tombstoned-{}-{}", entry.position, change.event_id),
                 None,
             ),
             commit_log::Change::PositionComplete => continue,
@@ -418,7 +418,7 @@ async fn publish_chunk(
     commit_log::record_published_in(&mut tx, instance, &placed)
         .await
         .map_err(|error| error.to_string())?;
-    total.excised += erase_excised_in(&mut tx, js, subjects, instance).await?;
+    total.tombstoned += erase_tombstoned_in(&mut tx, js, subjects, instance).await?;
     let mut record = record_started.elapsed();
     if let Some(position) = complete {
         let barrier_started = Instant::now();
@@ -447,7 +447,7 @@ async fn publish_chunk(
 
 /// Erasure is an idempotent physical action. Ordered tombstone notices come
 /// from the canonical change feed, never from this cleanup pass.
-async fn erase_excised_in(
+async fn erase_tombstoned_in(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
@@ -455,7 +455,7 @@ async fn erase_excised_in(
 ) -> Result<u64, String> {
     let mut erased = 0;
     loop {
-        let pending = commit_log::excised_on_stream_in(conn, instance, PAGE)
+        let pending = commit_log::tombstoned_on_stream_in(conn, instance, PAGE)
             .await
             .map_err(|error| error.to_string())?;
         if pending.is_empty() {
@@ -485,13 +485,13 @@ async fn erase_excised_in(
 }
 
 #[cfg(test)]
-async fn erase_excised(
+async fn erase_tombstoned(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
 ) -> Result<u64, String> {
     let stream = confirmed_stream(js, subjects).await?;
-    erase_excised_in(conn, js, subjects, &stream_instance(&stream)).await
+    erase_tombstoned_in(conn, js, subjects, &stream_instance(&stream)).await
 }
 
 async fn publish(
@@ -538,10 +538,10 @@ pub(crate) async fn publish_all(
         done.events as f64 / wall.as_secs_f64()
     };
     Ok(format!(
-        "published {} events and {} archive changes, erased {} excised, in {:.2}s, {rate:.0} events/s",
+        "published {} events and {} archive changes, erased {} tombstoned, in {:.2}s, {rate:.0} events/s",
         done.events,
         done.changes,
-        done.excised,
+        done.tombstoned,
         wall.as_secs_f64()
     ))
 }

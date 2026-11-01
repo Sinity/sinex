@@ -80,12 +80,10 @@ async fn negative_sql_ordinals_are_refused_by_each_coordinate_table(db: devkit::
     );
     let statements = [
         "INSERT INTO core.live_locations SELECT material_id,anchor,event_type,-1,event_id,reading_order,record_hash FROM core.live_locations LIMIT 1",
-        "INSERT INTO core.hidden_records (source,event_type,material_id,anchor,output_index,operation_id) SELECT 'negative',event_type,material_id,anchor,-1,id FROM core.events LIMIT 1",
         "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,anchor,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT 0,id,event_type,source,material_id,anchor,-1,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
         "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,anchor,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT -1,id,event_type,source,material_id,anchor,0,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
     ];
     let constraints = [
-        "output_index_in_range",
         "output_index_in_range",
         "admission_stage_output_index_check",
         "admission_stage_ord_check",
@@ -169,33 +167,14 @@ async fn largest_stored_output_round_trips_through_live_lookup_and_show(
             .await
             .unwrap();
     assert_eq!(staged, (i64::MAX, i64::MAX));
-    let hide = Batch {
-        archive: vec![ArchiveRequest::Hide {
-            target: EventId(id),
-            operation: OperationId::new(),
-        }],
-        ..batch(vec![])
-    };
-    admit_one(&mut conn, &hide).await;
-    let hidden: i64 =
-        sqlx::query_scalar("SELECT output_index FROM core.hidden_records WHERE material_id=$1")
-            .bind(location.material.0)
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(hidden, i64::MAX);
+    let archive = sinex_model::lifecycle::Act::Archive;
+    crate::lifecycle::move_events(&mut conn, archive, vec![EventId(id)], &NoDerivations).await;
     assert_eq!(
         crate::live::at(&mut conn, location, output).await.unwrap(),
         None
     );
-    let unhide = Batch {
-        archive: vec![ArchiveRequest::Unhide {
-            target: EventId(id),
-            operation: OperationId::new(),
-        }],
-        ..batch(vec![])
-    };
-    admit_one(&mut conn, &unhide).await;
+    let restore = sinex_model::lifecycle::Act::Restore;
+    crate::lifecycle::move_events(&mut conn, restore, vec![EventId(id)], &NoDerivations).await;
     assert_eq!(
         crate::live::at(&mut conn, location, output).await.unwrap(),
         Some(id)
@@ -206,4 +185,16 @@ async fn largest_stored_output_round_trips_through_live_lookup_and_show(
             .await
             .is_err()
     );
+
+    // The skeleton of a tombstoned reading keeps its largest coordinate.
+    crate::lifecycle::move_events(&mut conn, archive, vec![EventId(id)], &NoDerivations).await;
+    let tombstone = sinex_model::lifecycle::Act::Tombstone;
+    crate::lifecycle::move_events(&mut conn, tombstone, vec![EventId(id)], &NoDerivations).await;
+    let skeleton: i64 =
+        sqlx::query_scalar("SELECT output_index FROM core.event_tombstones WHERE event_id=$1")
+            .bind(id)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(skeleton, i64::MAX);
 }

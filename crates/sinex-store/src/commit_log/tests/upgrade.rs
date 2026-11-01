@@ -24,6 +24,10 @@ async fn other_rows(
     .unwrap();
     let mut rows = std::collections::BTreeMap::new();
     for (schema, table) in tables {
+        // The lifecycle upgrade drops the hidden records and excised digests.
+        if matches!(table.as_str(), "hidden_records" | "excised_materials") {
+            continue;
+        }
         if schema == "core" && table == "replay_refusals" {
             let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.replay_refusals")
                 .fetch_one(&mut *conn)
@@ -38,7 +42,16 @@ async fn other_rows(
         } else if matches!(table.as_str(), "events" | "admission_stage") {
             "to_jsonb(t)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint'"
         } else if table == "event_tombstones" {
-            "to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'"
+            "to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'-'ts_quality'-'reason'-'material_id'-'anchor'-'output_index'-'key_hash'"
+        } else if table == "materials" {
+            "to_jsonb(t)-'status'-'status_operation'"
+        } else if table == "operations" {
+            "to_jsonb(t)-'start_seq'-'end_seq'-'result'-'counts'-'progress'-'refusals'"
+        } else if table == "dirty" {
+            "to_jsonb(t)-'held_by'"
+        } else if matches!(table.as_str(), "archived" | "archive_changes") {
+            // The lifecycle upgrade renamed hide and unhide.
+            "to_jsonb(t)||jsonb_build_object('reason',CASE reason WHEN 'hide' THEN 'archive' WHEN 'unhide' THEN 'restore' ELSE reason END)"
         } else if table == "ingress_frames" {
             "to_jsonb(t)-'family'-'write_kind_prefixes'-'source_name'-'source_version'-'source_fingerprint'-'producer_host'"
         } else if table == "search_text" {
@@ -47,7 +60,7 @@ async fn other_rows(
             "to_jsonb(t)"
         };
         let predicate = if table == "counters" {
-            " WHERE name NOT IN ('blob_changes','excised','privacy_outputs','query_metadata')"
+            " WHERE name NOT IN ('blob_changes','excised','tombstoned','privacy_outputs','query_metadata')"
         } else {
             ""
         };
@@ -80,20 +93,13 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
     crate::read_models::tests::catch_up_search_text(&mut conn)
         .await
         .unwrap();
-    let batch = sinex_model::Batch {
-        run: sinex_model::RunId::new(),
-        kind: sinex_model::BatchKind::Api {
-            actor: "test".into(),
-        },
-        records: vec![],
-        archive: vec![sinex_model::ArchiveRequest::Hide {
-            target: sinex_model::EventId(ids[0].1),
-            operation: sinex_model::OperationId::new(),
-        }],
-    };
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&batch, &crate::NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![sinex_model::EventId(ids[0].1)],
+        &crate::NoDerivations,
+    )
+    .await;
     drop(conn);
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     sqlx::raw_sql(
@@ -122,7 +128,7 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         .await
         .unwrap();
     let tombstones: serde_json::Value =
-        sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class') FROM core.event_tombstones t")
+        sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'-'ts_quality'-'reason'-'material_id'-'anchor'-'output_index'-'key_hash') FROM core.event_tombstones t")
             .fetch_one(&mut conn)
             .await
             .unwrap();
@@ -180,7 +186,7 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         (4500, 150)
     );
     let after: serde_json::Value =
-        sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class') FROM core.event_tombstones t")
+        sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'-'ts_quality'-'reason'-'material_id'-'anchor'-'output_index'-'key_hash') FROM core.event_tombstones t")
             .fetch_one(&mut conn)
             .await
             .unwrap();
@@ -191,7 +197,7 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         constraints,
         "PRIMARY KEY (event_id, stream_seq, stream_instance)"
     );
-    let erased = excised_on_stream(&mut conn, 10).await.unwrap();
+    let erased = tombstoned_on_stream(&mut conn, 10).await.unwrap();
     assert_eq!((erased[0].event_id, erased[0].stream_seq), before[1000]);
     sqlx::query("SET ROLE sinex_writer")
         .execute(&mut conn)
@@ -212,7 +218,9 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         .await
         .unwrap();
     for instance in ["synthetic-native-a", "synthetic-native-b"] {
-        let copies = excised_on_stream_in(&mut conn, instance, 10).await.unwrap();
+        let copies = tombstoned_on_stream_in(&mut conn, instance, 10)
+            .await
+            .unwrap();
         assert_eq!(
             copies
                 .iter()
@@ -226,12 +234,12 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
         .await
         .unwrap();
     assert!(
-        excised_on_stream_in(&mut conn, "synthetic-native-a", 10)
+        tombstoned_on_stream_in(&mut conn, "synthetic-native-a", 10)
             .await
             .unwrap()
             .is_empty()
     );
-    let other = excised_on_stream_in(&mut conn, "synthetic-native-b", 10)
+    let other = tombstoned_on_stream_in(&mut conn, "synthetic-native-b", 10)
         .await
         .unwrap();
     assert_eq!(

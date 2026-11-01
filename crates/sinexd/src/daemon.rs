@@ -143,17 +143,21 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .recover(&mut writer_conn)
         .await
         .map_err(|error| error.to_string())?;
-    // Finish durable excision punches before sources resume.
-    let (deleted, left) = sinex_store::excision::finish_deletions(&mut writer_conn, &blobs)
+    // Finish removing bytes a tombstone freed before sources resume.
+    let (removed, left) = sinex_store::lifecycle::remove_unreferenced(&mut writer_conn, &blobs)
         .await
-        .map_err(|e| format!("finishing blob deletions: {e}"))?;
-    if !deleted.is_empty() || !left.is_empty() {
+        .map_err(|e| format!("removing tombstoned bytes: {e}"))?;
+    if !removed.is_empty() || !left.is_empty() {
         eprintln!(
-            "sinexd: finished {} blob deletions left by a stop; {} files could not be deleted",
-            deleted.len(),
+            "sinexd: removed {} tombstoned byte ranges left by a stop; {} could not be removed",
+            removed.len(),
             left.len()
         );
     }
+    // No operation runs while the writer starts; a stopped one resumes later.
+    sinex_store::lifecycle::release_held_keys(&mut writer_conn)
+        .await
+        .map_err(|e| format!("releasing held keys: {e}"))?;
     // Remove committed extents whose admission left no catalog row.
     let without_rows = sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs)
         .await

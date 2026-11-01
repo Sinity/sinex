@@ -35,7 +35,6 @@ const fn line_spec(
     SourceSpec {
         name,
         driver: Driver::AppendFile,
-        excisable: false,
         purpose,
         class: Class::Open,
         parser,
@@ -90,7 +89,6 @@ pub const CONFIG_DRIFT: SourceSpec = line_spec(
 pub const EXPERIMENTS: SourceSpec = SourceSpec {
     name: "machine.experiments",
     driver: Driver::DirSnapshot,
-    excisable: false,
     purpose: "machine experiment results with the conditions they ran under",
     class: Class::Open,
     parser: "machine-experiments",

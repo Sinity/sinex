@@ -47,7 +47,7 @@ pub struct LifecycleChange {
 pub enum Change {
     Event(Box<Committed>),
     Archive(LifecycleChange),
-    Excised(Tombstone),
+    Tombstoned(Tombstone),
     PositionComplete,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -207,7 +207,7 @@ async fn read_page(
         let change = match row.kind {
             0 => Change::Event(Box::new(events.remove(&row.event_id).ok_or_else(missing)?)),
             1 => Change::Archive(archived.remove(&row.change_seq).ok_or_else(missing)?),
-            2 => Change::Excised(erased.remove(&row.event_id).ok_or_else(missing)?),
+            2 => Change::Tombstoned(erased.remove(&row.event_id).ok_or_else(missing)?),
             9 => Change::PositionComplete,
             _ => return Err(Error::Invalid("unknown commit change category".into())),
         };

@@ -7,8 +7,8 @@ use serde_json::json;
 use sinex_model::event_types::{CommandExecuted, CommandFused};
 use sinex_model::query::{Context, bind};
 use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Class, Event, EventId, MaterialId, OperationId, Origin,
-    ReadingOrder, RecordLocation, RecordOutcome, RunId, Timestamp,
+    Batch, BatchKind, Class, Event, EventId, MaterialId, OperationId, Origin, ReadingOrder,
+    RecordLocation, RecordOutcome, RunId, Timestamp,
 };
 use sqlx::Connection;
 use uuid::Uuid;
@@ -315,20 +315,13 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
         .unwrap();
     let ids = world(&mut conn).await;
     let before = current_seq(&mut conn).await.unwrap();
-    let hide = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "test".into(),
-        },
-        records: vec![],
-        archive: vec![ArchiveRequest::Hide {
-            target: EventId(ids[0].0),
-            operation: OperationId::new(),
-        }],
-    };
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&hide, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![EventId(ids[0].0)],
+        &NoDerivations,
+    )
+    .await;
     // Archiving records the position it happened at; move past it.
     admit_commands(&mut conn, &[("echo after", "/")]).await;
     assert_eq!(
@@ -347,7 +340,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
     .await;
     assert_eq!(old.total, 1);
     assert_eq!(old.resolved.commit_seq, before - 1);
-    let archive = ask(&mut conn, "archive where reason = hide").await;
+    let archive = ask(&mut conn, "archive where reason = archive").await;
     assert_eq!(archive.total, 1);
 }
 

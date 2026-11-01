@@ -44,20 +44,14 @@ pub use framing::Framer;
 pub struct SourceSpec {
     pub name: &'static str,
     pub driver: Driver,
-    /// Whether excision can remove a record of this source completely. True
-    /// only where every stored copy of a record is one of its readings: the
-    /// driver never reads a record a second time (no rewrite, restart, re-fetch
-    /// or new export brings it back) and no record repeats under a key in a
-    /// later material. Excision refuses records of every other source.
-    pub excisable: bool,
     /// What the source's events are for.
     pub purpose: &'static str,
     pub class: Class,
     pub parser: &'static str,
     pub parser_version: u32,
     pub event_types: &'static [&'static str],
-    /// How the source's stored materials split into records, so a replay or
-    /// an excision finds the same records the driver read.
+    /// How the source's stored materials split into records, so a replay
+    /// finds the same records the driver read.
     pub framer: Framer,
 }
 

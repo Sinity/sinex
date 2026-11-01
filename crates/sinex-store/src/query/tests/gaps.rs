@@ -232,7 +232,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     .await;
     assert_eq!(drift.total, 1);
     assert_eq!(drift.rows[0]["id"], drift_id.to_string());
-    let before_hide = ask_page(
+    let before_archive = ask_page(
         &mut conn,
         source_question,
         Page {
@@ -242,22 +242,20 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     )
     .await;
     let before = current_seq(&mut conn).await.unwrap();
-    let mut hidden = batch.clone();
-    hidden.records.clear();
-    hidden.archive.push(ArchiveRequest::Hide {
-        target: drift_id,
-        operation: OperationId::new(),
-    });
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&hidden, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![drift_id],
+        &NoDerivations,
+    )
+    .await;
     let now = ask(
         &mut conn,
         "sources where source = terminal.atuin fields drift",
     )
     .await;
     assert_eq!(now.rows[0]["drift"]["count"], 0);
-    for cursor in [before_hide.page.cursor, before_record.page.cursor] {
+    for cursor in [before_archive.page.cursor, before_record.page.cursor] {
         let error = run(
             &mut conn,
             source_question,

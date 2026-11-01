@@ -2,9 +2,10 @@ use super::*;
 use crate::query::{Answer, Page};
 use crate::{AdmissionContext, NoDerivations};
 use sinex_model::event_types::{CommandFused, CommandImported};
+use sinex_model::lifecycle::Act;
 use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Class, Event, EventId, MaterialId, OperationId, Origin,
-    ReadingOrder, RecordLocation, RecordOutcome, RunId, Timestamp,
+    Batch, BatchKind, Class, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
+    RecordOutcome, RunId, Timestamp,
 };
 use std::collections::BTreeSet;
 
@@ -280,39 +281,19 @@ async fn traces_name_masked_archived_missing_and_tombstoned_links(db: devkit::pg
         .execute(&mut conn)
         .await
         .unwrap();
-    let hide = Batch {
-        archive: vec![ArchiveRequest::Hide {
-            target: child_id,
-            operation: OperationId::new(),
-        }],
-        ..batch(vec![])
-    };
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&hide, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
+    crate::lifecycle::move_events(&mut conn, Act::Archive, vec![child_id], &NoDerivations).await;
     let archived = walk(&mut conn, Walk::Trace, &reference).await.unwrap();
     assert_eq!(archived[0]["state"], "archived");
     assert_eq!(archived[1]["state"], "archived");
     assert_eq!(archived[2]["state"], "live");
-    // The retained skeleton and edges outlive cleared readings. This fixture
-    // isolates the reader from material deletion and writer custody mechanics.
-    let gone = vec![child_id.0, leaf_id.0];
-    let mut tx = conn.begin().await.unwrap();
-    let position = crate::commit_log::allocate_position(&mut tx).await.unwrap();
-    let operation = OperationId::new();
-    sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,ts_orig,operation_id,commit_seq,original_commit_seq,class) SELECT id,source,event_type,ts_orig,$2,$3,commit_seq,class FROM core.events WHERE id=ANY($1)")
-        .bind(&gone).bind(operation.0).bind(position).execute(&mut *tx).await.unwrap();
-    sqlx::query("SELECT set_config('sinex.excise_operation',$1,true)")
-        .bind(operation.0.to_string())
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM core.events WHERE id=ANY($1)")
-        .bind(&gone)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
+    // The retained skeleton and edges outlive tombstoned readings.
+    let tombstoned =
+        crate::lifecycle::move_events(&mut conn, Act::Tombstone, vec![child_id], &NoDerivations)
+            .await;
+    assert!(
+        matches!(tombstoned, crate::lifecycle::Ended::Ok { .. }),
+        "{tombstoned:?}"
+    );
     let missing = Uuid::now_v7();
     sqlx::query("INSERT INTO core.event_children(parent,child) VALUES($1,$2)")
         .bind(missing)

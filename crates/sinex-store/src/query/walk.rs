@@ -167,7 +167,7 @@ pub(crate) async fn walk(
         .map(|(id, depth)| json!({"id":id,"depth":depth}))
         .collect();
     // The visible view owns payload masking. Edges and tombstone skeletons
-    // retain identity after excision, without reconstructing cleared content.
+    // retain identity after a tombstone, without reconstructing cleared content.
     let rows = sqlx::query_scalar!(
         r#"WITH selected AS (
              SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(id uuid, depth numeric))

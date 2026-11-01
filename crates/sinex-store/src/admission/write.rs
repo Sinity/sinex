@@ -159,8 +159,15 @@ pub(super) async fn insert_admitted(
         )
         .await?;
         outcome.replaced = replaced.len();
-        outcome.dirty_keys +=
-            mark_archived_dirty(conn, &live, last, keys, Some(batch), None).await?;
+        outcome.dirty_keys += mark_archived_dirty(
+            conn,
+            &live,
+            last,
+            keys,
+            Some(batch),
+            (sinex_model::ArchiveReason::NewerReading, None),
+        )
+        .await?;
     }
 
     outcome.timings.insert("archive", started.elapsed());
@@ -253,7 +260,7 @@ pub(super) async fn save_position(
 }
 
 /// Register the stored bytes admitted events own beyond their materials, so
-/// excision can find and delete them (`core.event_blobs`).
+/// a tombstone can find and remove them (`core.event_blobs`).
 async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i64]) -> Result<()> {
     let (mut ids, mut blobs, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
     for ord in ords {

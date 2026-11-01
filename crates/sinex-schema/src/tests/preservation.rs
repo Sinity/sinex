@@ -25,7 +25,10 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
         .bind(schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut result = Vec::new();
     for (schema, table) in tables {
+        // The lifecycle upgrade drops the remembered hidden records: archived
+        // readings are no longer kept out of replay and re-import.
         if table == "event_children"
+            || table == "hidden_records"
             || schema == "registry"
             || (schema == "core"
                 && matches!(table.as_str(), "query_cursor_key" | "owner_protocol_key"))
@@ -53,14 +56,25 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
             }
             "counters" => {
                 format!(
-                    "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','privacy_outputs','query_metadata') ORDER BY 1"
+                    "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','privacy_outputs','query_metadata') ORDER BY 1"
                 )
             }
             "search_text" => {
                 format!("SELECT to_jsonb(t)-'trigram_indexed' FROM {name} t ORDER BY 1")
             }
             "event_tombstones" => format!(
-                "SELECT to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class' FROM {name} t ORDER BY 1"
+                "SELECT to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'-'ts_quality'-'reason'-'material_id'-'anchor'-'output_index'-'key_hash' FROM {name} t ORDER BY 1"
+            ),
+            "materials" => {
+                format!("SELECT to_jsonb(t)-'status'-'status_operation' FROM {name} t ORDER BY 1")
+            }
+            "operations" => format!(
+                "SELECT to_jsonb(t)-'start_seq'-'end_seq'-'result'-'counts'-'progress'-'refusals' FROM {name} t ORDER BY 1"
+            ),
+            "dirty" => format!("SELECT to_jsonb(t)-'held_by' FROM {name} t ORDER BY 1"),
+            // Hide and unhide became archive and restore.
+            "archived" | "archive_changes" => format!(
+                "SELECT to_jsonb(t)||jsonb_build_object('reason',CASE reason WHEN 'archive' THEN 'hide' WHEN 'restore' THEN 'unhide' ELSE reason END) FROM {name} t ORDER BY 1"
             ),
             "ingress_frames" => format!(
                 "SELECT to_jsonb(t)-'family'-'write_kind_prefixes'-'source_name'-'source_version'-'source_fingerprint'-'producer_host' FROM {name} t ORDER BY 1"
