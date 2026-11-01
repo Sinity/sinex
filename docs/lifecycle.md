@@ -93,7 +93,7 @@ Undo, archive, restore and replay are ordinary, everyday features; tombstoning i
 
 An archive, restore or tombstone that spans many batches is one operation. Its saved position is its progress, not a workflow state.
 
-- Each batch takes the next roots of the scope in event ID order after the saved position, among readings committed by the operation's start, with their whole chains. Its size follows how long the previous batch held the writer. An undo runs as two phases in one operation: the archive of what the target made live, then the restore of what it archived.
+- Each batch takes the next roots of the scope in event ID order after the saved position, among readings committed by the operation's start, with their whole chains. Each batch commits at exactly one new commit position, so a scope that fits one batch, such as a single event, advances the commit log by one. Its size follows how long the previous batch held the writer. An undo runs as two phases in one operation: the archive of what the target made live, then the restore of what it archived.
 
 - Refusal checks run on every batch, at that batch's commit. A refusal before the first batch commits changes nothing. A refusal after it ends the operation `stopped_early`, never reported as ok: the answer names what moved and what refused. Once the cause is cleared, the operation resumes like a replay from its saved position, or it is undone by its inverse.
 - "The chains that left together" means the chains the same operation moved, across all its batches.

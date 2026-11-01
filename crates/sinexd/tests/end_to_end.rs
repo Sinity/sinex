@@ -817,15 +817,18 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
         ],
         "typed history identifies both archives, both nonempty replay scopes and the restore"
     );
+    // Three lifecycle moves ran: the archive of `id`, the archive of the
+    // reread and the restore of `id`. Each names one event, so each is one batch.
     let batches = scalar(
         &mut c,
         "SELECT coalesce(sum((progress->>'batches')::bigint), 0)::bigint FROM core.operations WHERE kind IN ('archive','restore')",
     )
     .await;
+    assert_eq!(batches, 3, "each one-event move is one batch");
     assert_eq!(
         support::marker_count(&mut c).await - initial_markers,
-        batches + journals.iter().map(|(_, count)| *count).sum::<i64>(),
-        "markers cover every lifecycle batch and every journaled replay sequence"
+        3 + 1 + 2,
+        "one marker for each of the three lifecycle batches and each of the 1 + 2 journaled replay sequences"
     );
     consistent(&mut c).await;
 }
