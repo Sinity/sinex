@@ -1,18 +1,22 @@
 //! The lifecycle's laws against a real database: whole chains move, no
 //! event's state is earlier than its parents', restore refuses while another
-//! reading of the record is live, refusal is per batch and resuming reaches
-//! the uninterrupted result, tombstones are reached only from the archive and
-//! stop no new readings, undo swaps forever, and material status cascades.
+//! reading of the record is live and derives keyed aggregates again, refusal
+//! is per batch and resuming reaches the uninterrupted result, replay archives
+//! exactly what it replaces, tombstones are reached only from the archive,
+//! clear every copy and stop no new readings, undo swaps forever, material
+//! status cascades, and as-of reads return the live set of each position.
 use super::*;
-use crate::AdmissionContext;
 use crate::admission::{KeyInput, NoDerivations};
+use crate::{AdmissionContext, ComputedKey, DerivedScope, Outcome, ReadMark};
 use serde_json::{Value, json};
 use sinex_model::event_types::CommandExecuted;
 use sinex_model::lifecycle::{Act, MaterialStatus, Scope};
 use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder,
-    RecordLocation, RecordOutcome, ReplayScope, RunId, Timestamp,
+    ArchiveRequest, Batch, BatchKind, Class, Event, InputRef, MaterialId, MaterialRef,
+    ObservationFacts, Origin, ReadingOrder, RecordLocation, RecordOutcome, ReplayScope,
+    RevisionChange, RunId, SourceProgress, Timestamp,
 };
+use std::collections::BTreeSet;
 
 fn reading(source: &str, key: u8, content: u8, material: MaterialId, anchor: u64) -> Event {
     let command = format!("cmd-{content}");
@@ -70,10 +74,74 @@ async fn context(db: &devkit::pg::TestDatabase) -> AdmissionContext {
     AdmissionContext::connect(&db.url(None)).await.unwrap()
 }
 
-async fn admit(conn: &mut AdmissionContext, b: &Batch) {
+async fn admit(conn: &mut AdmissionContext, b: &Batch) -> Outcome {
     let mut tx = conn.begin().await.unwrap();
-    tx.admit(b, &NoDerivations).await.unwrap();
+    let outcome = tx.admit(b, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
+    outcome
+}
+
+/// A source batch that stages `blob` as the new material `material` and
+/// admits `event`, read from it.
+fn stage(material: MaterialId, blob: &str, event: Event) -> Batch {
+    let mut staged = batch(vec![event]);
+    staged.kind = BatchKind::Source(Box::new(SourceProgress {
+        source: None,
+        host: None,
+        binding: "staged".into(),
+        data_keys: vec![],
+        input: InputRef {
+            kind: "file".into(),
+            locator: "/staged".into(),
+            host: "h".into(),
+        },
+        observation: ObservationFacts {
+            changed: true,
+            ..Default::default()
+        },
+        revision: RevisionChange::Snapshot,
+        material: Some(MaterialRef {
+            id: material,
+            input: None,
+            blob: blob.into(),
+            length: 3,
+            part_index: 0,
+            previous_part: None,
+            parser: "test".into(),
+            parser_version: 1,
+            manifest: Default::default(),
+        }),
+        cursor: Value::Null,
+        carry: Value::Null,
+        memory: None,
+    }));
+    staged
+}
+
+/// A keyed derivation's complete output for one key, computed after the
+/// key's dirty mark at `dirty_seq`.
+fn aggregate(derivation: &str, key: Value, dirty_seq: i64, output: Event) -> Batch {
+    Batch {
+        run: RunId::new(),
+        kind: BatchKind::Derived {
+            derivation: derivation.into(),
+            scope: DerivedScope::Keys {
+                keys: vec![ComputedKey {
+                    key,
+                    dirty_seq,
+                    waiting: false,
+                    refresh_at: None,
+                }],
+                read: ReadMark::default(),
+            }
+            .to_value(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events: vec![output],
+        }],
+        archive: vec![],
+    }
 }
 
 /// A stored material holding `blob`, with no readings yet.
@@ -485,14 +553,69 @@ async fn tombstone_only_archived(db: devkit::pg::TestDatabase) {
 #[devkit::test]
 async fn tombstone_allows_new_readings(db: devkit::pg::TestDatabase) {
     let mut conn = context(&db).await;
-    let e = reading("again", 1, 1, MaterialId::new(), 0);
-    admit(&mut conn, &batch(vec![e.clone()])).await;
-    operate(&mut conn, Act::Archive, events(&[&e]), 16).await;
-    operate(&mut conn, Act::Tombstone, events(&[&e]), 16).await;
-    // The same record read again, as a replay or a re-stage would.
-    let again = reading("again", 1, 1, MaterialId::new(), 0);
-    admit(&mut conn, &batch(vec![again.clone()])).await;
-    assert_eq!(state(&mut conn, &again).await, "live");
+    // One record read from a material that stays live, to replay it.
+    let kept = material(&mut conn, &blob(5)).await;
+    let replayed = reading("again", 1, 1, kept, 0);
+    admit(&mut conn, &batch(vec![replayed.clone()])).await;
+    // Another staged from bytes, to stage the same bytes again.
+    let bytes = blob(6);
+    let first_stage = MaterialId::new();
+    let staged = reading("again", 2, 2, first_stage, 0);
+    admit(&mut conn, &stage(first_stage, &bytes, staged.clone())).await;
+    operation(&operate(&mut conn, Act::Archive, events(&[&replayed, &staged]), 16).await);
+    operation(&operate(&mut conn, Act::Tombstone, events(&[&replayed, &staged]), 16).await);
+    for event in [&replayed, &staged] {
+        assert_eq!(state(&mut conn, event).await, "tombstoned");
+    }
+
+    // A replay of the live material reads the record again.
+    let read_again = reading("again", 1, 1, kept, 0);
+    let (_, replay_outcome) = replay(&mut conn, kept, &[read_again.clone()]).await;
+    assert_eq!(
+        (replay_outcome.admitted, replay_outcome.replay_archived),
+        (1, 0),
+        "the tombstoned reading is gone; the new one is admitted"
+    );
+    assert_ne!(read_again.id, replayed.id);
+    assert_eq!(state(&mut conn, &read_again).await, "live");
+
+    // A new stage of identical bytes is a new material, and its reading of
+    // the record is admitted.
+    let second_stage = MaterialId::new();
+    let staged_again = reading("again", 2, 2, second_stage, 0);
+    let stage_outcome = admit(
+        &mut conn,
+        &stage(second_stage, &bytes, staged_again.clone()),
+    )
+    .await;
+    assert_eq!(stage_outcome.admitted, 1, "{stage_outcome:?}");
+    assert_ne!(staged_again.id, staged.id);
+    assert_eq!(state(&mut conn, &staged_again).await, "live");
+    let materials: Vec<uuid::Uuid> =
+        sqlx::query_scalar("SELECT id FROM raw.materials WHERE blob = $1 ORDER BY id")
+            .bind(&bytes)
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    let mut expected = vec![first_stage.0, second_stage.0];
+    expected.sort();
+    assert_eq!(
+        materials, expected,
+        "identical bytes are staged as a second material"
+    );
+    assert_state_order(&mut conn).await;
+}
+
+/// Why admission refuses an output of `parent`.
+async fn child_refusal(conn: &mut AdmissionContext, parent: &Event) -> String {
+    let child = derived("dead.derived", 2, &[parent]);
+    let mut tx = conn.begin().await.unwrap();
+    let result = tx.admit(&batch(vec![child]), &NoDerivations).await;
+    tx.rollback().await.unwrap();
+    match result {
+        Err(crate::Error::Invalid(reason)) => reason,
+        other => panic!("an output of a parent that is not live: {other:?}"),
+    }
 }
 
 #[devkit::test]
@@ -501,14 +624,66 @@ async fn no_dead_parents(db: devkit::pg::TestDatabase) {
     let parent = reading("dead", 1, 1, MaterialId::new(), 0);
     admit(&mut conn, &batch(vec![parent.clone()])).await;
     operate(&mut conn, Act::Archive, events(&[&parent]), 16).await;
+    assert_eq!(
+        child_refusal(&mut conn, &parent).await,
+        format!("derived parent {} is not live", parent.id.0)
+    );
     operate(&mut conn, Act::Tombstone, events(&[&parent]), 16).await;
-    let child = derived("dead", 2, &[&parent]);
-    let mut tx = conn.begin().await.unwrap();
-    assert!(
-        tx.admit(&batch(vec![child]), &NoDerivations).await.is_err(),
+    assert_eq!(
+        child_refusal(&mut conn, &parent).await,
+        format!("derived parent {} is not a committed reading", parent.id.0),
         "no admitted event names a tombstoned parent"
     );
-    tx.rollback().await.unwrap();
+
+    // An output whose input was archived after the derivation read it is
+    // dropped and counted, not refused; the other output is admitted.
+    let input = reading("dead", 3, 3, MaterialId::new(), 0);
+    let other = reading("dead", 4, 4, MaterialId::new(), 0);
+    admit(&mut conn, &batch(vec![input.clone(), other.clone()])).await;
+    let position = crate::query::current_seq(&mut conn).await.unwrap();
+    let read = ReadMark::now(&mut conn).await.unwrap();
+    operate(&mut conn, Act::Archive, events(&[&input]), 16).await;
+    let dropped = derived("dead.derived", 5, &[&input]);
+    let kept = derived("dead.derived", 6, &[&other]);
+    let outcome = admit(
+        &mut conn,
+        &Batch {
+            run: RunId::new(),
+            kind: BatchKind::Derived {
+                derivation: "dead.derived".into(),
+                scope: DerivedScope::Position {
+                    inputs: vec![input.id.0, other.id.0],
+                    position,
+                    read,
+                }
+                .to_value(),
+            },
+            records: vec![RecordOutcome::Events {
+                location: None,
+                events: vec![dropped.clone(), kept.clone()],
+            }],
+            archive: vec![],
+        },
+    )
+    .await;
+    assert_eq!(
+        (outcome.admitted, outcome.superseded_input),
+        (1, 1),
+        "{outcome:?}"
+    );
+    assert_eq!(state(&mut conn, &kept).await, "live");
+    assert_eq!(
+        count(
+            &mut conn,
+            &format!(
+                "SELECT count(*) FROM core.events WHERE id = '{}'",
+                dropped.id.0
+            )
+        )
+        .await,
+        0
+    );
+    assert_state_order(&mut conn).await;
 }
 
 #[devkit::test]
@@ -641,12 +816,12 @@ async fn material_tombstone_spares_shared_bytes(db: devkit::pg::TestDatabase) {
     );
 }
 
-/// A replay of `material` whose new reading of the record replaces `old`.
+/// A replay of `material` whose new readings are `readings`.
 async fn replay(
     conn: &mut AdmissionContext,
     material: MaterialId,
-    content: u8,
-) -> (OperationId, Event) {
+    readings: &[Event],
+) -> (OperationId, Outcome) {
     let operation = OperationId::new();
     let mut tx = conn.begin().await.unwrap();
     crate::replay::begin(
@@ -657,7 +832,6 @@ async fn replay(
     )
     .await
     .unwrap();
-    let new = reading("replayed", 1, content, material, 0);
     let b = Batch {
         run: RunId(operation.0),
         kind: BatchKind::Replay {
@@ -667,7 +841,7 @@ async fn replay(
         },
         records: vec![RecordOutcome::Events {
             location: None,
-            events: vec![new.clone()],
+            events: readings.to_vec(),
         }],
         archive: vec![ArchiveRequest::Replay {
             scope: ReplayScope {
@@ -677,9 +851,9 @@ async fn replay(
             operation,
         }],
     };
-    tx.admit(&b, &NoDerivations).await.unwrap();
+    let outcome = tx.admit(&b, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
-    (operation, new)
+    (operation, outcome)
 }
 
 #[devkit::test]
@@ -691,7 +865,8 @@ async fn undo_swaps_forever(db: devkit::pg::TestDatabase) {
     let child = derived("replayed.derived", 2, &[&old]);
     admit(&mut conn, &batch(vec![child.clone()])).await;
 
-    let (replayed, new) = replay(&mut conn, m, 2).await;
+    let new = reading("replayed", 1, 2, m, 0);
+    let (replayed, _) = replay(&mut conn, m, &[new.clone()]).await;
     assert_eq!(state(&mut conn, &old).await, "archived");
     assert_eq!(state(&mut conn, &child).await, "archived");
     assert_eq!(state(&mut conn, &new).await, "live");
@@ -824,4 +999,311 @@ async fn archive_by_run(db: devkit::pg::TestDatabase) {
     };
     assert_eq!(counts.archived, [("command.executed".to_owned(), 1)].into());
     assert_eq!(state(&mut conn, &kept).await, "live");
+}
+
+#[devkit::test]
+async fn restore_rederives_aggregates(db: devkit::pg::TestDatabase) {
+    let mut conn = context(&db).await;
+    let a = reading("inputs", 1, 1, MaterialId::new(), 0);
+    let b = reading("inputs", 2, 2, MaterialId::new(), 0);
+    admit(&mut conn, &batch(vec![a.clone(), b.clone()])).await;
+    let key = json!({"day": "2023-11-14"});
+    let old = derived("test.sum", 3, &[&a, &b]);
+    admit(
+        &mut conn,
+        &aggregate("test.sum", key.clone(), 0, old.clone()),
+    )
+    .await;
+
+    operation(&operate(&mut conn, Act::Archive, events(&[&a]), 16).await);
+    assert_eq!(
+        state(&mut conn, &old).await,
+        "archived",
+        "archiving one input archives the aggregate"
+    );
+    let Ended::Ok {
+        counts,
+        operation: restore,
+    } = operate(&mut conn, Act::Restore, events(&[&a]), 16).await
+    else {
+        panic!("restore refused");
+    };
+    assert_eq!(counts.restored, [("command.executed".to_owned(), 1)].into());
+    assert_eq!(counts.derived_again, 1);
+    for (event, expected) in [(&a, "live"), (&b, "live"), (&old, "archived")] {
+        assert_eq!(state(&mut conn, event).await, expected);
+    }
+    let (dirty_seq, end_seq): (i64, Option<i64>) = sqlx::query_as(
+        "SELECT d.last_dirty_seq, o.end_seq FROM derivation.dirty d, core.operations o
+         WHERE d.derivation = 'test.sum' AND d.key = $1 AND o.id = $2",
+    )
+    .bind(&key)
+    .bind(restore.0)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        Some(dirty_seq),
+        end_seq,
+        "the restore marks the aggregate's key dirty at its own position"
+    );
+
+    // The derivation computes the key again from what is live: a new reading,
+    // while the old aggregate row stays archived.
+    let new = derived("test.sum", 3, &[&a, &b]);
+    let outcome = admit(
+        &mut conn,
+        &aggregate("test.sum", key, dirty_seq, new.clone()),
+    )
+    .await;
+    assert_eq!(outcome.admitted, 1, "{outcome:?}");
+    assert_ne!(new.id, old.id);
+    assert_eq!(state(&mut conn, &new).await, "live");
+    assert_eq!(state(&mut conn, &old).await, "archived");
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT count(*) FROM derivation.dirty WHERE derivation = 'test.sum'"
+        )
+        .await,
+        0
+    );
+    assert_state_order(&mut conn).await;
+
+    // A restore of an operation that moved in several batches brings back
+    // exactly the chains that operation moved.
+    let moved: Vec<Event> = (4..=6)
+        .map(|k| reading("several", k, k, MaterialId::new(), 0))
+        .collect();
+    let apart = reading("several", 7, 7, MaterialId::new(), 0);
+    for event in moved.iter().chain([&apart]) {
+        admit(&mut conn, &batch(vec![event.clone()])).await;
+    }
+    operation(&operate(&mut conn, Act::Archive, events(&[&apart]), 16).await);
+    let archived = operation(
+        &operate(
+            &mut conn,
+            Act::Archive,
+            Scope::Source {
+                source: "several".into(),
+                after: None,
+                before: None,
+            },
+            1,
+        )
+        .await,
+    );
+    let batches: i64 = sqlx::query_scalar(
+        "SELECT (progress->>'batches')::bigint FROM core.operations WHERE id = $1",
+    )
+    .bind(archived.0)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(batches, 3);
+    let Ended::Ok { counts, .. } = operate(
+        &mut conn,
+        Act::Restore,
+        Scope::Operation {
+            operation: archived,
+        },
+        1,
+    )
+    .await
+    else {
+        panic!("restore refused");
+    };
+    assert_eq!(counts.restored, [("command.executed".to_owned(), 3)].into());
+    for event in &moved {
+        assert_eq!(state(&mut conn, event).await, "live");
+    }
+    assert_eq!(state(&mut conn, &apart).await, "archived");
+}
+
+/// The readings archived by `operation`, each with its reason.
+async fn archived_by(
+    conn: &mut PgConnection,
+    operation: OperationId,
+) -> BTreeSet<(uuid::Uuid, String)> {
+    sqlx::query_as("SELECT event_id, reason FROM audit.archived WHERE operation_id = $1")
+        .bind(operation.0)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect()
+}
+
+#[devkit::test]
+async fn replay_archives_replaced_readings_of_a_material(db: devkit::pg::TestDatabase) {
+    let mut conn = context(&db).await;
+    let m = material(&mut conn, &blob(7)).await;
+    let n = material(&mut conn, &blob(8)).await;
+    let first = reading("replayed", 1, 1, m, 0);
+    let second = reading("replayed", 2, 2, m, 1);
+    let elsewhere = reading("replayed", 3, 3, n, 0);
+    admit(
+        &mut conn,
+        &batch(vec![first.clone(), second.clone(), elsewhere.clone()]),
+    )
+    .await;
+    let child = derived("replayed.derived", 4, &[&first]);
+    admit(&mut conn, &batch(vec![child.clone()])).await;
+
+    let once = [
+        reading("replayed", 1, 1, m, 0),
+        reading("replayed", 2, 5, m, 1),
+    ];
+    let (replayed, outcome) = replay(&mut conn, m, &once).await;
+    assert_eq!(
+        (outcome.replay_archived, outcome.admitted),
+        (3, 2),
+        "{outcome:?}"
+    );
+    let reason = "replay".to_owned();
+    assert_eq!(
+        archived_by(&mut conn, replayed).await,
+        [
+            (first.id.0, reason.clone()),
+            (second.id.0, reason.clone()),
+            (child.id.0, reason.clone()),
+        ]
+        .into(),
+        "exactly the replaced readings and their chains, reason replay"
+    );
+    for event in &once {
+        assert!(![first.id, second.id].contains(&event.id));
+        assert_eq!(state(&mut conn, event).await, "live");
+    }
+    assert_eq!(state(&mut conn, &elsewhere).await, "live");
+
+    let twice = [
+        reading("replayed", 1, 1, m, 0),
+        reading("replayed", 2, 5, m, 1),
+    ];
+    let (replayed_again, outcome) = replay(&mut conn, m, &twice).await;
+    assert_eq!(
+        (outcome.replay_archived, outcome.admitted),
+        (2, 2),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        archived_by(&mut conn, replayed_again).await,
+        [(once[0].id.0, reason.clone()), (once[1].id.0, reason)].into()
+    );
+    // Each record: the original and the first replay's reading archived, the
+    // second replay's live.
+    for (original, first_replay, second_replay) in [
+        (&first, &once[0], &twice[0]),
+        (&second, &once[1], &twice[1]),
+    ] {
+        assert_eq!(state(&mut conn, original).await, "archived");
+        assert_eq!(state(&mut conn, first_replay).await, "archived");
+        assert_eq!(state(&mut conn, second_replay).await, "live");
+    }
+    assert_eq!(state(&mut conn, &elsewhere).await, "live");
+    assert_state_order(&mut conn).await;
+}
+
+/// How many search entries, embeddings and keyed output rows hold `events`.
+async fn copies(conn: &mut PgConnection, events: &[uuid::Uuid]) -> (i64, i64, i64) {
+    sqlx::query_as(
+        "SELECT (SELECT count(*) FROM core.search_text WHERE event_id = ANY($1)),
+                (SELECT count(*) FROM core.embedding_vectors WHERE target_id = ANY($1)),
+                (SELECT count(*) FROM derivation.outputs WHERE event_id = ANY($1))",
+    )
+    .bind(events)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap()
+}
+
+#[devkit::test]
+async fn tombstone_clears_copies(db: devkit::pg::TestDatabase) {
+    let mut conn = context(&db).await;
+    let e = reading("copies", 1, 1, MaterialId::new(), 0);
+    admit(&mut conn, &batch(vec![e.clone()])).await;
+    let summary = derived("copies.sum", 2, &[&e]);
+    admit(
+        &mut conn,
+        &aggregate("copies.sum", json!({"all": true}), 0, summary.clone()),
+    )
+    .await;
+    crate::read_models::tests::catch_up_search_text(&mut conn)
+        .await
+        .unwrap();
+    let ids = [e.id.0, summary.id.0];
+    for id in ids {
+        sqlx::query(
+            "INSERT INTO core.embedding_vectors (embedding_id, target_id, coverage) VALUES ($1, $2, 'unavailable')",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+    assert_eq!(copies(&mut conn, &ids).await, (2, 2, 1));
+
+    operation(&operate(&mut conn, Act::Archive, events(&[&e]), 16).await);
+    operation(&operate(&mut conn, Act::Tombstone, events(&[&e]), 16).await);
+    for event in [&e, &summary] {
+        assert_eq!(state(&mut conn, event).await, "tombstoned");
+    }
+    assert_eq!(copies(&mut conn, &ids).await, (0, 0, 0));
+}
+
+#[devkit::test]
+async fn as_of_reads_exact(db: devkit::pg::TestDatabase) {
+    let mut conn = context(&db).await;
+    let m = material(&mut conn, &blob(9)).await;
+    let a = reading("history", 1, 1, MaterialId::new(), 0);
+    let b = reading("history", 2, 2, m, 0);
+    let b_again = reading("history", 2, 3, m, 0);
+    let start = crate::query::current_seq(&mut conn).await.unwrap();
+    // The live set at each commit position from `start` on, as the script
+    // makes it; every step but the replay takes one position.
+    let mut expected: Vec<BTreeSet<String>> = vec![BTreeSet::new()];
+    let live = |events: &[&Event]| -> BTreeSet<String> {
+        events.iter().map(|e| e.id.0.to_string()).collect()
+    };
+    admit(&mut conn, &batch(vec![a.clone()])).await;
+    expected.push(live(&[&a]));
+    admit(&mut conn, &batch(vec![b.clone()])).await;
+    expected.push(live(&[&a, &b]));
+    operation(&operate(&mut conn, Act::Archive, events(&[&a]), 16).await);
+    expected.push(live(&[&b]));
+    // A replay archives at one position and admits at the next.
+    replay(&mut conn, m, &[b_again.clone()]).await;
+    expected.push(live(&[]));
+    expected.push(live(&[&b_again]));
+    operation(&operate(&mut conn, Act::Restore, events(&[&a]), 16).await);
+    expected.push(live(&[&a, &b_again]));
+    operation(&operate(&mut conn, Act::Archive, events(&[&b_again]), 16).await);
+    expected.push(live(&[&a]));
+    let end = crate::query::current_seq(&mut conn).await.unwrap();
+    assert_eq!(
+        end - start,
+        i64::try_from(expected.len()).unwrap() - 1,
+        "commit positions are dense"
+    );
+
+    let at = sinex_model::query::Context::utc("2023-11-15T00:00:00Z".parse().unwrap());
+    for (position, live) in (start..=end).zip(&expected) {
+        let answer = crate::query::run(
+            &mut conn,
+            &format!("events where source = history fields id as of seq {position}"),
+            None,
+            &at,
+            &crate::query::Page::default(),
+        )
+        .await
+        .unwrap();
+        let read: BTreeSet<String> = answer
+            .rows
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(&read, live, "as of seq {position}");
+    }
 }

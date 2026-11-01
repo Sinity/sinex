@@ -532,9 +532,22 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     .fetch_one(&mut conn)
     .await
     .unwrap();
+    let (archived_at, end_seq): (i64, Option<i64>) = sqlx::query_as(
+        "SELECT a.archived_seq, o.end_seq FROM audit.archived a
+         JOIN core.operations o ON o.id = a.operation_id WHERE a.event_id = $1",
+    )
+    .bind(target.0)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        (archived_at, end_seq),
+        (frontier + 1, Some(frontier + 1)),
+        "the one-batch archive takes the next position and ends there"
+    );
     assert_eq!(changed.0, first, "archival preserves the first dirty mark");
-    assert!(
-        changed.1 > frontier,
+    assert_eq!(
+        changed.1, archived_at,
         "and advances the last one to its actual lifecycle position"
     );
 }
