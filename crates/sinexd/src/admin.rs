@@ -242,6 +242,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let local = api::Api {
         source_config: Default::default(),
+        read_failures: Default::default(),
         reads,
         writer: Some(ctx.writer.clone()),
         blobs: ctx.blobs.clone(),

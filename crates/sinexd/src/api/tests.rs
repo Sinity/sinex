@@ -170,6 +170,7 @@ async fn world_with_config(
         .unwrap();
     let api = Api {
         source_config: Arc::new(source_config),
+        read_failures: Default::default(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
