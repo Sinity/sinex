@@ -883,7 +883,7 @@ async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomp
         position
     );
     assert!(
-        first["result"]["presentation"]["markdown"]
+        first["result"]["text"]
             .as_str()
             .unwrap()
             .contains("Unresolved recorded check failure")

@@ -151,7 +151,7 @@ impl Api {
                     let budget = budget.map_or(4000, |b| usize::try_from(b).unwrap_or(usize::MAX));
                     if let Some(reference) = day.as_deref().filter(|value| value.starts_with("sinex:ev/") || value.starts_with("query:")) {
                         let (p, citation) = analysis::render_pack(&mut conn, reference, budget).await?;
-                        return Ok(json!({"context_pack": citation, "presentation": p}));
+                        return Ok(json!({"text": p.markdown, "context_pack": citation, "presentation": p}));
                     }
                     let day = match day {
                         Some(d) => analysis::parse_day(&d)?,
@@ -164,7 +164,7 @@ impl Api {
                     let pack_request = analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let (p, citation) = analysis::render_pack(&mut conn, &format!("query:{pack_request}"), budget).await?;
-                    Ok(json!({"context_pack": citation, "presentation": p}))
+                    Ok(json!({"text": p.markdown, "context_pack": citation, "presentation": p}))
                 }
                 _ => Err("not an analysis call".into()),
             }

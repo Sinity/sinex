@@ -191,13 +191,11 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).expect("JSON prints"));
 }
 
-/// The text an answer was rendered as, when it has one: an analysis answer's
-/// `text`, or a presentation's markdown (the brief). Printed instead of the
-/// JSON document unless `--json` is given.
+/// The text an answer was rendered as (`text`: the brief, a panel,
+/// `analysis-why`), printed instead of the JSON document unless `--json` is
+/// given.
 fn rendered_text(result: &Value) -> Option<&str> {
-    result["text"]
-        .as_str()
-        .or_else(|| result["presentation"]["markdown"].as_str())
+    result["text"].as_str()
 }
 
 fn status_error(code: u8, reason: impl std::fmt::Display, state: Option<&str>) -> ExitCode {

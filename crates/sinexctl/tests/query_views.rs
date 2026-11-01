@@ -116,7 +116,7 @@ fn answered(args: &[&str], result: Value) -> String {
 /// law: text-by-default
 #[devkit::test]
 fn rendered_answers_print_their_text_once_unless_json_is_asked() {
-    let brief = json!({"context_pack":"sinex:ev/synthetic","presentation":{
+    let brief = json!({"text":"# Brief for 2026-09-14\n- synthetic finding\n","context_pack":"sinex:ev/synthetic","presentation":{
         "context":{"title":"Brief for 2026-09-14","evaluated_at":"2026-09-14T08:00:00Z","as_of":7,"day_setting":"04:00 UTC"},
         "sections":[{"title":"Data quality","findings":[]}],
         "markdown":"# Brief for 2026-09-14\n- synthetic finding\n"}});
