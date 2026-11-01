@@ -107,7 +107,6 @@ timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
 cap = "cargo"
-max_io_pressure = 5
 
 [operations.compile]
 description = "Selected package or target compilation against the schema database"
@@ -128,4 +127,40 @@ arguments = "required"
 pool = "codex"
 result = "exit"
 timeout_seconds = 14400
+cache = "none"
+
+[operations.admission_statements]
+description = "Disposable admission statement, key-size and reset experiments"
+exec = ["python", "/realm/tmp/work/codex/sx-admit-b/experiments.py"]
+pool = "measure"
+result = "exit"
+timeout_seconds = 1800
+scratch = "nvme"
+cache = "none"
+
+[operations.admission_recovery]
+description = "Complete preserved disposable admission statement measurements"
+exec = ["python", "/realm/tmp/work/codex/sx-admit-b/recover_experiments.py"]
+pool = "measure"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
+
+[operations.admission_series]
+description = "Resume the recorded alternating admission benchmark series"
+exec = ["python", "/realm/tmp/work/codex/sx-admit-b/paired_benchmarks.py", "0fda3198309768258272e2bc8e3f9617eae13f72", "--base-sha", "570ed900c2586c8e56ddb0aad61b86dbc961eba1"]
+pool = "background"
+result = "exit"
+timeout_seconds = 21600
+scratch = "nvme"
+cache = "none"
+
+[operations.admission_finish]
+description = "Collect exact-head gates, experiments and paired results into the existing draft"
+exec = ["python", "/realm/tmp/work/codex/sx-admit-b/finish_evidence.py"]
+pool = "background"
+result = "exit"
+timeout_seconds = 28800
+scratch = "nvme"
 cache = "none"
