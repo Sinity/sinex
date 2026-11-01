@@ -328,34 +328,18 @@ async fn publish_chunk(
 ) -> Result<(Duration, Duration, Duration), String> {
     let acknowledge_started = Instant::now();
     let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
-    let policy = sinex_store::privacy::projection::lock_epoch(&mut tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    if !policy.ready() {
-        return Err("privacy_projection_stale".into());
-    }
     let mut acks = Vec::new();
     for entry in entries {
         let (message, subject, id, event) = match &entry.change {
-            commit_log::Change::Event(event) => {
-                let class = sinex_store::privacy::projection::publication_class(
-                    &mut tx,
-                    event.id,
-                    policy.active,
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-                let class = class.ok_or("privacy_projection_unavailable")?;
-                (
-                    Confirmed::EventReference {
-                        commit_seq: event.commit_seq,
-                        event: EventId(event.id),
-                    },
-                    subjects.confirmed_event(&class, &event.event_type),
-                    format!("event-{}", entry.position),
-                    Some(event.id),
-                )
-            }
+            commit_log::Change::Event(event) => (
+                Confirmed::EventReference {
+                    commit_seq: event.commit_seq,
+                    event: EventId(event.id),
+                },
+                subjects.confirmed_event(&event.class, &event.event_type),
+                format!("event-{}", entry.position),
+                Some(event.id),
+            ),
             commit_log::Change::Archive(lifecycle) => {
                 let change = &lifecycle.archive;
                 let message = if change.archived {
@@ -368,17 +352,9 @@ async fn publish_chunk(
                         operation: change.operation_id.map(OperationId),
                     })
                 };
-                let class = sinex_store::privacy::projection::lifecycle_publication_class(
-                    &mut tx,
-                    change.event_id,
-                    policy.active,
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-                let class = class.ok_or("privacy_projection_unavailable")?;
                 (
                     message,
-                    subjects.confirmed_lifecycle(&class, &lifecycle.event_type),
+                    subjects.confirmed_lifecycle(&lifecycle.class, &lifecycle.event_type),
                     format!("archive-{}", change.change_seq),
                     None,
                 )

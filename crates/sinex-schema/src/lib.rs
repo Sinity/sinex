@@ -16,10 +16,8 @@ use sqlx::{Connection, Executor, PgConnection};
 
 mod event_indexes;
 mod lifecycle;
-mod model_calls;
 pub mod online;
 mod owner_protocol;
-mod privacy_epoch;
 mod query_cursors;
 mod read_boundary;
 mod source_declarations;
@@ -188,6 +186,16 @@ impl Checks {
 /// without the grant: the event, its type and time stay visible, its payload
 /// and equivalence key do not.
 fn visibility() -> Vec<String> {
+    let mut statements = visibility_functions();
+    statements.extend([
+        VISIBLE_EVENTS.into(),
+        VISIBLE_SEARCH_TEXT.into(),
+        VISIBLE_EMBEDDING_VECTORS.into(),
+    ]);
+    statements
+}
+
+fn visibility_functions() -> Vec<String> {
     vec![
         "CREATE OR REPLACE FUNCTION core.payload_time(value text) RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN
  IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN NULL; END IF;
@@ -198,24 +206,37 @@ fn visibility() -> Vec<String> {
       OR class = ANY (string_to_array(coalesce(current_setting('sinex.grants', true), ''), ','))
 $$"
         .to_string(),
-        crate::privacy_epoch::VISIBLE_EVENTS.into(),
-        crate::privacy_epoch::VISIBLE_VECTORS.into(),
-        crate::privacy_epoch::VISIBLE_SEARCH.into(),
-        crate::privacy_epoch::DERIVATION_EVENTS.into(),
     ]
 }
 
-pub(crate) fn visibility_before_privacy_epoch() -> Vec<String> {
-    vec![
-        "CREATE OR REPLACE FUNCTION core.payload_time(value text) RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN
- IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN NULL; END IF;
- RETURN value::timestamptz;
- EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN RETURN NULL; END $$".to_string(),
-        "CREATE OR REPLACE FUNCTION core.class_visible(class text) RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT class = 'open'
-      OR class = ANY (string_to_array(coalesce(current_setting('sinex.grants', true), ''), ','))
-$$"
-        .to_string(),
+pub(crate) const VISIBLE_EVENTS: &str = "CREATE VIEW core.visible_events AS SELECT
+  e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.output_index, e.parents,
+  e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
+  CASE WHEN core.class_visible(e.class) THEN e.payload
+       ELSE jsonb_build_object('withheld', e.class) END AS payload,
+  CASE WHEN core.class_visible(e.class) THEN e.equivalence_key END AS equivalence_key,
+  e.reading_order, e.record_hash, e.record_state, e.class, e.kind_version, e.validation,
+  e.producer_family, e.producer_identity, e.source_version, e.source_fingerprint
+FROM core.events e";
+
+pub(crate) const VISIBLE_SEARCH_TEXT: &str =
+    "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv, s.trigram_indexed
+FROM core.search_text s JOIN core.events e ON e.id = s.event_id
+WHERE core.class_visible(e.class)";
+
+/// A vector is readable when both the embedding event and its target are.
+pub(crate) const VISIBLE_EMBEDDING_VECTORS: &str =
+    "CREATE VIEW core.visible_embedding_vectors AS SELECT
+  v.embedding_id, v.target_id, v.space, v.dimensions, v.projected, v.coverage, v.reason
+FROM core.embedding_vectors v
+JOIN core.events e ON e.id = v.embedding_id
+JOIN core.events target ON target.id = v.target_id
+WHERE core.class_visible(e.class) AND core.class_visible(target.class)";
+
+/// The views as they stood before producer metadata and stored vectors.
+pub(crate) fn visibility_before_producer_families() -> Vec<String> {
+    let mut statements = visibility_functions();
+    statements.extend([
         "CREATE VIEW core.visible_events AS SELECT
   e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.output_index, e.parents,
   e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
@@ -225,11 +246,9 @@ $$"
   e.reading_order, e.record_hash, e.record_state, e.class, e.kind_version, e.validation
 FROM core.events e"
             .to_string(),
-        "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv, s.trigram_indexed
-FROM core.search_text s JOIN core.events e ON e.id = s.event_id
-WHERE core.class_visible(e.class)"
-            .to_string(),
-    ]
+        VISIBLE_SEARCH_TEXT.into(),
+    ]);
+    statements
 }
 
 /// One view per event type with the payload's top-level fields as columns, for

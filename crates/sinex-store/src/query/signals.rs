@@ -203,7 +203,7 @@ pub async fn standing_query(
                 .identity
                 .parse()
                 .map_err(|_| Error::Invalid("signal event row has no reading identity".into()))?;
-            let details=sqlx::query!(r#"SELECT jsonb_build_object('material',original.material_id,'anchor',original.anchor,'output',original.output_index,'source',original.source,'kind',original.event_type,'key',CASE WHEN preserved.event_id IS NOT NULL THEN preserved.equivalence_key ELSE original.equivalence_key END,'observed',visible.ts_coided,'start',visible.ts_orig,'payload',visible.payload) AS "details!",visible.class::text AS "class!" FROM core.visible_events visible JOIN core.events original ON original.id=visible.id LEFT JOIN privacy.original_events preserved ON preserved.event_id=original.id WHERE visible.id=$1"#,id).fetch_optional(&mut *conn).await?;
+            let details=sqlx::query!(r#"SELECT jsonb_build_object('material',original.material_id,'anchor',original.anchor,'output',original.output_index,'source',original.source,'kind',original.event_type,'key',original.equivalence_key,'observed',visible.ts_coided,'start',visible.ts_orig,'payload',visible.payload) AS "details!",visible.class::text AS "class!" FROM core.visible_events visible JOIN core.events original ON original.id=visible.id WHERE visible.id=$1"#,id).fetch_optional(&mut *conn).await?;
             let Some(details) = details else {
                 return Err(Error::Invalid(
                     "signal query reading became unavailable".into(),

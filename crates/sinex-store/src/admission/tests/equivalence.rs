@@ -104,7 +104,7 @@ async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Val
             )
         } else if table == "counters" {
             format!(
-                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','privacy_outputs','query_metadata') ORDER BY 1"
+                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','query_metadata') ORDER BY 1"
             )
         } else if table == "event_tombstones" {
             format!(

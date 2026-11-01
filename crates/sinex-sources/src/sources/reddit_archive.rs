@@ -3,7 +3,7 @@
 //! object per line), on `ExportArchive`. The archive copied each item when
 //! Reddit served it, so it holds items the operator later deleted and items
 //! newer than the last GDPR export. Its items carry Reddit's own IDs, which
-//! the GDPR export writes too; `post.fusion` joins the two.
+//! the GDPR export writes too; the two stay separate records.
 use super::fields;
 use serde_json::{Map, Value};
 use sinex_model::Class;

@@ -26,7 +26,6 @@ pub mod input;
 pub mod library;
 pub mod machine;
 pub mod media;
-pub mod model_call;
 pub mod operator;
 pub mod peripheral;
 pub mod portfolio;
@@ -271,15 +270,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<work::AgentctlEvent>(),
     // Derived
     info::<CommandFused>(),
-    info::<fused::FocusFused>(),
-    info::<fused::VisitFused>(),
-    info::<fused::PlayFused>(),
-    info::<fused::ClipboardFused>(),
-    info::<fused::NotificationFused>(),
     info::<fused::MailFused>(),
-    info::<fused::RestFused>(),
-    info::<fused::PostFused>(),
-    info::<fused::ConversationFused>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),
@@ -340,10 +331,6 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<operator::LogEntry>(),
     info::<operator::SteeringRow>(),
     // Library
-    info::<model_call::ModelPolicy>(),
-    info::<model_call::ModelRequest>(),
-    info::<model_call::RecordedResponse>(),
-    info::<model_call::ModelReceipt>(),
     info::<library::FileCopy>(),
     info::<library::DocumentText>(),
     info::<library::Item>(),

@@ -32,7 +32,6 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
             || schema == "registry"
             || (schema == "core"
                 && matches!(table.as_str(), "query_cursor_key" | "owner_protocol_key"))
-            || (schema == "privacy" && table == "policy_state")
         {
             continue;
         }
@@ -56,7 +55,7 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
             }
             "counters" => {
                 format!(
-                    "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','privacy_outputs','query_metadata') ORDER BY 1"
+                    "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','query_metadata') ORDER BY 1"
                 )
             }
             "search_text" => {
@@ -247,3 +246,4 @@ async fn chain_refuses_writer_and_newer_schema_before_changing_rows(db: devkit::
 }
 
 mod output_ordinals;
+mod privacy_outputs;

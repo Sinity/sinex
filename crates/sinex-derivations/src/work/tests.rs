@@ -200,7 +200,12 @@ fn compute(inputs: &[Event]) -> Vec<Event> {
     acts.extend(
         inputs
             .iter()
-            .filter(|event| matches!(event.event_type.as_str(), "rest.fused" | "state.interval"))
+            .filter(|event| {
+                matches!(
+                    event.event_type.as_str(),
+                    "health.record" | "state.interval"
+                )
+            })
             .cloned(),
     );
     let keys: BTreeSet<_> = acts
@@ -336,20 +341,51 @@ fn resume_trail_keeps_edit_locations_and_unresolved_failures() {
     assert!(card.stated_goal.is_some());
 }
 
+/// Rest as a health provider recorded it.
+fn sleep(provider: &str, category: &str, start: i64, end: i64) -> Event {
+    Event::build(
+        &sinex_model::event_types::health::HealthRecord::new(
+            provider.into(),
+            category.into(),
+            format!("{provider}:{start}"),
+            Some(at(start)),
+            Some(at(end)),
+            None,
+            Default::default(),
+            vec![],
+        )
+        .unwrap(),
+        "synthetic.work",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: start as u64,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap()
+}
+
 #[devkit::test]
 fn wake_days_follow_rest_while_calculation_days_stay_fixed() {
-    let sleep = |id: &str, start, end| {
-        record(
-            "rest.fused",
-            json!({"record":id,"started_at":at(start),"ended_at":at(end),"kind":"sleep","observed_by":[]}),
-            start as u64,
-        )
-    };
     let inputs = vec![
-        sleep("first", 0, 8 * 3600),
-        sleep("second", 28 * 3600, 36 * 3600),
+        sleep("sleep-as-android", "sleep", 0, 8 * 3600),
+        // The same night as a second provider recorded it.
+        sleep("samsung-health", "Sleep", 600, 7 * 3600),
+        sleep("sleep-as-android", "sleep", 28 * 3600, 36 * 3600),
+        // A nap is no wake.
+        sleep(
+            "samsung-health",
+            "Shealth Vitality Nap Data",
+            12 * 3600,
+            13 * 3600,
+        ),
     ];
-    let output = [8 * 3600, 36 * 3600]
+    let output = [7 * 3600, 8 * 3600, 13 * 3600, 36 * 3600]
         .into_iter()
         .flat_map(|start| {
             Keyed::compute(
@@ -1034,64 +1070,4 @@ fn highest_reducer_controls_retirement_while_older_raw_snapshot_remains_citable(
     assert_eq!(cleared.outputs.len(), 1);
     assert_eq!(cleared.outputs[0].payload["eligible_entries"], 0);
     assert_eq!(cleared.outputs[0].payload["state"], "complete");
-}
-
-#[devkit::test]
-fn transformed_required_snapshot_emits_unavailable_without_estimated_acts() {
-    let snapshot = prompt("codex:required", 10);
-    let key = json!({"session":"codex:required"});
-    let env = Env::at(
-        at(20),
-        sinex_model::time_settings::TimeSettings::new("UTC", 0, 0).unwrap(),
-    );
-    assert!(
-        Keyed::compute(&WorkActs, &key, std::slice::from_ref(&snapshot), &env)
-            .outputs
-            .iter()
-            .any(|e| e.event_type == "work.act")
-    );
-    let issue = sinex_model::UnavailableInput {
-        event: snapshot.id,
-        kind: sinex_model::KindRef {
-            name: snapshot.event_type.clone(),
-            version: snapshot.kind_version,
-        },
-        reason: sinex_model::InputUnavailableReason::RequiredPathTransformed,
-    };
-    let output = Keyed::unavailable_inputs(
-        &WorkActs,
-        &key,
-        std::slice::from_ref(&snapshot),
-        &[issue],
-        &env,
-    );
-    assert!(!output.waiting);
-    assert_eq!(output.outputs.len(), 1);
-    assert_eq!(output.outputs[0].event_type, "work.coverage");
-    assert_eq!(output.outputs[0].payload["state"], "unavailable");
-    assert_eq!(
-        output.outputs[0].payload["reasons"]["required_path_transformed"],
-        1
-    );
-    assert!(output.outputs[0].payload["eligible_entries"].is_null());
-    assert_eq!(
-        output.outputs[0].origin,
-        sinex_model::Origin::Derived {
-            parents: vec![snapshot.id]
-        }
-    );
-    let requirements = Keyed::input_requirements(&WorkActs).unwrap();
-    let current = requirements.iter().find(|r| r.kind.version == 4).unwrap();
-    assert!(current.paths.contains(&"/objectives".to_owned()));
-    assert!(
-        current
-            .paths
-            .contains(&"/record/snapshot/calls/*/at".to_owned())
-    );
-    assert!(
-        !current
-            .paths
-            .iter()
-            .any(|path| path.ends_with("/command") || path.ends_with("/text"))
-    );
 }

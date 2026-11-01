@@ -145,60 +145,6 @@ const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous p
 /// they cannot drift apart.
 pub const COMMANDS: &[Command] = &[
     Command {
-        name: "model-call",
-        summary: "Inspect model execution availability (provider execution remains disabled)",
-        args: &[pos(
-            "operation",
-            ArgKind::Text,
-            "Configured model operation",
-        )],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "model-policy",
-        summary: "Record and authorize an explicit operator model policy",
-        args: &[pos("definition", ArgKind::Text, "Complete policy JSON")],
-        access: Access::Operator,
-        mcp: true,
-    },
-    Command {
-        name: "model-record",
-        summary: "Retain a supplied model response and reconcile its actual charge",
-        args: &[
-            pos(
-                "policy",
-                ArgKind::Reference,
-                "Exact authorized policy event",
-            ),
-            pos(
-                "definition",
-                ArgKind::Text,
-                "Complete recorded response JSON",
-            ),
-        ],
-        access: Access::Operator,
-        mcp: true,
-    },
-    Command {
-        name: "model-receipt",
-        summary: "Record an actual receipt without asserting a verified model request",
-        args: &[
-            pos(
-                "policy",
-                ArgKind::Reference,
-                "Exact authorized policy event",
-            ),
-            pos(
-                "definition",
-                ArgKind::Text,
-                "Complete actual receipt and accounting basis JSON",
-            ),
-        ],
-        access: Access::Operator,
-        mcp: true,
-    },
-    Command {
         name: "signal",
         summary: "Author or inspect standing signal rules",
         access: Access::Agent,

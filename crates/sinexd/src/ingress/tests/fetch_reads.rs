@@ -362,9 +362,7 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
 }
 
 #[devkit::test]
-async fn raw_material_fetch_requires_complete_unchanged_current_policy_outputs(
-    db: devkit::pg::TestDatabase,
-) {
+async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::TestDatabase) {
     let grant = crate::ingress::fetch::Grants {
         kind_prefixes: vec!["command".into()],
         classes: vec![
@@ -395,17 +393,20 @@ async fn raw_material_fetch_requires_complete_unchanged_current_policy_outputs(
         .await;
     assert_eq!(receipt.refusal, None);
     let event = receipt.admitted[0];
-    let request = FetchMaterial { material };
-    let fetch = || {
-        sinex_transport::replies::request_json::<FetchMaterialReply>(
-            &h.client,
-            h.subjects.fetch_material("replica"),
-            "replica",
-            &request,
-            Duration::from_secs(20),
-        )
+    let fetch = |material| {
+        let h = &h;
+        async move {
+            sinex_transport::replies::request_json::<FetchMaterialReply>(
+                &h.client,
+                h.subjects.fetch_material("replica"),
+                "replica",
+                &FetchMaterial { material },
+                Duration::from_secs(20),
+            )
+            .await
+        }
     };
-    let original = fetch().await.unwrap();
+    let original = fetch(material).await.unwrap();
     assert!(original.material.is_some());
     let extents = original
         .extents
@@ -423,76 +424,51 @@ async fn raw_material_fetch_requires_complete_unchanged_current_policy_outputs(
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    let raw_hash = sqlx::query_scalar!(
-        "SELECT encode(record_hash,'hex') FROM core.events WHERE id=$1",
-        event.0
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
     sinex_store::privacy::add_rule(
         &mut conn,
         &sinex_store::privacy::NewRule {
-            name: "synthetic-hidden-command".into(),
+            name: "synthetic-sealed-command".into(),
             source,
             event_type: Some("command.imported".into()),
             field: Some("/command".into()),
             matcher: "all".into(),
             matcher_arg: None,
-            class: sinex_model::Class::Guarded,
+            class: sinex_model::Class::Sealed,
             action: sinex_store::privacy::Action::DropField,
             author: "synthetic-test".into(),
         },
     )
     .await
     .unwrap();
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
-    let refused = fetch().await.unwrap();
-    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Denied));
-    assert!(refused.material.is_none());
-    assert!(refused.extents.is_empty());
-    assert!(refused.refusal.unwrap().contains("privacy rules"));
-    let projected: FetchEventReply = sinex_transport::replies::request_json(
-        &h.client,
-        h.subjects.fetch_event("replica"),
-        "replica",
-        &FetchEvent { event },
-        Duration::from_secs(20),
-    )
-    .await
-    .unwrap();
-    let projected = projected.event.unwrap();
-    assert!(projected.payload.get("command").is_none());
-    assert!(projected.projection.verifies(&projected.payload));
-    assert_eq!(Some(projected.record_hash), raw_hash);
-    sinex_store::privacy::end_rule(&mut conn, "synthetic-hidden-command", "synthetic-test")
-        .await
-        .unwrap();
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
-    assert!(fetch().await.unwrap().material.is_some());
-    sqlx::query!("UPDATE privacy.event_outputs SET changed=false,state='unavailable_original' WHERE event_id=$1",event.0).execute(&mut conn).await.unwrap();
-    let refused = fetch().await.unwrap();
-    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Unavailable));
-    assert!(refused.material.is_none());
-    sqlx::query!(
-        "UPDATE privacy.event_outputs SET state='complete',class='sealed' WHERE event_id=$1",
-        event.0
-    )
-    .execute(&mut conn)
-    .await
-    .unwrap();
-    let refused = fetch().await.unwrap();
+    let (sealed, frame) = h.material_frame("sealed-material", b"synthetic sealed raw bytes\n");
+    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    let receipt = h
+        .send(
+            "kitty",
+            &Ingress::Events {
+                source: Some(test_source("kitty")),
+                coverage: None,
+                frame: "sealed-event".into(),
+                events: vec![imported(sealed, 0, "synthetic sealed raw bytes")],
+                failures: vec![],
+            },
+        )
+        .await;
+    assert_eq!(receipt.refusal, None);
+    let (class, payload): (String, serde_json::Value) =
+        sqlx::query_as("SELECT class,payload FROM core.events WHERE id=$1")
+            .bind(receipt.admitted[0].0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(class, "sealed", "admission applied the rule once");
+    assert!(payload.get("command").is_none());
+    let refused = fetch(sealed).await.unwrap();
     assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Locked));
-    assert!(refused.extents.is_empty());
-    sqlx::query!("UPDATE privacy.policy_state SET desired_epoch=active_epoch+1 WHERE id")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    let refused = fetch().await.unwrap();
-    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Unavailable));
     assert!(refused.material.is_none());
+    assert!(refused.extents.is_empty());
+    assert!(
+        fetch(material).await.unwrap().material.is_some(),
+        "a later rule leaves readings admitted before it unchanged"
+    );
 }

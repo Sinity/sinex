@@ -579,6 +579,48 @@ impl Compiler<'_> {
                 f.param(V::String(Some(value.to_owned()))).push(")");
                 out.push(f);
             }
+            for rows in a.kind_rows {
+                let mut f = SqlFragment::text(Self::template(cols, "({t}.event_type <> "));
+                f.param(V::String(Some(rows.kind.to_owned())))
+                    .push(" OR (true");
+                for (field, value) in rows.equal {
+                    f.push(Self::template(cols, " AND {t}.payload ->> "))
+                        .param(V::String(Some((*field).to_owned())))
+                        .push(" = ")
+                        .param(V::String(Some((*value).to_owned())));
+                }
+                for field in rows.present {
+                    f.push(Self::template(cols, " AND {t}.payload ->> "))
+                        .param(V::String(Some((*field).to_owned())))
+                        .push(" IS NOT NULL");
+                }
+                for (field, values) in rows.not_in {
+                    let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+                    f.push(Self::template(cols, " AND coalesce({t}.payload ->> "))
+                        .param(V::String(Some((*field).to_owned())))
+                        .push(", '') <> ALL(")
+                        .param(V::String(Some(text_array(&values))))
+                        .push("::text[])");
+                }
+                f.push("))");
+                out.push(f);
+            }
+            if let Some(fused) = a.fused {
+                // A source record a live fused record joins is that record's member.
+                let mut f = SqlFragment::text(
+                    "NOT EXISTS (SELECT 1 FROM core.visible_events fused WHERE fused.event_type = ",
+                );
+                f.param(V::String(Some(fused.to_owned())))
+                    .push(Self::template(
+                        cols,
+                        " AND fused.parents @> ARRAY[{t}.id] AND fused.commit_seq <= ",
+                    ))
+                    .param(V::BigInt(Some(self.seq)))
+                    .push(" AND NOT audit.is_archived_at(fused.id, ")
+                    .param(V::BigInt(Some(self.seq)))
+                    .push("))");
+                out.push(f);
+            }
         }
         out
     }

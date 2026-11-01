@@ -56,8 +56,6 @@ pub mod mail_imap;
 pub mod media_capture;
 #[cfg(feature = "full")]
 pub mod messenger;
-#[cfg(feature = "full")]
-pub mod model_calls;
 /// Media players (MPRIS) on the session bus.
 pub mod mpris;
 #[cfg(feature = "full")]
@@ -244,7 +242,6 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &forecast::FORMAT,
         &query::FORMAT,
         &analysis::FORMAT,
-        &model_calls::FORMAT,
         &signals::FORMAT,
         &page_crawl::FORMAT,
         &telemetry::FORMAT,

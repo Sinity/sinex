@@ -2,6 +2,7 @@
 //! create operator time; every act, episode and resume pack is a stored event.
 use crate::activity::{SECOND, evidence, stable, union_seconds};
 use crate::derived_event::derived;
+use crate::observed::{REST, is_sleep, sleep_kinds};
 use crate::{AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::{activity::Agency, work::*};
@@ -48,18 +49,6 @@ impl Keyed for WorkActs {
     const VERSION: u32 = 7;
     const INPUTS: &'static [&'static str] = &["polylogue.work_snapshot"];
     const OUTPUTS: &'static [&'static str] = &["work.act", "work.coverage"];
-    fn input_requirements(&self) -> Option<Vec<sinex_model::InputRequirement>> {
-        Some(snapshot::requirements())
-    }
-    fn unavailable_inputs(
-        &self,
-        key: &Value,
-        inputs: &[Event],
-        issues: &[sinex_model::UnavailableInput],
-        _: &Env,
-    ) -> Computed {
-        snapshot::required_unavailable(key, inputs, issues)
-    }
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
         input
             .payload
@@ -91,8 +80,8 @@ fn episode_kind(episode: &Value) -> Kind {
 pub struct WorkEpisodes;
 impl Keyed for WorkEpisodes {
     const NAME: &'static str = "work.episodes";
-    const VERSION: u32 = 4;
-    const INPUTS: &'static [&'static str] = &["work.act", "state.interval", "rest.fused"];
+    const VERSION: u32 = 5;
+    const INPUTS: &'static [&'static str] = &["work.act", "state.interval", "health.record"];
     const OUTPUTS: &'static [&'static str] =
         &["work.episode", "work.suspension", "work.resumption"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
@@ -119,7 +108,11 @@ impl Keyed for WorkEpisodes {
                         .unwrap_or(Timestamp(time::PrimitiveDateTime::MIN.assume_utc())),
                     end: input
                         .payload
-                        .get("ended_at")
+                        .get(if input.event_type == "health.record" {
+                            "end"
+                        } else {
+                            "ended_at"
+                        })
                         .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
                         .unwrap_or(at),
                 }]
@@ -127,7 +120,9 @@ impl Keyed for WorkEpisodes {
             .unwrap_or_default()
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect());
+        let mut kinds = vec![Kind::all("work.act"), Kind::all("state.interval")];
+        kinds.extend(REST.kinds());
+        let mut query = InputQuery::all(kinds);
         query.range = Some(InputRange::Extent {
             kinds: vec![episode_kind(key.get("episode")?)],
         });
@@ -137,7 +132,7 @@ impl Keyed for WorkEpisodes {
             count: 1,
         });
         query.after.push(crate::Neighbour {
-            kinds: vec![Kind::all("rest.fused")],
+            kinds: REST.kinds(),
             per: None,
             count: 1,
         });
@@ -155,16 +150,11 @@ impl Keyed for WorkEpisodes {
             per: Some("subject_id"),
             count: 1,
         });
-        query.intervals = vec![
-            (
-                "state.interval",
-                sinex_model::clock::IntervalEnd::At("ended_at"),
-            ),
-            (
-                "rest.fused",
-                sinex_model::clock::IntervalEnd::At("ended_at"),
-            ),
-        ];
+        query.intervals = vec![(
+            "state.interval",
+            sinex_model::clock::IntervalEnd::At("ended_at"),
+        )];
+        query.intervals.extend(REST.intervals());
         Some(query)
     }
     fn refresh_at(&self, outputs: &[Event], _: &Env) -> Option<Timestamp> {
@@ -241,7 +231,7 @@ impl Keyed for WorkEpisodes {
                     start > before.at
                         && start <= until
                         && after.is_none_or(|(_, next)| start < next.at)
-                        && (event.event_type == "rest.fused"
+                        && (REST.admits(&event.event_type, &event.payload)
                             || (event.event_type == "state.interval"
                                 && before.machine.as_ref().is_some_and(|host| {
                                     event
@@ -474,24 +464,29 @@ impl Keyed for ContextPacks {
 pub struct ActivityDays;
 impl Keyed for ActivityDays {
     const NAME: &'static str = "activity.days";
-    const VERSION: u32 = 1;
-    const INPUTS: &'static [&'static str] = &["rest.fused", "activity.span"];
+    const VERSION: u32 = 2;
+    const INPUTS: &'static [&'static str] = &["health.record", "activity.span"];
     const OUTPUTS: &'static [&'static str] = &["activity.day"];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        if input.event_type != "rest.fused" || input.payload["kind"] != "sleep" {
+        if !is_sleep(input.event_type, input.payload) {
             return vec![];
         }
         input
             .payload
-            .get("ended_at")
+            .get("end")
             .filter(|end| !end.is_null())
             .map(|end| vec![json!({"start":end})])
             .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
+        let end_field = if input.event_type == "health.record" {
+            "end"
+        } else {
+            "ended_at"
+        };
         let end = input
             .payload
-            .get("ended_at")
+            .get(end_field)
             .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok());
         input
             .ts_orig
@@ -509,17 +504,22 @@ impl Keyed for ActivityDays {
     }
     fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
         let start = serde_json::from_value::<Timestamp>(key.get("start")?.clone()).ok()?;
-        let mut query = InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect());
+        let mut kinds = sleep_kinds();
+        kinds.push(Kind::all("activity.span"));
+        let mut query = InputQuery::all(kinds);
         query.range = Some(InputRange::UntilNext {
             start,
             after: None,
-            kinds: vec![Kind::only("rest.fused", &[("kind", "sleep")])],
-            field: "ended_at",
+            kinds: sleep_kinds(),
+            field: "end",
         });
-        query.intervals = Self::INPUTS
-            .iter()
-            .map(|kind| (*kind, sinex_model::clock::IntervalEnd::At("ended_at")))
-            .collect();
+        query.intervals = vec![
+            ("health.record", sinex_model::clock::IntervalEnd::At("end")),
+            (
+                "activity.span",
+                sinex_model::clock::IntervalEnd::At("ended_at"),
+            ),
+        ];
         Some(query)
     }
     fn key_state(&self, _: &Value, _: &Env) -> KeyState {
@@ -532,22 +532,29 @@ impl Keyed for ActivityDays {
         else {
             return Computed::default();
         };
-        let mut wakes: Vec<_> = inputs
+        // Providers record one night separately; overlapping sleep records are
+        // one sleep, and its wake is their latest end.
+        let mut sleeps: Vec<_> = inputs
             .iter()
-            .filter(|event| event.event_type == "rest.fused" && event.payload["kind"] == "sleep")
+            .filter(|event| is_sleep(&event.event_type, &event.payload))
             .filter_map(|event| {
-                Some((
-                    serde_json::from_value::<sinex_model::Timestamp>(
-                        event.payload.get("ended_at")?.clone(),
-                    )
-                    .ok()?,
-                    event,
-                ))
+                let rest = REST.read(event)?;
+                let end = serde_json::from_value::<Timestamp>(rest["ended_at"].clone()).ok()?;
+                Some((event.ts_orig.at?.min(end), end, event))
             })
-            .filter(|(at, _)| *at <= env.now)
+            .filter(|(_, end, _)| *end <= env.now)
             .collect();
-        wakes.sort_by_cached_key(|(at, event)| (*at, stable(event)));
-        wakes.dedup_by_key(|(at, _)| *at);
+        sleeps.sort_by_cached_key(|(start, end, event)| (*start, *end, stable(event)));
+        let mut wakes: Vec<(Timestamp, Vec<&Event>)> = Vec::new();
+        for (start, end, event) in sleeps {
+            match wakes.last_mut() {
+                Some((wake, members)) if start <= *wake => {
+                    *wake = (*wake).max(end);
+                    members.push(event);
+                }
+                _ => wakes.push((end, vec![event])),
+            }
+        }
         let mut outputs = Vec::new();
         for (index, (start, wake)) in wakes
             .iter()
@@ -630,9 +637,14 @@ impl Keyed for ActivityDays {
                     profile: "wake-day/v1".into(),
                 },
                 Self::NAME,
-                [*wake]
-                    .into_iter()
-                    .chain(wakes.get(index + 1).map(|(_, event)| *event))
+                wake.iter()
+                    .copied()
+                    .chain(
+                        wakes
+                            .get(index + 1)
+                            .into_iter()
+                            .flat_map(|(_, next)| next.iter().copied()),
+                    )
                     .chain(spans.iter().map(|(event, _)| *event)),
             ));
         }

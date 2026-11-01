@@ -338,7 +338,7 @@ Family F16.
 - Segments are independently decodable and continuous; frames carry clock and discontinuity facts so transcripts align later.
 - Stream and node hotplug, graph rate changes and device failures are source events or gaps. All known devices are captured at startup, and streams are opened before publishing.
 
-**Imported speech.** JSON, Whisper, WebVTT, SRT and plain-text transcripts keep each cue or segment, exact decimal relative offsets, speaker, language, model, run, confidence and unknown fields, linked to the media material when known. External run IDs are never turned into Sinex parent IDs. New speech recognition, voice-activity detection and diarization are model work in [derivations](derivations.md), off while model-calling features are off, and never replace the audio.
+**Imported speech.** JSON, Whisper, WebVTT, SRT and plain-text transcripts keep each cue or segment, exact decimal relative offsets, speaker, language, model, run, confidence and unknown fields, linked to the media material when known. External run IDs are never turned into Sinex parent IDs. New speech recognition, voice-activity detection and diarization are model work in [derivations](derivations.md), off while model features are off, and never replace the audio.
 
 ## Operator records and source health
 

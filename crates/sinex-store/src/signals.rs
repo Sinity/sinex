@@ -295,7 +295,7 @@ pub async fn live_reading(
 }
 
 /// A replay uses the original owner-certified input snapshot, never a fresh
-/// policy mark that would certify copied evidence under a different transform.
+/// read mark that would certify copied evidence against later changes.
 pub async fn material_read_mark(
     conn: &mut PgConnection,
     material: sinex_model::MaterialId,
@@ -343,13 +343,13 @@ pub async fn input_position(conn: &mut PgConnection, id: EventId) -> Result<Opti
 }
 
 /// Rereading a native fact may change reading IDs, but cannot change the exact
-/// native input set or promote legacy unknown originals to a proved lineage.
+/// native input set.
 async fn lineage(
     conn: &mut PgConnection,
     ids: &[uuid::Uuid],
 ) -> Result<Option<BTreeMap<uuid::Uuid, String>>> {
-    let rows=sqlx::query!(r#"SELECT e.id,coalesce(o.recoverable,false) AS "known!",jsonb_build_array(e.source,e.event_type,CASE WHEN o.equivalence_key IS NOT NULL THEN jsonb_build_array('key',o.equivalence_key) WHEN e.material_id IS NOT NULL THEN jsonb_build_array('record',e.material_id,e.anchor,e.output_index) ELSE jsonb_build_array('event',e.id) END) AS "identity!" FROM core.events e LEFT JOIN privacy.original_events o ON o.event_id=e.id WHERE e.id=ANY($1)"#,ids).fetch_all(conn).await?;
-    if rows.len() != ids.len() || rows.iter().any(|row| !row.known) {
+    let rows=sqlx::query!(r#"SELECT e.id,jsonb_build_array(e.source,e.event_type,CASE WHEN e.equivalence_key IS NOT NULL THEN jsonb_build_array('key',e.equivalence_key) WHEN e.material_id IS NOT NULL THEN jsonb_build_array('record',e.material_id,e.anchor,e.output_index) ELSE jsonb_build_array('event',e.id) END) AS "identity!" FROM core.events e WHERE e.id=ANY($1)"#,ids).fetch_all(conn).await?;
+    if rows.len() != ids.len() {
         return Ok(None);
     }
     rows.into_iter()

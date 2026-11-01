@@ -34,8 +34,6 @@ async fn sql_cannot_change_grants_or_escape_its_role_through_nested_queries(
         "SELECT examples FROM derivation.comparisons",
         "SELECT secret FROM core.query_cursor_key",
         "SELECT secret FROM core.owner_protocol_key",
-        "SELECT payload FROM privacy.event_outputs",
-        "SELECT baseline_class FROM privacy.original_events",
         "SELECT state FROM core.signal_checkpoints",
     ] {
         let (_, reply) = call(&w, Some(READ), json!({"method":"sql","sql":statement})).await;

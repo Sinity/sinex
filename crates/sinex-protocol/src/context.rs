@@ -34,7 +34,6 @@ pub struct DeliveredCompletion {
 pub struct CoverageProof {
     pub stamp: String,
     pub position: i64,
-    pub policy_epoch: i64,
     pub scope: String,
 }
 

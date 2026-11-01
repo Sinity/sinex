@@ -84,7 +84,7 @@ The default order is the operator's authored value (an explicit empty included),
 - Rejecting an imported or proposed value is its own explicit record, not a reserved leading character in a tag label.
 - Shown-value precedence is the library's own: Polylogue's assertions have no imported level to rank, while booru imports, catalog sidecars and reading-service tags make imported values the library's common case.
 - **The shown-value projection** (`library_shown`: item, field, value, level, state, supporters) is maintained by the writer in the admission transaction for the targets a request touches, through the common currency function, so reads never recompute currency over the archive.
-- Proposals (classifier or model output) are the lowest level and never overwrite an authored value. Model execution follows [the model-calling contract](derivations.md#model-calling); imported model outputs are captured regardless.
+- Proposals (classifier or model output) are the lowest level and never overwrite an authored value. Model execution follows [the model output contract](derivations.md#the-contract-every-model-output-follows); imported model outputs are captured regardless.
 
 ## Items, locators and copies
 
