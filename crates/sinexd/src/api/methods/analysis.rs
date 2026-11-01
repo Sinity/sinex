@@ -151,8 +151,7 @@ impl Api {
                     let budget = budget.map_or(4000, |b| usize::try_from(b).unwrap_or(usize::MAX));
                     if let Some(reference) = day.as_deref().filter(|value| value.starts_with("sinex:ev/") || value.starts_with("query:")) {
                         let (p, citation) = analysis::render_pack(&mut conn, reference, budget).await?;
-                        let machine = json!({"context_pack": citation, "read_as": p.context.as_of, "sections": p.sections.iter().filter(|section| section.title == "Machine").collect::<Vec<_>>()});
-                        return Ok(json!({"text": p.markdown, "presentation": p, "context_pack": citation, "machine": machine}));
+                        return Ok(json!({"text": p.markdown, "context_pack": citation, "presentation": p}));
                     }
                     let day = match day {
                         Some(d) => analysis::parse_day(&d)?,
@@ -165,8 +164,7 @@ impl Api {
                     let pack_request = analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let (p, citation) = analysis::render_pack(&mut conn, &format!("query:{pack_request}"), budget).await?;
-                    let machine = json!({"context_pack": citation, "read_as": p.context.as_of, "sections": p.sections.iter().filter(|section| section.title == "Machine").collect::<Vec<_>>()});
-                    Ok(json!({"text": p.markdown, "presentation": p, "context_pack": citation, "machine": machine}))
+                    Ok(json!({"text": p.markdown, "context_pack": citation, "presentation": p}))
                 }
                 _ => Err("not an analysis call".into()),
             }

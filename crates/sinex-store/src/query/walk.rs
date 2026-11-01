@@ -327,8 +327,6 @@ pub(crate) async fn recall_summary(
         r#"SELECT c.source AS "name!" FROM core.source_counts c
            WHERE EXISTS (SELECT 1 FROM core.visible_events e WHERE e.source=c.source
              AND NOT e.event_type = ANY($1))
-           UNION SELECT name FROM registry.sources
-           WHERE NOT event_types <@ $1::text[]
            ORDER BY 1"#,
         &bookkeeping_types,
     )
