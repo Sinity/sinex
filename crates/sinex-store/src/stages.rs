@@ -5,6 +5,7 @@
 use crate::{Error, Result};
 use serde::Serialize;
 use serde_json::Value;
+use sinex_model::DbCheck;
 use sinex_model::lifecycle::OperationResult;
 use sinex_model::{InputRef, Manifest, MaterialId, ObservationFacts, OperationId, RevisionChange};
 use sqlx::PgConnection;
@@ -149,9 +150,9 @@ pub struct Stage {
     pub actor: String,
     pub at: sinex_model::Timestamp,
     pub scope: Value,
-    /// `ok`, `stopped_early`, or `None` while it has not ended: running, or
-    /// interrupted and waiting for `resume`.
-    pub result: Option<String>,
+    /// `None` while it has not ended: running, or interrupted and waiting
+    /// for `resume`.
+    pub result: Option<OperationResult>,
     pub counts: Value,
     pub inventory: Value,
     pub refusals: Value,
@@ -172,37 +173,50 @@ struct Row {
     end_seq: Option<i64>,
 }
 
-impl From<Row> for Stage {
-    fn from(r: Row) -> Self {
-        Stage {
+impl TryFrom<Row> for Stage {
+    type Error = Error;
+
+    fn try_from(r: Row) -> Result<Self> {
+        let result = match r.result.as_deref() {
+            None => None,
+            Some(text) => Some(
+                [OperationResult::Ok, OperationResult::StoppedEarly]
+                    .into_iter()
+                    .find(|result| result.as_db() == text)
+                    .ok_or_else(|| {
+                        Error::Invalid(format!("operation {}: unknown result {text}", r.id))
+                    })?,
+            ),
+        };
+        Ok(Stage {
             operation: OperationId(r.id),
             actor: r.actor,
             at: sinex_model::Timestamp(r.at),
             scope: r.scope,
-            result: r.result,
+            result,
             counts: r.counts,
             inventory: r.progress,
             refusals: r.refusals,
             start_seq: r.start_seq,
             end_seq: r.end_seq,
-        }
+        })
     }
 }
 
-/// Stage operations, newest first; with `unfinished`, only those that have
-/// not ended.
-pub async fn list(conn: &mut PgConnection, unfinished: bool) -> Result<Vec<Stage>> {
+/// Stage operations, newest first; with `active`, only those that have not
+/// ended.
+pub async fn list(conn: &mut PgConnection, active: bool) -> Result<Vec<Stage>> {
     let rows = sqlx::query_as!(
         Row,
         r#"SELECT id, actor, at, scope, result, counts, progress, refusals, start_seq, end_seq
            FROM core.operations WHERE kind = $1 AND (NOT $2 OR result IS NULL)
            ORDER BY at DESC, id DESC"#,
         KIND,
-        unfinished,
+        active,
     )
     .fetch_all(conn)
     .await?;
-    Ok(rows.into_iter().map(Stage::from).collect())
+    rows.into_iter().map(Stage::try_from).collect()
 }
 
 /// One stage operation; `None` when no stage has the ID.
@@ -216,7 +230,7 @@ pub async fn show(conn: &mut PgConnection, operation: OperationId) -> Result<Opt
     )
     .fetch_optional(conn)
     .await?;
-    Ok(row.map(Stage::from))
+    row.map(Stage::try_from).transpose()
 }
 
 #[cfg(test)]

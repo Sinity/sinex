@@ -268,6 +268,7 @@ pub(crate) async fn recorded(
         failures: count("failures")?,
         dirty_keys: count("dirty_keys")?,
         replay_archived: count("replay_archived")?,
+        removed_at_source: count("removed_at_source")?,
         commit_seq: row
             .outcome
             .get("commit_range")
@@ -401,6 +402,7 @@ impl Outcome {
             "commit_range": self.commit_seq,
             "superseded_input": self.superseded_input,
             "replay_archived": self.replay_archived,
+            "removed_at_source": self.removed_at_source,
             "dirty_keys": self.dirty_keys,
             "admitted": self.admitted,
             "repeats": self.repeats,

@@ -226,6 +226,8 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         sinex_model::time_settings::TimeSettings::from_parts(zone.clone(), day_start),
     )
     .await?;
+    // A local command stops only when it ends.
+    let (_running, stop) = tokio::sync::watch::channel(false);
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect(database)
@@ -235,6 +237,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         source_config: Default::default(),
         read_failures: Default::default(),
         running_stages: Default::default(),
+        stop,
         reads,
         writer: Some(ctx.writer.clone()),
         blobs: ctx.blobs.clone(),

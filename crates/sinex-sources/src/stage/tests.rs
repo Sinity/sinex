@@ -315,23 +315,18 @@ fn a_member_two_sources_would_read_is_read_by_neither() {
     let staged = plan(&formats, &[item(&archive)], &settings()).unwrap();
     let file = &staged.files[0];
     // Keep's note and Chrome's history both look like messages to the
-    // messenger reader, so neither Keep, Chrome nor messenger reads them.
+    // messenger reader, so neither Keep, Chrome nor messenger reads them; the
+    // candidates are the formats `--parser` would take.
     assert_eq!(
         disposition(file, "Takeout/Keep/Contested.json"),
         &Disposition::StoredNotInterpreted {
-            candidates: vec![
-                google_takeout::keep::SPEC.name.into(),
-                messenger::SPEC.name.into()
-            ]
+            candidates: vec!["messenger".into(), "takeout".into()]
         }
     );
     assert_eq!(
         disposition(file, "Takeout/Chrome/History.json"),
         &Disposition::StoredNotInterpreted {
-            candidates: vec![
-                takeout_chrome::SPEC.name.into(),
-                messenger::SPEC.name.into()
-            ]
+            candidates: vec!["messenger".into(), "takeout-chrome".into()]
         }
     );
     assert_eq!(
@@ -339,10 +334,16 @@ fn a_member_two_sources_would_read_is_read_by_neither() {
         &not_interpreted()
     );
     assert!(file.bindings.is_empty());
-    let FileReading::Unparsed { candidates } = &file.reading else {
-        panic!("{:?}", file.reading)
-    };
-    assert!(candidates.contains(&messenger::SPEC.name.to_owned()));
+    assert_eq!(
+        file.reading,
+        FileReading::Unparsed {
+            candidates: vec![
+                "messenger".into(),
+                "takeout".into(),
+                "takeout-chrome".into()
+            ]
+        }
+    );
 }
 
 #[devkit::test]

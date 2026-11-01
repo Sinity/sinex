@@ -361,12 +361,12 @@ impl Api {
             host: self.host.clone(),
             zone: self.zone.iana_name().map(str::to_owned),
         };
-        self.start_stage(caller, OperationId::new(), request, false, follow)
+        self.start_stage(caller, OperationId::new(), request, None, follow)
             .await
     }
 
-    /// Read a stage that did not end again, from its recorded plan and its
-    /// bindings' cursors, and answer when it ends.
+    /// Read a stage that did not end again, from its recorded plan, its
+    /// saved progress and its bindings' cursors, and answer when it ends.
     async fn resume_stage(&self, caller: &Caller, operation: OperationId) -> Reply {
         let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
@@ -379,23 +379,30 @@ impl Api {
         };
         drop(conn);
         if let Some(result) = stored.result {
-            return refused(format!("stage {} already ended {result}", operation.0));
+            use sinex_model::DbCheck;
+            return refused(format!(
+                "stage {} already ended {}",
+                operation.0,
+                result.as_db()
+            ));
         }
         match crate::stage::Request::from_scope(&stored.scope) {
             Ok(request) => {
-                self.start_stage(caller, operation, request, true, true)
+                self.start_stage(caller, operation, request, Some(stored.inventory), true)
                     .await
             }
             Err(e) => refused(e),
         }
     }
 
+    /// Plan, claim the bindings, and read in a task of its own; `saved` is
+    /// the progress of a stage being resumed.
     async fn start_stage(
         &self,
         caller: &Caller,
         operation: OperationId,
         request: crate::stage::Request,
-        resume: bool,
+        saved: Option<Value>,
         follow: bool,
     ) -> Reply {
         let Some(writer) = self.writer.clone() else {
@@ -406,18 +413,7 @@ impl Api {
         let host = self.host.clone();
         let plan = tokio::task::spawn_blocking(move || {
             let plan = planned.plan()?;
-            // A path this daemon reads continuously is already staged; a
-            // second reader of the same binding would race its cursor.
-            let continuous = crate::binding_runner::plan(&config, &host)?;
-            for (_, binding) in plan.bindings() {
-                if continuous.iter().any(|(_, b)| b.name == binding.name) {
-                    return Err(format!(
-                        "{} is read continuously as {}; it needs no stage",
-                        binding.input.display(),
-                        binding.name
-                    ));
-                }
-            }
+            crate::stage::not_continuous(&plan, &crate::binding_runner::plan(&config, &host)?)?;
             Ok::<_, String>(plan)
         })
         .await;
@@ -426,9 +422,10 @@ impl Api {
             Ok(Err(e)) => return refused(e),
             Err(e) => return refused(e.to_string()),
         };
-        if !crate::stage::claim(&self.running_stages, operation) {
-            return refused(format!("stage {} is being read now", operation.0));
-        }
+        let claim = match crate::stage::Claim::take(&self.running_stages, &plan) {
+            Ok(claim) => claim,
+            Err(e) => return refused(e),
+        };
         let unlock = if caller.actor == "operator" {
             self.unlock
                 .lock()
@@ -441,30 +438,30 @@ impl Api {
         };
         let reads = self.reads.clone();
         let blobs = self.blobs.clone();
-        let running = self.running_stages.clone();
+        let stop = self.stop.clone();
         let actor = caller.actor.to_owned();
         let (begun, started) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
-            let outcome = async {
-                let mut conn = reads.acquire().await.map_err(|e| e.to_string())?;
-                let mut staging = crate::stage::Staging {
-                    read_conn: &mut conn,
-                    blobs: &blobs,
-                    writer: &writer,
-                    access: crate::material_access::Access {
-                        recipient: None,
-                        unlock: unlock.as_ref(),
-                    },
-                };
-                if resume {
-                    staging.resume(operation, &request, plan, begun).await
-                } else {
-                    staging.run(operation, &actor, &request, plan, begun).await
+            let _claim = claim;
+            let mut conn = reads.acquire().await.map_err(|e| e.to_string())?;
+            let mut staging = crate::stage::Staging {
+                read_conn: &mut conn,
+                blobs: &blobs,
+                writer: &writer,
+                access: crate::material_access::Access {
+                    recipient: None,
+                    unlock: unlock.as_ref(),
+                },
+                stop,
+            };
+            match saved {
+                Some(saved) => {
+                    staging
+                        .resume(operation, &request, plan, &saved, begun)
+                        .await
                 }
+                None => staging.run(operation, &actor, &request, plan, begun).await,
             }
-            .await;
-            crate::stage::release(&running, operation);
-            outcome
         });
         if !follow && let Ok(started) = started.await {
             return Reply::Ok { result: started };

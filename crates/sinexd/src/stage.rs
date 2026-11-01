@@ -9,27 +9,29 @@
 //!
 //! A staged input is read to its end and then finished: staging the same
 //! unchanged path again reads nothing new, and a newer export is a new path.
-//! An interrupted stage runs again from the same plan and its bindings'
-//! committed cursors (`resume`), so it reaches the same readings.
+//! An interrupted stage is read again from its recorded plan (`resume`): the
+//! files it finished keep their accounting, files it stored are not stored
+//! again, and every binding continues from its committed cursor.
 use crate::material_access::{Access, Sink};
 use crate::writer::{self, StageWrite, WriterHandle};
 use serde_json::{Value, json};
 use sinex_model::lifecycle::OperationResult;
-use sinex_model::{Accounting, InputRef, Manifest, MaterialId, OperationId, RunId};
+use sinex_model::{Accounting, Class, InputRef, Manifest, MaterialId, OperationId, RunId};
 use sinex_source_core::{Binding, MaterialSink, Settings, Source, drivers};
 use sinex_sources::sources;
-use sinex_sources::stage::{Item, StagePlan};
+use sinex_sources::stage::{FileReading, Item, StagePlan};
 use sinex_store::{Blobs, bindings, positions};
 use sqlx::PgConnection;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 
 /// What `stage` was asked to do: its scope, kept with the operation so a
 /// resumed stage plans exactly the same.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Request {
-    pub items: Vec<StagedItem>,
+    pub items: Vec<Item>,
     /// The account an export belongs to, recorded with every binding as the
     /// `account` option.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -44,16 +46,9 @@ pub(crate) struct Request {
     pub zone: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct StagedItem {
-    pub path: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parser: Option<String>,
-}
-
 /// The staged items for `paths` read with `parsers`: none (each file is
 /// recognised by detection), one for every path, or one per path in order.
-pub(crate) fn items(paths: &[String], parsers: &[String]) -> Result<Vec<StagedItem>, String> {
+pub(crate) fn items(paths: &[String], parsers: &[String]) -> Result<Vec<Item>, String> {
     if !parsers.is_empty() && parsers.len() != 1 && parsers.len() != paths.len() {
         return Err(format!(
             "{} parsers for {} paths: name one parser for every path, or one per path",
@@ -64,7 +59,7 @@ pub(crate) fn items(paths: &[String], parsers: &[String]) -> Result<Vec<StagedIt
     Ok(paths
         .iter()
         .enumerate()
-        .map(|(index, path)| StagedItem {
+        .map(|(index, path)| Item {
             path: PathBuf::from(path),
             parser: match parsers.len() {
                 0 => None,
@@ -75,22 +70,68 @@ pub(crate) fn items(paths: &[String], parsers: &[String]) -> Result<Vec<StagedIt
         .collect())
 }
 
-/// The stages a daemon is reading now.
-pub(crate) type Running = std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<OperationId>>>;
+/// The bindings the daemon's stages are reading now, by name: a binding has
+/// one reader at a time, or two would race its cursor.
+pub(crate) type Running = std::sync::Arc<std::sync::Mutex<BTreeSet<String>>>;
 
-/// Mark `operation` as being read; false when it already is.
-pub(crate) fn claim(running: &Running, operation: OperationId) -> bool {
-    running
-        .lock()
-        .expect("the running stages are never poisoned")
-        .insert(operation)
+/// A stage's hold on its bindings, released when it ends, however it ends.
+pub(crate) struct Claim {
+    running: Running,
+    names: Vec<String>,
 }
 
-pub(crate) fn release(running: &Running, operation: OperationId) {
-    running
-        .lock()
-        .expect("the running stages are never poisoned")
-        .remove(&operation);
+impl Claim {
+    /// Hold every binding of `plan`, or none when one is being read.
+    pub(crate) fn take(running: &Running, plan: &StagePlan) -> Result<Self, String> {
+        let names: Vec<String> = plan.bindings().map(|(_, b)| b.name.clone()).collect();
+        let mut held = running.lock().expect("the running stages are never poisoned");
+        if let Some(busy) = names.iter().find(|name| held.contains(*name)) {
+            return Err(format!("{busy} is being read by another stage now"));
+        }
+        held.extend(names.iter().cloned());
+        Ok(Self {
+            running: running.clone(),
+            names,
+        })
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let mut held = self
+            .running
+            .lock()
+            .expect("the running stages are never poisoned");
+        for name in &self.names {
+            held.remove(name);
+        }
+    }
+}
+
+/// Refuse a plan any of whose bindings the daemon reads continuously, by
+/// source and resolved input: that input is staged already, and a second
+/// reader would race its cursor.
+pub(crate) fn not_continuous(
+    plan: &StagePlan,
+    continuous: &[(&'static sinex_source_core::InputFormat, Binding)],
+) -> Result<(), String> {
+    let resolved = |b: &Binding| {
+        (
+            b.source.clone(),
+            std::fs::canonicalize(&b.input).unwrap_or_else(|_| b.input.clone()),
+        )
+    };
+    let read: BTreeSet<_> = continuous.iter().map(|(_, b)| resolved(b)).collect();
+    for (_, binding) in plan.bindings() {
+        if read.contains(&resolved(binding)) {
+            return Err(format!(
+                "{} is read continuously by {} from its canonical location; it needs no stage",
+                binding.input.display(),
+                binding.source
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Request {
@@ -123,24 +164,25 @@ impl Request {
                 ));
             }
         }
-        let items: Vec<Item> = self
-            .items
-            .iter()
-            .map(|i| Item {
-                path: i.path.clone(),
-                parser: i.parser.clone(),
-            })
-            .collect();
-        sinex_sources::stage::plan(sources::formats(), &items, &self.settings())
+        sinex_sources::stage::plan(sources::formats(), &self.items, &self.settings())
     }
 }
 
+/// How far one product of one staged file has been read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductState {
+    #[default]
+    Queued,
+    Read,
+    Failed,
+}
+
 /// One product (a source) of one staged file, as reading goes.
-#[derive(Clone, Debug, Default, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Product {
-    /// `queued`, `read` or `failed`.
-    state: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    state: ProductState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     accounting: Accounting,
 }
@@ -161,15 +203,7 @@ impl Progress {
             .map(|file| {
                 file.bindings
                     .iter()
-                    .map(|(_, b)| {
-                        (
-                            b.source.clone(),
-                            Product {
-                                state: "queued",
-                                ..Product::default()
-                            },
-                        )
-                    })
+                    .map(|(_, b)| (b.source.clone(), Product::default()))
                     .collect()
             })
             .collect();
@@ -181,7 +215,49 @@ impl Progress {
         }
     }
 
-    /// The inventory as the operations log and `stage show` hold it.
+    /// The progress a stage saved before it was interrupted: what each
+    /// file's products read, and which files it stored. A file whose
+    /// products all read is not read again; a product read in part starts
+    /// over from its committed cursor, and its accounting then covers what
+    /// is read after the resume.
+    fn resumed(plan: StagePlan, saved: &Value) -> Result<Self, String> {
+        let mut progress = Self::new(plan);
+        let saved_files = saved["files"].as_array().cloned().unwrap_or_default();
+        for (index, file) in progress.plan.files.iter().enumerate() {
+            let Some(before) = saved_files
+                .iter()
+                .find(|f| f["path"] == json!(file.path))
+            else {
+                continue;
+            };
+            if let Some(material) = before.get("material").filter(|m| !m.is_null()) {
+                progress.stored[index] = Some(
+                    serde_json::from_value(material.clone())
+                        .map_err(|e| format!("saved stage progress: {e}"))?,
+                );
+            }
+            let products: BTreeMap<String, Product> =
+                serde_json::from_value(before["products"].clone())
+                    .map_err(|e| format!("saved stage progress: {e}"))?;
+            for (source, product) in products {
+                if product.state == ProductState::Read
+                    && let Some(current) = progress.products[index].get_mut(&source)
+                {
+                    *current = product;
+                }
+            }
+        }
+        Ok(progress)
+    }
+
+    /// Whether every product of file `index` has been read.
+    fn file_read(&self, index: usize) -> bool {
+        self.products[index]
+            .values()
+            .all(|p| p.state == ProductState::Read)
+    }
+
+    /// The inventory as the operations log and `stage-show` hold it.
     fn inventory(&self) -> Value {
         let files: Vec<Value> = self
             .plan
@@ -227,12 +303,15 @@ pub(crate) struct Staging<'a> {
     pub blobs: &'a Blobs,
     pub writer: &'a WriterHandle,
     pub access: Access<'a>,
+    /// The daemon's shutdown: the bindings stop reading, the stage ends
+    /// `stopped_early`, and `resume` reads it again later.
+    pub stop: watch::Receiver<bool>,
 }
 
 impl Staging<'_> {
-    /// Record a new stage with its inventory, then read it.
-    /// `begun` is told the operation and its inventory once the stage is
-    /// recorded, before anything is read.
+    /// Record a new stage with its inventory, then read it. `begun` is told
+    /// the operation and its inventory once the stage is recorded, before
+    /// anything is read.
     pub(crate) async fn run(
         &mut self,
         operation: OperationId,
@@ -254,17 +333,18 @@ impl Staging<'_> {
         self.read(operation, request, progress, begun).await
     }
 
-    /// Read again a stage that did not end, from its recorded plan and its
-    /// bindings' committed cursors.
+    /// Read again a stage that did not end, from its recorded plan, its saved
+    /// progress and its bindings' committed cursors.
     pub(crate) async fn resume(
         &mut self,
         operation: OperationId,
         request: &Request,
         plan: StagePlan,
+        saved: &Value,
         begun: tokio::sync::oneshot::Sender<Value>,
     ) -> Result<Outcome, String> {
-        self.read(operation, request, Progress::new(plan), begun)
-            .await
+        let progress = Progress::resumed(plan, saved)?;
+        self.read(operation, request, progress, begun).await
     }
 
     async fn read(
@@ -286,11 +366,17 @@ impl Staging<'_> {
             let path = progress.plan.files[index].path.clone();
             let planned = progress.plan.files[index].bindings.clone();
             if planned.is_empty() {
+                if progress.stored[index].is_some() {
+                    continue;
+                }
                 match self.store_unparsed(request, index, &progress).await {
                     Ok(material) => progress.stored[index] = Some(material),
                     Err(error) => failures.push(format!("{}: {error}", path.display())),
                 }
             } else {
+                if progress.file_read(index) {
+                    continue;
+                }
                 let mut readers = Vec::new();
                 for (format, binding) in planned {
                     match crate::binding_reader::BindingReader::new(format, binding.clone()) {
@@ -300,14 +386,13 @@ impl Staging<'_> {
                         }
                     }
                 }
-                let (_stop, stop) = tokio::sync::watch::channel(false);
                 let results = crate::binding_reader::read(
                     &mut *self.read_conn,
                     self.blobs,
                     self.writer,
                     &Sink(self.blobs.clone()),
                     &mut readers,
-                    stop,
+                    self.stop.clone(),
                     self.access,
                     &mut |_, _| {},
                 )
@@ -315,9 +400,13 @@ impl Staging<'_> {
                 for (source, result) in results {
                     match result {
                         Ok(totals) => {
-                            let product =
-                                progress.products[index].entry(source.clone()).or_default();
-                            product.state = "read";
+                            let product = progress.products[index]
+                                .entry(source.clone())
+                                .or_default();
+                            // Another binding of the same source may have failed.
+                            if product.state != ProductState::Failed {
+                                product.state = ProductState::Read;
+                            }
                             product.accounting.add(&totals.accounting);
                             if let Err(imbalance) = product.accounting.balanced() {
                                 let error = format!("accounting does not balance: {imbalance}");
@@ -371,7 +460,7 @@ impl Staging<'_> {
             result,
             report: json!({
                 "operation": operation,
-                "result": result.as_db(),
+                "result": result,
                 "inventory": inventory,
                 "counts": counts,
                 "sources": sources,
@@ -382,7 +471,9 @@ impl Staging<'_> {
     }
 
     /// Store a file no parser reads, byte for byte, as material with no
-    /// parser. Each stage of it is a new material of the same input.
+    /// parser. Each stage of it is a new material of the same input. A file
+    /// a sealed source would read is not stored in the clear: it is staged
+    /// with that source's parser named.
     async fn store_unparsed(
         &mut self,
         request: &Request,
@@ -390,6 +481,21 @@ impl Staging<'_> {
         progress: &Progress,
     ) -> Result<MaterialId, String> {
         let file = &progress.plan.files[index];
+        let candidates = match &file.reading {
+            FileReading::Unparsed { candidates } => candidates.clone(),
+            FileReading::Parsed { .. } => vec![],
+        };
+        if let Some(sealed) = candidates.iter().find(|name| {
+            sources::format(name).is_some_and(|format| {
+                (format.specs)()
+                    .iter()
+                    .any(|spec| spec.class == Class::Sealed)
+            })
+        }) {
+            return Err(format!(
+                "{sealed} reads sealed records, so the file is not stored unsealed without a parser; stage it with --parser"
+            ));
+        }
         let path = file.path.clone();
         let sink = Sink(self.blobs.clone());
         let (blob, observation) = tokio::task::spawn_blocking(move || {
@@ -400,10 +506,6 @@ impl Staging<'_> {
         .await
         .map_err(|e| e.to_string())??;
         let locator = file.path.display().to_string();
-        let candidates = match &file.reading {
-            sinex_sources::stage::FileReading::Unparsed { candidates } => candidates.clone(),
-            sinex_sources::stage::FileReading::Parsed { .. } => vec![],
-        };
         let mut details = serde_json::Map::new();
         details.insert("host".into(), json!(request.host));
         details.insert("candidates".into(), json!(candidates));
@@ -424,21 +526,19 @@ impl Staging<'_> {
         };
         let id = MaterialId::new();
         self.writer
-            .stage(StageWrite::Unparsed(Box::new(
-                sinex_store::stages::Unparsed {
-                    id,
-                    binding: format!("stage:{locator}@{}", request.host),
-                    input: InputRef {
-                        kind: "file".into(),
-                        locator,
-                        host: request.host.clone(),
-                    },
-                    length: observation.size.unwrap_or(0),
-                    observation,
-                    blob,
-                    manifest,
+            .stage(StageWrite::Unparsed(Box::new(sinex_store::stages::Unparsed {
+                id,
+                binding: format!("stage:{locator}@{}", request.host),
+                input: InputRef {
+                    kind: "file".into(),
+                    locator,
+                    host: request.host.clone(),
                 },
-            )))
+                length: observation.size.unwrap_or(0),
+                observation,
+                blob,
+                manifest,
+            })))
             .await
             .map_err(|e| e.to_string())?;
         Ok(id)
@@ -458,7 +558,7 @@ fn fail(
     let product = progress.products[index]
         .entry(source.to_owned())
         .or_default();
-    product.state = "failed";
+    product.state = ProductState::Failed;
     product.error = Some(error.to_owned());
     failures.push(format!("{} ({source}): {error}", file.path.display()));
 }
@@ -479,11 +579,13 @@ pub(crate) async fn local(
         .await
         .map_err(|e| e.to_string())??;
     let (begun, _) = tokio::sync::oneshot::channel();
+    let (_running, stop) = watch::channel(false);
     let outcome = Staging {
         read_conn: &mut ctx.read_conn,
         blobs: &ctx.blobs,
         writer: &ctx.writer,
         access: Access::default(),
+        stop,
     }
     .run(OperationId::new(), "operator", &request, plan, begun)
     .await;
@@ -655,9 +757,12 @@ impl Totals {
     }
 
     /// What admission decided for a batch's readings. Admission counts a
-    /// reading that replaced the live one among those it admitted.
+    /// reading that replaced the live one among those it admitted, and
+    /// offers a removed reading for each live reading of a record the
+    /// source dropped.
     pub(crate) fn add_outcome(&mut self, out: &sinex_store::Outcome) {
         let a = &mut self.accounting;
+        a.readings += out.removed_at_source as u64;
         a.new += out.admitted.saturating_sub(out.replaced) as u64;
         a.revised += out.replaced as u64;
         a.same += out.repeats as u64;

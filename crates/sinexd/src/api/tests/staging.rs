@@ -40,7 +40,7 @@ async fn stage_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     let (_, unfinished) = call(
         &w,
         Some(READ),
-        json!({"method": "stage-list", "unfinished": true}),
+        json!({"method": "stage-list", "active": true}),
     )
     .await;
     assert_eq!(unfinished["result"]["stages"], json!([]));
@@ -71,6 +71,32 @@ async fn a_stage_answers_with_its_inventory_before_it_reads(db: devkit::pg::Test
     let file = &body["result"]["inventory"]["files"][0];
     assert_eq!(file["reading"], json!({"as": "unparsed", "candidates": []}));
     assert_eq!(file["members"][0]["disposition"], "stored_not_interpreted");
+    assert_eq!(file["material"], Value::Null, "answered before storing");
+    // The stage reads on after the answer, to its end.
+    let operation = body["result"]["operation"].clone();
+    let mut shown = Value::Null;
+    for _ in 0..600 {
+        (_, shown) = call(
+            &w,
+            Some(READ),
+            json!({"method": "stage-show", "operation": operation}),
+        )
+        .await;
+        if !shown["result"]["result"].is_null() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(shown["result"]["result"], "ok", "{shown}");
+    let material = &shown["result"]["inventory"]["files"][0]["material"];
+    assert!(material.is_string(), "{shown}");
+    let parser: Option<String> =
+        sqlx::query_scalar("SELECT parser FROM raw.materials WHERE id = $1::uuid")
+            .bind(material.as_str().unwrap())
+            .fetch_one(&w.reads)
+            .await
+            .unwrap();
+    assert_eq!(parser, None);
 }
 
 #[devkit::test]

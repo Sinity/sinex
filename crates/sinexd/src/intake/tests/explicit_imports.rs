@@ -1,8 +1,8 @@
 //! Explicit imports through staging, intake, admission and stored-byte replay.
 use serde_json::Value;
 
-fn item(path: &std::path::Path, parser: &str) -> crate::stage::StagedItem {
-    crate::stage::StagedItem {
+fn item(path: &std::path::Path, parser: &str) -> sinex_sources::stage::Item {
+    sinex_sources::stage::Item {
         path: path.to_path_buf(),
         parser: Some(parser.into()),
     }
@@ -12,7 +12,7 @@ fn item(path: &std::path::Path, parser: &str) -> crate::stage::StagedItem {
 async fn stage(
     db: &devkit::pg::TestDatabase,
     store: &std::path::Path,
-    items: Vec<crate::stage::StagedItem>,
+    items: Vec<sinex_sources::stage::Item>,
 ) {
     let outcome = crate::stage::local(
         &db.url(None),

@@ -2,16 +2,16 @@
 slow-timeout = { period = "30s", terminate-after = 4 }
 fail-fast = false
 
-# The crash harness runs whole backfills against the development PostgreSQL,
+# The crash harness runs whole stages against the development PostgreSQL,
 # whose data lives on a few-GB tmpfs shared with other work; two at a time
-# bound the competing backfills and replay transactions.
+# bound the competing stages and replay transactions.
 [test-groups]
 crash = { max-threads = 2 }
 
-# These scenarios own two complete histories and their backfill/replay
+# These scenarios own two complete histories and their stage/replay
 # continuations. Reserve the shared test services globally while they run.
 [[profile.default.overrides]]
-filter = "binary_id(=sinexd::crash) & (test(=backfill_killed_between_atuin_batches) | test(=backfill_killed_between_zsh_batches))"
+filter = "binary_id(=sinexd::crash) & (test(=stage_killed_between_atuin_batches) | test(=stage_killed_between_zsh_batches))"
 test-group = "crash"
 threads-required = "num-test-threads"
 

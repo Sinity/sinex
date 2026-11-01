@@ -6,7 +6,7 @@ fn time_settings() -> sinex_model::time_settings::TimeSettings {
     sinex_model::time_settings::TimeSettings::new("UTC", 4, 0).expect("fixture day setting")
 }
 
-fn request(items: Vec<StagedItem>) -> Request {
+fn request(items: Vec<Item>) -> Request {
     Request {
         items,
         account: Some("owner@example.test".into()),
@@ -16,21 +16,21 @@ fn request(items: Vec<StagedItem>) -> Request {
     }
 }
 
-fn detected(path: &Path) -> StagedItem {
-    StagedItem {
+fn detected(path: &Path) -> Item {
+    Item {
         path: path.to_path_buf(),
         parser: None,
     }
 }
 
-fn named(path: &Path, parser: &str) -> StagedItem {
-    StagedItem {
+fn named(path: &Path, parser: &str) -> Item {
+    Item {
         path: path.to_path_buf(),
         parser: Some(parser.into()),
     }
 }
 
-async fn stage(db: &devkit::pg::TestDatabase, store: &Path, items: Vec<StagedItem>) -> Outcome {
+async fn stage(db: &devkit::pg::TestDatabase, store: &Path, items: Vec<Item>) -> Outcome {
     let outcome = local(&db.url(None), store, request(items), time_settings())
         .await
         .unwrap();
@@ -201,7 +201,7 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.result.as_deref(), Some("ok"));
+    assert_eq!(stored.result, Some(OperationResult::Ok));
     assert_eq!(stored.actor, "operator");
     assert_eq!(stored.scope["account"], "owner@example.test");
     assert_eq!(stored.inventory, outcome.report["inventory"]);
@@ -423,4 +423,76 @@ fn a_relative_path_is_refused() {
         .plan()
         .unwrap_err();
     assert!(error.contains("absolute"), "{error}");
+}
+
+/// law: sx.stage.idempotent-progress
+#[devkit::test]
+async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("history");
+    std::fs::write(&history, ": 1600000000:0;synthetic one\n").unwrap();
+    let unknown = dir.path().join("unknown.bin");
+    std::fs::write(&unknown, b"synthetic bytes no parser declares").unwrap();
+    let store = dir.path().join("store");
+    let items = vec![detected(&history), detected(&unknown)];
+    let first = stage(&db, &store, items.clone()).await;
+
+    // A stage interrupted after it had read and stored everything: its
+    // record holds the progress it saved, and it has no result.
+    let mut ctx =
+        crate::reader_context::ReaderContext::open(&db.url(None), &store, time_settings())
+            .await
+            .unwrap();
+    let interrupted = OperationId::new();
+    let request = request(items);
+    ctx.writer
+        .stage(StageWrite::Begin {
+            operation: interrupted,
+            actor: "operator".into(),
+            scope: request.scope(),
+            inventory: first.report["inventory"].clone(),
+        })
+        .await
+        .unwrap();
+    let before = material_count(&mut ctx.read_conn).await;
+    let plan = request.plan().unwrap();
+    let (begun, _) = tokio::sync::oneshot::channel();
+    let (_running, stop) = watch::channel(false);
+    let resumed = Staging {
+        read_conn: &mut ctx.read_conn,
+        blobs: &ctx.blobs,
+        writer: &ctx.writer,
+        access: Access::default(),
+        stop,
+    }
+    .resume(
+        interrupted,
+        &request,
+        plan,
+        &first.report["inventory"],
+        begun,
+    )
+    .await
+    .unwrap();
+    assert!(resumed.failures.is_empty(), "{:?}", resumed.failures);
+    // Nothing finished is read or stored again, and the accounting is kept.
+    assert_eq!(material_count(&mut ctx.read_conn).await, before);
+    assert_eq!(resumed.report["counts"], first.report["counts"]);
+    assert_eq!(
+        resumed.report["inventory"]["files"][1]["material"],
+        first.report["inventory"]["files"][1]["material"]
+    );
+    let stored = sinex_store::stages::show(&mut ctx.read_conn, interrupted)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.result, Some(OperationResult::Ok));
+    ctx.close().await.unwrap();
+}
+
+async fn material_count(conn: &mut PgConnection) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM raw.materials")
+        .fetch_one(conn)
+        .await
+        .unwrap()
 }

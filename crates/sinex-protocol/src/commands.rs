@@ -610,7 +610,7 @@ pub const COMMANDS: &[Command] = &[
         name: "stage-list",
         summary: "Stage operations, newest first, with each one's files, accounting and result.",
         args: &[opt(
-            "unfinished",
+            "active",
             ArgKind::Bool,
             "only stages that have not ended: running, or interrupted and waiting for resume",
         )],

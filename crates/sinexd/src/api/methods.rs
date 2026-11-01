@@ -43,6 +43,9 @@ pub(crate) struct Api {
     /// The stages this daemon is reading now, so one is never read twice
     /// at once.
     pub running_stages: crate::stage::Running,
+    /// The daemon's shutdown. A stage reading in the background stops at it,
+    /// ends `stopped_early`, and `resume` reads it again later.
+    pub stop: tokio::sync::watch::Receiver<bool>,
     pub library_roots: Vec<std::path::PathBuf>,
 }
 
@@ -579,12 +582,12 @@ impl Api {
                 )
                 .await
             }
-            Request::StageList { unfinished } => {
+            Request::StageList { active } => {
                 let mut conn = match self.acquire(caller).await {
                     Ok(c) => c,
                     Err(e) => return refused(e.to_string()),
                 };
-                match sinex_store::stages::list(&mut conn, unfinished.unwrap_or(false)).await {
+                match sinex_store::stages::list(&mut conn, active.unwrap_or(false)).await {
                     Ok(stages) => Reply::Ok {
                         result: json!({ "stages": stages }),
                     },

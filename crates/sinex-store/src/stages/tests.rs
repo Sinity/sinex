@@ -66,7 +66,7 @@ async fn a_stage_is_logged_from_begin_to_end(db: devkit::pg::TestDatabase) {
     .unwrap();
     assert!(list(&mut conn, true).await.unwrap().is_empty());
     let shown = show(&mut conn, operation).await.unwrap().unwrap();
-    assert_eq!(shown.result.as_deref(), Some("ok"));
+    assert_eq!(shown.result, Some(OperationResult::Ok));
     assert_eq!(shown.counts, json!({"new": 3}));
     assert_eq!(shown.inventory, json!({"files": ["done"]}));
     assert!(shown.end_seq.is_some());

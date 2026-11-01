@@ -108,14 +108,15 @@ A continuous binding is a staged input declared in configuration: Sinex's own Ni
 
 `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow]` is the imperative form. It is an [operation](lifecycle.md#operations-and-actors), and each source it reads has its [run](events.md#producer-versions-runs-and-manifests). The daemon runs it for `sinexctl stage`; with the daemon stopped, `sinexd admin stage` runs the same command with its own writer. Paths are absolute, because the daemon reads them and the operation records them. The CLI form and its output are in [the CLI](interfaces.md#cli).
 
-- **One parser for every path, or one per path.** `--parser` once names the format for every path; given once per path, the n-th names the n-th path's; without it, each file is recognised by [parser selection](#parser-selection). A directory staged without `--parser` stages each file in it, in name order; a directory a named format reads as one input (a notes vault, a Maildir) is that format's one input.
+- **One parser for every path, or one per path.** `--parser` once names the format for every path; given once per path, the n-th names the n-th path's; without it, each file is recognised by [parser selection](#parser-selection).
 - **The account and the export date** are recorded in the operation's scope and on every material stored with no parser; the account is also recorded with each binding as its `account` option.
 - **A staged input finishes.** It is read to its end and is then `finished`: staging the same unchanged path again reads nothing new, and a newer export of the same provider is a new path and a new stage. A path the daemon already reads continuously from its canonical location is refused: it is staged already.
 
 | Staged | Material |
 |---|---|
 | a file | one material, stored as received; an archive stays whole, its members addressed inside it |
-| a directory | one PAX tar material (extended attributes, ACLs, sparse files, byte file names), its files addressed as members ([directory captures](sources.md#directory-captures)) |
+| a directory a format reads as one input (named with `--parser`, or found at its canonical location) | one PAX tar material (extended attributes, ACLs, sparse files, byte file names), its files addressed as members ([directory captures](sources.md#directory-captures)) |
+| a directory with no parser named | each file in it staged as a file, in name order, so the parts of a multipart export are staged together and each is recognised on its own |
 | a SQLite database a declared live-database source reads (Atuin, browser history) | its rows, read in one read transaction, committed WAL frames included; never an image |
 | any other SQLite file | an imported original stored whole, with its rows read into a rows part |
 
@@ -146,7 +147,7 @@ stage 0190…  ok
 /exports/takeout-20300101T000000Z-003.zip  1 member(s)  stored, not interpreted (no parser)
 ```
 
-`stage` answers with the operation and the inventory as soon as the stage is recorded and reads on in the daemon; with `--follow` it answers when the stage ends, with the final inventory and accounting. `stage-list [--unfinished]` and `stage-show OPERATION` read them later. A stage that stopped early, or whose daemon stopped while it read, is read again with `resume OPERATION`: it plans the recorded scope again and each binding continues from its committed cursor, so it reaches the same readings and the same accounting.
+`stage` answers with the operation and the inventory as soon as the stage is recorded and reads on in the daemon; with `--follow` it answers when the stage ends, with the final inventory and accounting. `stage-list [--active]` and `stage-show OPERATION` read them later. A binding is read by one stage at a time, and a path the daemon reads continuously is not staged again. A stage that stopped early, or whose daemon stopped while it read, ends `stopped_early` or without a result and is read again with `resume OPERATION`: it plans the recorded scope again, keeps the accounting of the files it finished and the materials it stored, and each binding continues from its committed cursor.
 
 ### Staging before a parser exists
 
@@ -202,10 +203,10 @@ Decided target (2026-11-01). Materials come first and parsers whenever, so an ag
 - **replay-reads-stored-copy**: replay after the original file is deleted reads the stored bytes and produces the same records.
 - **no-material-per-poll**: no poll makes its own material; a growing input's parts rotate only at their declared bounds.
 - **metadata-exhaustive**: an observation records every readable metadata item, and an unreadable one is recorded unavailable with a reason; GNU tar is the restore oracle for directory captures.
-- **stage.shapes**: `stage` of a file, a directory, a live SQLite database and an archive each produce the material shape in [one-shot staging](#one-shot-staging), an operation row and a run.
+- **stage.shapes**: `stage` of a file, a directory, a live SQLite database and a SQLite export each produce the material shape in [one-shot staging](#one-shot-staging), an operation row and a run.
 - **stage.strict-detection**: a file matching no declared structure is stored with no parser and no candidates; one matching two is stored with no parser and both listed; detection never assigns a parser of another origin; a member two sources would read is read by neither.
 - **stage.inventory-total**: for a staged export, every member appears in the inventory exactly once, as read, failed or stored and not interpreted.
-- **stage.idempotent-progress**: killing a stage at any point and running it again reaches the same live readings and the same cursors.
+- **stage.idempotent-progress**: killing a stage at any point and running it again reaches the same live readings and the same accounting.
 - **acct.identity**: for every product of a stage, records framed = read + headers + failures, and readings offered = new + same + revised + older + superseded.
 - **stage.without-parser**: staging with no matching parser stores the material byte for byte with no parser and the candidates; a later replay with `--parser` reads it.
 - **stage.restage-two-materials-one-live-reading**: staging byte-identical content twice from two paths yields two materials and one live reading per record; staging the same unchanged path again reads nothing new.

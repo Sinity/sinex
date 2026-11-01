@@ -135,7 +135,7 @@ pub enum Request {
     #[serde(rename = "stage-list")]
     StageList {
         #[serde(default)]
-        unfinished: Option<bool>,
+        active: Option<bool>,
     },
     #[serde(rename = "stage-show")]
     StageShow {

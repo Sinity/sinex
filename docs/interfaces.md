@@ -240,7 +240,7 @@ the surfaces are:
   answering with the operation and the inventory of every staged member at once, and
   with `--follow` ending with each product's accounting and `stopped_early` when it did
   not finish ([staging](materials.md#inventory-and-accounting)); `stage-list
-  [--unfinished]` and `stage-show OPERATION` read stages later. With the daemon stopped,
+  [--active]` and `stage-show OPERATION` read stages later. With the daemon stopped,
   `sinexd admin stage` runs the same command with its own writer;
 - `archive REF | QUERY | --material ID… | --run ID | --source S [--after T] [--before T]`
   and `restore` over the same scopes or `--operation OP` (the chains that operation

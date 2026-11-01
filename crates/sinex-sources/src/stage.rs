@@ -9,8 +9,9 @@
 //! decided member by member: each member is read by the one source whose
 //! binding selects it, and a member two sources would both read is read by
 //! neither, so a source contesting any member reads nothing from that
-//! archive. Nothing is guessed from a file name.
-use serde::Serialize;
+//! archive. Nothing is guessed from a file name. Candidates are always format
+//! names, the names `--parser` takes.
+use serde::{Deserialize, Serialize};
 use sinex_source_core::binding::{Binding, InputFormat, Reading, Settings};
 use sinex_source_core::drivers::export_archive::Container;
 use sinex_source_core::shared_pass::{ListedMember, members};
@@ -18,7 +19,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// One path given to `stage`, with the parser named for it, if any.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,8 +56,9 @@ pub struct StagedFile {
 pub enum FileReading {
     /// Read by these formats' bindings.
     Parsed { formats: Vec<String> },
-    /// Stored as received with no parser. `candidates` names the formats or
-    /// sources that recognised it, when more than one did.
+    /// Stored as received with no parser. `candidates` names the formats that
+    /// recognised it, or would each read a member of it, when more than one
+    /// did.
     Unparsed { candidates: Vec<String> },
 }
 
@@ -81,7 +83,7 @@ pub enum Disposition {
         reason: String,
     },
     /// Kept in the stored original and read by nothing. `candidates` names
-    /// the sources that would each read it, when several would.
+    /// the formats whose sources would each read it, when several would.
     StoredNotInterpreted { candidates: Vec<String> },
 }
 
@@ -131,7 +133,7 @@ pub fn plan(
                     true,
                     sinex_source_core::binding::any,
                 ) {
-                    files.push(detect(formats, &path, settings)?);
+                    files.extend(detect(formats, &path, settings)?);
                 }
             }
         }
@@ -233,12 +235,14 @@ fn named(
     Ok(out)
 }
 
-/// One file tested against every declared structure.
+/// One file tested against every declared structure. A format that
+/// recognises the file plans it, and its plan may add inputs the file names
+/// (a ledger's includes).
 fn detect(
     formats: &[&'static InputFormat],
     path: &Path,
     settings: &Settings,
-) -> Result<StagedFile, String> {
+) -> Result<Vec<StagedFile>, String> {
     let (container, listed) = listing(path)?;
     let archive = is_archive(container);
     let mut whole_file = Vec::new();
@@ -285,15 +289,20 @@ fn detect(
         bindings: vec![],
     };
     match (whole_file.as_slice(), archive_formats.is_empty()) {
-        ([format], true) => {
-            let mut files = named(formats, format.name, path, settings)?;
-            Ok(files.remove(0))
-        }
-        ([], false) => by_member(&archive_formats, path, container, listed, settings),
+        ([format], true) => named(formats, format.name, path, settings),
+        ([], false) => Ok(vec![by_member(
+            &archive_formats,
+            path,
+            container,
+            listed,
+            settings,
+        )?]),
         _ => {
             let mut candidates: Vec<String> = names(&whole_file);
             candidates.extend(names(&archive_formats));
-            Ok(unparsed(candidates, listed))
+            candidates.sort();
+            candidates.dedup();
+            Ok(vec![unparsed(candidates, listed)])
         }
     }
 }
@@ -318,6 +327,18 @@ fn by_member(
         .iter()
         .map(|(_, binding, selection)| (binding.source.clone(), *selection))
         .collect();
+    // The format each source is planned by, for candidates.
+    let format_of = |source: &String| -> String {
+        bindings
+            .iter()
+            .find(|(_, binding, _)| &binding.source == source)
+            .map(|(format, _, _)| format.name.to_owned())
+            .expect("every selecting source has a binding")
+    };
+    let formats_of = |sources: &[String]| -> Vec<String> {
+        let formats: BTreeSet<String> = sources.iter().map(format_of).collect();
+        formats.into_iter().collect()
+    };
     let per_member: Vec<Vec<String>> = listed
         .iter()
         .map(|member| selecting(&selections, &member.name))
@@ -345,7 +366,7 @@ fn by_member(
                 },
                 _ => Disposition::StoredNotInterpreted {
                     candidates: if sources.len() > 1 {
-                        sources.clone()
+                        formats_of(sources)
                     } else {
                         vec![]
                     },
@@ -353,15 +374,16 @@ fn by_member(
             },
         })
         .collect();
+    let contested: Vec<String> = contested.into_iter().cloned().collect();
+    let contested_formats = formats_of(&contested);
     let kept: Vec<(&'static InputFormat, Binding)> = bindings
         .into_iter()
         .filter(|(_, binding, _)| readers.contains(&binding.source))
         .map(|(format, binding, _)| (format, binding))
         .collect();
     let reading = if kept.is_empty() {
-        let candidates: BTreeSet<String> = contested.into_iter().cloned().collect();
         FileReading::Unparsed {
-            candidates: candidates.into_iter().collect(),
+            candidates: contested_formats,
         }
     } else {
         let mut formats: Vec<String> = Vec::new();
@@ -405,8 +427,9 @@ fn selecting(selections: &[(String, Option<fn(&str) -> bool>)], member: &str) ->
     out
 }
 
-/// The archive container and members of `path`; a directory or a file that
-/// is not an archive is its own one member.
+/// The archive container and members of `path`; a directory, a file that is
+/// not an archive, or an input a plan names that does not exist yet is its
+/// own one member.
 fn listing(path: &Path) -> Result<(Option<Container>, Vec<ListedMember>), String> {
     let whole = || ListedMember {
         name: path
@@ -415,7 +438,7 @@ fn listing(path: &Path) -> Result<(Option<Container>, Vec<ListedMember>), String
             .unwrap_or_else(|| path.display().to_string()),
         size: size(path),
     };
-    if path.is_dir() {
+    if !path.is_file() {
         return Ok((None, vec![whole()]));
     }
     let (container, listed) = members(path).map_err(|e| format!("{}: {e}", path.display()))?;
