@@ -36,7 +36,11 @@ fn the_same_message_id_in_different_accounts_is_not_joined() {
     second.payload["account"] = json!("two@example.test");
     let mut unknown = mail("communication.mbox", "rfc@example.test", H + 5.0);
     unknown.payload["account"] = Value::Null;
-    assert_eq!(fuse(&MAIL, &[first.clone(), second, unknown]).len(), 3);
+    // No copies join, so no fused record exists (docs/derivations.md: "there
+    // are no one-member fused records") and each message is read on its own.
+    let separate = [first.clone(), second, unknown];
+    assert!(fuse(&MAIL, &separate).is_empty());
+    assert_eq!(occurrences(&MAIL, &separate).len(), 3);
     let mut same = mail("communication.imap", "rfc@example.test", H + 5.0);
     same.payload["account"] = json!("one@example.test");
     let joined = fuse(&MAIL, &[first, same]);
@@ -50,7 +54,9 @@ fn messages_from_unknown_accounts_in_different_sources_stay_separate() {
     let mut second = mail("communication.mbox", "rfc@example.test", H + 5.0);
     first.payload["account"] = Value::Null;
     second.payload["account"] = Value::Null;
-    let output = fuse(&MAIL, &[first, second]);
-    assert_eq!(output.len(), 2);
-    assert!(output.iter().all(|message| message["account"].is_null()));
+    let inputs = [first, second];
+    assert!(fuse(&MAIL, &inputs).is_empty());
+    let read = occurrences(&MAIL, &inputs);
+    assert_eq!(read.len(), 2);
+    assert!(read.iter().all(|message| message["account"].is_null()));
 }
