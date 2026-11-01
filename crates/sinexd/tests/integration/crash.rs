@@ -8,11 +8,9 @@
 //! in the same state as a run that was never interrupted: the same live
 //! readings, no reading twice, every event live or archived, the commit log
 //! dense, every material that is not tombstoned has its bytes present.
-mod support;
+use crate::support;
 
-#[path = "crash/private_history.rs"]
 mod private_history;
-#[path = "crash/progress.rs"]
 mod progress;
 
 use devkit::pg::TestDatabase;
@@ -100,10 +98,20 @@ impl Inputs {
         Self::new(128, 127)
     }
 
-    // Three admission batches per source (10,000 events per batch), so a
-    // kill can land between commits, replay sequences or publisher pages.
+    // Two admission batches per source (10,000 events per batch), so a kill
+    // can land between commits or replay sequences.
     fn multiple_batches() -> Self {
-        Self::new(22_000, 21_000)
+        Self::new(10_500, 10_200)
+    }
+
+    // Two zsh batches inside one replay transaction; the Atuin rows stay small.
+    fn zsh_batches() -> Self {
+        Self::new(10_500, 127)
+    }
+
+    // Several publisher pages (1,000 events per page).
+    fn publisher_pages() -> Self {
+        Self::new(1_600, 1_500)
     }
 
     fn new(zsh_lines: usize, atuin_rows: usize) -> Self {
@@ -741,20 +749,15 @@ macro_rules! backfill_steps {
     )*};
 }
 
-// One test per admission statement, blocked in its first transaction.
+// One test per state a kill inside the first backfill can leave. Every
+// statement of an admission transaction leaves the same state (nothing of the
+// transaction committed, no bytes past the committed segment end), so one kill
+// stands for them all; the run registration before it and the synced bytes
+// at its commit leave different states.
 backfill_steps! { Inputs::first_transaction();
+    backfill_killed_allocating_commit_seq: None, lock("core.counters");
     backfill_killed_registering_the_material: None, lock("raw.inputs");
     backfill_killed_recording_synced_extents: None, lock("core.blob_extents");
-    backfill_killed_recording_synced_segment_end: None, lock("core.blob_segments");
-    backfill_killed_loading_privacy_rules: None, read_lock("privacy.rules");
-    backfill_killed_staging: None, lock("core.admission_stage");
-    backfill_killed_allocating_commit_seq: None, lock("core.counters");
-    backfill_killed_inserting_events: None, lock("core.events");
-    backfill_killed_writing_the_commit_log: None, lock("core.commit_log");
-    backfill_killed_writing_live_keys: None, lock("core.live_equivalence");
-    backfill_killed_writing_live_locations: None, lock("core.live_locations");
-    backfill_killed_marking_dirty_keys: None, lock("derivation.dirty");
-    backfill_killed_saving_the_position: None, lock("raw.positions");
 }
 
 backfill_steps! { Inputs::multiple_batches();
@@ -773,7 +776,7 @@ backfill_steps! { Inputs::multiple_batches();
 async fn replay_survives(lock_sql: &str) {
     let started = Instant::now();
     let note = |phase| eprintln!("replay {phase} after {:?}", started.elapsed());
-    let inputs = Inputs::multiple_batches();
+    let inputs = Inputs::zsh_batches();
     note("inputs ready");
     let expected = {
         let reference = Target::new(&inputs);
@@ -1025,7 +1028,7 @@ tombstone_steps! {
 /// a page published before the crash but not yet recorded is published again,
 /// and the stream drops the copies by message ID.
 async fn publisher_survives(between_pages: bool) {
-    let inputs = Inputs::multiple_batches();
+    let inputs = Inputs::publisher_pages();
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
     let nats = devkit::nats::test_nats().expect("run through `xtask test`");

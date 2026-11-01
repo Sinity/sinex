@@ -657,5 +657,4 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
 }
 
 #[cfg(test)]
-#[path = "progress/tests.rs"]
 mod tests;

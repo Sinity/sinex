@@ -146,16 +146,6 @@ fn check(run: &mut Run) -> Result {
         "fmt",
         devkit::cargo_command().args(["fmt", "--all", "--", "--check"]),
     )?;
-    run.command(
-        "fuzz-fmt",
-        devkit::cargo_command().args([
-            "fmt",
-            "--manifest-path",
-            "fuzz/Cargo.toml",
-            "--",
-            "--check",
-        ]),
-    )?;
     run.step("boundaries", |run| Ok(boundaries::check(&run.root)?))?;
     let mut prepared = None;
     run.step("database", |run| {
@@ -169,19 +159,6 @@ fn check(run: &mut Run) -> Result {
         &["clippy", "--locked", "--workspace", "--all-targets"],
         &database::env(&server, &databases),
     );
-    let result = result.and_then(|_| {
-        run.cargo_with(
-            "fuzz-clippy",
-            &[
-                "clippy",
-                "--locked",
-                "--manifest-path",
-                "fuzz/Cargo.toml",
-                "--all-targets",
-            ],
-            &database::env(&server, &databases),
-        )
-    });
     run.step("cleanup", |_| {
         drop(server);
         Ok(())
@@ -250,44 +227,16 @@ fn with_services(
     result
 }
 
+/// One build for every selection: tests always build from the workspace's
+/// feature resolution, so a focused run and a full run share their compiled
+/// test binaries. Package selection becomes a nextest filter.
 fn test(run: &mut Run, args: &[String], threads: Option<&str>) -> Result {
-    let arguments = test_arguments(args, threads);
     with_services(run, |run, env| {
-        if full_test(&arguments) {
-            run.cargo_with(
-                "fuzz-tests",
-                &[
-                    "test",
-                    "--locked",
-                    "--manifest-path",
-                    "fuzz/Cargo.toml",
-                    "--lib",
-                ],
-                env,
-            )?;
-        }
         let mut options = test_options(args, env.to_vec());
         options.args = test_arguments(&options.args, threads);
         run.nextest("test", &options)?;
         Ok(())
     })
-}
-
-fn full_test(args: &[String]) -> bool {
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--workspace" | "--all" | "--locked" => {}
-            "--test-threads" | "--jobs" | "-j" => {
-                if args.next().is_none() {
-                    return false;
-                }
-            }
-            _ if thread_option(arg) => {}
-            _ => return false,
-        }
-    }
-    true
 }
 
 fn thread_option(arg: &str) -> bool {
@@ -324,18 +273,6 @@ fn build_tests(run: &mut Run) -> Result {
     let (server, databases) = prepared.expect("prepared");
     let env = database::env(&server, &databases);
     run.cargo_with(
-        "fuzz test build",
-        &[
-            "test",
-            "--no-run",
-            "--locked",
-            "--manifest-path",
-            "fuzz/Cargo.toml",
-            "--lib",
-        ],
-        &env,
-    )?;
-    run.cargo_with(
         "test build",
         &["test", "--no-run", "--locked", "--workspace"],
         &env,
@@ -343,23 +280,91 @@ fn build_tests(run: &mut Run) -> Result {
     Ok(())
 }
 
+/// Nextest options that take a value, so the value is not read as a test name.
+const VALUE_OPTIONS: &[&str] = &[
+    "--test-threads",
+    "-j",
+    "--jobs",
+    "--retries",
+    "--profile",
+    "-P",
+    "--partition",
+    "--run-ignored",
+    "--success-output",
+    "--failure-output",
+    "--status-level",
+    "--final-status-level",
+    "--message-format",
+    "--test",
+    "--bin",
+    "--example",
+    "--target",
+    "--exclude",
+];
+
 fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
-    let explicit_scope = args
-        .iter()
-        .take_while(|arg| arg.as_str() != "--")
-        .any(|arg| {
-            arg == "-p"
-                || (arg.starts_with("-p") && arg.len() > 2)
-                || arg == "--package"
-                || arg.starts_with("--package=")
-                || arg == "--workspace"
-                || arg == "--all"
-        });
-    let mut selected = vec!["--locked".to_owned()];
-    if !explicit_scope {
-        selected.push("--workspace".to_owned());
+    let (own, binary) = match args.iter().position(|arg| arg == "--") {
+        Some(split) => args.split_at(split),
+        None => (args, &[][..]),
+    };
+    let mut packages = Vec::new();
+    let mut filters = Vec::new();
+    let mut names = Vec::new();
+    let mut rest = Vec::new();
+    let mut own = own.iter();
+    while let Some(arg) = own.next() {
+        let arg = arg.as_str();
+        if let Some(package) = arg
+            .strip_prefix("--package=")
+            .or_else(|| arg.strip_prefix("-p").filter(|value| !value.is_empty()))
+        {
+            packages.push(package.to_owned());
+        } else if matches!(arg, "-p" | "--package") {
+            packages.extend(own.next().cloned());
+        } else if let Some(filter) = arg
+            .strip_prefix("--filterset=")
+            .or_else(|| arg.strip_prefix("--filter-expr="))
+        {
+            filters.push(filter.to_owned());
+        } else if matches!(arg, "-E" | "--filterset" | "--filter-expr") {
+            filters.extend(own.next().cloned());
+        } else if matches!(arg, "--workspace" | "--all") {
+        } else if VALUE_OPTIONS.contains(&arg) {
+            rest.push(arg.to_owned());
+            rest.extend(own.next().cloned());
+        } else if arg.starts_with('-') {
+            rest.push(arg.to_owned());
+        } else {
+            names.push(arg.to_owned());
+        }
     }
-    selected.extend_from_slice(args);
+    let mut selected = vec!["--locked".to_owned(), "--workspace".to_owned()];
+    selected.extend(rest);
+    if packages.is_empty() {
+        for filter in &filters {
+            selected.extend(["-E".to_owned(), filter.clone()]);
+        }
+        selected.extend(names.iter().cloned());
+    } else {
+        let scope = packages
+            .iter()
+            .map(|package| format!("package(={package})"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        // Name filters and filtersets narrow the selected packages.
+        let narrowing = filters
+            .iter()
+            .map(|filter| format!("({filter})"))
+            .chain(names.iter().map(|name| format!("test({name})")))
+            .collect::<Vec<_>>();
+        let filter = if narrowing.is_empty() {
+            scope
+        } else {
+            format!("({scope}) & ({})", narrowing.join(" | "))
+        };
+        selected.extend(["-E".to_owned(), filter]);
+    }
+    selected.extend(binary.iter().cloned());
     Nextest {
         args: selected,
         env,

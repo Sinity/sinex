@@ -2,10 +2,10 @@ use sinex_protocol::{Ingress, Subjects};
 use sinex_source_core::Reader;
 use sinex_source_core::drivers::producer::{Position, Producer, Store};
 use std::{path::Path, time::Duration};
-#[path = "../../sinex-source-core/tests/support/producer.rs"]
+#[path = "../../../sinex-source-core/tests/support/producer.rs"]
 mod support;
 use support::standin;
-#[path = "../../sinex-source-core/tests/support/hello.rs"]
+#[path = "../../../sinex-source-core/tests/support/hello.rs"]
 mod hello;
 
 #[devkit::test(multi_thread)]

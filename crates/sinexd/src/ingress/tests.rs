@@ -168,20 +168,14 @@ impl Harness {
             .await
             .unwrap();
         let mut catalog_conn = PgConnection::connect(&url).await.unwrap();
-        sinex_store::source_declarations::register(
-            &mut catalog_conn,
-            &crate::catalog::source_declarations(),
-        )
-        .await
-        .unwrap();
+        // The catalog and every grant's declarations in one registration.
+        let mut declarations = crate::catalog::source_declarations();
         for write in grants.values().filter_map(|grant| grant.write.as_ref()) {
-            sinex_store::source_declarations::register(
-                &mut catalog_conn,
-                &write.source_declarations,
-            )
+            declarations.extend(write.source_declarations.iter().cloned());
+        }
+        sinex_store::source_declarations::register(&mut catalog_conn, &declarations)
             .await
             .unwrap();
-        }
         let store_dir = std::env::temp_dir().join(format!("sinex-ingress-{}", Uuid::now_v7()));
         let blobs = Blobs::open(&store_dir).unwrap();
         let (handle, queues) = writer::channels();
