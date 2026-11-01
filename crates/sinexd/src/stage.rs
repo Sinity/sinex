@@ -84,7 +84,9 @@ impl Claim {
     /// Hold every binding of `plan`, or none when one is being read.
     pub(crate) fn take(running: &Running, plan: &StagePlan) -> Result<Self, String> {
         let names: Vec<String> = plan.bindings().map(|(_, b)| b.name.clone()).collect();
-        let mut held = running.lock().expect("the running stages are never poisoned");
+        let mut held = running
+            .lock()
+            .expect("the running stages are never poisoned");
         if let Some(busy) = names.iter().find(|name| held.contains(*name)) {
             return Err(format!("{busy} is being read by another stage now"));
         }
@@ -224,10 +226,7 @@ impl Progress {
         let mut progress = Self::new(plan);
         let saved_files = saved["files"].as_array().cloned().unwrap_or_default();
         for (index, file) in progress.plan.files.iter().enumerate() {
-            let Some(before) = saved_files
-                .iter()
-                .find(|f| f["path"] == json!(file.path))
-            else {
+            let Some(before) = saved_files.iter().find(|f| f["path"] == json!(file.path)) else {
                 continue;
             };
             if let Some(material) = before.get("material").filter(|m| !m.is_null()) {
@@ -400,9 +399,8 @@ impl Staging<'_> {
                 for (source, result) in results {
                     match result {
                         Ok(totals) => {
-                            let product = progress.products[index]
-                                .entry(source.clone())
-                                .or_default();
+                            let product =
+                                progress.products[index].entry(source.clone()).or_default();
                             // Another binding of the same source may have failed.
                             if product.state != ProductState::Failed {
                                 product.state = ProductState::Read;
@@ -526,19 +524,21 @@ impl Staging<'_> {
         };
         let id = MaterialId::new();
         self.writer
-            .stage(StageWrite::Unparsed(Box::new(sinex_store::stages::Unparsed {
-                id,
-                binding: format!("stage:{locator}@{}", request.host),
-                input: InputRef {
-                    kind: "file".into(),
-                    locator,
-                    host: request.host.clone(),
+            .stage(StageWrite::Unparsed(Box::new(
+                sinex_store::stages::Unparsed {
+                    id,
+                    binding: format!("stage:{locator}@{}", request.host),
+                    input: InputRef {
+                        kind: "file".into(),
+                        locator,
+                        host: request.host.clone(),
+                    },
+                    length: observation.size.unwrap_or(0),
+                    observation,
+                    blob,
+                    manifest,
                 },
-                length: observation.size.unwrap_or(0),
-                observation,
-                blob,
-                manifest,
-            })))
+            )))
             .await
             .map_err(|e| e.to_string())?;
         Ok(id)
