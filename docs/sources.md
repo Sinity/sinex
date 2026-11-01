@@ -167,6 +167,10 @@ Status keeps these facts per source; [interfaces](interfaces.md#status) presents
 
 A registered command or a live process does not establish capture; only admitted records do.
 
+- **Read outcomes are one current coverage reading per binding.** Each binding on each host, and each input discovery finds unreadable, has one live `source.coverage` reading: observed, partial, recorded with unknown coverage, or missing with the error. A read admits a newer reading only when the state or its reason differs from the current one, so an unchanged binding read every few seconds writes nothing, and the time of the current reading is when that state began. Earlier readings stay in history as archived readings. A restarted daemon continues from the stored readings. An explicit one-time read (`backfill`, `stage`) records its own outcome.
+- **Not present yet is not missing.** An input that does not exist yet (an export never staged, a device never attached) is waiting for input: status shows it as such, and it writes no coverage reading. An input that exists but cannot be read is missing, with the reason; once it can be looked at again, a newer reading replaces the missing one.
+- **One run per source while it is read.** The daemon holds one source run per source, parser version and host for as long as it reads that source, and one run for the coverage readings, ending them when it stops; a read round starts no runs.
+
 - **Stalls.** A continuous source silent past its declared `expect`/`stale_after` is shown as quiet. A stalled source writes a self-observation event and raises an interrupting notice; delivery follows the [signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/signals.md) contract.
 - **Runaways.** A day's volume above `runaway_bytes_per_day` is reported as a runaway, so noise is found and fixed at its source.
 - **Disk runway.** Status always shows free space and the days remaining at the measured write rate, with a warning below 14 days. Nothing is refused for space; capture pauses only on a truly full filesystem.
@@ -234,6 +238,8 @@ Every implemented source passes the common checks: acquire two records including
 - **fair-bindings**: with one binding holding a large backlog, other bindings are admitted within their freshness objective.
 - **cursor-only-after-commit**: a cursor never advances past records that were not committed, and an empty fetch does not mark a source caught up.
 - **gap-reasons-recorded**: overflow, disconnected, encoder, provider and sequence gaps each produce a `capture.gap` with stream, interval, reason and missing count, and status never shows such an interval as empty.
+- **coverage-on-change**: a hundred read rounds of an unchanged binding admit one coverage reading, one material and no more than one source run and one coverage run; a failure replaces the current reading, and a restarted reader writes nothing for an unchanged binding.
+- **waiting-input-is-not-missing**: an input that does not exist yet writes no coverage reading; an unreadable input writes one missing reading, which a newer reading replaces once the input can be looked at.
 - **stall-notice**: a continuous source silent past `stale_after` is shown quiet and raises the configured notice.
 - **sampling-keeps-raw**: with sampling declared, raw bytes stay complete, discrete and typed-view packets are never sampled, counts are reported, and replay at stride 1 restores every event.
 - **no-retention**: no code path deletes a material, spool segment, gap or self-observation event by age.

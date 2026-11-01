@@ -72,14 +72,14 @@ fn replanning_adds_late_files_once_and_keeps_other_inputs_running() {
         json!({"sources":{"media.spotify-history":{"paths":[dir.path()]},"terminal.atuin-history":{"paths":["/missing-sinex-fixture"]}}}),
     );
     let mut bindings = Bindings::default();
-    bindings.extend(&config, "h", &[]);
+    bindings.extend(&config, "h", &[], &mut Default::default());
     assert!(bindings.readers.is_empty());
     std::fs::write(dir.path().join("a.zip"), b"x").unwrap();
-    bindings.extend(&config, "h", &[]);
-    bindings.extend(&config, "h", &[]);
+    bindings.extend(&config, "h", &[], &mut Default::default());
+    bindings.extend(&config, "h", &[], &mut Default::default());
     assert_eq!(bindings.readers.len(), 1);
     std::fs::write(dir.path().join("b.zip"), b"x").unwrap();
-    bindings.extend(&config, "h", &[]);
+    bindings.extend(&config, "h", &[], &mut Default::default());
     assert_eq!(bindings.readers.len(), 2);
     assert!(
         bindings
@@ -273,7 +273,7 @@ fn conflicting_saved_aliases_leave_other_inputs_reading_and_retry_when_resolved(
         .collect();
     let config = config(json!({"sources":{"terminal.zsh-history":{"paths":[input, independent]}}}));
     let mut bindings = Bindings::default();
-    bindings.extend(&config, "h", &saved);
+    bindings.extend(&config, "h", &saved, &mut Default::default());
     assert_eq!(bindings.readers.len(), 1);
     assert_eq!(bindings.readers[0].binding.input, independent);
     assert!(
@@ -282,9 +282,9 @@ fn conflicting_saved_aliases_leave_other_inputs_reading_and_retry_when_resolved(
             .values()
             .any(|message| message.contains("unavailable: discovery conflict"))
     );
-    bindings.extend(&config, "h", &saved[..1]);
+    bindings.extend(&config, "h", &saved[..1], &mut Default::default());
     assert_eq!(bindings.readers.len(), 2);
-    bindings.extend(&config, "h", &saved);
+    bindings.extend(&config, "h", &saved, &mut Default::default());
     assert_eq!(
         bindings.readers.len(),
         1,
@@ -407,4 +407,86 @@ fn read_failures_keep_their_start_until_a_read_succeeds() {
     assert_eq!(failure.since, since);
     note(&failures, "b", None);
     assert!(failures.lock().unwrap().is_empty());
+}
+
+/// Plan `configuration` once, admit the coverage it observed, and return the
+/// live spotify coverage readings as binding and state.
+async fn admit(
+    context: &mut crate::reader_context::ReaderContext,
+    bindings: &mut Bindings,
+    coverage: &mut binding_reader::coverage::Coverage,
+    configuration: &Config,
+) -> Vec<(String, String)> {
+    bindings.extend(configuration, "h", &[], coverage);
+    let mut errors = Vec::new();
+    coverage
+        .flush(
+            &mut context.read_conn,
+            &context.blobs,
+            &context.writer,
+            crate::material_access::Access::default(),
+            &mut errors,
+        )
+        .await;
+    assert!(errors.is_empty(), "{errors:?}");
+    sqlx::query_as(
+        "SELECT e.payload->>'binding', e.payload->>'state' FROM core.events e
+         WHERE e.event_type='source.coverage' AND e.payload->>'observed_source'='media.spotify-history'
+           AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
+         ORDER BY 1",
+    )
+    .fetch_all(&mut context.read_conn)
+    .await
+    .unwrap()
+}
+
+/// law: waiting-input-is-not-missing
+#[devkit::test]
+async fn an_input_not_present_yet_is_not_missing_coverage(db: devkit::pg::TestDatabase) {
+    let root = tempfile::tempdir().unwrap();
+    let absent = root.path().join("never-staged.zip");
+    // A path under a regular file cannot be read: the input is unavailable.
+    let blocker = root.path().join("blocker");
+    std::fs::write(&blocker, b"").unwrap();
+    let blocked = blocker.join("export.zip");
+    let configuration = config(
+        json!({"sources":{"media.spotify-history":{"paths":[absent.clone(), blocked.clone()]}}}),
+    );
+    let mut context = crate::reader_context::ReaderContext::open(
+        &db.url(None),
+        &root.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
+    let mut coverage = binding_reader::coverage::Coverage::default();
+    let mut bindings = Bindings::default();
+    let key = |path: &std::path::Path| {
+        format!(
+            "input media.spotify-history spotify read {}",
+            path.display()
+        )
+    };
+    let live = admit(&mut context, &mut bindings, &mut coverage, &configuration).await;
+    assert_eq!(live, [(key(&blocked), "missing".to_owned())]);
+    // Planned again a minute later, nothing changed and nothing is written.
+    admit(&mut context, &mut bindings, &mut coverage, &configuration).await;
+    let readings: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE event_type='source.coverage' AND payload->>'observed_source'='media.spotify-history'",
+    )
+    .fetch_one(&mut context.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(readings, 1);
+    // Once the path can be looked at, the input is waiting, no longer missing.
+    std::fs::remove_file(&blocker).unwrap();
+    std::fs::create_dir(&blocker).unwrap();
+    let live = admit(&mut context, &mut bindings, &mut coverage, &configuration).await;
+    assert_eq!(
+        live,
+        [(key(&blocked), "recorded_unknown_coverage".to_owned())]
+    );
+    coverage.end(&mut context.read_conn).await.unwrap();
+    context.close().await.unwrap();
 }

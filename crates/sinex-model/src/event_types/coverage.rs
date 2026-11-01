@@ -20,16 +20,17 @@ pub enum CoverageCompleteness {
     Unknown,
 }
 
-/// A successful read proves access, including when the input was unchanged.
-/// It establishes temporal coverage only when the source declares its bounds.
+/// The current read state of one binding on one host: a newer reading
+/// replaces it when the state or its reason changes. A successful read proves
+/// access, including when the input was unchanged; it establishes temporal
+/// coverage only when the source declares its bounds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "source.coverage", key = ["observation"], replace = repeat, time = ended_at, quality = captured)]
+#[event(version = 3, type = "source.coverage", key = ["binding", "host"], replace = newer, time = ended_at, quality = captured)]
 pub struct SourceCoverage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_run: Option<crate::RunId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_class: Option<crate::Class>,
-    pub observation: String,
     pub observed_source: String,
     pub binding: String,
     pub host: String,

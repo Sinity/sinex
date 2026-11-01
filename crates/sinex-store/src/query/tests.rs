@@ -407,12 +407,19 @@ async fn walks_follow_provenance(db: devkit::pg::TestDatabase) {
     assert_eq!(shown["event_type"], json!("command.fused"));
 }
 
+/// law: no-data-means-silent
 #[devkit::test]
 async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     world(&mut conn).await;
+    // A registered source that never recorded anything is not configured
+    // here, not silent, so it is never listed as having no data.
+    sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('export.never-staged','export-archive',1,ARRAY['synthetic.record'],'synthetic query test')")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     let a = ask(&mut conn, "recall 2026-09-14T08:02:00Z ±90s").await;
     // Commands at 08:01, 08:02 and 08:03, each observed and fused.
     assert_eq!(a.total, 6, "{:?}", a.rows);

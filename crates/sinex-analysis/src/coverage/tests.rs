@@ -6,7 +6,6 @@ fn access_failure_and_unknown_temporal_bounds_never_supply_observed_coverage() {
     let mut row = SourceCoverage {
         observed_run: None,
         observed_class: None,
-        observation: "synthetic".into(),
         observed_source: "synthetic".into(),
         binding: "synthetic".into(),
         host: "synthetic".into(),

@@ -223,6 +223,8 @@ Content, pending before past, every line cited:
   never reports "no activity".
 - **missing-sources-named**: a window with an expected binding that was missing or behind
   names that binding in the answer, even when the binding has some events in the window.
+- **no-data-means-silent**: a recall window lists as having no data only sources that
+  have recorded events, never a source that is registered but never recorded anything.
 - **mark-order**: `recall mark N` orders by marked time with a stable tie-break, and a
   backdated mark keeps its marked time.
 - **note-revision-keeps-text**: revising a note leaves the earlier note readable, and the

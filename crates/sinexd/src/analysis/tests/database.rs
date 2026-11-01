@@ -366,7 +366,6 @@ fn observed(from: i64, to: i64) -> Event {
         &SourceCoverage {
             observed_run: None,
             observed_class: None,
-            observation: format!("synthetic:{from}:{to}"),
             observed_source: "code.git".into(),
             binding: "test".into(),
             host: "test".into(),

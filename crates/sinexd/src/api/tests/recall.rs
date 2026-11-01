@@ -367,7 +367,6 @@ async fn recall_brief_and_machine_render_one_stored_context_pack(db: devkit::pg:
         brief["result"]["context_pack"],
         recall["result"]["context_pack"]
     );
-    assert_eq!(brief["result"]["machine"], recall["result"]["machine"]);
     assert_eq!(
         brief["result"]["presentation"],
         recall["result"]["presentation"]
@@ -875,10 +874,13 @@ async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomp
     let (_, first) = call(&w, Some(READ), json!({"method":"brief","day":citation})).await;
     assert_eq!(first["outcome"], "ok", "{first}");
     assert_eq!(first["result"]["context_pack"], citation);
-    assert_eq!(first["result"]["machine"]["context_pack"], citation);
-    assert_eq!(first["result"]["machine"]["read_as"], position);
+    assert_eq!(
+        first["result"]["presentation"]["context"]["citation"],
+        citation
+    );
+    assert_eq!(first["result"]["presentation"]["context"]["as_of"], position);
     assert!(
-        first["result"]["text"]
+        first["result"]["presentation"]["markdown"]
             .as_str()
             .unwrap()
             .contains("Unresolved recorded check failure")

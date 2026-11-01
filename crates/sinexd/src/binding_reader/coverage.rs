@@ -1,14 +1,23 @@
-//! A read outcome is evidence even when no source record changed.
+//! A read outcome is evidence even when no source record changed. Each binding
+//! on each host has one current coverage reading; a newer one is admitted only
+//! when the binding's state or its reason changes, so a binding read every few
+//! seconds writes when it starts failing or recovers, not on every read.
 use crate::backfill::Totals;
 use crate::material_access::Access;
 use crate::writer::{Priority, WriterHandle};
 use sinex_model::event_types::coverage::{CoverageCompleteness, CoverageState, SourceCoverage};
-use sinex_model::{Class, Timestamp};
+use sinex_model::{Class, RunId, Timestamp};
 use sinex_source_core::Binding;
 use sinex_sources::sources::coverage;
 use sinex_store::{Blobs, bindings};
 use sqlx::PgConnection;
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// Why a successful read establishes no observed coverage. One reason for
+/// every successful read, so a binding that alternates between new records
+/// and none stays in one state.
+const READ_SUCCEEDED: &str = "input read successfully; temporal coverage is not declared";
 
 pub(super) fn outcome(
     binding: &Binding,
@@ -18,11 +27,7 @@ pub(super) fn outcome(
     let (state, reason, events, failures) = match result {
         Ok(totals) if totals.failures == 0 => (
             CoverageState::RecordedUnknownCoverage,
-            Some(if totals.events_offered == 0 {
-                "input checked successfully; no new events".into()
-            } else {
-                "input read successfully; temporal coverage is not declared".into()
-            }),
+            Some(READ_SUCCEEDED.into()),
             totals.events_offered as u64,
             0,
         ),
@@ -37,7 +42,6 @@ pub(super) fn outcome(
     SourceCoverage {
         observed_run: None,
         observed_class: binding.settings.class,
-        observation: uuid::Uuid::now_v7().to_string(),
         observed_source: binding.source.clone(),
         binding: binding.name.clone(),
         host: binding.settings.host.clone(),
@@ -52,21 +56,92 @@ pub(super) fn outcome(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn flush(
-    conn: &mut PgConnection,
-    blobs: &Blobs,
-    writer: &WriterHandle,
-    access: Access<'_>,
-    pending: &mut Vec<SourceCoverage>,
-    results: &mut Vec<(String, Result<Totals, String>)>,
-) {
-    for observation in pending.drain(..) {
-        let source = observation.observed_source.clone();
-        if let Err(error) = record(conn, blobs, writer, access, observation).await {
-            eprintln!("sinexd: source coverage evidence for {source}: {error}");
-            results.push((source, Err(format!("source coverage evidence: {error}"))));
+/// A binding's coverage identity: its name and host.
+type Key = (String, String);
+
+/// The coverage a reader has admitted, the observations waiting to be
+/// admitted, and the one open run per host that admits them.
+#[derive(Default)]
+pub(crate) struct Coverage {
+    current: BTreeMap<Key, (CoverageState, Option<String>)>,
+    pending: Vec<SourceCoverage>,
+    runs: BTreeMap<String, RunId>,
+}
+
+impl Coverage {
+    /// Coverage that continues from the current readings stored for `host`, so
+    /// a restarted reader writes nothing for a binding whose state is unchanged.
+    pub(crate) async fn stored(conn: &mut PgConnection, host: &str) -> Result<Self, String> {
+        let events = sinex_store::live::of_types(conn, &["source.coverage".into()])
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut current = BTreeMap::new();
+        for payload in events.into_iter().filter_map(|event| event.payload) {
+            let row: SourceCoverage =
+                serde_json::from_value(payload).map_err(|error| error.to_string())?;
+            if row.host == host {
+                current.insert((row.binding, row.host), (row.state, row.reason));
+            }
         }
+        Ok(Self {
+            current,
+            ..Self::default()
+        })
+    }
+
+    /// Queue `observation` when its state or reason differs from its binding's
+    /// current reading. A later observation of the same binding replaces one
+    /// still waiting.
+    pub(crate) fn observe(&mut self, observation: SourceCoverage) {
+        self.pending.retain(|waiting| {
+            (&waiting.binding, &waiting.host) != (&observation.binding, &observation.host)
+        });
+        let key = (observation.binding.clone(), observation.host.clone());
+        if self.current.get(&key) != Some(&(observation.state, observation.reason.clone())) {
+            self.pending.push(observation);
+        }
+    }
+
+    /// Whether `binding` on `host` has a current reading.
+    pub(crate) fn has_reading(&self, binding: &str, host: &str) -> bool {
+        self.current
+            .contains_key(&(binding.to_owned(), host.to_owned()))
+    }
+
+    /// Admit every waiting observation. One that fails is reported in
+    /// `results` and observed again on the binding's next read.
+    pub(crate) async fn flush(
+        &mut self,
+        conn: &mut PgConnection,
+        blobs: &Blobs,
+        writer: &WriterHandle,
+        access: Access<'_>,
+        results: &mut Vec<(String, Result<Totals, String>)>,
+    ) {
+        for observation in std::mem::take(&mut self.pending) {
+            let source = observation.observed_source.clone();
+            let key = (observation.binding.clone(), observation.host.clone());
+            let state = (observation.state, observation.reason.clone());
+            match record(conn, blobs, writer, access, &mut self.runs, observation).await {
+                Ok(()) => {
+                    self.current.insert(key, state);
+                }
+                Err(error) => {
+                    eprintln!("sinexd: source coverage evidence for {source}: {error}");
+                    results.push((source, Err(format!("source coverage evidence: {error}"))));
+                }
+            }
+        }
+    }
+
+    /// End the runs that admitted coverage.
+    pub(crate) async fn end(self, conn: &mut PgConnection) -> Result<(), String> {
+        for run in self.runs.into_values() {
+            sinex_store::runs::end(conn, run)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 }
 
@@ -75,6 +150,7 @@ async fn record(
     blobs: &Blobs,
     writer: &WriterHandle,
     access: Access<'_>,
+    runs: &mut BTreeMap<String, RunId>,
     observation: SourceCoverage,
 ) -> Result<(), String> {
     let binding = format!("source.observation:{}", observation.binding);
@@ -131,20 +207,27 @@ async fn record(
         .max(settings)
         .max(observation.observed_class.unwrap_or_default());
     let material = crate::material_access::MaterialAccess::new(blobs.clone(), class, access)?;
-    let version = coverage::OBSERVATION.parser_version.to_string();
-    let run = sinex_store::runs::start(
-        conn,
-        &sinex_store::runs::Manifest {
-            name: coverage::OBSERVATION.name,
-            kind: "source",
-            version: &version,
-            build: crate::build_identity::current()?,
-            emits: coverage::OBSERVATION.event_types,
-        },
-        &observation.host,
-    )
-    .await
-    .map_err(|error| error.to_string())?;
+    let run = match runs.get(&observation.host) {
+        Some(run) => *run,
+        None => {
+            let version = coverage::OBSERVATION.parser_version.to_string();
+            let run = sinex_store::runs::start(
+                conn,
+                &sinex_store::runs::Manifest {
+                    name: coverage::OBSERVATION.name,
+                    kind: "source",
+                    version: &version,
+                    build: crate::build_identity::current()?,
+                    emits: coverage::OBSERVATION.event_types,
+                },
+                &observation.host,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            runs.insert(observation.host.clone(), run);
+            run
+        }
+    };
     let result = crate::intake::Intake {
         host: Some(&observation.host),
         writer,
@@ -159,11 +242,7 @@ async fn record(
     }
     .submit(acquired, serde_json::Value::Null, &mut Totals::default())
     .await;
-    let ended = sinex_store::runs::end(conn, run)
-        .await
-        .map_err(|error| error.to_string());
     let admitted = result?;
-    ended?;
     if admitted.outcome.failures != 0 || admitted.outcome.admitted != 1 {
         return Err("read outcome was not admitted as one coverage event".into());
     }

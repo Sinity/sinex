@@ -66,9 +66,8 @@ fn observation(request: &AnalysisRequest, name: &str, state: CoverageState) -> E
     captured(&SourceCoverage {
         observed_run: None,
         observed_class: None,
-        observation: name.into(),
         observed_source: "code.git".into(),
-        binding: "synthetic".into(),
+        binding: name.into(),
         host: "synthetic".into(),
         started_at: request.started_at,
         ended_at: request.ended_at,

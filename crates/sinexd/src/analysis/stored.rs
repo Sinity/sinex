@@ -340,10 +340,10 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, Strin
         let Some(row) = event.payload_as::<SourceCoverage>() else {
             continue;
         };
-        let order = (row.ended_at, row.started_at, row.observation);
+        let order = (row.ended_at, row.started_at, event.id);
         let entry = latest
             .entry((row.observed_source, row.binding, row.host))
-            .or_insert((order.clone(), event.id));
+            .or_insert((order, event.id));
         if order > entry.0 {
             *entry = (order, event.id);
         }

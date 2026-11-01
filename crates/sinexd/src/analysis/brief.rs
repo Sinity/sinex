@@ -295,60 +295,43 @@ pub(super) fn sections(
     Ok(sections)
 }
 
+/// The data-quality findings from source coverage: every binding whose current
+/// read failed or was partial, failures first. A read that succeeded is not a
+/// data-quality finding.
 fn source_read_findings(
     panel: &super::panel::Panel,
     settings: &Settings,
 ) -> Result<Vec<Finding>, String> {
     use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
-    let mut observations = panel
-        .evidence
-        .iter()
-        .map(|evidence| {
-            let row: SourceCoverage = serde_json::from_value(evidence["observation"].clone())
-                .map_err(|error| error.to_string())?;
-            let citation = evidence["citation"]
-                .as_str()
-                .ok_or("coverage evidence has no citation")?
-                .to_owned();
-            Ok((row, citation))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let rank = |state: CoverageState| match state {
-        CoverageState::Missing => 0,
-        CoverageState::Partial => 1,
-        CoverageState::RecordedUnknownCoverage => 2,
-        CoverageState::Observed => 3,
-    };
-    observations.sort_by(|(a, _), (b, _)| {
-        (
-            rank(a.state),
-            &a.observed_source,
-            &a.binding,
-            &a.host,
-            a.ended_at,
-            &a.observation,
-        )
-            .cmp(&(
-                rank(b.state),
-                &b.observed_source,
-                &b.binding,
-                &b.host,
-                b.ended_at,
-                &b.observation,
-            ))
+    let mut observations = Vec::new();
+    for evidence in &panel.evidence {
+        let row: SourceCoverage = serde_json::from_value(evidence["observation"].clone())
+            .map_err(|error| error.to_string())?;
+        let state = match row.state {
+            CoverageState::Missing => "missing",
+            CoverageState::Partial => "partial",
+            CoverageState::Observed | CoverageState::RecordedUnknownCoverage => continue,
+        };
+        let citation = evidence["citation"]
+            .as_str()
+            .ok_or("coverage evidence has no citation")?
+            .to_owned();
+        observations.push((state, row, citation));
+    }
+    observations.sort_by(|(a_state, a, _), (b_state, b, _)| {
+        (a_state, &a.observed_source, &a.binding, &a.host, a.ended_at).cmp(&(
+            b_state,
+            &b.observed_source,
+            &b.binding,
+            &b.host,
+            b.ended_at,
+        ))
     });
     let zone = jiff::tz::TimeZone::get(settings.time_settings.zone_name())
         .map_err(|error| error.to_string())?;
     observations
         .into_iter()
-        .filter(|(row, _)| row.state != CoverageState::Observed)
-        .map(|(row, citation)| {
-            let state = match row.state {
-                CoverageState::Observed => "observed",
-                CoverageState::Partial => "partial",
-                CoverageState::RecordedUnknownCoverage => "recorded_unknown_coverage",
-                CoverageState::Missing => "missing",
-            };
+        .map(|(state, row, citation)| {
             let when = jiff::Timestamp::from_nanosecond(row.ended_at.unix_ns())
                 .map_err(|error| error.to_string())?
                 .to_zoned(zone.clone())

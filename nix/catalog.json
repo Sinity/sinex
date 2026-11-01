@@ -4238,13 +4238,14 @@
       "keep_known": [],
       "key_rule": {
         "fields": [
-          "observation"
+          "binding",
+          "host"
         ],
         "rule": "fields"
       },
       "kind": {
         "name": "source.coverage",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -4297,7 +4298,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A successful read proves access, including when the input was unchanged.\nIt establishes temporal coverage only when the source declares its bounds.",
+        "description": "The current read state of one binding on one host: a newer reading\nreplaces it when the state or its reason changes. A successful read proves\naccess, including when the input was unchanged; it establishes temporal\ncoverage only when the source declares its bounds.",
         "properties": {
           "binding": {
             "type": "string"
@@ -4322,9 +4323,6 @@
             "type": "integer"
           },
           "host": {
-            "type": "string"
-          },
-          "observation": {
             "type": "string"
           },
           "observed_class": {
@@ -4364,7 +4362,6 @@
           }
         },
         "required": [
-          "observation",
           "observed_source",
           "binding",
           "host",
@@ -4382,7 +4379,7 @@
       "removed_rule": {
         "rule": "never"
       },
-      "replace_rule": "suppress_repeat",
+      "replace_rule": "replace_when_newer",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [

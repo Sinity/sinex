@@ -256,7 +256,9 @@ one irreversible deletion; a refused material is read again by replay.
 
 - Typed printers per operation, from its answer type. Modes: a table (default on a
   terminal), `--json` (one complete document), `--jsonl` (rows streamed after a
-  documented metadata frame), `--ids`.
+  documented metadata frame), `--ids`. An answer rendered as text (the brief, a panel,
+  `analysis-why`) prints that text once by default; its JSON document is printed only
+  with `--json`.
 - Colour only on a terminal with `NO_COLOR` unset. Colour and weight encode status only
   (ok, stale, missing, provisional, error), never source identity. Provisional rows look
   provisional; unknown is printed "unknown", never blank. Widths count display columns.
@@ -565,6 +567,8 @@ memory per page); no test asserts elapsed time ([benchmarks](testing.md#benchmar
   fails on a difference or on a word missing from the vocabulary.
 - **completion-offline**: completion answers from the catalog file with the daemon
   stopped, within its budget, and never offers an unavailable operation.
+- **text-by-default**: an answer rendered as text prints that text once without
+  `--json`, and the whole answer document with `--json`.
 - **picker-off-terminal**: off a terminal or with a machine format, an ambiguous
   reference exits 2 with its candidates and the exact non-interactive call.
 - **help-examples-run**: every help example runs on the synthetic world and matches its

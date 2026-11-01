@@ -142,12 +142,14 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .map(|(format, b)| crate::binding_reader::BindingReader::new(format, b))
         .collect::<Result<Vec<_>, _>>()?;
     let (_stop, stop) = tokio::sync::watch::channel(false);
+    let mut rounds = crate::binding_reader::Rounds::default();
     let results = crate::binding_reader::read(
         &mut ctx.read_conn,
         &ctx.blobs,
         &ctx.writer,
         &sink,
         &mut readers,
+        &mut rounds,
         stop,
         crate::material_access::Access {
             recipient: None,
@@ -158,6 +160,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     )
     .await;
     let mut failures = Vec::new();
+    if let Err(error) = rounds.end(&mut ctx.read_conn).await {
+        failures.push(error);
+    }
     for (source, result) in results {
         match result {
             Ok(totals) => match per_source.iter_mut().find(|(s, _)| *s == source) {

@@ -88,3 +88,49 @@ fn context_timeline_and_window_citations_page_through_the_same_query_protocol() 
         assert_eq!(requests[1]["cursor"], "next");
     }
 }
+
+/// Answer one request with `result` and return what `sinexctl` printed.
+fn answered(args: &[&str], result: Value) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        request(&mut stream);
+        let body = json!({"outcome":"ok","result":result}).to_string();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_sinexctl"))
+        .args(["--endpoint", &endpoint, "--token-file", "/dev/null"])
+        .args(args)
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// law: text-by-default
+#[devkit::test]
+fn rendered_answers_print_their_text_once_unless_json_is_asked() {
+    let brief = json!({"context_pack":"sinex:ev/synthetic","presentation":{
+        "context":{"title":"Brief for 2026-09-14","evaluated_at":"2026-09-14T08:00:00Z","as_of":7,"day_setting":"04:00 UTC"},
+        "sections":[{"title":"Data quality","findings":[]}],
+        "markdown":"# Brief for 2026-09-14\n- synthetic finding\n"}});
+    assert_eq!(
+        answered(&["brief"], brief.clone()),
+        "# Brief for 2026-09-14\n- synthetic finding\n"
+    );
+    let printed: Value = serde_json::from_str(&answered(&["--json", "brief"], brief.clone())).unwrap();
+    assert_eq!(printed, brief);
+    assert_eq!(
+        answered(
+            &["analysis-why", "git.commits", "2026-09-14"],
+            json!({"text":"git.commits on 2026-09-14: recorded"})
+        ),
+        "git.commits on 2026-09-14: recorded\n"
+    );
+}
