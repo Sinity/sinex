@@ -158,7 +158,7 @@ fn check(run: &mut Run) -> Result {
     clippy(run)
 }
 
-/// Clippy of the workspace and of the fuzz targets, against the schema
+/// Clippy of the workspace, fuzz harness included, against the schema
 /// database.
 fn clippy(run: &mut Run) -> Result {
     let mut prepared = None;
