@@ -384,7 +384,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         rows(&mut w.conn, "media where media_type = \"image/png\"").await,
         2
     );
-    assert!(rows(&mut w.conn, "curation where origin = imported").await >= 4);
+    assert!(rows(&mut w.conn, "curation where curation.origin = imported").await >= 4);
 
     // Opening: a verified copy on disk; then the view.
     let open = w
