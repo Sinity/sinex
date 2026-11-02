@@ -44,7 +44,7 @@ After a successful drain, copy the stopped state with ownership, modes and bytes
 
 ### Upgrading
 
-Activating a new version does not change the schema. When a version brings a schema upgrade, stop `sinexd`, run `sinex-schema apply`, then start it; until then the daemon refuses to start and names the command ([admission.md](admission.md#schema-evolution)). Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture.
+Activating a new version does not change the schema. When a version brings a schema upgrade, `sinexd` refuses to start and names the command ([admission.md](admission.md#schema-evolution)). With `sinexd` stopped, run `systemctl start sinex-schema-upgrade` (`sinexd admin upgrade` as the Sinex user), which returns when the one upgrade transaction commits or rolls back, then start `sinexd`. Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture.
 
 ### PostgreSQL tuning
 

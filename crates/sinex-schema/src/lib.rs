@@ -1,6 +1,7 @@
 //! The declarations create an empty database at the current schema version,
 //! [`VERSION`]. A database at an older version is upgraded by the forward
-//! upgrades in `upgrades.rs`, in one transaction; a newer one is refused.
+//! upgrades in `upgrades.rs`, in one transaction, only by the explicit
+//! [`apply`]; [`start`] and the daemon refuse it. A newer one is refused.
 //!
 //! Enum CHECK lists come from the Rust enums (`DbCheck`), and the event-type
 //! bundled registry rows and views come from `sinex_model::event_types::ALL`.
@@ -41,6 +42,10 @@ pub enum Error {
     Database(#[from] sqlx::Error),
     #[error("database is at schema version {found}, this build declares version {VERSION}")]
     Version { found: i32 },
+    #[error(
+        "database is at schema version {found}, this build declares version {VERSION}; stop sinexd and run `sinexd admin upgrade`"
+    )]
+    UpgradeNeeded { found: i32 },
     #[error("database has Sinex objects but no schema version; refusing to guess")]
     Unversioned,
     #[error("a writer holds the database; stop sinexd before upgrading its schema")]
@@ -352,6 +357,7 @@ pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error>
         .await?;
     match found {
         Some(VERSION) => require_read_boundary(connection).await,
+        Some(found) if (0..VERSION).contains(&found) => Err(Error::UpgradeNeeded { found }),
         Some(found) => Err(Error::Version { found }),
         None => Err(Error::Unversioned),
     }
@@ -364,9 +370,30 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     apply_with_owners(connection, &kinds::Owners::default()).await
 }
 
+/// Upgrade or create the schema with these kind owners: the explicit
+/// operation run while sinexd is stopped.
 pub async fn apply_with_owners(
     connection: &mut PgConnection,
     owners: &kinds::Owners,
+) -> Result<Applied, Error> {
+    apply_allowing(connection, owners, true).await
+}
+
+/// What daemon startup runs: create the schema in an empty database or keep
+/// the declarations current at this version. A database at an older version
+/// is refused with the upgrade command, never upgraded here, so a deploy's
+/// upgrade is its own visible step.
+pub async fn start(
+    connection: &mut PgConnection,
+    owners: &kinds::Owners,
+) -> Result<Applied, Error> {
+    apply_allowing(connection, owners, false).await
+}
+
+async fn apply_allowing(
+    connection: &mut PgConnection,
+    owners: &kinds::Owners,
+    upgrade_allowed: bool,
 ) -> Result<Applied, Error> {
     let has_version_table: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='sinex_schema' AND tablename='applied')",
@@ -382,7 +409,11 @@ pub async fn apply_with_owners(
         return match found {
             Some(VERSION) => apply_current(connection, owners).await,
             Some(found) if (0..VERSION).contains(&found) => {
-                upgrade(connection, found, owners).await
+                if upgrade_allowed {
+                    upgrade(connection, found, owners).await
+                } else {
+                    Err(Error::UpgradeNeeded { found })
+                }
             }
             Some(found) => Err(Error::Version { found }),
             None => Err(Error::Unversioned),

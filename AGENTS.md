@@ -68,7 +68,7 @@ concepts an agent needs before opening it.
 | `crates/sinex-model` | identifiers, the three clocks, record locations and keys, kinds as declarations with field hints, typed payloads, events and batches. No I/O |
 | `crates/sinex-protocol` | the command table and the producer protocol. No I/O |
 | `crates/sinex-transport` | the NATS ingress, the confirmed stream, the one producer client (to be split out; this code is in `sinexd` and the producers today) |
-| `crates/sinex-schema` | the schema declared in Rust, generating fresh DDL and structural upgrades, plus named data steps; `sinex-schema apply` |
+| `crates/sinex-schema` | the schema declared in Rust, generating fresh DDL and structural upgrades, plus named data steps; `sinex-schema apply` for development databases (deployments run `sinexd admin upgrade`) |
 | `crates/sinex-store` | admission, the lifecycle, liveness, search, privacy classification and output actions, the reader access boundary, query compilation. Knows no source by name |
 | `crates/sinex-source-core` | the parser trait, drain, the segment spool driver and shared drivers |
 | `crates/sinex-sources` | one declaration per source, its parser, and the live capture loop |

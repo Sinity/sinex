@@ -67,6 +67,38 @@ async fn search_version_two(conn: &mut PgConnection) {
         .unwrap();
 }
 
+/// Startup never upgrades: it refuses an older version, names the upgrade
+/// command and leaves the store as it was; the explicit apply then upgrades.
+#[devkit::test]
+async fn startup_refuses_an_older_version_and_leaves_it_unchanged(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    search_version_two(&mut conn).await;
+    let owners = crate::kinds::Owners::default();
+    let error = start(&mut conn, &owners).await.unwrap_err();
+    assert!(matches!(error, Error::UpgradeNeeded { found: 2 }));
+    assert!(error.to_string().contains("sinexd admin upgrade"));
+    assert!(matches!(
+        require_current(&mut conn).await,
+        Err(Error::UpgradeNeeded { found: 2 })
+    ));
+    let version: Option<i32> = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(version, Some(2));
+    assert_eq!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Upgraded {
+            from: 2,
+            to: VERSION
+        }
+    );
+    assert_eq!(
+        start(&mut conn, &owners).await.unwrap(),
+        Applied::Current { version: VERSION }
+    );
+}
+
 #[devkit::test]
 async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
