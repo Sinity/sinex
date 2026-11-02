@@ -240,13 +240,15 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
         .execute(&mut writer)
         .await
         .unwrap();
-    // A later step's index already exists, so the upgrade fails after the
+    // A later step's mark already exists, so the upgrade fails after the
     // search step and every earlier statement.
-    conn.execute("CREATE INDEX events_feed ON core.events(id)")
+    conn.execute("CREATE TABLE sinex_schema.events_feed_pending ()")
         .await
         .unwrap();
     assert!(apply(&mut conn).await.is_err());
-    conn.execute("DROP INDEX core.events_feed").await.unwrap();
+    conn.execute("DROP TABLE sinex_schema.events_feed_pending")
+        .await
+        .unwrap();
     assert_eq!(catalog(&mut conn).await.unwrap(), before);
     assert_eq!(
         sqlx::query_scalar::<_, i32>("SELECT max(version) FROM sinex_schema.applied")
@@ -295,7 +297,7 @@ async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
 mod kinds;
 
 /// A synthetic downgrade leaves unused column slots; names and definitions remain the contract.
-async fn catalog(conn: &mut PgConnection) -> Result<Vec<String>, Error> {
+pub(crate) async fn catalog(conn: &mut PgConnection) -> Result<Vec<String>, Error> {
     Ok(super::catalog(conn)
         .await?
         .into_iter()

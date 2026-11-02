@@ -699,6 +699,9 @@ impl Api {
         let telemetry = sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE)
             .await
             .map_err(|e| e.to_string())?;
+        let upgrade_work = sinex_store::diagnostics::upgrade_work(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
         let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
@@ -802,6 +805,8 @@ impl Api {
                 "behind": row.commit_seq - row.search_position.unwrap_or(0),
             },
             "schema_version": row.schema_version,
+            // Upgrade tasks the daemon still runs after start; empty when done.
+            "upgrade_work_after_start": upgrade_work,
             "failures_24h": row.failures_24h,
             // Inputs that cannot be read admit no records, so no record failure
             // counts them; each binding failing now is listed here instead.

@@ -53,8 +53,8 @@ pub(super) async fn roots(
             r#"SELECT e.id FROM audit.archived a JOIN core.events e ON e.id = a.event_id
                WHERE a.operation_id = $1 AND e.id > $2
                  AND (NOT $3 OR NOT EXISTS (
-                   SELECT 1 FROM core.event_children c JOIN audit.archived p ON p.event_id = c.parent
-                   WHERE c.child = e.id AND p.operation_id = a.operation_id))
+                   SELECT 1 FROM core.event_parents_of(e.id) c JOIN audit.archived p ON p.event_id = c.parent
+                   WHERE p.operation_id = a.operation_id))
                ORDER BY e.id LIMIT $4"#,
             operation.0,
             after,
@@ -110,9 +110,9 @@ pub(super) async fn roots(
                    OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)
                  ELSE EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
                    AND (NOT $5 OR NOT EXISTS (
-                     SELECT 1 FROM core.event_children c JOIN audit.archived p ON p.event_id = c.parent
+                     SELECT 1 FROM core.event_parents_of(e.id) c JOIN audit.archived p ON p.event_id = c.parent
                      JOIN audit.archived s ON s.event_id = e.id
-                     WHERE c.child = e.id AND p.operation_id IS NOT DISTINCT FROM s.operation_id)) END
+                     WHERE p.operation_id IS NOT DISTINCT FROM s.operation_id)) END
                ORDER BY e.id LIMIT $6"#,
             run.0,
             after,
@@ -143,9 +143,9 @@ pub(super) async fn roots(
                        OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)
                      ELSE EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
                        AND (NOT $8 OR NOT EXISTS (
-                         SELECT 1 FROM core.event_children c JOIN audit.archived p ON p.event_id = c.parent
+                         SELECT 1 FROM core.event_parents_of(e.id) c JOIN audit.archived p ON p.event_id = c.parent
                          JOIN audit.archived s ON s.event_id = e.id
-                         WHERE c.child = e.id AND p.operation_id IS NOT DISTINCT FROM s.operation_id)) END
+                         WHERE p.operation_id IS NOT DISTINCT FROM s.operation_id)) END
                    ORDER BY e.id LIMIT $9"#,
                 source,
                 after,

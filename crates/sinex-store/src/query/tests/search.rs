@@ -163,6 +163,7 @@ async fn search_answers_and_position_hold_while_trigram_rewrite_runs(db: devkit:
     assert_eq!(catch_up_search_text(&mut conn).await.unwrap(), position);
     assert!(flags(&mut conn).await.iter().all(|(_, trigram)| *trigram));
     let mut stages = Vec::new();
+    let mut search_steps = 0;
     loop {
         assert_eq!(current_seq(&mut conn).await.unwrap(), position);
         assert_eq!(
@@ -179,15 +180,21 @@ async fn search_answers_and_position_hold_while_trigram_rewrite_runs(db: devkit:
             answers.push((answer.total, answer.rows));
         }
         stages.push(answers);
+        use sinex_schema::online::{Progress, Task};
         match sinex_schema::online::step(&mut conn, 1).await.unwrap() {
-            sinex_schema::online::Progress::Advanced { .. } => {}
-            sinex_schema::online::Progress::Done => break,
-            sinex_schema::online::Progress::IndexBuildRunning => {
-                panic!("no other session builds the index")
+            Progress::Advanced {
+                task: Task::SearchRewrite,
+                ..
             }
+            | Progress::Finished {
+                task: Task::SearchRewrite,
+            } => search_steps += 1,
+            Progress::Advanced { .. } | Progress::Finished { .. } => {}
+            Progress::Done => break,
+            Progress::Waiting => panic!("no other session holds the work"),
         }
     }
-    assert_eq!(stages.len(), 4, "one search row per step, then the index");
+    assert_eq!(search_steps, 4, "one search row per step, then the index");
     assert_eq!(flags(&mut conn).await, indexed_flags);
     let mut rewritten = Vec::new();
     for text in texts {

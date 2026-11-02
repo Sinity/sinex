@@ -1,195 +1,187 @@
 //! Upgrade work the running daemon finishes after start. An upgrade adds only
-//! what new writes need; rewriting rows stored before it and rebuilding
-//! indexes over them happen here, in bounded steps that resume after a
-//! restart, so capture is stopped only for the upgrade itself.
+//! what new writes need; filling new tables from rows stored before it and
+//! building indexes over them happen here, in bounded steps that resume after
+//! a restart, so admission is stopped only for the upgrade itself.
 //!
-//! Search rows stored before kinds declared trigram participation keep
-//! `trigram_indexed = true` until rewritten. Search matches a row under either
-//! flag value (the flag only chooses between the trigram index and a scan), so
-//! answers are the same before, during and after the rewrite. When every row
-//! is rewritten, the trigram index is rebuilt over eligible rows only, and the
-//! mark table is dropped: a finished store matches a fresh one.
+//! The work is an ordered list of tasks. Each task exists while its mark table
+//! in `sinex_schema` exists: the upgrade creates the mark, and the step that
+//! finishes the task drops it in the same transaction as its last change. A
+//! finished store therefore holds no mark and matches a fresh one. Readers
+//! stay correct while a task remains; each task module says how.
 use crate::Error;
-use sqlx::{Connection, PgConnection};
+use sqlx::PgConnection;
 
-/// Search rows read per rewrite step, each step one short transaction.
+mod event_children;
+mod event_indexes;
+mod published_key;
+mod search_text;
+
+/// Rows read per batch step (events with parents, search rows), each step
+/// one short transaction.
 pub const BATCH: i64 = 5_000;
 
-/// The last search row the rewrite has handled, in `event_id` order. The
-/// upgrade creates it; it exists only while the work remains.
-pub(crate) const SEARCH_REWRITE_MARK: &str = "CREATE TABLE sinex_schema.search_trigram_rewrite (
-  id boolean PRIMARY KEY CHECK (id),
-  rewritten_through uuid
-)";
+/// Held for the length of one step, so a session of a stopped daemon that is
+/// still building an index is waited for rather than raced.
+const WORK_LOCK: i64 = 0x7369_6e65_784f_4e4c;
+
+/// One task of the work after start, in the order the daemon runs them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Task {
+    /// `core.published` gets its key over (event, stream position, stream
+    /// instance). The publisher holds until it exists.
+    PublishedKey,
+    /// The commit-order index over events that feed pages read.
+    FeedIndex,
+    /// The parent edges of events stored before the upgrade.
+    EventChildren,
+    /// The index coverage probes read.
+    CoverageIndex,
+    /// Search rows of kinds outside the trigram index leave it, and the index
+    /// is rebuilt over the rest.
+    SearchRewrite,
+}
+
+impl Task {
+    pub const ALL: [Task; 5] = [
+        Task::PublishedKey,
+        Task::FeedIndex,
+        Task::EventChildren,
+        Task::CoverageIndex,
+        Task::SearchRewrite,
+    ];
+
+    /// The name status reports.
+    pub fn name(self) -> &'static str {
+        match self {
+            Task::PublishedKey => "published key",
+            Task::FeedIndex => "feed index",
+            Task::EventChildren => "event children",
+            Task::CoverageIndex => "coverage index",
+            Task::SearchRewrite => "search rewrite",
+        }
+    }
+
+    fn mark(self) -> &'static str {
+        match self {
+            Task::PublishedKey => "sinex_schema.published_key_pending",
+            Task::FeedIndex => "sinex_schema.events_feed_pending",
+            Task::EventChildren => "sinex_schema.event_children_fill",
+            Task::CoverageIndex => "sinex_schema.events_coverage_pending",
+            Task::SearchRewrite => "sinex_schema.search_trigram_rewrite",
+        }
+    }
+}
 
 /// What one [`step`] did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Progress {
-    /// One batch was read; `rewritten` of its rows changed. More may remain.
-    Advanced { rewritten: u64 },
-    /// A session that has ended on our side, such as a stopped daemon's, is
-    /// still building the index; call again once it has finished.
-    IndexBuildRunning,
+    /// Part of `task` was done; `rows` rows were written. More may remain.
+    Advanced { task: Task, rows: u64 },
+    /// `task` finished.
+    Finished { task: Task },
+    /// Another session, such as a stopped daemon's backend that is still
+    /// building an index, holds the work; call again once it has ended.
+    Waiting,
     /// No work remains.
     Done,
 }
 
-/// Run the next bounded unit of the remaining work: one batch of at most
-/// `batch` search rows, or, once all rows are rewritten, the concurrent
-/// rebuild of the trigram index. Call it again until it returns
-/// [`Progress::Done`]; an interruption at any point resumes on the next call.
-pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error> {
-    let pending: bool =
-        sqlx::query_scalar("SELECT to_regclass('sinex_schema.search_trigram_rewrite') IS NOT NULL")
-            .fetch_one(&mut *conn)
+/// The tasks that remain, in order.
+pub async fn remaining(conn: &mut PgConnection) -> Result<Vec<Task>, Error> {
+    let marks: Vec<String> = Task::ALL.iter().map(|task| task.mark().into()).collect();
+    let present: Vec<bool> =
+        sqlx::query_scalar("SELECT to_regclass(mark) IS NOT NULL FROM unnest($1::text[]) WITH ORDINALITY m(mark, n) ORDER BY n")
+            .bind(&marks)
+            .fetch_all(&mut *conn)
             .await?;
-    if !pending {
+    Ok(Task::ALL
+        .into_iter()
+        .zip(present)
+        .filter_map(|(task, present)| present.then_some(task))
+        .collect())
+}
+
+/// Whether `task` remains.
+pub async fn pending(conn: &mut PgConnection, task: Task) -> Result<bool, Error> {
+    Ok(sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+        .bind(task.mark())
+        .fetch_one(&mut *conn)
+        .await?)
+}
+
+/// Run the next bounded unit of the first remaining task. Call it again until
+/// it returns [`Progress::Done`]; an interruption at any point resumes on the
+/// next call.
+pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error> {
+    let Some(task) = remaining(conn).await?.first().copied() else {
         return Ok(Progress::Done);
-    }
-    if let Some(rewritten) = rewrite_batch(conn, batch).await? {
-        return Ok(Progress::Advanced { rewritten });
-    }
-    if !rebuild_trigram_index(conn).await? {
-        return Ok(Progress::IndexBuildRunning);
-    }
-    sqlx::query("DROP TABLE sinex_schema.search_trigram_rewrite")
-        .persistent(false)
-        .execute(&mut *conn)
+    };
+    let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+        .bind(WORK_LOCK)
+        .fetch_one(&mut *conn)
         .await?;
-    Ok(Progress::Done)
+    if !held {
+        return Ok(Progress::Waiting);
+    }
+    let result = run(conn, task, batch).await;
+    let released = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(WORK_LOCK)
+        .execute(&mut *conn)
+        .await;
+    let progress = result?;
+    released?;
+    Ok(progress)
+}
+
+async fn run(conn: &mut PgConnection, task: Task, batch: i64) -> Result<Progress, Error> {
+    // A task the previous holder finished between our check and the lock.
+    if !pending(conn, task).await? {
+        return Ok(Progress::Finished { task });
+    }
+    match task {
+        Task::PublishedKey => published_key::step(conn).await?,
+        Task::FeedIndex => event_indexes::step(conn, &event_indexes::FEED).await?,
+        Task::CoverageIndex => event_indexes::step(conn, &event_indexes::COVERAGE).await?,
+        Task::EventChildren => {
+            if let Some(rows) = event_children::step(conn, batch).await? {
+                return Ok(Progress::Advanced { task, rows });
+            }
+        }
+        Task::SearchRewrite => {
+            if let Some(rows) = search_text::step(conn, batch).await? {
+                return Ok(Progress::Advanced { task, rows });
+            }
+        }
+    }
+    Ok(Progress::Finished { task })
 }
 
 /// Run [`step`] until no work remains.
 pub async fn finish(conn: &mut PgConnection) -> Result<(), Error> {
     loop {
         match step(conn, BATCH).await? {
-            Progress::Advanced { .. } => {}
-            Progress::IndexBuildRunning => {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await
-            }
+            Progress::Advanced { .. } | Progress::Finished { .. } => {}
+            Progress::Waiting => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
             Progress::Done => return Ok(()),
         }
     }
 }
 
-/// Rewrite the next rows after the mark and move the mark, in one
-/// transaction. `None` when no row follows the mark.
-async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64>, Error> {
-    let excluded: Vec<String> = sinex_model::event_types::ALL
-        .iter()
-        .filter(|kind| !kind.trigram_indexed)
-        .map(|kind| kind.event_type.to_string())
-        .collect();
-    let mut tx = conn.begin().await?;
-    let mark: Option<String> = sqlx::query_scalar(
-        "SELECT rewritten_through::text FROM sinex_schema.search_trigram_rewrite FOR UPDATE",
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-    // Each bound is spelled out so it stays an index range under a generic
-    // plan, and so the events join reads only the chunks the range covers.
-    let resumed = mark.is_some();
-    let (next_batch, rewrite) = (
-        format!(
-            "SELECT event_id::text FROM (
-               SELECT event_id FROM core.search_text WHERE {} ORDER BY event_id LIMIT $2
-             ) batch ORDER BY event_id DESC LIMIT 1",
-            after("event_id", resumed)
-        ),
-        format!(
-            "UPDATE core.search_text s SET trigram_indexed = false
-             FROM core.events e
-             WHERE e.id = s.event_id AND s.trigram_indexed AND e.event_type = ANY($3)
-               AND {} AND s.event_id <= $2::uuid AND {} AND e.id <= $2::uuid",
-            after("s.event_id", resumed),
-            after("e.id", resumed)
-        ),
-    );
-    let last: Option<String> = sqlx::query_scalar(next_batch.as_str())
-        .bind(&mark)
-        .bind(batch.max(1))
-        .fetch_optional(&mut *tx)
-        .await?;
-    let Some(last) = last else {
-        tx.commit().await?;
-        return Ok(None);
-    };
-    let rewritten = sqlx::query(rewrite.as_str())
-        .bind(&mark)
-        .bind(&last)
-        .bind(&excluded)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-    sqlx::query("UPDATE sinex_schema.search_trigram_rewrite SET rewritten_through = $1::uuid")
-        .bind(&last)
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(Some(rewritten))
-}
-
-/// The lower key bound after the mark, or none before the first batch.
-fn after(column: &str, resumed: bool) -> String {
-    if resumed {
-        format!("{column} > $1::uuid")
-    } else {
-        "$1::text IS NULL".into()
+/// The statements an upgrade runs to leave `task` for after start. A mark
+/// table without columns says the task remains; the edge fill's mark also
+/// holds its position.
+pub(crate) fn begin(task: Task) -> Vec<String> {
+    match task {
+        Task::EventChildren => event_children::begin(),
+        Task::SearchRewrite => search_text::begin(),
+        _ => vec![format!("CREATE TABLE {} ()", task.mark())],
     }
 }
 
-/// Replace the trigram index over every row with the declared one over
-/// eligible rows, without blocking reads or writes. Each state an
-/// interruption can leave is a starting point: an invalid partial build is
-/// dropped and built again, a valid one is kept, and a finished drop only
-/// needs the rename. A build another session still runs (a stopped daemon's
-/// backend keeps building after its client is gone) is waited for, not
-/// dropped: `false` means it is still running.
-///
-/// The build holds a lock that the search consumer's own lock waits for, so
-/// search maintenance, and a tombstone queued behind it, wait for the build;
-/// the search position reports that delay.
-async fn rebuild_trigram_index(conn: &mut PgConnection) -> Result<bool, Error> {
-    let (whole, partial_valid, building): (Option<bool>, Option<bool>, bool) = sqlx::query_as(
-        "SELECT (SELECT indpred IS NULL FROM pg_index WHERE indexrelid = to_regclass('core.search_text_trigram')),
-                (SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('core.search_text_trigram_partial')),
-                EXISTS (SELECT 1 FROM pg_stat_progress_create_index
-                        WHERE index_relid = to_regclass('core.search_text_trigram_partial')
-                          AND pid <> pg_backend_pid())",
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    if whole == Some(false) {
-        return Ok(true);
-    }
-    if building {
-        return Ok(false);
-    }
-    let mut partial_valid = partial_valid;
-    if partial_valid == Some(false) {
-        sqlx::query("DROP INDEX CONCURRENTLY core.search_text_trigram_partial")
-            .persistent(false)
-            .execute(&mut *conn)
-            .await?;
-        partial_valid = None;
-    }
-    if partial_valid.is_none() {
-        sqlx::query(
-            "CREATE INDEX CONCURRENTLY search_text_trigram_partial ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed",
-        )
-        .persistent(false)
-        .execute(&mut *conn)
-        .await?;
-    }
-    if whole == Some(true) {
-        sqlx::query("DROP INDEX CONCURRENTLY core.search_text_trigram")
-            .persistent(false)
-            .execute(&mut *conn)
-            .await?;
-    }
-    sqlx::query("ALTER INDEX core.search_text_trigram_partial RENAME TO search_text_trigram")
-        .persistent(false)
-        .execute(&mut *conn)
-        .await?;
-    Ok(true)
+/// The statement that ends `task`, run in the transaction of its last change.
+fn end(task: Task) -> String {
+    format!("DROP TABLE {}", task.mark())
 }
+
+#[cfg(test)]
+mod tests;

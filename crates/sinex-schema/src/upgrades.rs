@@ -34,11 +34,13 @@ fn landed() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
-        // 2 to 3: coverage probes each run through one covering index.
-        vec![
-            "DROP INDEX IF EXISTS core.events_coverage".into(),
-            crate::description::version_nine::COVERAGE_RUNS.into(),
-        ],
+        // 2 to 3: coverage probes each run through one covering index, built
+        // after start; until then they read the (source, ts_orig) index.
+        [
+            vec!["DROP INDEX IF EXISTS core.events_coverage".into()],
+            crate::online::begin(crate::online::Task::CoverageIndex),
+        ]
+        .concat(),
         // Version four added kind rows and views, installed from the current description.
         vec![],
     ]
@@ -68,11 +70,23 @@ pub(crate) const NAMED: &[&str] = &[
     "lifecycle",
 ];
 
+#[cfg(test)]
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
+    upgrades_with(false)
+}
+
+/// The upgrades, swapping in the equivalence-key copy `sinexd admin upgrade
+/// --prepare` built when it is `prepared` (`prepare.rs`), and otherwise
+/// removing any incomplete preparation and converting the keys in place.
+pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     let mut steps = landed();
     steps.push(crate::tables::blob_changes());
     steps.push(vec!["DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading'; END IF; END $$".into()]);
-    steps.push(compact_equivalence_keys());
+    steps.push(if prepared {
+        crate::prepare::swap()
+    } else {
+        [crate::prepare::removal(), compact_equivalence_keys()].concat()
+    });
     steps.push(search_text());
     steps.push(publication_pairs());
     let before = crate::description::Description::before_kind_declarations();
@@ -93,14 +107,15 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
         "ALTER TABLE core.event_tombstones ADD COLUMN commit_seq bigint".into(),
         "ALTER TABLE core.event_tombstones ADD COLUMN original_commit_seq bigint".into(),
         "ALTER TABLE core.event_tombstones ADD COLUMN class text".into(),
-        "CREATE INDEX events_feed ON core.events (commit_seq,id)".into(),
         "CREATE INDEX archive_changes_feed ON audit.archive_changes (commit_seq,change_seq,event_id)".into(),
         "CREATE INDEX tombstones_feed ON core.event_tombstones (commit_seq,event_id)".into(),
         "CREATE INDEX tombstones_original_position ON core.event_tombstones (original_commit_seq)".into(),
         "ALTER TABLE core.published ADD COLUMN stream_instance text NOT NULL DEFAULT ''".into(),
-        "ALTER TABLE core.published DROP CONSTRAINT published_pairs_pkey".into(),
-        "ALTER TABLE core.published ADD CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id,stream_seq,stream_instance)".into(),
     ]);
+    // The feed index and the publication key are built after start (`online.rs`).
+    let positions = steps.last_mut().expect("the step was just added");
+    positions.extend(crate::online::begin(crate::online::Task::FeedIndex));
+    positions.extend(crate::online::begin(crate::online::Task::PublishedKey));
     steps.push(vec![
         crate::tables::PRODUCER_ORDERS.into(),
         "GRANT SELECT, INSERT, UPDATE, DELETE ON core.producer_orders TO sinex_writer".into(),
@@ -154,11 +169,10 @@ fn compact_equivalence_keys() -> Vec<String> {
         ]
 }
 
+/// The key over publication pairs is built once, after start, together with
+/// the stream instance the later confirmed-stream step adds (`online.rs`).
 fn publication_pairs() -> Vec<String> {
-    vec![
-        "ALTER TABLE core.published DROP CONSTRAINT published_pkey".into(),
-        "ALTER TABLE core.published ADD CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq)".into(),
-    ]
+    vec![]
 }
 
 /// Only what new writes need: the column, defaulting every stored row to the
@@ -173,9 +187,10 @@ fn search_text() -> Vec<String> {
          FROM core.search_text s JOIN core.events e ON e.id = s.event_id
          WHERE core.class_visible(e.class)"
             .into(),
-        crate::online::SEARCH_REWRITE_MARK.into(),
-        "INSERT INTO sinex_schema.search_trigram_rewrite (id) VALUES (true)".into(),
     ]
+    .into_iter()
+    .chain(crate::online::begin(crate::online::Task::SearchRewrite))
+    .collect()
 }
 
 /// Move archive edges and counters into ordinary store tables without dropping captured telemetry.
@@ -185,8 +200,9 @@ fn foundations() -> Vec<String> {
         "DROP TABLE telemetry.events".into(),
         "DROP SCHEMA telemetry".into(),
         "INSERT INTO core.counters (name, value) SELECT 'excised', count(*) FROM core.event_tombstones ON CONFLICT DO NOTHING".into(),
-        "INSERT INTO core.event_children (parent, child) SELECT DISTINCT unnest(parents), id FROM core.events WHERE parents IS NOT NULL ON CONFLICT DO NOTHING".into(),
     ];
+    // The edges of stored events are filled after start (`online.rs`).
+    steps.extend(crate::online::begin(crate::online::Task::EventChildren));
     steps.extend(crate::description::Description::producer_metadata_changes());
     steps
 }

@@ -184,6 +184,14 @@ pub(crate) async fn publish_pending_measured(
     subjects: &Subjects,
     mut page_done: impl FnMut(PageTiming),
 ) -> Result<Published, String> {
+    // Until the upgrade's publication key is built after start, a second copy
+    // of an event has no key to go under; the saved position shows the wait.
+    if sinex_schema::online::pending(conn, sinex_schema::online::Task::PublishedKey)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(Published::default());
+    }
     let stream = confirmed_stream(js, subjects).await?;
     let instance = stream_instance(&stream);
     let consumer = consumer_for(&instance);

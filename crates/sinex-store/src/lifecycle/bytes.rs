@@ -1,6 +1,6 @@
 //! Tombstoning readings, and removing stored bytes nothing holds any more.
 //! A tombstone keeps a skeleton (identity, time, the record's place, why it
-//! left the live set) and clears every place that held the payload: the
+//! left the live set, its parent edges) and clears every place that held the payload: the
 //! event row, its search text, its embedding, its keyed output row and the
 //! bytes it owned beyond its material. Its confirmed-stream messages are
 //! erased by the publisher, which finds them through the skeleton.
@@ -33,6 +33,18 @@ pub(super) async fn tombstone_events(
         events,
         operation.0,
         seq,
+    )
+    .execute(&mut *conn)
+    .await?;
+    // The skeleton keeps the event's parent edges, which lineage reads after
+    // the row is gone. Admission wrote them already, except for an event
+    // stored before an upgrade whose edges are still being filled.
+    sqlx::query!(
+        "INSERT INTO core.event_children (parent, child)
+         SELECT DISTINCT p.parent, e.id FROM core.events e CROSS JOIN LATERAL unnest(e.parents) p(parent)
+         WHERE e.id = ANY($1)
+         ON CONFLICT DO NOTHING",
+        events
     )
     .execute(&mut *conn)
     .await?;

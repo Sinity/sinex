@@ -13,6 +13,8 @@ pub struct Snapshot {
     pub failures_24h: i64,
     pub blobs: i64,
     pub sources: Vec<SourceState>,
+    /// Upgrade work the daemon still has to finish after start, in order.
+    pub upgrade_work: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +48,7 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
             failures_24h: 0,
             blobs: 0,
             sources: Vec::new(),
+            upgrade_work: Vec::new(),
         });
     }
     let positions = positions(&mut tx).await?;
@@ -69,6 +72,7 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
         last_seen: r.last_seen,
     })
     .collect();
+    let upgrade_work = upgrade_work(&mut tx).await?;
     tx.rollback().await?;
     Ok(Snapshot {
         commit_seq: positions.commit_seq,
@@ -77,7 +81,18 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
         failures_24h: positions.failures_24h,
         blobs: row.blobs,
         sources,
+        upgrade_work,
     })
+}
+
+/// The names of the upgrade tasks that remain after start, in the order the
+/// daemon runs them; empty once the store matches a fresh one.
+pub async fn upgrade_work(conn: &mut PgConnection) -> Result<Vec<&'static str>> {
+    Ok(sinex_schema::online::remaining(conn)
+        .await?
+        .into_iter()
+        .map(sinex_schema::online::Task::name)
+        .collect())
 }
 
 /// How far commits, the schema and the search index are.

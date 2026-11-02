@@ -30,7 +30,7 @@ pub(super) async fn replay_scope(
            descendants AS (
              SELECT id FROM read_here
              UNION
-             SELECT edge.child FROM core.event_children edge JOIN descendants p ON edge.parent = p.id)
+             SELECT edge.child FROM descendants p CROSS JOIN LATERAL core.event_children_of(p.id) edge)
            SELECT x.id AS "id!" FROM descendants x
            WHERE EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = x.id)
               OR EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = x.id)"#,

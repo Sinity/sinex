@@ -1,5 +1,5 @@
 use super::*;
-use crate::online::{Progress, step};
+use crate::online::{Progress, Task, remaining, step};
 
 /// A version-two store with thirty events whose kinds cycle through journal,
 /// lake and command (the first two outside the trigram index), each with a
@@ -22,6 +22,13 @@ async fn upgraded_with_search_rows(conn: &mut PgConnection) {
             to: VERSION
         }
     );
+    // The tasks before the search rewrite.
+    while remaining(conn).await.unwrap() != [Task::SearchRewrite] {
+        assert!(matches!(
+            step(conn, crate::online::BATCH).await.unwrap(),
+            Progress::Advanced { .. } | Progress::Finished { .. }
+        ));
+    }
 }
 
 /// Each event kind with its rows' flags, and the event-less row's flag.
@@ -71,11 +78,17 @@ async fn online_rewrite_resumes_from_its_mark_and_converges(db: devkit::pg::Test
     // Rows follow event order: 1, 2 are outside the trigram index, 3 is in it.
     assert_eq!(
         step(&mut conn, 7).await.unwrap(),
-        Progress::Advanced { rewritten: 5 }
+        Progress::Advanced {
+            task: Task::SearchRewrite,
+            rows: 5
+        }
     );
     assert_eq!(
         step(&mut conn, 7).await.unwrap(),
-        Progress::Advanced { rewritten: 5 }
+        Progress::Advanced {
+            task: Task::SearchRewrite,
+            rows: 5
+        }
     );
     for (pattern, answer) in patterns.iter().zip(&answers) {
         assert_eq!(&matches(&mut conn, pattern).await, answer, "{pattern}");
@@ -104,7 +117,10 @@ async fn online_rewrite_resumes_from_its_mark_and_converges(db: devkit::pg::Test
     // Rows fifteen to twenty-one: 15, 18 and 21 are commands.
     assert_eq!(
         step(&mut conn, 7).await.unwrap(),
-        Progress::Advanced { rewritten: 4 }
+        Progress::Advanced {
+            task: Task::SearchRewrite,
+            rows: 4
+        }
     );
 
     crate::online::finish(&mut conn).await.unwrap();

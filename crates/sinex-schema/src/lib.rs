@@ -18,6 +18,7 @@ mod lifecycle;
 mod model_calls;
 pub mod online;
 mod owner_protocol;
+pub mod prepare;
 mod privacy_epoch;
 mod query_cursors;
 mod read_boundary;
@@ -483,7 +484,7 @@ async fn run_upgrades(
     if !free {
         return Err(Error::WriterRunning);
     }
-    let all = upgrades::upgrades();
+    let all = upgrades::upgrades_with(prepare::ready(connection).await?);
     let start = usize::try_from(from).expect("an upgrade starts at a version from 0");
     for (version, statements) in (from..).zip(&all[start..]) {
         for statement in statements {

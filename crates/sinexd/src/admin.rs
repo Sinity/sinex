@@ -22,11 +22,17 @@ pub(crate) enum Admin {
     },
     /// Upgrade an older schema to this build's version in one transaction,
     /// with sinexd stopped; refuses while a writer holds the database.
+    /// `--prepare`, run by the new build while the old daemon still serves,
+    /// builds the work the upgrade can swap in; `--unprepare` removes it.
     Upgrade {
         #[arg(long)]
         database: String,
         #[arg(long = "kind-owner")]
         kind_owners: Vec<String>,
+        #[arg(long, conflicts_with = "unprepare")]
+        prepare: bool,
+        #[arg(long)]
+        unprepare: bool,
     },
     /// As the database superuser: create the extensions and roles the schema
     /// needs, and give `owner` the roles. The owner then applies the schema.
@@ -97,6 +103,23 @@ async fn schema(database: &str, kind_owners: Vec<String>, upgrade: bool) -> Resu
         .map_err(|e| e.to_string())
 }
 
+async fn connect(database: &str) -> Result<sqlx::PgConnection, String> {
+    use sqlx::Connection;
+    sqlx::PgConnection::connect(database)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// `sinexd admin upgrade --prepare`: build what the upgrade can swap in,
+/// beside the serving daemon.
+async fn prepare(database: &str) -> Result<(), String> {
+    let mut connection = connect(database).await?;
+    sinex_schema::prepare::prepare(&mut connection, sinex_schema::prepare::BATCH)
+        .await
+        .map(|prepared| println!("{prepared}"))
+        .map_err(|e| e.to_string())
+}
+
 pub(crate) async fn run(command: Admin) -> Result<(), String> {
     match command {
         Admin::Diagnostics { command } => crate::diagnostics::run(command).await,
@@ -107,7 +130,24 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
         } => schema(&database, kind_owners, false).await,
         Admin::Upgrade {
             database,
+            prepare: true,
+            ..
+        } => prepare(&database).await,
+        Admin::Upgrade {
+            database,
+            unprepare: true,
+            ..
+        } => {
+            let mut connection = connect(&database).await?;
+            sinex_schema::prepare::unprepare(&mut connection)
+                .await
+                .map(|()| println!("removed the upgrade preparation"))
+                .map_err(|e| e.to_string())
+        }
+        Admin::Upgrade {
+            database,
             kind_owners,
+            ..
         } => schema(&database, kind_owners, true).await,
         Admin::PrepareDatabase { database, owner } => {
             use sqlx::Connection;

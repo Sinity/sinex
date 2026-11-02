@@ -231,7 +231,7 @@ pub async fn producer_records(
     kind: &str,
     acquisition_kind: &str,
 ) -> Result<Vec<(EventId, serde_json::Value, String, Option<String>)>> {
-    Ok(sqlx::query!(r#"SELECT e.id AS "id!",e.payload AS "payload!",f.producer,f.family FROM core.visible_events e JOIN core.event_children acquisition ON acquisition.child=e.id JOIN core.events parent ON parent.id=acquisition.parent JOIN core.ingress_frames f ON f.material_id=parent.material_id WHERE e.event_type=$1 AND parent.event_type=$2 AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id) ORDER BY e.commit_seq"#,kind,acquisition_kind)
+    Ok(sqlx::query!(r#"SELECT e.id AS "id!",e.payload AS "payload!",f.producer,f.family FROM core.visible_events e CROSS JOIN LATERAL core.event_parents_of(e.id) acquisition JOIN core.events parent ON parent.id=acquisition.parent JOIN core.ingress_frames f ON f.material_id=parent.material_id WHERE e.event_type=$1 AND parent.event_type=$2 AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id) ORDER BY e.commit_seq"#,kind,acquisition_kind)
         .fetch_all(conn).await?.into_iter().map(|row|(EventId(row.id),row.payload,row.producer,row.family)).collect())
 }
 
@@ -267,7 +267,7 @@ pub async fn frozen_payload(
     family: &str,
     acquisition_kind: &str,
 ) -> Result<Option<FrozenEvidence>> {
-    Ok(sqlx::query!(r#"SELECT e.payload AS "payload!",m.manifest->>'signal_settings_identity' AS "settings_identity?",(m.manifest->>'signal_position')::bigint AS "position?" FROM core.events e JOIN core.event_children acquisition ON acquisition.child=e.id JOIN core.events parent ON parent.id=acquisition.parent JOIN raw.materials m ON m.id=parent.material_id JOIN core.ingress_frames f ON f.material_id=parent.material_id WHERE e.event_type=$1 AND e.payload->>'delivery_id'=$2 AND f.family=$3 AND parent.event_type=$4 ORDER BY e.commit_seq DESC LIMIT 1"#,kind,id,family,acquisition_kind).fetch_optional(conn).await?.map(|row|FrozenEvidence{position:row.position,payload:row.payload,settings_identity:row.settings_identity}))
+    Ok(sqlx::query!(r#"SELECT e.payload AS "payload!",m.manifest->>'signal_settings_identity' AS "settings_identity?",(m.manifest->>'signal_position')::bigint AS "position?" FROM core.events e CROSS JOIN LATERAL core.event_parents_of(e.id) acquisition JOIN core.events parent ON parent.id=acquisition.parent JOIN raw.materials m ON m.id=parent.material_id JOIN core.ingress_frames f ON f.material_id=parent.material_id WHERE e.event_type=$1 AND e.payload->>'delivery_id'=$2 AND f.family=$3 AND parent.event_type=$4 ORDER BY e.commit_seq DESC LIMIT 1"#,kind,id,family,acquisition_kind).fetch_optional(conn).await?.map(|row|FrozenEvidence{position:row.position,payload:row.payload,settings_identity:row.settings_identity}))
 }
 
 /// Resolve an acquisition repeated in another frame to its retained live reading.

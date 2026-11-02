@@ -1044,7 +1044,7 @@ pub async fn producer_versions(
     let rows = sqlx::query!(
         r#"WITH RECURSIVE selected(id) AS (
                SELECT unnest($1::uuid[])
-               UNION SELECT links.parent FROM core.event_children links JOIN selected s ON s.id=links.child
+               UNION SELECT links.parent FROM selected s CROSS JOIN LATERAL core.event_parents_of(s.id) links
            )
            SELECT e.source AS producer,m.name AS "manifest?",m.version AS "version?",
                   m.build AS "build?",material.parser AS "parser?",

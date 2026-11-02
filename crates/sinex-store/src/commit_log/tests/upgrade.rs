@@ -155,6 +155,7 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
             to: sinex_schema::VERSION
         }
     );
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(pairs(&mut conn).await, before);
     let mut other_after = other_rows(&mut conn).await;
     other_after.retain(|name, _| other_before.contains_key(name));
@@ -266,20 +267,28 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
     );
 }
 
+/// The pair key is built after start. A build that fails keeps the old key
+/// and every mapping, and the task stays until a later step succeeds.
 #[devkit::test]
-async fn failed_pair_upgrade_rolls_back_the_constraint_and_every_mapping(
-    db: devkit::pg::TestDatabase,
-) {
+async fn failed_pair_key_build_keeps_the_old_key_and_every_mapping(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     version_two(&mut conn).await;
     sqlx::raw_sql("INSERT INTO core.published VALUES ('00000000-0000-0000-0000-000000000001', 99); CREATE INDEX published_pairs_pkey ON core.consumer_positions(commit_seq)")
         .execute(&mut conn).await.unwrap();
-    assert!(sinex_schema::apply(&mut conn).await.is_err());
-    let version: i32 = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(version, 2);
+    sinex_schema::apply(&mut conn).await.unwrap();
+    let key = "SELECT conname || ' ' || pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'core.published'::regclass AND contype = 'p'";
+    assert!(
+        sinex_schema::online::step(&mut conn, sinex_schema::online::BATCH)
+            .await
+            .is_err()
+    );
+    assert!(
+        sinex_schema::online::pending(&mut conn, sinex_schema::online::Task::PublishedKey)
+            .await
+            .unwrap()
+    );
+    let old: String = sqlx::query_scalar(key).fetch_one(&mut conn).await.unwrap();
+    assert_eq!(old, "published_pkey PRIMARY KEY (event_id)");
     let seq: i64 = sqlx::query_scalar("SELECT stream_seq FROM core.published")
         .fetch_one(&mut conn)
         .await
@@ -289,7 +298,12 @@ async fn failed_pair_upgrade_rolls_back_the_constraint_and_every_mapping(
         .execute(&mut conn)
         .await
         .unwrap();
-    sinex_schema::apply(&mut conn).await.unwrap();
+    sinex_schema::online::finish(&mut conn).await.unwrap();
+    let new: String = sqlx::query_scalar(key).fetch_one(&mut conn).await.unwrap();
+    assert_eq!(
+        new,
+        "published_pairs_pkey PRIMARY KEY (event_id, stream_seq, stream_instance)"
+    );
     assert_eq!(pairs(&mut conn).await, [(Uuid::from_u128(1), 99)]);
 }
 
@@ -300,6 +314,7 @@ async fn empty_publication_table_upgrades_and_accepts_multiple_copies(
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     version_two(&mut conn).await;
     sinex_schema::apply(&mut conn).await.unwrap();
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert!(pairs(&mut conn).await.is_empty());
     let id = Uuid::now_v7();
     record_published(&mut conn, &[(id, 8), (id, 9), (id, 8)])
