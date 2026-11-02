@@ -239,10 +239,13 @@ impl DerivationRunner {
     /// archive stands. A refused or interrupted archive keeps the registration
     /// and is resumed at the next start.
     async fn archive_retired_outputs(&mut self) -> Result<(), String> {
-        let retired =
-            registry::retired_derivations(&mut self.read, &crate::catalog::derivation_names())
-                .await
-                .map_err(|e| e.to_string())?;
+        // Every derivation the build has, and any this runner was started
+        // with beyond them, is current.
+        let mut known = crate::catalog::derivation_names();
+        known.extend(self.runs.keys().cloned());
+        let retired = registry::retired_derivations(&mut self.read, &known)
+            .await
+            .map_err(|e| e.to_string())?;
         for producer in retired {
             match crate::lifecycle::run(
                 &mut self.read,
