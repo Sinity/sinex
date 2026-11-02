@@ -24,8 +24,7 @@
 //! in: missing evidence is not continued activity. A play with no end is of
 //! unknown length and counts no seconds.
 use crate::derived_event::derived;
-use crate::fusion::FusionRule;
-use crate::fusion::rules::{COMMANDS, MAIL};
+use crate::fusion::Family as FusionFamily;
 use crate::observed::{FOCUS, Family, PLAYS, VISITS};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind, Neighbour};
 use serde_json::{Value, json};
@@ -58,7 +57,7 @@ pub enum Records {
     /// Events of these kinds, as stored.
     Stored(fn() -> Vec<Kind>),
     /// A fusion family's occurrences, each once, in the fused kind's payload.
-    Fused(&'static FusionRule),
+    Fused(fn() -> &'static FusionFamily),
     /// A family without fusion: each source's records, in the family's
     /// common payload.
     Observed(&'static Family),
@@ -68,7 +67,7 @@ impl Records {
     fn kinds(self) -> Vec<Kind> {
         match self {
             Self::Stored(kinds) => kinds(),
-            Self::Fused(rule) => rule.kinds(),
+            Self::Fused(family) => family().kinds(),
             Self::Observed(family) => family.kinds(),
         }
     }
@@ -77,7 +76,7 @@ impl Records {
     /// record of every source record it holds.
     fn margin(self) -> i128 {
         match self {
-            Self::Fused(rule) => rule.margin(),
+            Self::Fused(family) => family().margin(),
             Self::Stored(_) | Self::Observed(_) => 0,
         }
     }
@@ -90,7 +89,7 @@ impl Records {
                 .filter(|e| kinds.iter().any(|k| k.admits(&e.event_type, &e.payload)))
                 .map(|e| (e, Cow::Borrowed(&e.payload)))
                 .collect(),
-            Self::Fused(rule) => rule
+            Self::Fused(family) => family()
                 .occurrences(inputs)
                 .into_iter()
                 .map(|o| (o.event, o.payload))
@@ -161,7 +160,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "shell.commands",
         description: "Commands run",
-        records: Records::Fused(&COMMANDS),
+        records: Records::Fused(crate::fusion::commands),
         calculation: Calculation::Count,
         dimensions: &["host", "cwd"],
         sources: SHELLS,
@@ -170,7 +169,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "shell.failed_ratio",
         description: "Share of commands with a known exit code that failed",
-        records: Records::Fused(&COMMANDS),
+        records: Records::Fused(crate::fusion::commands),
         calculation: Calculation::Ratio {
             numerator: |p| exit_known(p) && p["exit_code"] != 0,
             denominator: exit_known,
@@ -280,7 +279,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "mail.messages",
         description: "Mail messages",
-        records: Records::Fused(&MAIL),
+        records: Records::Fused(crate::fusion::mail),
         calculation: Calculation::Count,
         dimensions: &[],
         sources: &[
@@ -520,8 +519,10 @@ impl Keyed for HourlyMetrics {
     // picks the metrics.
     const INPUTS: &'static [&'static str] = &[
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
+        "terminal.reported",
         "shell.session",
         "presence.interval",
         "state.interval",
@@ -589,6 +590,7 @@ impl Keyed for HourlyMetrics {
                 kinds: vec![kind],
                 per: None,
                 count: 1,
+                lifetime: None,
             }));
         }
         Some(q)

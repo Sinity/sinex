@@ -218,7 +218,7 @@ fn a_message_two_mail_sources_hold_counts_once() {
         mail_in("communication.mbox", "<1>", Some("Plans"), None, "a@x", 100),
         mail_in("communication.mbox", "<2>", Some("Other"), None, "b@x", 200),
     ];
-    let mut inputs = crate::fusion::tests::fuse_events(&MAIL, &sources);
+    let mut inputs = crate::fusion::tests::fuse_events(crate::fusion::mail(), &sources);
     assert_eq!(inputs.len(), 1);
     inputs.extend(sources);
     let got = days(&inputs);

@@ -235,12 +235,20 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
             start = payload_time("started_at"),
         ),
         ("commands", "session") => payload_text("session"),
-        // A command record no fused command joins was observed by its source.
+        // A fused command was observed by its members' sources; a command
+        // record no fused command joins, by its own source.
         ("commands", "observed_by") => {
-            "coalesce((SELECT string_agg(x, ',') FROM jsonb_array_elements_text(\
-              CASE WHEN jsonb_typeof({t}.payload -> 'observed_by') = 'array' THEN {t}.payload -> 'observed_by' END) x), {t}.source)"
+            "coalesce((SELECT string_agg(m ->> 'source', ',' ORDER BY n) FROM jsonb_array_elements(\
+              CASE WHEN jsonb_typeof({t}.payload -> 'members') = 'array' THEN {t}.payload -> 'members' END) WITH ORDINALITY AS x(m, n)), {t}.source)"
                 .to_string()
         }
+        ("duplicates", "family" | "left" | "right" | "left_source" | "right_source" | "strategy" | "decided_by") => {
+            payload_text(name)
+        }
+        ("duplicates", "candidates") => payload_number(name),
+        ("duplicates", "distance") => format!("({} / 1e9)", payload_number("distance_ns")),
+        ("duplicates", "chosen") => payload_bool(name),
+        ("duplicates", "decision") => payload_text("state"),
         ("focus", "app") => format!("coalesce({}, {})", payload_text("attributes,class"), payload_text("app")),
         ("focus", "title") => format!("coalesce({}, {})", payload_text("attributes,title"), payload_text("title")),
         ("visits", "url") => format!("coalesce({}, {})", payload_text("url"), payload_text("to_url")),

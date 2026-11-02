@@ -130,11 +130,13 @@ impl Keyed for WorkEpisodes {
             kinds: vec![Kind::only("work.act", &[("agency", "operator")])],
             per: None,
             count: 1,
+            lifetime: None,
         });
         query.after.push(crate::Neighbour {
             kinds: REST.kinds(),
             per: None,
             count: 1,
+            lifetime: None,
         });
         query.after.push(crate::Neighbour {
             kinds: ["desktop.lock", "desktop.display", "machine.suspend"]
@@ -149,6 +151,7 @@ impl Keyed for WorkEpisodes {
                 .collect(),
             per: Some("subject_id"),
             count: 1,
+            lifetime: None,
         });
         query.intervals = vec![(
             "state.interval",

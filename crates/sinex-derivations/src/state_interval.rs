@@ -42,6 +42,7 @@ impl Interruption {
                 kinds: vec![Kind::only("presence.span", &[("status", "afk")])],
                 per: Some("scope"),
                 count: 1,
+                lifetime: None,
             },
         }
     }

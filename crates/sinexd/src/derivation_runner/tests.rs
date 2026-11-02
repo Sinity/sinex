@@ -45,7 +45,7 @@ fn atuin(id: &str, command: &str, secs: i64, exit: i64, order: i64) -> Event {
             shell: None,
             extra: Default::default(),
         },
-        "terminal.atuin",
+        "terminal.atuin-history",
         location(0),
         ReadingOrder(order),
         *blake3::hash(format!("{id}{command}{exit}{order}").as_bytes()).as_bytes(),
@@ -64,7 +64,7 @@ fn zsh(command: &str, secs: i64, anchor: u64) -> Event {
             paths: vec![],
             n: 0,
         },
-        "terminal.zsh",
+        "terminal.zsh-history",
         location(anchor),
         ReadingOrder(0),
         *blake3::hash(command.as_bytes()).as_bytes(),
@@ -230,11 +230,13 @@ async fn commands_fuse_into_sessions_and_figures(db: devkit::pg::TestDatabase) {
     // zsh record, and every consumer counts each command once.
     let fused: Vec<CommandFused> = w.live().await;
     assert_eq!(fused.len(), 2, "{fused:?}");
-    assert!(
-        fused
+    assert!(fused.iter().all(|f| {
+        f.members
             .iter()
-            .all(|f| f.observed_by == ["terminal.atuin", "terminal.zsh"])
-    );
+            .map(|m| m.source.as_str())
+            .collect::<Vec<_>>()
+            == ["terminal.atuin-history", "terminal.zsh-history"]
+    }));
     let sessions: Vec<ShellSession> = w.live().await;
     assert_eq!(sessions.len(), 2, "{sessions:?}");
     assert_eq!(sessions[0].commands, 2);
@@ -287,7 +289,7 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
     w.admit(vec![a, zsh("make", 1, 10)]).await;
     let mut d = w.runner().await;
     d.catch_up().await.unwrap();
-    assert_eq!(w.live::<CommandFused>().await[0].observed_by.len(), 2);
+    assert_eq!(w.live::<CommandFused>().await[0].members.len(), 2);
 
     // Archiving the Atuin reading leaves zsh alone: the fused command goes
     // and the zsh record is read directly.
@@ -358,7 +360,12 @@ impl Keyed for Waiting {
             session: None,
             duration_ns: None,
             exit_code: None,
-            observed_by: vec![],
+            execution: None,
+            members: vec![],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         };
         Computed {
             error: None,
@@ -489,7 +496,12 @@ impl<const V: u32> Keyed for Count<V> {
             session: None,
             duration_ns: None,
             exit_code: None,
-            observed_by: vec![],
+            execution: None,
+            members: vec![],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         };
         Computed {
             error: None,
@@ -561,7 +573,12 @@ impl sinex_derivations::PerEvent for Echo {
                 session: None,
                 duration_ns: None,
                 exit_code: None,
-                observed_by: vec![],
+                execution: None,
+                members: vec![],
+                basis: sinex_model::event_types::fused::Basis::Rule,
+                ambiguous: 1,
+                competitors: vec![],
+                rule_version: 1,
             },
             "test.echo",
             [input],
@@ -787,6 +804,10 @@ mod state_closers;
 mod external;
 
 mod selected_provenance;
+
+mod retired;
+
+mod tokens;
 
 mod embedding;
 

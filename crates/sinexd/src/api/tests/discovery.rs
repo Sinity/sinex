@@ -26,11 +26,12 @@ async fn discovery_omits_unimplemented_commands_and_unimplemented_calls_refuse_e
         .map(|command| command["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"recall"));
-    for value in [
-        json!({"method":"stage", "path":"/synthetic/input"}),
-        json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
-        json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
-    ] {
+    // Duplicate decisions are built (docs/derivations.md: "`same A B` and
+    // `distinct A B` are duplicate decisions, authored records").
+    for built in ["same", "distinct", "withdraw-decision"] {
+        assert!(names.contains(&built), "{built}");
+    }
+    for value in [json!({"method":"stage", "path":"/synthetic/input"})] {
         assert!(!names.contains(&value["method"].as_str().unwrap()));
         let (status, _) = call(&w, Some(READ), value.clone()).await;
         assert_eq!(status, StatusCode::FORBIDDEN);

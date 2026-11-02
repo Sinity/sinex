@@ -77,7 +77,17 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
                     session: None,
                     duration_ns: None,
                     exit_code: None,
-                    observed_by: vec!["terminal.atuin".into()],
+                    execution: None,
+                    members: vec![sinex_model::event_types::fused::Member {
+                        record: format!("fixture:{}", "terminal.atuin"),
+                        source: "terminal.atuin".into(),
+                        event_type: "command.executed".into(),
+                        joined: sinex_model::event_types::fused::Joined::Lead,
+                    }],
+                    basis: sinex_model::event_types::fused::Basis::Rule,
+                    ambiguous: 1,
+                    competitors: vec![],
+                    rule_version: 1,
                 },
                 "derive.cursor-test",
                 Origin::Derived {

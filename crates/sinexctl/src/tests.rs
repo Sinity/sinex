@@ -52,7 +52,12 @@ fn the_cli_is_generated_from_the_table() {
 
 #[devkit::test]
 fn cli_discovery_omits_unimplemented_operations_and_keeps_recall() {
-    for name in ["stage", "same", "distinct"] {
+    // `same` and `distinct` are built (docs/derivations.md: "`same A B` and
+    // `distinct A B` are duplicate decisions, authored records").
+    for name in ["same", "distinct", "withdraw-decision"] {
+        assert!(cli().find_subcommand(name).is_some(), "{name}");
+    }
+    for name in ["stage"] {
         assert!(cli().find_subcommand(name).is_none(), "{name}");
         let error = cli().try_get_matches_from(["sinexctl", name]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);

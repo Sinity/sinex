@@ -78,7 +78,7 @@ impl Keyed for ActivityWindows {
             }
         }
         // A command record a fused command joins counts through the fused one.
-        let joined = COMMANDS.members(inputs);
+        let joined = crate::fusion::commands().joined(inputs);
         let mut outputs = Vec::new();
         let mut waiting = false;
         for (scope, mut active) in by_scope {

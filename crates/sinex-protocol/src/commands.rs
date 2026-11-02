@@ -80,6 +80,16 @@ const fn opt(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
     }
 }
 
+/// The two records a duplicate decision is about.
+const JUDGED_PAIR: &[Arg] = &[
+    pos("a", ArgKind::Reference, "one record: an event citation"),
+    pos(
+        "b",
+        ArgKind::Reference,
+        "the other record: an event citation",
+    ),
+];
+
 /// What an archive, restore or tombstone acts on. Exactly one scope; an
 /// omitted scope is an error, never everything.
 const LIFECYCLE_SCOPE: &[Arg] = &[
@@ -530,6 +540,27 @@ pub const COMMANDS: &[Command] = &[
         ],
         access: Access::Operator,
         mcp: false,
+    },
+    Command {
+        name: "same",
+        summary: "Decide two records are one occurrence: a duplicate decision that revises your earlier one on the pair. The operator's decisions govern; an agent's governs only where the family admits agent decisions.",
+        args: JUDGED_PAIR,
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "distinct",
+        summary: "Decide two records are two occurrences, so fusion never joins them: a duplicate decision that revises your earlier one on the pair.",
+        args: JUDGED_PAIR,
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "withdraw-decision",
+        summary: "Withdraw your duplicate decision on two records; the family's rules decide the pair again.",
+        args: JUDGED_PAIR,
+        access: Access::Agent,
+        mcp: true,
     },
     Command {
         name: "archive",

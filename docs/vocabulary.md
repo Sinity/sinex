@@ -90,7 +90,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **admission**: the one function that stores events and source progress together ([admission](admission.md)).
 - **writer**: the daemon task that runs admission, one commit group at a time.
 - **commit log**: committed changes in commit order; each has a **commit position**.
-- **read model**: a table maintained by admission for reading (liveness, detector hits, `duplicates`).
+- **read model**: a table maintained by admission for reading (liveness, detector hits).
 - **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinex-schema apply`.
 
 ## Producers and transport
@@ -120,8 +120,11 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **derivation**: a declared computation whose outputs are stored events; **per-event** or **keyed** ([derivations](derivations.md)).
 - **dirty key**: a key whose inputs changed and whose output set will be recomputed.
 - **provisional**: the value of a key whose time window is still open.
-- **fusion**: joining readings of one occurrence seen by several sources, for a defined family, into a **fused record** with its **basis**.
-- **duplicate decision**: an authored `same` or `distinct` decision on an ambiguous pair in `duplicates`, or on a candidate pair in the library's duplicate review.
+- **fusion**: joining readings of one occurrence seen by several sources, for a defined family, into a **fused record** with its **basis**. A **fusion family** is declared in data: its members, scope, identifiers and windows.
+- **fused record**: the association record of one occurrence: its members by record citation, how each joined, its basis and ambiguity.
+- **duplicates**: the pairs a fusion pass had to choose about (`fusion.considered_pair` events), with their decision state.
+- **duplicate decision**: an authored `same` or `distinct` record on an unordered pair (`curation.duplicate`), shared by fusion and the library's duplicate review; `withdraw-decision` withdraws it.
+- **execution token**: the UUIDv7 the shell integration mints for one command execution and hands to every observer it reaches (its own report, kitty), beside the Atuin row ID started for it.
 - **interval**: a state with a start and maybe an end, computed by a derivation.
 - **figure**: a measure over one period and grain, stored as an event (a figure cell) whose state has no default: observed, partial, lower bound, missing with a reason, not applicable, not estimable ([figure cells](evidence.md#figure-cells)).
 - **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).

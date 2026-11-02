@@ -29,6 +29,11 @@ enum Command {
     /// Capture the session's sources and produce them to `sinexd` over the
     /// NATS ingress, until stopped.
     Run(Run),
+    /// Report one finished command execution to the integration socket (run
+    /// by the shell integration's hooks). Never waits on Sinex: when nothing
+    /// listens, the report is dropped.
+    #[command(hide = true)]
+    ReportCommand(ReportCommand),
     /// Print one clipboard frame for the content on standard input (run by
     /// `wl-paste --watch`).
     #[command(hide = true)]
@@ -79,6 +84,35 @@ struct Run {
 }
 
 #[derive(clap::Args)]
+struct ReportCommand {
+    /// `zsh`, `bash` or `fish`.
+    #[arg(long)]
+    shell: String,
+    /// The execution token the shell minted when the command started.
+    #[arg(long)]
+    execution: String,
+    /// When the command started, in nanoseconds since the Unix epoch.
+    #[arg(long)]
+    started_at_ns: i128,
+    /// When it ended, in nanoseconds since the Unix epoch.
+    #[arg(long)]
+    ended_at_ns: Option<i128>,
+    #[arg(long, allow_hyphen_values = true)]
+    exit: Option<i64>,
+    #[arg(long)]
+    cwd: Option<std::path::PathBuf>,
+    /// The shell's process ID.
+    #[arg(long)]
+    session: Option<String>,
+    /// The Atuin history row started for this execution.
+    #[arg(long)]
+    atuin_id: Option<String>,
+    /// The command line, exactly as the shell received it.
+    #[arg(last = true, allow_hyphen_values = true)]
+    command: Vec<String>,
+}
+
+#[derive(clap::Args)]
 struct Live {
     /// The live format (`hyprland`, `notifications`, `players`,
     /// `clipboard`, `producers`, `media`, `file-watch`, `journald`).
@@ -103,6 +137,11 @@ fn main() -> ExitCode {
                 Err(e) => fail(e),
             }
         }
+        Command::ReportCommand(report) => {
+            // Failing to report is never the shell's problem.
+            let _ = report_command(report);
+            ExitCode::SUCCESS
+        }
         Command::ClipboardFrame { selection } => {
             match sinex_sources::sources::clipboard::print_frame(&selection) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -120,6 +159,39 @@ fn main() -> ExitCode {
             Err(e) => fail(e),
         },
     }
+}
+
+fn report_command(report: ReportCommand) -> Result<(), String> {
+    use sinex_sources::sources::session_socket::{self, ShellReport};
+    let socket = session_socket::default_path().ok_or("no integration socket")?;
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map_err(|e| e.to_string())?
+        .trim()
+        .to_owned();
+    let started_at =
+        sinex_model::Timestamp::from_unix_ns(report.started_at_ns).map_err(|e| e.to_string())?;
+    let duration_ns = report
+        .ended_at_ns
+        .and_then(|end| i64::try_from(end - report.started_at_ns).ok())
+        .filter(|ns| *ns >= 0);
+    let probe = Duration::from_millis(200);
+    let line = session_socket::shell_line(&ShellReport {
+        execution: report.execution,
+        shell: report.shell,
+        host,
+        command: report.command.join(" "),
+        git_identity: report
+            .cwd
+            .as_deref()
+            .and_then(|cwd| session_socket::git_identity(cwd, probe)),
+        cwd: report.cwd.map(|cwd| cwd.display().to_string()),
+        started_at,
+        duration_ns,
+        exit_code: report.exit,
+        session: report.session,
+        atuin_id: report.atuin_id.filter(|id| !id.is_empty()),
+    });
+    session_socket::send(&socket, &line, probe).map_err(|e| e.to_string())
 }
 
 fn fail(e: String) -> ExitCode {

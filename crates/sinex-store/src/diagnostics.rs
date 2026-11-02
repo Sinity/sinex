@@ -153,3 +153,44 @@ pub async fn producer_errors(conn: &mut PgConnection) -> Result<Vec<ProducerErro
     .fetch_all(&mut *conn)
     .await?)
 }
+
+/// One fusion family's ambiguity: the pairs it had to choose about by
+/// judgment state, and its fused records chosen among several candidates.
+#[derive(Debug, serde::Serialize)]
+pub struct FusionAmbiguity {
+    pub family: String,
+    pub undecided: i64,
+    pub decided: i64,
+    pub ambiguous_fused: i64,
+}
+
+/// Ambiguity per fusion family over the live records the caller can see.
+/// `fused_types` names each family's fused kind, so fused records with
+/// `ambiguous > 1` count under their family.
+pub async fn fusion_ambiguity(
+    conn: &mut PgConnection,
+    families: &[(String, String)],
+) -> Result<Vec<FusionAmbiguity>> {
+    let (names, fused_types): (Vec<String>, Vec<String>) = families.iter().cloned().unzip();
+    Ok(sqlx::query_as!(
+        FusionAmbiguity,
+        r#"SELECT f.family AS "family!",
+             (SELECT count(*) FROM core.visible_events e
+               WHERE e.event_type = 'fusion.considered_pair' AND e.payload->>'family' = f.family
+                 AND e.payload->>'state' = 'undecided'
+                 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)) AS "undecided!",
+             (SELECT count(*) FROM core.visible_events e
+               WHERE e.event_type = 'fusion.considered_pair' AND e.payload->>'family' = f.family
+                 AND e.payload->>'state' <> 'undecided'
+                 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)) AS "decided!",
+             (SELECT count(*) FROM core.visible_events e
+               WHERE e.event_type = f.fused_type AND (e.payload->>'ambiguous')::bigint > 1
+                 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)) AS "ambiguous_fused!"
+           FROM unnest($1::text[], $2::text[]) AS f(family, fused_type)
+           ORDER BY f.family"#,
+        &names,
+        &fused_types,
+    )
+    .fetch_all(&mut *conn)
+    .await?)
+}

@@ -28,7 +28,7 @@ fn command(secs: i64, cwd: &str, exit: Option<i64>) -> Event {
             shell: None,
             extra: Default::default(),
         },
-        "terminal.atuin",
+        "terminal.atuin-history",
         Class::Open,
     )
 }
@@ -218,7 +218,7 @@ fn a_command_two_shells_saw_counts_once_and_one_shell_alone_counts_once() {
         zsh("both", base + 10.4),
         zsh("zsh only", base + 100.0),
     ];
-    let mut inputs = fuse_events(&COMMANDS, &shells);
+    let mut inputs = fuse_events(crate::fusion::commands(), &shells);
     assert_eq!(inputs.len(), 1, "the pair fuses, the lone record does not");
     inputs.extend(shells);
     let commands = hourly("shell.commands", &inputs, 100_000);
@@ -233,7 +233,7 @@ fn a_command_fused_across_a_day_start_counts_on_the_fused_record_day_only() {
     // half a second after it and zsh's half a second before it.
     let start = (T - 6 * 3600) as f64;
     let shells = [atuin("edge", start + 0.5, 0), zsh("edge", start - 0.5)];
-    let mut inputs = fuse_events(&COMMANDS, &shells);
+    let mut inputs = fuse_events(crate::fusion::commands(), &shells);
     assert_eq!(inputs.len(), 1);
     inputs.extend(shells);
     let fused = &inputs[0];

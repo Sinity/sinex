@@ -24,6 +24,27 @@ pub(crate) async fn install_native_sources(conn: &mut PgConnection) -> Result<()
         .map_err(|error| format!("committing source catalog: {error}"))
 }
 
+/// Every per-event derivation the build has, whatever the configuration.
+fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
+    let mut per_event = sinex_derivations::per_event();
+    per_event.push(
+        Box::new(crate::document_text::DocumentText { pdf_reader: None }) as Box<dyn AnyPerEvent>,
+    );
+    per_event
+        .push(Box::new(crate::screen_text::ScreenText { engine: None }) as Box<dyn AnyPerEvent>);
+    per_event
+}
+
+/// The name of every derivation the build has, enabled or not. A registered
+/// derivation outside this list was removed.
+pub(crate) fn derivation_names() -> Vec<String> {
+    crate::analysis::keyed()
+        .iter()
+        .map(|d| d.name().to_owned())
+        .chain(per_event().iter().map(|d| d.name().to_owned()))
+        .collect()
+}
+
 pub(crate) fn catalog() -> Value {
     let sources: Vec<Value> = sources().into_iter().map(|s| s.to_json()).collect();
     let keyed = crate::analysis::keyed().into_iter().map(|d| {
@@ -36,13 +57,7 @@ pub(crate) fn catalog() -> Value {
             "outputs": d.output_types(),
         })
     });
-    let mut per_event = sinex_derivations::per_event();
-    per_event.push(
-        Box::new(crate::document_text::DocumentText { pdf_reader: None }) as Box<dyn AnyPerEvent>,
-    );
-    per_event
-        .push(Box::new(crate::screen_text::ScreenText { engine: None }) as Box<dyn AnyPerEvent>);
-    let per_event = per_event.into_iter().map(|d| {
+    let per_event = per_event().into_iter().map(|d| {
         json!({
             "name": d.name(),
             "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),

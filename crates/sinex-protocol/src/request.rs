@@ -239,6 +239,11 @@ pub enum Request {
         a: String,
         b: String,
     },
+    #[serde(rename = "withdraw-decision")]
+    WithdrawDecision {
+        a: String,
+        b: String,
+    },
     Mark {
         #[serde(default)]
         text: Option<String>,
@@ -472,6 +477,7 @@ impl Request {
             Request::Resume { .. } => "resume",
             Request::Same { .. } => "same",
             Request::Distinct { .. } => "distinct",
+            Request::WithdrawDecision { .. } => "withdraw-decision",
             Request::Mark { .. } => "mark",
             Request::PrivacyRules { .. } => "privacy-rules",
             Request::PrivacyRule { .. } => "privacy-rule",
@@ -509,7 +515,7 @@ impl Request {
     /// panic.
     pub fn access(&self) -> Access {
         match self {
-            Self::Stage { .. } | Self::Same { .. } | Self::Distinct { .. } => Access::Agent,
+            Self::Stage { .. } => Access::Agent,
             _ => {
                 command(self.method())
                     .expect("implemented request is in the command table")

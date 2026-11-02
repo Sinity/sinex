@@ -65,7 +65,7 @@ async fn input_provenance_keeps_parser_versions_and_missing_manifests(
             "terminal.atuin",sinex_model::Origin::Record{location:sinex_model::RecordLocation{material,anchor:0},output_index:0},sinex_model::ReadingOrder(1),[1;32],sinex_model::Class::Open,
         ).unwrap();
         let fused=(sinex_model::event_types::find("command.fused").unwrap().build)(
-            &serde_json::json!({"record":format!("command.executed:{}",observed.id),"command":command,"host":"synthetic-host","started_at":at,"cwd":"/work","session":"synthetic","duration_ns":null,"exit_code":null,"observed_by":["terminal.atuin"]}),
+            &serde_json::json!({"record":format!("command.executed:{}",observed.id),"command":command,"host":"synthetic-host","started_at":at,"cwd":"/work","session":"synthetic","duration_ns":null,"exit_code":null,"execution":null,"members":[{"record":"fixture:terminal.atuin","source":"terminal.atuin","event_type":"command.executed","joined":{"by":"lead"}}],"basis":"rule","ambiguous":1,"competitors":[],"rule_version":1}),
             "derive.shell-fusion",sinex_model::Origin::Derived{parents:vec![observed.id]},sinex_model::ReadingOrder(1),[2;32],sinex_model::Class::Open,
         ).unwrap();
         selected.push(fused.id);

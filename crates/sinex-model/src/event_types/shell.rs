@@ -40,6 +40,45 @@ pub struct CommandExecuted {
     pub extra: Map<String, Value>,
 }
 
+/// One finished command execution, reported by the shell integration Sinex
+/// ships (zsh, bash and fish hooks) through the session integration socket.
+/// The integration mints the execution token when the command starts and
+/// hands it to every other observer it can reach: the terminal records it
+/// (kitty's `sinex_execution` user variable), and the Atuin row ID started
+/// for the same execution is recorded beside it, so fusion matches these
+/// observers by identifier instead of by time.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(version = 1,
+    type = "command.reported",
+    key = ["host", "execution"],
+    replace = repeat,
+    time = started_at,
+    quality = intrinsic
+)]
+pub struct CommandReported {
+    /// A UUIDv7 minted by the shell for this execution.
+    pub execution: String,
+    /// `zsh`, `bash` or `fish`.
+    pub shell: String,
+    pub host: String,
+    /// The command line as the shell received it.
+    pub command: String,
+    pub cwd: Option<String>,
+    pub started_at: Timestamp,
+    pub duration_ns: Option<i64>,
+    pub exit_code: Option<i64>,
+    /// The shell's process ID, which tells concurrent shells apart.
+    pub session: Option<String>,
+    /// The Atuin history row started for this execution, when Atuin's hook
+    /// ran in the same shell.
+    pub atuin_id: Option<String>,
+    /// Repository facts observed beside the cwd when the report was sent.
+    pub git_identity: Option<crate::event_types::work::GitIdentity>,
+    /// Fields the integration sent that this type does not name, kept by name.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
 /// A command from a shell's history file: zsh (plain or extended), bash
 /// (with or without `#` timestamp lines) or fish. The source names the shell.
 /// Timed records keep their equivalence key across materials; untimed records use

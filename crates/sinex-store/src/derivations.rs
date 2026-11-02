@@ -43,6 +43,9 @@ pub struct Nearest {
     /// One answer set per value of this payload field seen in the window.
     pub per: Option<&'static str>,
     pub count: i64,
+    /// With `per`: each value is a start-minted token, and its read stops at
+    /// the lifetime the window records holding it give it.
+    pub lifetime: Option<sinex_model::TokenLifetime>,
 }
 
 /// Live events of some kinds in a `ts_orig` window, plus nearest neighbours.
@@ -785,19 +788,62 @@ async fn nearest(
             }
         }
         Some(per) => {
-            let mut values: Vec<String> = window_events
+            // Each value with how far its read may go: the far bound of the
+            // value's lifetime on this side, or none without a lifetime.
+            let mut reach: std::collections::BTreeMap<String, Option<i128>> =
+                std::collections::BTreeMap::new();
+            for c in window_events
                 .iter()
                 .filter(|c| n.kinds.iter().any(|k| k.event_type == c.event.event_type))
-                .filter_map(|c| match c.event.payload.get(per)? {
-                    Value::String(s) => Some(s.clone()),
-                    Value::Null => None,
-                    other => Some(other.to_string()),
-                })
-                .collect();
-            values.sort_unstable();
-            values.dedup();
-            if values.is_empty() {
+            {
+                let value = match c.event.payload.get(per) {
+                    Some(Value::String(s)) => s.clone(),
+                    None | Some(Value::Null) => continue,
+                    Some(other) => other.to_string(),
+                };
+                let far = match (n.lifetime, c.event.ts_orig.at) {
+                    (Some(lifetime), Some(t)) => {
+                        let (lo, hi) = lifetime.bounds(&value, t.unix_ns(), &c.event.payload);
+                        Some(if after { hi } else { lo })
+                    }
+                    _ => None,
+                };
+                let entry = reach.entry(value).or_insert(far);
+                *entry = match (*entry, far) {
+                    (Some(a), Some(b)) => Some(if after { a.max(b) } else { a.min(b) }),
+                    _ => None,
+                };
+            }
+            if reach.is_empty() {
                 return Ok(out);
+            }
+            // Each value's read is the range [from, until) on the
+            // `(event_type, ts_orig)` index: from the edge to the lifetime's
+            // end after the window, from the lifetime's start to the edge
+            // before it. Without a lifetime the range runs to the end of
+            // time on that side.
+            // Before and after every stored time, inside PostgreSQL's range.
+            let first = OffsetDateTime::UNIX_EPOCH - time::Duration::days(1_000_000);
+            let last = OffsetDateTime::UNIX_EPOCH + time::Duration::days(2_900_000);
+            let to_time = |ns: i128| {
+                OffsetDateTime::from_unix_timestamp_nanos(ns).unwrap_or(if ns < 0 {
+                    first
+                } else {
+                    last
+                })
+            };
+            let mut values = Vec::with_capacity(reach.len());
+            let mut from = Vec::with_capacity(reach.len());
+            let mut until = Vec::with_capacity(reach.len());
+            for (value, far) in reach {
+                values.push(value);
+                if after {
+                    from.push(edge);
+                    until.push(far.map_or(last, |ns| to_time(ns + 1)));
+                } else {
+                    from.push(far.map_or(first, to_time));
+                    until.push(edge);
+                }
             }
             let rows = sqlx::query!(
                 r#"SELECT x.id AS "id!", x.event_type AS "event_type!", x.source AS "source!",
@@ -807,9 +853,10 @@ async fn nearest(
                      x.record_state AS "record_state!", x.class AS "class!",
                      x.kind_version AS "kind_version!", x.validation AS "validation!", x.replace_rule,
                      x.commit_seq AS "commit_seq!"
-                   FROM unnest($5::text[]) AS v(val) CROSS JOIN LATERAL (
+                   FROM unnest($5::text[], $8::timestamptz[], $9::timestamptz[]) AS v(val, from_at, until_at) CROSS JOIN LATERAL (
                      SELECT e.*, (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule FROM core.events e
                      WHERE e.event_type = ANY($1)
+                       AND e.ts_orig >= v.from_at AND e.ts_orig < v.until_at
                        AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
                        AND e.payload->>$6 = v.val
                        AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
@@ -824,6 +871,8 @@ async fn nearest(
                 &values,
                 per,
                 n.count,
+                &from,
+                &until,
             )
             .fetch_all(&mut *conn)
             .await?;

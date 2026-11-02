@@ -27,7 +27,10 @@ pub use batch::{
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
-pub use id::{EventId, InputId, MaterialId, ObservationId, OperationId, RevisionId, RunId};
+pub use id::{
+    EventId, InputId, MaterialId, ObservationId, OperationId, RevisionId, RunId, TokenLifetime,
+    uuid7_millisecond,
+};
 pub use kinds::{FieldHint, KindDeclaration, KindRef, Search, Validation};
 pub use manifest::{Manifest, MaterialRole, Member};
 pub use payload::{

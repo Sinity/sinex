@@ -1,0 +1,177 @@
+{
+  "families": [
+    {
+      "name": "command",
+      "derivation": "command.fusion",
+      "version": 4,
+      "output": "command.fused",
+      "start_field": "started_at",
+      "scope": ["host"],
+      "match": ["command"],
+      "window_ms": 2000,
+      "fallback_ms": 60000,
+      "tokens": ["execution"],
+      "token_length": "duration_ns",
+      "agent_decisions": "record",
+      "members": [
+        {
+          "event_type": "command.reported",
+          "source": "session.integrations",
+          "fields": {
+            "command": { "pointer": "/command", "normalize": "trim" },
+            "host": "/host",
+            "cwd": "/cwd",
+            "session": "/session",
+            "duration_ns": "/duration_ns",
+            "exit_code": "/exit_code",
+            "execution": "/execution"
+          },
+          "identifiers": {
+            "execution": "/execution",
+            "atuin": "/atuin_id"
+          }
+        },
+        {
+          "event_type": "command.executed",
+          "source": "terminal.atuin-history",
+          "fields": {
+            "command": { "pointer": "/command", "normalize": "trim" },
+            "host": { "pointer": "/hostname", "normalize": "before_colon" },
+            "cwd": "/cwd",
+            "session": "/session",
+            "duration_ns": "/duration_ns",
+            "exit_code": "/exit_code"
+          },
+          "identifiers": {
+            "atuin": "/native_id"
+          }
+        },
+        {
+          "event_type": "command.imported",
+          "fields": {
+            "command": { "pointer": "/command", "normalize": "trim" },
+            "host": "/hostname"
+          }
+        },
+        {
+          "event_type": "terminal.reported",
+          "source": "session.integrations",
+          "only": { "event": "cmd_end" },
+          "identifier_only": true,
+          "fields": {
+            "command": { "pointer": "/cmdline", "normalize": "trim" },
+            "host": "/extra/terminal_identity/host",
+            "cwd": "/cwd",
+            "exit_code": "/exit_status"
+          },
+          "identifiers": {
+            "execution": "/execution"
+          }
+        }
+      ]
+    },
+    {
+      "name": "mail",
+      "derivation": "mail.fusion",
+      "version": 4,
+      "output": "mail.fused",
+      "start_field": "sent_at",
+      "scope": ["account"],
+      "keyed_by": ["account", "message_id"],
+      "spread_ms": 86400000,
+      "agent_decisions": "record",
+      "members": [
+        {
+          "event_type": "mail.message",
+          "source": "communication.gmail",
+          "fields": {
+            "account": { "pointer": "/account", "normalize": "non_empty" },
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" },
+            "subject": "/subject",
+            "from": "/from",
+            "thread_id": "/thread_id",
+            "labels": "/labels"
+          },
+          "identifiers": {
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" }
+          }
+        },
+        {
+          "event_type": "mail.message",
+          "source": "communication.imap",
+          "fields": {
+            "account": { "pointer": "/account", "normalize": "non_empty" },
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" },
+            "subject": "/subject",
+            "from": "/from",
+            "thread_id": "/thread_id",
+            "labels": "/labels"
+          },
+          "identifiers": {
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" }
+          }
+        },
+        {
+          "event_type": "mail.message",
+          "source": "communication.maildir",
+          "fields": {
+            "account": { "pointer": "/account", "normalize": "non_empty" },
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" },
+            "subject": "/subject",
+            "from": "/from",
+            "thread_id": "/thread_id",
+            "labels": "/labels"
+          },
+          "identifiers": {
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" }
+          }
+        },
+        {
+          "event_type": "mail.message",
+          "source": "communication.mbox",
+          "fields": {
+            "account": { "pointer": "/account", "normalize": "non_empty" },
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" },
+            "subject": "/subject",
+            "from": "/from",
+            "thread_id": "/thread_id",
+            "labels": "/labels"
+          },
+          "identifiers": {
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" }
+          }
+        },
+        {
+          "event_type": "mail.message",
+          "source": "communication.outlook",
+          "fields": {
+            "account": { "pointer": "/account", "normalize": "non_empty" },
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" },
+            "subject": "/subject",
+            "from": "/from",
+            "thread_id": "/thread_id",
+            "labels": "/labels"
+          },
+          "identifiers": {
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" }
+          }
+        },
+        {
+          "event_type": "mail.message",
+          "source": "communication.outlook-csv",
+          "fields": {
+            "account": { "pointer": "/account", "normalize": "non_empty" },
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" },
+            "subject": "/subject",
+            "from": "/from",
+            "thread_id": "/thread_id",
+            "labels": "/labels"
+          },
+          "identifiers": {
+            "message_id": { "pointer": "/message_id", "normalize": "non_empty" }
+          }
+        }
+      ]
+    }
+  ]
+}
