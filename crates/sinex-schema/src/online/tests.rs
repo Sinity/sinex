@@ -186,7 +186,11 @@ async fn work_after_start_resumes_in_order_and_walks_answer_as_filled(
     assert_eq!(mark, ids[8]);
     assert_eq!(
         remaining(&mut conn).await.unwrap(),
-        [Task::EventChildren, Task::CoverageIndex]
+        [
+            Task::EventChildren,
+            Task::CoverageIndex,
+            Task::SearchRewrite
+        ]
     );
     // An edge admission already wrote is not written again.
     conn.execute(
