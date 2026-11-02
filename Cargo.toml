@@ -18,6 +18,7 @@ members = [
     "crates/sinex-capture",
     "crates/sinexctl",
     "xtask",
+    "fuzz",
 ]
 
 [workspace.package]
@@ -94,6 +95,8 @@ todo = "warn"
 # Line tables keep backtraces useful at a fraction of the binary size.
 [profile.dev]
 debug = "line-tables-only"
+# Debug info stays in the object files, so each test binary links smaller.
+split-debuginfo = "unpacked"
 
 [profile.dev.package.blake3]
 opt-level = 3

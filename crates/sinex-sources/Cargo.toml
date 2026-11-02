@@ -56,15 +56,3 @@ workspace = true
 [features]
 default = ["full"]
 full = ["dep:csv", "dep:thiserror","sinex-source-core/archives", "sinex-source-core/sqlite", "dep:rusqlite", "dep:gix", "dep:serde-saphyr", "dep:mailparse", "dep:encoding_rs", "dep:sha2", "dep:md-5", "dep:ureq", "dep:rustls", "dep:webpki-roots"]
-
-[[test]]
-name = "golden"
-required-features = ["full"]
-
-[[test]]
-name = "framing"
-required-features = ["full"]
-
-[[test]]
-name = "archive"
-required-features = ["full"]

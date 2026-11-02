@@ -63,8 +63,15 @@ impl Library<'_> {
             .map_err(e)?;
         let reader = crate::binding_reader::BindingReader::new(format, binding)?;
         crate::intake::request_class(conn, reader.source.as_ref()).await?;
-        let counts =
-            crate::binding_reader::once(conn, self.blobs, self.writer, vec![reader]).await?;
+        // The scan and the derivation futures are boxed like the intake in
+        // `Library::write_citing`, so `add` stays small in its callers.
+        let counts = Box::pin(crate::binding_reader::once(
+            conn,
+            self.blobs,
+            self.writer,
+            vec![reader],
+        ))
+        .await?;
         let files = counts.events_offered;
         let seen = counts.admitted;
         let after = reads::copies(conn, self.host, &root_text)
@@ -72,14 +79,14 @@ impl Library<'_> {
             .map_err(e)?;
         let keys: std::collections::BTreeSet<_> =
             after.iter().map(|copy| copy.item.clone()).collect();
-        let computed = crate::derivation_runner::compute_now(
+        let computed = Box::pin(crate::derivation_runner::compute_now(
             conn,
             self.writer,
             &sinex_derivations::library::LibraryItems,
             keys.into_iter().map(Value::String).collect(),
             self.host,
             self.time_settings.clone(),
-        )
+        ))
         .await?;
         let mut new_items = 0;
         let mut revisions = 0;

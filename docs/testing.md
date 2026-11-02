@@ -51,7 +51,7 @@ Sources are explicit in a development run: `--sources FILE` selects daemon bindi
 
 `cargo xtask history explain RUN` shows resolved arguments, stages and slow tests. `history compare BEFORE AFTER` compares passed runs with matching command, exact arguments, host and toolchain; `history compare-days DATE DATE` groups UTC days by those same fields. Parallel test durations are separate from wall time. Recorded overlap does not by itself establish resource contention. `NEXTEST_TEST_THREADS` selects test concurrency unless explicit nextest options override it, and the resolved setting is recorded with the run.
 
-The two multi-batch native interruption scenarios reserve all configured nextest slots while they exercise both histories and their replay continuations. Other crash cases share a two-slot group. These reservations change scheduling; fixture sizes and per-test deadlines stay fixed.
+Crash cases share a two-slot nextest group, which bounds how many whole backfills compete for the test PostgreSQL at once while the rest of the suite runs beside them. The group changes scheduling only; per-test deadlines stay fixed.
 
 The daemon shutdown law reads the supervisor's actual task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness retain their own bounded deadlines.
 
@@ -113,7 +113,8 @@ laws and citations are shared with Polylogue and described in its
 [docs index](https://github.com/Sinity/polylogue/blob/master/docs/README.md).
 
 - **Tests carry the key in their name.** Integration tests are one binary per
-  area (`crates/<crate>/tests/<area>/`); the test that checks a law is named
+  crate (`crates/<crate>/tests/integration/`) with one module per area, so
+  each crate links its test dependencies once; the test that checks a law is named
   from its key (`restore_refused_while_other_reading_live`), with a suffix
   when several tests check one law. Finding a law's tests is a name search.
 - **Shared laws live with the shared code.** The query language's law suite
@@ -143,6 +144,12 @@ a crash may leave):
 - between the transactions of a replay;
 - around the publisher's acknowledgement on the confirmed stream.
 
+A kill point earns its own test only when it leaves a different state.
+Every statement inside one admission transaction leaves the same one (nothing
+of the transaction committed), so a single kill inside the transaction covers
+them; the kill before the run is registered and the kill after the segment
+sync, with bytes past the committed end, are separate tests.
+
 ## VM tests
 
 NixOS VM tests boot the shipped modules
@@ -164,7 +171,9 @@ The native Rust suite tests GNU tar restoration of sparse files, native names, e
 Fuzzing runs as tests over the real boundaries: COPY encoding, manifests,
 producer frames and the query parser. Bounded replay of each target's corpus
 runs inside the ordinary test run; longer runs are a test profile over the
-same harness, not a separate command. Ruling, 2026-03-12: "it MUST NOT be a
+same harness, not a separate command. The harness (`fuzz/`) is a workspace
+member, so its tests build in the same feature resolution as every other
+test. Ruling, 2026-03-12: "it MUST NOT be a
 separate command" (cc-queued:065c511c-e336-4e59-825b-eeefc71cdaae@2026-03-12T00:31:10Z).
 
 ## Benchmarks

@@ -2930,6 +2930,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
+name = "libfuzzer-sys"
+version = "0.4.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2"
+dependencies = [
+ "arbitrary",
+ "cc",
+]
+
+[[package]]
 name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4487,6 +4497,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-fuzz"
+version = "0.1.0"
+dependencies = [
+ "devkit",
+ "jiff",
+ "libfuzzer-sys",
+ "serde_json",
+ "sinex-model",
+ "sinex-protocol",
+ "sinex-store",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "sinex-library"
 version = "0.1.0"
 dependencies = [
@@ -5811,7 +5836,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

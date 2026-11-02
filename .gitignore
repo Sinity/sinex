@@ -9,4 +9,3 @@ __pycache__/
 # `cargo xtask link-common`: the patch and saved original workspace locks.
 /.cargo/local.toml
 /.cargo/common-link.lock
-/.cargo/common-link.fuzz.lock
