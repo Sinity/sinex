@@ -274,7 +274,7 @@ pub async fn input_contract(
         .iter()
         .map(|kind| kind.name.clone())
         .collect::<Vec<_>>();
-    let rows:Vec<InputRow>=sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,e.source,e.source_version,e.source_fingerprint,e.producer_family,e.class FROM core.events e WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
+    let rows:Vec<RequiredInput>=sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,e.source,e.source_version,e.source_fingerprint,e.producer_family,e.class FROM core.events e WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
         .bind(names).bind(claims.position).fetch_all(&mut *conn).await?;
     for (kind, version, source, source_version, fingerprint, family, class) in rows {
         if family.as_deref() != Some(claims.family.as_str()) {
@@ -345,7 +345,7 @@ pub async fn required_classes(
 
 /// One distinct required input: kind, kind version, source, source version,
 /// source fingerprint, producer family and class.
-type InputRow = (
+type RequiredInput = (
     String,
     i64,
     String,
