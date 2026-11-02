@@ -171,7 +171,10 @@ async fn an_unanswered_notification_stays_unknown_and_never_holds_admission() {
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(unknown, 2, "one attempt, recorded before and after its call");
+    assert_eq!(
+        unknown, 2,
+        "one attempt, recorded before and after its call"
+    );
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,

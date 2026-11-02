@@ -245,6 +245,109 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     process.stop().await;
 }
 
+/// law: signal-basis-changed-withdraws
+/// A firing held past a privacy policy change is withdrawn rather than
+/// delivered with evidence read under the earlier policy, and the deliverer
+/// goes on delivering other rules instead of retrying it.
+#[devkit::test]
+async fn a_firing_whose_policy_changed_is_withdrawn_and_delivery_goes_on() {
+    let db = devkit::pg::test_database().unwrap();
+    let database = db.url(None);
+    let nats = devkit::nats::test_nats().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let store = root.join("store");
+    let socket = root.join("api.sock");
+    std::fs::create_dir(root.join("tokens")).unwrap();
+    std::fs::write(root.join("tokens/operator.token"), TOKEN).unwrap();
+    daemon::sources(
+        &root.join("sources.json"),
+        &["sinex.telemetry", "sinex.signals"],
+    );
+    let mut config: Value =
+        serde_json::from_slice(&std::fs::read(root.join("sources.json")).unwrap()).unwrap();
+    config["signals"] = json!({"interrupt_budget_per_hour":4,"quiet_hours":null,"notifications":null,"values":{},"actions":{},"outlet_timeout_ms":1000});
+    std::fs::write(
+        root.join("sources.json"),
+        serde_json::to_vec(&config).unwrap(),
+    )
+    .unwrap();
+    let mut process = start(&database, &store, root, &nats);
+    ready(&mut process, &socket).await;
+    let mut conn = PgConnection::connect(&database).await.unwrap();
+    wait_scalar(&mut conn, "SELECT count(*) FROM core.signal_checkpoints", 1).await;
+    let mut held = rule("held", "notice");
+    held["for"] = json!(3000);
+    ok(
+        &socket,
+        json!({"method":"signal","action":"add","name":"held","rule":held.to_string()}),
+    );
+    wait_scalar(&mut conn, ADOPTED, 1).await;
+    ok(
+        &socket,
+        json!({"method":"mark","text":"synthetic held occurrence"}),
+    );
+    // The row is selected under the current policy before the policy changes.
+    wait_scalar(
+        &mut conn,
+        "SELECT count(*) FROM core.signal_checkpoints WHERE state->'inputs' <> '{}'::jsonb",
+        1,
+    )
+    .await;
+    let before: i64 = sqlx::query_scalar("SELECT active_epoch FROM privacy.policy_state WHERE id")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut conn,
+        "query.request",
+        sinex_model::Class::Sealed,
+        "synthetic-operator",
+    )
+    .await
+    .unwrap();
+    wait_scalar(
+        &mut conn,
+        &format!("SELECT count(*) FROM privacy.policy_state WHERE id AND desired_epoch=active_epoch AND active_epoch>{before}"),
+        1,
+    )
+    .await;
+    wait_scalar(
+        &mut conn,
+        "SELECT count(*) FROM core.events WHERE event_type='signal.outcome' AND payload->'outcome'->'result'->>'reason'='basis_changed'",
+        1,
+    )
+    .await;
+    let delivered: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.delivery'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(delivered, 0, "the withdrawn firing is never delivered");
+
+    ok(
+        &socket,
+        json!({"method":"signal","action":"add","name":"after","rule":rule("after","notice").to_string()}),
+    );
+    wait_scalar(&mut conn, ADOPTED, 2).await;
+    ok(
+        &socket,
+        json!({"method":"mark","text":"synthetic later occurrence"}),
+    );
+    wait_scalar(
+        &mut conn,
+        "SELECT count(*) FROM core.events WHERE event_type='signal.delivery' AND payload->'delivery'->'fired'->>'rule_name'='after'",
+        1,
+    )
+    .await;
+    let withdrawn: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.outcome' AND payload->'outcome'->'result'->>'reason'='basis_changed'")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(withdrawn, 1, "the withdrawal is recorded once, not retried");
+    process.stop().await;
+}
+
 #[path = "signals/desktop.rs"]
 mod desktop;
 

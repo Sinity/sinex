@@ -722,6 +722,47 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
     }
 }
 
+/// A read mark holds while the policy its readings were selected under is
+/// current and each of them is live; a newer reading or a policy change ends it.
+#[devkit::test]
+async fn a_read_mark_holds_until_its_readings_or_policy_change(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let first = keyed("source", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![first.clone()])).await;
+    let read = ReadMark::now(&mut conn).await.unwrap();
+    assert!(read.holds(&mut conn, &[first.id.0]).await.unwrap());
+
+    let second = keyed("source", 1, 2, 2);
+    admit_one(&mut conn, &batch(vec![second.clone()])).await;
+    assert!(
+        !read.holds(&mut conn, &[first.id.0]).await.unwrap(),
+        "the replaced reading is archived"
+    );
+    let current = ReadMark::now(&mut conn).await.unwrap();
+    assert!(current.holds(&mut conn, &[second.id.0]).await.unwrap());
+
+    sqlx::query("UPDATE privacy.policy_state SET desired_epoch=desired_epoch+1 WHERE id")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert!(
+        !current.holds(&mut conn, &[second.id.0]).await.unwrap(),
+        "a policy change in progress"
+    );
+    sqlx::query("UPDATE privacy.policy_state SET active_epoch=desired_epoch WHERE id")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert!(
+        !current.holds(&mut conn, &[second.id.0]).await.unwrap(),
+        "a settled newer policy"
+    );
+    let settled = ReadMark::now(&mut conn).await.unwrap();
+    assert!(settled.holds(&mut conn, &[second.id.0]).await.unwrap());
+}
+
 mod kinds;
 
 mod cache;

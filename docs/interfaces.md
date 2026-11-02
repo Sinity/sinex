@@ -504,6 +504,12 @@ because its configured outlet belongs to its own product. Polylogue shows only i
   first seen: the reading itself, or every reading a group selected. Replaying one of
   those readings archives the delivery with the rest of the chain, like any derived
   reading.
+- **A firing whose basis changed is withdrawn.** When a cited reading is archived (by a
+  replay or a lifecycle step) or the privacy policy changes between selecting a row and
+  handing its firing off, the handoff is withdrawn: no delivery is recorded and no
+  outlet runs, only an outcome `not_sent` with reason `basis_changed`. Its evidence was
+  read under a policy or from readings that no longer hold, so it is never certified
+  under the current ones, and the deliverer never retries it.
 - **Any producer may notify** (decided target, not built). A credentialed producer submits a `notice.submitted` fact
   (title, body, reference or URL, an interrupt request, a `key` for grouping and
   replacement, an optional `clears` key); it is a delivery of the implicit rule

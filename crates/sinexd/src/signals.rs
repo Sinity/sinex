@@ -21,6 +21,9 @@ use tokio::sync::{mpsc, watch};
 const PRODUCT: &str = "sinex";
 /// The derivation that writes deliveries.
 pub(crate) const DELIVERIES: &str = "sinex.signals.deliveries";
+/// Why a withdrawn handoff was not sent: the readings it cited no longer
+/// stand under the current policy and lifecycle.
+const BASIS_CHANGED: &str = "basis_changed";
 
 fn error(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -267,7 +270,9 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         state.evaluator.resume(at, calendar, &mut state.host)
     }
     .map_err(error)?;
-    let (deliveries, records) = hand_off(config, &mut state, handoffs, read_mark, now)?;
+    let (deliveries, mut records) = hand_off(config, &mut state, handoffs, read_mark, now)?;
+    let changed = changed_basis(&mut conn, &deliveries).await?;
+    let deliveries = withdraw(&mut state, deliveries, &mut records, &changed, now);
     let commit = Commit {
         host: api.host.clone(),
         class: Class::Guarded,
@@ -279,6 +284,9 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         observed_seq: Some(seq),
         checkpoint: state,
     };
+    // A conflicting commit retries the step. A basis that changed after the
+    // check above is found by the next step's check and withdrawn there, so
+    // the same frozen inputs are never retried twice.
     match persist(api, &mut conn, records, commit, now).await {
         Ok(()) => Ok(Step::Committed),
         Err(reason)
@@ -557,6 +565,69 @@ fn hand_off(
     }
     state.inputs.retain(|_, inputs| !inputs.is_empty());
     Ok((deliveries, records))
+}
+
+/// The deliveries whose cited readings no longer stand: one was archived (by
+/// a replay or a lifecycle step) or the privacy policy changed since they
+/// were selected.
+async fn changed_basis(
+    conn: &mut sqlx::PgConnection,
+    deliveries: &[(sinex_model::Event, sinex_store::ReadMark)],
+) -> Result<BTreeSet<String>, String> {
+    let mut changed = BTreeSet::new();
+    for (event, read) in deliveries {
+        let parents: Vec<uuid::Uuid> = match &event.origin {
+            sinex_model::Origin::Derived { parents } => parents.iter().map(|id| id.0).collect(),
+            sinex_model::Origin::Record { .. } => Vec::new(),
+        };
+        if !read.holds(conn, &parents).await.map_err(error)? {
+            changed.insert(delivery_id(event)?);
+        }
+    }
+    Ok(changed)
+}
+
+fn delivery_id(event: &sinex_model::Event) -> Result<String, String> {
+    event.payload["delivery_id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "a signal delivery lacks its identity".into())
+}
+
+/// Withdraw handoffs whose basis changed: no delivery event and no outlet
+/// work, only an outcome saying why it was not sent. Admitting one would
+/// certify evidence the current policy or lifecycle no longer holds, and
+/// retrying it would meet the same refusal every time.
+fn withdraw(
+    state: &mut Checkpoint,
+    deliveries: Vec<(sinex_model::Event, sinex_store::ReadMark)>,
+    records: &mut Vec<SignalRecord>,
+    changed: &BTreeSet<String>,
+    now: Timestamp,
+) -> Vec<(sinex_model::Event, sinex_store::ReadMark)> {
+    if changed.is_empty() {
+        return deliveries;
+    }
+    for id in changed {
+        state.outbox.remove(id);
+        state.open.remove(id);
+    }
+    records.retain(|record| {
+        !matches!(record, SignalRecord::Outcome(recorded) if changed.contains(&recorded.delivery_id))
+    });
+    records.extend(changed.iter().map(|id| {
+        outcome(
+            id,
+            ::signals::Outcome::Attempt {
+                result: ::signals::DeliveryOutcome::NotSent(BASIS_CHANGED.into()),
+            },
+            now,
+        )
+    }));
+    deliveries
+        .into_iter()
+        .filter(|(event, _)| delivery_id(event).is_ok_and(|id| !changed.contains(&id)))
+        .collect()
 }
 
 fn outcome(delivery: &str, outcome: ::signals::Outcome, at: Timestamp) -> SignalRecord {

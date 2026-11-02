@@ -416,3 +416,75 @@ fn a_cleared_delivery_is_closed_once_shown_and_never_shown_otherwise() {
     assert_eq!(state.outbox.get(unsent.id()), Some(&Pending::Clear));
     assert!(state.open.is_empty());
 }
+
+/// law: signal-basis-changed-withdraws
+/// A handoff whose cited readings no longer stand is withdrawn: no delivery
+/// event, no outlet work, one outcome saying its basis changed. The others in
+/// the same step are untouched.
+#[devkit::test]
+fn a_handoff_whose_basis_changed_is_withdrawn_and_the_rest_go_ahead() {
+    let mut state = state();
+    state
+        .rules
+        .insert("changed".into(), rule("changed", "notice"));
+    state.rules.insert("kept".into(), rule("kept", "notice"));
+    let show = ::signals::Decision::Show { send_away: false };
+    let changed = delivery(
+        PRODUCT,
+        "changed",
+        "a",
+        ::signals::Channel::Interrupt,
+        show.clone(),
+        true,
+    );
+    let kept = delivery(
+        PRODUCT,
+        "kept",
+        "a",
+        ::signals::Channel::Interrupt,
+        show,
+        true,
+    );
+    let at = Timestamp::from_unix_secs(1_800_000_000).unwrap();
+    let (deliveries, mut records) = hand_off(
+        &config(true),
+        &mut state,
+        handoffs(vec![changed.clone(), kept.clone()]),
+        mark(),
+        at,
+    )
+    .unwrap();
+    assert_eq!(deliveries.len(), 2);
+    assert!(state.outbox.contains_key(changed.id()));
+    assert!(state.open.contains_key(changed.id()));
+
+    let withdrawn = BTreeSet::from([changed.id().to_owned()]);
+    let deliveries = withdraw(&mut state, deliveries, &mut records, &withdrawn, at);
+
+    let ids: Vec<String> = deliveries
+        .iter()
+        .map(|(event, _)| delivery_id(event).unwrap())
+        .collect();
+    assert_eq!(ids, vec![kept.id().to_owned()]);
+    assert!(!state.outbox.contains_key(changed.id()));
+    assert!(!state.open.contains_key(changed.id()));
+    assert!(state.outbox.contains_key(kept.id()));
+    let outcomes: Vec<(&str, &::signals::Outcome)> = records
+        .iter()
+        .filter_map(|record| match record {
+            SignalRecord::Outcome(recorded) => {
+                Some((recorded.delivery_id.as_str(), &recorded.outcome))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        vec![(
+            changed.id(),
+            &::signals::Outcome::Attempt {
+                result: ::signals::DeliveryOutcome::NotSent(BASIS_CHANGED.into()),
+            }
+        )]
+    );
+}
