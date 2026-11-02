@@ -381,6 +381,9 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     process.stop().await;
 }
 
+#[path = "signals/conflicts.rs"]
+mod conflicts;
+
 #[path = "signals/desktop.rs"]
 mod desktop;
 
