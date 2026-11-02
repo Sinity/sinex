@@ -38,14 +38,27 @@ cache = "none"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.baseline]
-description = "All Rust tests on the master-baseline checkout; the host queues it on each new master head"
-exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
-pool = "bulk"
+description = "Warm build of master (test binaries and clippy, nothing run) that seeds new checkouts; the host queues it on each new master head"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "warm"]
+# A build only, so it takes the compile slot, behind every lane's job there.
+pool = "compile"
+priority = -100
 result = "exit"
-# The same full suite as test needs the same cold-build and runtime budget.
 timeout_seconds = 1800
-scratch = "tmpfs"
+scratch = "nvme"
 cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.catalog]
+description = "Regenerate nix/catalog.json from the source declarations (sinexd admin catalog, compiled against the schema database)"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "db", "exec", "--", "bash", "-c", "cargo run --locked --quiet -p sinexd -- admin catalog > nix/catalog.json.new && mv nix/catalog.json.new nix/catalog.json"]
+pool = "compile"
+result = "exit"
+timeout_seconds = 1800
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.focused]
