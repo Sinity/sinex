@@ -4,25 +4,31 @@
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
+        "command.reported",
         "command.executed",
-        "command.imported"
+        "command.imported",
+        "terminal.reported",
+        "curation.duplicate"
       ],
       "kind": "keyed",
       "name": "command.fusion",
       "outputs": [
-        "command.fused"
+        "command.fused",
+        "fusion.considered_pair"
       ]
     },
     {
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
-        "mail.message"
+        "mail.message",
+        "curation.duplicate"
       ],
       "kind": "keyed",
       "name": "mail.fusion",
       "outputs": [
-        "mail.fused"
+        "mail.fused",
+        "fusion.considered_pair"
       ]
     },
     {
@@ -44,8 +50,10 @@
       "history": "recompute",
       "inputs": [
         "command.fused",
+        "command.reported",
         "command.executed",
-        "command.imported"
+        "command.imported",
+        "terminal.reported"
       ],
       "kind": "keyed",
       "name": "shell.sessions",
@@ -118,6 +126,7 @@
         "presence.span",
         "window.span",
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
         "browser.visit",
@@ -163,6 +172,7 @@
         "presence.span",
         "window.span",
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
         "browser.visit",
@@ -239,8 +249,10 @@
       "history": "recompute",
       "inputs": [
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
+        "terminal.reported",
         "shell.session",
         "presence.interval",
         "state.interval",
@@ -372,8 +384,10 @@
       "inputs": [
         "operator.mark",
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
+        "terminal.reported",
         "state.interval",
         "window.span",
         "shell.session",
@@ -430,6 +444,7 @@
         "forecast.resolved",
         "command.executed",
         "command.imported",
+        "command.reported",
         "transaction.posted",
         "journal.directive",
         "journal.imported",
@@ -512,6 +527,8 @@
         "agentctl.event",
         "command.fused",
         "mail.fused",
+        "fusion.considered_pair",
+        "curation.duplicate",
         "shell.session",
         "state.interval",
         "metric.figure",
@@ -650,10 +667,12 @@
         "command.executed",
         "command.fused",
         "command.imported",
+        "command.reported",
         "config_drift.checked",
         "context.pack",
         "conversation.day",
         "conversation.message",
+        "curation.duplicate",
         "desktop.other",
         "device.changed",
         "device_traffic.sampled",
@@ -670,6 +689,7 @@
         "forecast.issued",
         "forecast.resolved",
         "frame.captured",
+        "fusion.considered_pair",
         "generation.activated",
         "git.commit",
         "git.ref_updated",
@@ -5712,6 +5732,157 @@
       "key_rule": {
         "fields": [
           "host",
+          "execution"
+        ],
+        "rule": "fields"
+      },
+      "kind": {
+        "name": "command.reported",
+        "version": 1
+      },
+      "normalization": "rust",
+      "owned_blobs": [],
+      "payload_schema": {
+        "$defs": {
+          "GitIdentity": {
+            "description": "Repository facts observed beside a cwd, never resolved during derivation.",
+            "properties": {
+              "branch": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "common_dir": {
+                "type": "string"
+              },
+              "head": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "root_commits": {
+                "description": "Multiple unrelated roots can be reachable after an unrelated-history merge.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "common_dir",
+              "root_commits"
+            ],
+            "type": "object"
+          },
+          "Timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "One finished command execution, reported by the shell integration Sinex\nships (zsh, bash and fish hooks) through the session integration socket.\nThe integration mints the execution token when the command starts and\nhands it to every other observer it can reach: the terminal records it\n(kitty's `sinex_execution` user variable), and the Atuin row ID started\nfor the same execution is recorded beside it, so fusion matches these\nobservers by identifier instead of by time.",
+        "properties": {
+          "atuin_id": {
+            "description": "The Atuin history row started for this execution, when Atuin's hook\nran in the same shell.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "command": {
+            "description": "The command line as the shell received it.",
+            "type": "string"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_ns": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "execution": {
+            "description": "A UUIDv7 minted by the shell for this execution.",
+            "type": "string"
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "extra": {
+            "additionalProperties": true,
+            "description": "Fields the integration sent that this type does not name, kept by name.",
+            "type": "object"
+          },
+          "git_identity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Repository facts observed beside the cwd when the report was sent."
+          },
+          "host": {
+            "type": "string"
+          },
+          "session": {
+            "description": "The shell's process ID, which tells concurrent shells apart.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shell": {
+            "description": "`zsh`, `bash` or `fish`.",
+            "type": "string"
+          },
+          "started_at": {
+            "$ref": "#/$defs/Timestamp"
+          }
+        },
+        "required": [
+          "execution",
+          "shell",
+          "host",
+          "command",
+          "started_at"
+        ],
+        "title": "CommandReported",
+        "type": "object"
+      },
+      "removed_rule": {
+        "rule": "never"
+      },
+      "replace_rule": "suppress_repeat",
+      "search": "words_and_trigram",
+      "time_rule": {
+        "fields": [
+          "started_at"
+        ],
+        "quality": "intrinsic",
+        "rule": "first_present"
+      }
+    },
+    {
+      "declaring_producer": "sinex",
+      "field_hints": [],
+      "keep_known": [],
+      "key_rule": {
+        "fields": [
+          "host",
           "journal",
           "member",
           "member_duplicate",
@@ -7355,7 +7526,7 @@
       },
       "kind": {
         "name": "terminal.reported",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -7384,6 +7555,13 @@
           "event": {
             "description": "`cmd_start`, `cmd_end`, `focus`, `close`, `title`…",
             "type": "string"
+          },
+          "execution": {
+            "description": "The execution token Sinex's shell integration minted for the command\n(`cmd_start`, `cmd_end`), when the shell ran the integration.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "exit_status": {
             "format": "int64",
@@ -13963,22 +14141,178 @@
       },
       "kind": {
         "name": "command.fused",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
+          "Basis": {
+            "description": "What decided a fused record: an exact shared identifier, a matching rule\n(time window, unique fallback, absorption), or a duplicate decision.\nA record with several kinds of links records the weakest automatic one\n(`rule` before `identifier`), and `operator` when any duplicate decision decided it.",
+            "enum": [
+              "identifier",
+              "rule",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "Joined": {
+            "description": "How one member joined its fused record.",
+            "oneOf": [
+              {
+                "description": "The most preferred member, which the others joined.",
+                "properties": {
+                  "by": {
+                    "const": "lead",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "It shares an exact identifier in this namespace with a member.",
+                "properties": {
+                  "by": {
+                    "const": "identifier",
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "namespace"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The closest partner within the family's window.",
+                "properties": {
+                  "by": {
+                    "const": "window",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The only partner within the family's wider fallback window.",
+                "properties": {
+                  "by": {
+                    "const": "fallback",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A repeat inside a span led by a more preferred member.",
+                "properties": {
+                  "by": {
+                    "const": "absorb",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A `same` duplicate decision by this author.",
+                "properties": {
+                  "author": {
+                    "type": "string"
+                  },
+                  "by": {
+                    "const": "decision",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "author"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Member": {
+            "description": "One member of a fused record, cited by its record, not its reading.",
+            "properties": {
+              "event_type": {
+                "type": "string"
+              },
+              "joined": {
+                "$ref": "#/$defs/Joined"
+              },
+              "record": {
+                "description": "The member's stable record citation: `<type>:<native id>` when the\nsource has one, otherwise its record location.",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "record",
+              "source",
+              "event_type",
+              "joined"
+            ],
+            "type": "object"
+          },
           "Timestamp": {
             "format": "date-time",
             "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One command run, from Atuin and zsh history. zsh history holds about a\nthousand pairs of the same command in the same second on the operator's\nmachine, which is why the record, not the text and time, identifies it.",
+        "description": "One command run, from the shell integration's reports, Atuin and zsh\nhistory. zsh history holds many pairs of the same command in the same\nsecond, which is why the record, not the text and time, identifies it.",
         "properties": {
+          "ambiguous": {
+            "description": "How many candidates the weakest choice was made among; 1 when there\nwas no choice.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "basis": {
+            "$ref": "#/$defs/Basis"
+          },
           "command": {
             "type": "string"
+          },
+          "competitors": {
+            "description": "The record citations of the candidates not chosen.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "cwd": {
             "type": [
@@ -13993,6 +14327,13 @@
               "null"
             ]
           },
+          "execution": {
+            "description": "The execution token the shell integration minted for this run.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "exit_code": {
             "format": "int64",
             "type": [
@@ -14003,16 +14344,21 @@
           "host": {
             "type": "string"
           },
-          "observed_by": {
-            "description": "The sources that observed this command.",
+          "members": {
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/Member"
             },
             "type": "array"
           },
           "record": {
-            "description": "The preferred member's identity: `<type>:<native id>` when the source\nhas one (Atuin), otherwise its record location.",
+            "description": "The preferred member's record citation.",
             "type": "string"
+          },
+          "rule_version": {
+            "description": "The fusion family's version, which covers its declaration.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
           },
           "session": {
             "type": [
@@ -14029,7 +14375,11 @@
           "command",
           "host",
           "started_at",
-          "observed_by"
+          "members",
+          "basis",
+          "ambiguous",
+          "competitors",
+          "rule_version"
         ],
         "title": "CommandFused",
         "type": "object"
@@ -14059,25 +14409,176 @@
       },
       "kind": {
         "name": "mail.fused",
-        "version": 3
+        "version": 4
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
+          "Basis": {
+            "description": "What decided a fused record: an exact shared identifier, a matching rule\n(time window, unique fallback, absorption), or a duplicate decision.\nA record with several kinds of links records the weakest automatic one\n(`rule` before `identifier`), and `operator` when any duplicate decision decided it.",
+            "enum": [
+              "identifier",
+              "rule",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "Joined": {
+            "description": "How one member joined its fused record.",
+            "oneOf": [
+              {
+                "description": "The most preferred member, which the others joined.",
+                "properties": {
+                  "by": {
+                    "const": "lead",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "It shares an exact identifier in this namespace with a member.",
+                "properties": {
+                  "by": {
+                    "const": "identifier",
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "namespace"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The closest partner within the family's window.",
+                "properties": {
+                  "by": {
+                    "const": "window",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The only partner within the family's wider fallback window.",
+                "properties": {
+                  "by": {
+                    "const": "fallback",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A repeat inside a span led by a more preferred member.",
+                "properties": {
+                  "by": {
+                    "const": "absorb",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A `same` duplicate decision by this author.",
+                "properties": {
+                  "author": {
+                    "type": "string"
+                  },
+                  "by": {
+                    "const": "decision",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "author"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Member": {
+            "description": "One member of a fused record, cited by its record, not its reading.",
+            "properties": {
+              "event_type": {
+                "type": "string"
+              },
+              "joined": {
+                "$ref": "#/$defs/Joined"
+              },
+              "record": {
+                "description": "The member's stable record citation: `<type>:<native id>` when the\nsource has one, otherwise its record location.",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "record",
+              "source",
+              "event_type",
+              "joined"
+            ],
+            "type": "object"
+          },
           "Timestamp": {
             "format": "date-time",
             "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One mail message, from every mail source that holds it (IMAP, Maildir,\nmbox, Outlook): its `Message-ID` and `Date` are the same wherever it is\nstored.",
+        "description": "One mail message stored by two or more mail sources of one account\n(Gmail, IMAP, Maildir, mbox, Outlook): its account and `Message-ID`\nidentify it.",
         "properties": {
           "account": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
+          },
+          "ambiguous": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "basis": {
+            "$ref": "#/$defs/Basis"
+          },
+          "competitors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "from": {
             "items": {
@@ -14091,24 +14592,29 @@
             },
             "type": "array"
           },
+          "members": {
+            "items": {
+              "$ref": "#/$defs/Member"
+            },
+            "type": "array"
+          },
           "message_id": {
             "type": [
               "string",
               "null"
             ]
           },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "record": {
             "type": "string"
           },
+          "rule_version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "sent_at": {
             "$ref": "#/$defs/Timestamp",
-            "description": "The `Date` header."
+            "description": "The preferred member's `Date` header."
           },
           "subject": {
             "type": [
@@ -14124,11 +14630,16 @@
           }
         },
         "required": [
+          "account",
           "record",
           "from",
           "labels",
           "sent_at",
-          "observed_by"
+          "members",
+          "basis",
+          "ambiguous",
+          "competitors",
+          "rule_version"
         ],
         "title": "MailFused",
         "type": "object"
@@ -14141,6 +14652,307 @@
       "time_rule": {
         "fields": [
           "sent_at"
+        ],
+        "quality": "intrinsic",
+        "rule": "first_present"
+      }
+    },
+    {
+      "declaring_producer": "sinex",
+      "field_hints": [],
+      "keep_known": [],
+      "key_rule": {
+        "fields": [
+          "family",
+          "left",
+          "right"
+        ],
+        "rule": "fields"
+      },
+      "kind": {
+        "name": "fusion.considered_pair",
+        "version": 1
+      },
+      "normalization": "rust",
+      "owned_blobs": [],
+      "payload_schema": {
+        "$defs": {
+          "Decision": {
+            "description": "The decision on a pair.",
+            "enum": [
+              "same",
+              "distinct"
+            ],
+            "type": "string"
+          },
+          "PairState": {
+            "description": "The decision on a pair: none yet, the same occurrence, or two.",
+            "enum": [
+              "undecided",
+              "same",
+              "distinct"
+            ],
+            "type": "string"
+          },
+          "StandingDecision": {
+            "description": "One author's standing decision on a pair.",
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "decision": {
+                "$ref": "#/$defs/Decision"
+              }
+            },
+            "required": [
+              "author",
+              "decision"
+            ],
+            "type": "object"
+          },
+          "Strategy": {
+            "description": "Which strategy proposed a considered pair.",
+            "oneOf": [
+              {
+                "enum": [
+                  "identifier",
+                  "window",
+                  "fallback"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "decision",
+                "description": "No strategy proposed it; a duplicate decision names the pair.",
+                "type": "string"
+              }
+            ]
+          },
+          "Timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "A pair of records a fusion pass had to choose about: one of several\ncandidates for the same partner, or a pair a duplicate decision names.\nWritten by the fusion pass with its fused records and queried as\n`duplicates`. The pair is cited by records, never readings.",
+        "properties": {
+          "at": {
+            "$ref": "#/$defs/Timestamp",
+            "description": "The earlier of the two starts."
+          },
+          "candidates": {
+            "description": "How many candidates the choice was among.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "chosen": {
+            "description": "Whether this pair is joined in a fused record.",
+            "type": "boolean"
+          },
+          "decided_by": {
+            "description": "Who made the governing decision.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "distance_ns": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "family": {
+            "type": "string"
+          },
+          "left": {
+            "description": "The lesser of the two record citations.",
+            "type": "string"
+          },
+          "left_source": {
+            "type": "string"
+          },
+          "other_decisions": {
+            "description": "Standing decisions that do not govern (an agent's, where the family\nrecords agent decisions without applying them).",
+            "items": {
+              "$ref": "#/$defs/StandingDecision"
+            },
+            "type": "array"
+          },
+          "right": {
+            "type": "string"
+          },
+          "right_source": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/$defs/PairState",
+            "description": "The governing decision."
+          },
+          "strategy": {
+            "$ref": "#/$defs/Strategy"
+          }
+        },
+        "required": [
+          "family",
+          "left",
+          "right",
+          "left_source",
+          "right_source",
+          "at",
+          "strategy",
+          "candidates",
+          "distance_ns",
+          "chosen",
+          "state",
+          "other_decisions"
+        ],
+        "title": "ConsideredPair",
+        "type": "object"
+      },
+      "removed_rule": {
+        "rule": "never"
+      },
+      "replace_rule": "replace_when_newer",
+      "search": "words_and_trigram",
+      "time_rule": {
+        "fields": [
+          "at"
+        ],
+        "quality": "intrinsic",
+        "rule": "first_present"
+      }
+    },
+    {
+      "declaring_producer": "sinex",
+      "field_hints": [],
+      "keep_known": [],
+      "key_rule": {
+        "fields": [
+          "rev"
+        ],
+        "rule": "fields"
+      },
+      "kind": {
+        "name": "curation.duplicate",
+        "version": 1
+      },
+      "normalization": "rust",
+      "owned_blobs": [],
+      "payload_schema": {
+        "$defs": {
+          "Decision": {
+            "description": "The decision on a pair.",
+            "enum": [
+              "same",
+              "distinct"
+            ],
+            "type": "string"
+          },
+          "Timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One revision of a duplicate decision, or a withdrawal of one.",
+        "properties": {
+          "at": {
+            "description": "The writer's clock in Unix milliseconds, for display; currency never\nreads it.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "author": {
+            "description": "Computed from the authenticated caller, never supplied.",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Decision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`None` for a withdrawal."
+          },
+          "family": {
+            "description": "The fusion family whose records the pair are, when it is one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "family_key": {
+            "description": "For a fusion family keyed by identity, the key that holds the pair."
+          },
+          "pair": {
+            "description": "The two record citations, sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pair_at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The earlier of the pair's own times, when they have times, so the\nderivation that reads the pair also reads the decision."
+          },
+          "rev": {
+            "description": "This revision's ID; equals `root` for the first revision.",
+            "type": "string"
+          },
+          "revises": {
+            "description": "The revisions this one revises, as `<root>@<rev>`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "root": {
+            "description": "The ID of the record's first revision.",
+            "type": "string"
+          },
+          "via": {
+            "description": "The channel the request arrived on. Every decision reaches the\ndaemon through its API, so this is `api`.",
+            "type": "string"
+          },
+          "withdraws": {
+            "description": "The revisions (`<root>@<rev>`) or records (`<root>`) this one\nwithdraws.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "root",
+          "rev",
+          "author",
+          "via",
+          "at",
+          "revises",
+          "withdraws",
+          "pair"
+        ],
+        "title": "Duplicate",
+        "type": "object"
+      },
+      "removed_rule": {
+        "rule": "never"
+      },
+      "replace_rule": "suppress_repeat",
+      "search": "words_and_trigram",
+      "time_rule": {
+        "fields": [
+          "pair_at"
         ],
         "quality": "intrinsic",
         "rule": "first_present"
@@ -28723,7 +29535,8 @@
       "eventTypes": [
         "editor.reported",
         "terminal.reported",
-        "scrollback.captured"
+        "scrollback.captured",
+        "command.reported"
       ],
       "formats": [
         "integration-socket"
@@ -28924,6 +29737,35 @@
       ],
       "name": "forecast.request",
       "purpose": "submitted probability forecasts"
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "system",
+            "request_only": true,
+            "requests": [],
+            "streams": []
+          },
+          "format": "duplicate"
+        }
+      ],
+      "drivers": [
+        "api-request"
+      ],
+      "eventTypes": [
+        "curation.duplicate"
+      ],
+      "formats": [
+        "duplicate"
+      ],
+      "name": "duplicate.request",
+      "purpose": "decisions on whether two records are one occurrence"
     },
     {
       "class": "guarded",
