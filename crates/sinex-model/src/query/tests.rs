@@ -666,5 +666,9 @@ fn curation_fields_bind_without_shadowing_core_fields() {
     q("curation where name = favourites AND kind = collection");
     // `origin` stays the core field: material or derived.
     q("curation where origin = material");
-    assert!(err("curation where origin = imported").message.contains("origin"));
+    assert!(
+        err("curation where origin = imported")
+            .message
+            .contains("origin")
+    );
 }

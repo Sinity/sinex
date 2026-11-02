@@ -540,7 +540,11 @@ pub const ALIASES: &[Alias] = &[
             ),
             // `key` and `origin` are core event fields (the equivalence key,
             // material or derived), so the record's own are named apart.
-            f("name", FieldType::Text, "tag, property, scale or collection"),
+            f(
+                "name",
+                FieldType::Text,
+                "tag, property, scale or collection",
+            ),
             f("value", FieldType::Text, "value"),
             f(
                 "value_origin",
