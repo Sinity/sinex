@@ -320,7 +320,7 @@ impl Api {
         .await
         {
             Ok(totals) => Reply::Ok {
-                result: json!({ "crawl": totals.to_string() }),
+                result: json!({ "crawl": totals.to_json() }),
             },
             Err(e) => refused(e),
         }
@@ -490,7 +490,7 @@ impl Api {
         }
     }
 
-    async fn stage_show(&self, caller: &Caller, operation: &str) -> Reply {
+    pub(super) async fn stage_show(&self, caller: &Caller, operation: &str) -> Reply {
         let operation = match uuid("operation", operation) {
             Ok(id) => OperationId(id),
             Err(e) => return refused(e),
