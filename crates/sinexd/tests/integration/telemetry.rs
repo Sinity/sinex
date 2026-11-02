@@ -1,7 +1,6 @@
 //! The daemon samples observed admission and failures through its own source.
 #[allow(dead_code)]
-#[path = "support/daemon.rs"]
-mod daemon;
+use crate::support::daemon;
 use daemon::*;
 use sqlx::{Connection, PgConnection};
 use std::path::Path;

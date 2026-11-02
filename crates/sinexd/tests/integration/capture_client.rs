@@ -1,6 +1,5 @@
 //! Real capture-only client, local spooling and the daemon's NATS ingress.
-#[path = "support/daemon.rs"]
-mod daemon;
+use crate::support::daemon;
 use daemon::*;
 use sqlx::{Connection, PgConnection};
 use std::os::unix::fs::MetadataExt;
@@ -266,5 +265,4 @@ async fn capture_only_binary_spools_before_daemon_and_resumes_over_nats_once() {
     );
 }
 
-#[path = "capture_client/native.rs"]
 mod native;

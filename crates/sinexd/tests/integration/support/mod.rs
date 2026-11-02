@@ -1,3 +1,5 @@
+pub(crate) mod daemon;
+
 use sqlx::PgConnection;
 
 async fn count(conn: &mut PgConnection, sql: &str) -> i64 {

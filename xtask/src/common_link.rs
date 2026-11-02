@@ -14,7 +14,7 @@ pub fn link(checkout: Option<PathBuf>) -> Result<(), String> {
         .unwrap_or_else(|| root.join("../polylogue-sinex-common"));
     let names = with_link(&root, |link| link.link(&checkout))?;
     println!(
-        "linked {} to {}; run `cargo xtask unlink-common` before committing the workspace locks",
+        "linked {} to {}; run `cargo xtask unlink-common` before committing the workspace lock",
         names.join(", "),
         checkout.display()
     );
@@ -44,12 +44,7 @@ fn with_link<T>(
     let patch = root.join(".cargo/local.toml");
     let lock = root.join("Cargo.lock");
     let backup = root.join(".cargo/common-link.lock");
-    let fuzz_lock = root.join("fuzz/Cargo.lock");
-    let fuzz_backup = root.join(".cargo/common-link.fuzz.lock");
-    let mut locks = vec![(lock.as_path(), backup.as_path())];
-    if fuzz_lock.exists() || fuzz_backup.exists() {
-        locks.push((fuzz_lock.as_path(), fuzz_backup.as_path()));
-    }
+    let locks = vec![(lock.as_path(), backup.as_path())];
     operation(LocalLink {
         repository: REPOSITORY,
         patch: &patch,

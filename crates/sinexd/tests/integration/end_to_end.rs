@@ -1,7 +1,7 @@
 //! Whole-system rules checked end to end through the real `sinexd` binary on
 //! small generated inputs: backfill, replay, archive, tombstone. Run through `xtask
 //! test`, which provides the development database.
-mod support;
+use crate::support;
 
 use devkit::pg::TestDatabase;
 use sqlx::{Connection, PgConnection, Row};

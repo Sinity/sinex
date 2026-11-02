@@ -26,18 +26,56 @@ fn test_selection_preserves_the_original_name_filter() {
 }
 
 #[devkit::test]
-fn test_selection_passes_package_and_filter_arguments_without_workspace() {
-    for args in [
-        vec!["-p", "sinex-sources", "session_socket"],
-        vec!["-psinex-sources", "session_socket"],
-        vec!["--package=sinex-sources", "-E", "test(session_socket)"],
-        vec!["--package", "sinex-model", "-p", "sinex-protocol", "--lib"],
+fn package_selection_becomes_a_filter_over_the_workspace_build() {
+    for (args, filter) in [
+        (
+            vec!["-p", "sinex-sources", "session_socket"],
+            "(package(=sinex-sources)) & (test(session_socket))",
+        ),
+        (
+            vec!["-psinex-sources", "session_socket"],
+            "(package(=sinex-sources)) & (test(session_socket))",
+        ),
+        (
+            vec!["--package=sinex-sources", "-E", "test(session_socket)"],
+            "(package(=sinex-sources)) & ((test(session_socket)))",
+        ),
+        (
+            vec!["--package", "sinex-model", "-p", "sinex-protocol"],
+            "package(=sinex-model) | package(=sinex-protocol)",
+        ),
     ] {
         let got = options(&args);
-        let expected: Vec<_> = ["--locked"].into_iter().chain(args).collect();
-        assert_eq!(got.args, expected);
+        assert_eq!(got.args, ["--locked", "--workspace", "-E", filter]);
         assert!(!got.allow_no_tests);
     }
+}
+
+#[devkit::test]
+fn package_selection_keeps_other_options_and_binary_arguments() {
+    let got = options(&[
+        "-p",
+        "sinexd",
+        "--lib",
+        "--test-threads",
+        "2",
+        "--",
+        "--nocapture",
+    ]);
+    assert_eq!(
+        got.args,
+        [
+            "--locked",
+            "--workspace",
+            "--lib",
+            "--test-threads",
+            "2",
+            "-E",
+            "package(=sinexd)",
+            "--",
+            "--nocapture"
+        ]
+    );
 }
 
 #[devkit::test]
@@ -154,28 +192,4 @@ fn binary_arguments_do_not_hide_inherited_test_threads() {
         ["--test-threads", "num-cpus", "--", "--test-threads", "8"]
     );
     assert_eq!(test_arguments(&[], Some("-2")), ["--test-threads", "-2"]);
-}
-
-#[devkit::test]
-fn concurrency_options_keep_the_full_fuzz_regression_gate() {
-    for args in [
-        vec![],
-        vec!["--test-threads", "1"],
-        vec!["-j4"],
-        vec!["--jobs=4"],
-        vec!["--workspace", "-j", "1"],
-    ] {
-        let args = args.into_iter().map(String::from).collect::<Vec<_>>();
-        assert!(full_test(&args));
-    }
-    assert!(full_test(&test_arguments(&[], Some("1"))));
-    for args in [
-        vec!["-p", "sinex-model"],
-        vec!["--test-threads", "1", "session_socket"],
-        vec!["--", "--test-threads", "1"],
-        vec!["--test-threads"],
-    ] {
-        let args = args.into_iter().map(String::from).collect::<Vec<_>>();
-        assert!(!full_test(&args));
-    }
 }

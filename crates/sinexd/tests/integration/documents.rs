@@ -1,8 +1,7 @@
 //! Documents enter through the public library command and become searchable
 //! derived readings whose selectors and parents still name the stored bytes.
 #[allow(dead_code)]
-#[path = "support/daemon.rs"]
-mod daemon;
+use crate::support::daemon;
 
 use serde_json::{Value, json};
 use sqlx::Connection;

@@ -1,7 +1,6 @@
 //! Isolated real-daemon signal effects use public commands and retained attempts.
 #[allow(dead_code)]
-#[path = "support/daemon.rs"]
-mod daemon;
+use crate::support::daemon;
 use futures::FutureExt;
 use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection};
@@ -277,8 +276,6 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     process.stop().await;
 }
 
-#[path = "signals/desktop.rs"]
 mod desktop;
 
-#[path = "signals/forwarded.rs"]
 mod forwarded;

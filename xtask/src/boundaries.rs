@@ -100,6 +100,8 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-source-core",
         ]),
         "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
+        // Fuzz properties drive the real serialization boundaries.
+        "sinex-fuzz" => Ok(&["sinex-model", "sinex-protocol", "sinex-store"]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
 }
@@ -180,11 +182,12 @@ fn validate(metadata: Metadata) -> Result<(), String> {
                 names.contains(dep.name.as_str()) && !permitted.contains(&dep.name.as_str());
             let forbidden_pure = pure(&package.name) && impure(&dep.name);
             // Statements live in the store; the schema crate applies the
-            // declarations and the daemon only opens connections.
+            // declarations, the daemon only opens connections and the fuzz
+            // harness hands the store's COPY encoding to PostgreSQL's reader.
             let forbidden_sql = dep.name == "sqlx"
                 && !matches!(
                     package.name.as_str(),
-                    "sinex-store" | "sinex-schema" | "sinexd"
+                    "sinex-store" | "sinex-schema" | "sinexd" | "sinex-fuzz"
                 );
             if forbidden_internal
                 || forbidden_pure
