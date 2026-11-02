@@ -2,7 +2,7 @@
 use crate::backfill::Totals;
 use crate::writer::{AdmissionCheck, Priority, WriterHandle};
 use serde_json::Value;
-use sinex_model::{Class, EventPayload, MaterialId, RecordOutcome, RunId};
+use sinex_model::{Class, MaterialId, RecordOutcome, RunId};
 use sinex_source_core::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;

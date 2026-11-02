@@ -629,30 +629,49 @@ async fn admit_signals(
         .begin()
         .await
         .map_err(|error| store_error(error.into()))?;
-    let result = async {
-        let mut outcome = Outcome::default();
-        if let Some(expected) = commit.observed_seq
-            && sinex_store::query::current_seq(&mut tx)
+    let result = signal_step(&mut tx, batch, keys, commit).await;
+    match result {
+        Ok(outcome) => {
+            tx.commit()
                 .await
-                .map_err(store_error)?
-                != expected
-        {
-            return Err(WriteError::Refused(
-                "signal evaluation input snapshot changed; evaluate again".into(),
-            ));
+                .map_err(|error| store_error(error.into()))?;
+            Ok(outcome)
         }
-        if let Some(batch) = batch {
-            outcome += tx.admit(batch, keys).await.map_err(store_error)?;
+        Err(error) => {
+            tx.rollback()
+                .await
+                .map_err(|error| store_error(error.into()))?;
+            Err(error)
         }
-        let handed = commit.deliveries.iter().flat_map(|handed| {
-            handed
-                .events
-                .iter()
-                .map(move |(event, read)| (handed.run, event, read))
-        });
-        for (run, event, read) in handed {
+    }
+}
+
+/// The writes of one signal step inside its open transaction. A named
+/// function rather than an async block keeps the writer future `Send`.
+async fn signal_step(
+    tx: &mut sinex_store::AdmissionTransaction<'_>,
+    batch: Option<&Batch>,
+    keys: &dyn DirtyKeys,
+    commit: &sinex_store::signals::Commit,
+) -> Result<Outcome, WriteError> {
+    let mut outcome = Outcome::default();
+    if let Some(expected) = commit.observed_seq
+        && sinex_store::query::current_seq(tx)
+            .await
+            .map_err(store_error)?
+            != expected
+    {
+        return Err(WriteError::Refused(
+            "signal evaluation input snapshot changed; evaluate again".into(),
+        ));
+    }
+    if let Some(batch) = batch {
+        outcome += tx.admit(batch, keys).await.map_err(store_error)?;
+    }
+    for handed in &commit.deliveries {
+        for (event, read) in &handed.events {
             let delivery = Batch {
-                run,
+                run: handed.run,
                 kind: sinex_model::BatchKind::Derived {
                     derivation: crate::signals::DELIVERIES.into(),
                     scope: sinex_store::DerivedScope::Keys {
@@ -680,32 +699,17 @@ async fn admit_signals(
             }
             outcome += admitted;
         }
-        let mut state = commit.checkpoint.clone();
-        if commit.observed_seq.is_some() {
-            state.observed_seq = sinex_store::query::current_seq(&mut tx)
-                .await
-                .map_err(store_error)?;
-        }
-        sinex_store::signals::save(&mut tx, &commit.host, commit.expected_revision, &state)
+    }
+    let mut state = commit.checkpoint.clone();
+    if commit.observed_seq.is_some() {
+        state.observed_seq = sinex_store::query::current_seq(tx)
             .await
             .map_err(store_error)?;
-        Ok(outcome)
     }
-    .await;
-    match result {
-        Ok(outcome) => {
-            tx.commit()
-                .await
-                .map_err(|error| store_error(error.into()))?;
-            Ok(outcome)
-        }
-        Err(error) => {
-            tx.rollback()
-                .await
-                .map_err(|error| store_error(error.into()))?;
-            Err(error)
-        }
-    }
+    sinex_store::signals::save(tx, &commit.host, commit.expected_revision, &state)
+        .await
+        .map_err(store_error)?;
+    Ok(outcome)
 }
 
 fn content_error(error: &sinex_store::Error) -> bool {
