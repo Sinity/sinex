@@ -12,8 +12,8 @@ use sinex_model::event_types::signal::{
 };
 use sinex_model::{Class, EventId, EventPayload, Timestamp};
 use sinex_store::signals::{Checkpoint, Commit, Deliveries, Forwarded, Pending};
-use std::collections::BTreeSet;
 use sqlx::Connection;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 
@@ -304,14 +304,10 @@ async fn absorb_reports(
     sinex_store::query::set_grants(conn, "guarded")
         .await
         .map_err(error)?;
-    let reports = sinex_store::signals::reports(
-        conn,
-        ReportReceived::EVENT_TYPE,
-        state.reports_seq,
-        seq,
-    )
-    .await
-    .map_err(error)?;
+    let reports =
+        sinex_store::signals::reports(conn, ReportReceived::EVENT_TYPE, state.reports_seq, seq)
+            .await
+            .map_err(error)?;
     for report in reports {
         if report.payload.get("withheld").is_some() {
             continue;
@@ -361,7 +357,13 @@ fn hand_off(
     handoffs: ::signals::Handoffs,
     read_mark: sinex_store::ReadMark,
     now: Timestamp,
-) -> Result<(Vec<(sinex_model::Event, sinex_store::ReadMark)>, Vec<SignalRecord>), String> {
+) -> Result<
+    (
+        Vec<(sinex_model::Event, sinex_store::ReadMark)>,
+        Vec<SignalRecord>,
+    ),
+    String,
+> {
     let mut deliveries = Vec::new();
     let mut records = Vec::new();
     let desktop = config.notifications.is_some();
@@ -394,7 +396,11 @@ fn hand_off(
             if let Some(first) = matched.first() {
                 read = first.read;
             }
-            parents.extend(matched.iter().flat_map(|inputs| inputs.parents.iter().copied()));
+            parents.extend(
+                matched
+                    .iter()
+                    .flat_map(|inputs| inputs.parents.iter().copied()),
+            );
         }
         parents.sort_unstable();
         parents.dedup();
@@ -430,12 +436,13 @@ fn hand_off(
                 let reference = outlets::reference(&delivery);
                 let rule = own.as_ref().map(|own| &own.active.rule);
                 let pending = match delivery.fired.channel {
-                    ::signals::Channel::Value => rule
-                        .and_then(|rule| rule.target.clone())
-                        .map(|target| Pending::Value {
-                            target,
-                            delivery: Box::new(delivery.clone()),
-                        }),
+                    ::signals::Channel::Value => {
+                        rule.and_then(|rule| rule.target.clone())
+                            .map(|target| Pending::Value {
+                                target,
+                                delivery: Box::new(delivery.clone()),
+                            })
+                    }
                     ::signals::Channel::Action => rule
                         .and_then(|rule| rule.command.clone())
                         .map(|command| Pending::Action { command, reference }),
@@ -582,10 +589,7 @@ async fn persist(
     settle(&mut commit.checkpoint);
     let writer = api.writer.as_ref().ok_or("signals require the writer")?;
     if records.is_empty() {
-        writer
-            .submit_signals(None, commit)
-            .await
-            .map_err(error)?;
+        writer.submit_signals(None, commit).await.map_err(error)?;
         return Ok(());
     }
     crate::intake::request_checkpoint(

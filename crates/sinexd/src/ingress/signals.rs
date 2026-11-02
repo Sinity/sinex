@@ -188,4 +188,3 @@ fn prepare(
         .map_err(|error| Check::Unavailable(error.to_string()))?;
     Ok((blob, length, *hasher.finalize().as_bytes()))
 }
-

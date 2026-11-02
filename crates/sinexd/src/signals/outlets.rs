@@ -123,11 +123,7 @@ pub(super) async fn effect(config: &Config, pending: &Pending) -> DeliveryOutcom
     }
 }
 
-async fn command_effect(
-    command: &Command,
-    reference: &str,
-    deadline: Duration,
-) -> DeliveryOutcome {
+async fn command_effect(command: &Command, reference: &str, deadline: Duration) -> DeliveryOutcome {
     let mut process = tokio::process::Command::new(&command.program);
     process
         .args(&command.arguments)
@@ -190,14 +186,7 @@ async fn file_value(path: &std::path::Path, bytes: &[u8]) -> DeliveryOutcome {
     }
     // The rename has published the value; only its durability is unconfirmed
     // if the directory cannot be synced.
-    match async {
-        tokio::fs::File::open(directory)
-            .await?
-            .sync_all()
-            .await
-    }
-    .await
-    {
+    match async { tokio::fs::File::open(directory).await?.sync_all().await }.await {
         Ok(()) => DeliveryOutcome::Delivered,
         Err(_) => DeliveryOutcome::Unknown,
     }

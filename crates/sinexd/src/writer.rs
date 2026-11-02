@@ -859,9 +859,7 @@ async fn replay_sequence(
         {
             frame.receipt_number = receipt_number;
         }
-        outcomes.push(
-            tx.admit(&batch, keys).await.map_err(store_error)?,
-        );
+        outcomes.push(tx.admit(&batch, keys).await.map_err(store_error)?);
     }
     let admitted: Vec<uuid::Uuid> = outcomes
         .iter()

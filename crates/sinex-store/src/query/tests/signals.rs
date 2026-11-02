@@ -261,8 +261,7 @@ async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
         shipped: Default::default(),
     };
     let at = 1_800_000_000_000;
-    let mut evaluator =
-        ::signals::Evaluator::new(at - 1, vec![active.clone()], &calendar).unwrap();
+    let mut evaluator = ::signals::Evaluator::new(at - 1, vec![active.clone()], &calendar).unwrap();
     evaluator
         .observe(::signals::Evaluation {
             rule: active.version.clone(),

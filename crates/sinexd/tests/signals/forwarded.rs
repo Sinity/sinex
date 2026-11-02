@@ -194,7 +194,14 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
 
     // A producer without the forwarding grant, and a report about another
     // product, are refused.
-    let refused = submit(&capture, &subjects, "capture", "capture-forward", vec![progress(at)]).await;
+    let refused = submit(
+        &capture,
+        &subjects,
+        "capture",
+        "capture-forward",
+        vec![progress(at)],
+    )
+    .await;
     assert!(refused.refusal.is_some(), "{refused:?}");
     let foreign = submit(
         &polylogue,
@@ -237,7 +244,10 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         vec![json!({"decision":"show","send_away":false})]
     );
     let cited:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.events d JOIN core.event_children c ON c.child=d.id JOIN core.events r ON r.id=c.parent WHERE d.event_type='signal.delivery' AND r.event_type='signal.report')").fetch_one(&mut conn).await.unwrap();
-    assert!(cited, "a forwarded delivery cites the report that carried it");
+    assert!(
+        cited,
+        "a forwarded delivery cites the report that carried it"
+    );
 
     let second = submit(
         &polylogue,

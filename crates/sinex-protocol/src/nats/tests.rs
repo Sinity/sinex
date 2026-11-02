@@ -40,13 +40,7 @@ fn producer_permissions_name_only_its_own_subjects() {
             "_INBOX.phone.>"
         ]
     );
-    assert_eq!(
-        subscribe,
-        [
-            "sinex.ack.phone",
-            "_INBOX.phone.>"
-        ]
-    );
+    assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.phone.>"]);
     let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")], &[]);
     assert!(
         config.contains(r#"user: "phone", password: "p\"w""#),
@@ -193,13 +187,7 @@ fn confirmed_consumer_permissions_are_exact_and_never_allow_admin_or_raw_reads()
         || subject.contains("DELETE")
         || subject.contains("MSG.GET")
         || subject.contains("sinex-other")));
-    assert_eq!(
-        subscribe,
-        vec![
-            "sinex.ack.replica",
-            "_INBOX.replica.>"
-        ]
-    );
+    assert_eq!(subscribe, vec!["sinex.ack.replica", "_INBOX.replica.>"]);
 }
 
 #[devkit::test]

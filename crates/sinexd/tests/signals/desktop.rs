@@ -272,7 +272,10 @@ async fn a_missing_server_is_retried_once_when_it_appears() {
             .fetch_one(&mut conn)
             .await
             .unwrap();
-    assert_eq!(deliveries, 1, "server appearance retries the original delivery");
+    assert_eq!(
+        deliveries, 1,
+        "server appearance retries the original delivery"
+    );
     process.stop().await;
     let mut process = start(&database, &store, root, &nats);
     ready(&mut process, &socket).await;

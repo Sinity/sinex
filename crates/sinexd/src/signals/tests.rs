@@ -183,7 +183,10 @@ fn a_delivery_cites_its_rule_and_the_readings_its_row_was_computed_from() {
     assert_eq!(parents(&events[0].0), expected);
     assert_eq!(events[0].0.payload["delivery_id"], handed.fired.id);
     assert_eq!(events[0].0.class, Class::Guarded);
-    assert_eq!(events[0].1, read, "admitted under the mark its row was read with");
+    assert_eq!(
+        events[0].1, read,
+        "admitted under the mark its row was read with"
+    );
     // A passive notice owes no outlet, and the row left the answer.
     assert!(state.outbox.is_empty());
     assert!(state.inputs.is_empty());
@@ -206,7 +209,16 @@ fn a_forwarded_delivery_cites_its_report_and_an_unknown_one_is_refused() {
         false,
     );
     let at = Timestamp::from_unix_secs(1_800_000_000).unwrap();
-    assert!(hand_off(&config(true), &mut state, handoffs(vec![handed.clone()]), mark(), at).is_err());
+    assert!(
+        hand_off(
+            &config(true),
+            &mut state,
+            handoffs(vec![handed.clone()]),
+            mark(),
+            at
+        )
+        .is_err()
+    );
     let report = EventId::new();
     state.forwarded.insert(
         handed.fired.id.clone(),
@@ -215,7 +227,14 @@ fn a_forwarded_delivery_cites_its_report_and_an_unknown_one_is_refused() {
             class: Class::Open,
         },
     );
-    let (events, _) = hand_off(&config(true), &mut state, handoffs(vec![handed]), mark(), at).unwrap();
+    let (events, _) = hand_off(
+        &config(true),
+        &mut state,
+        handoffs(vec![handed]),
+        mark(),
+        at,
+    )
+    .unwrap();
     assert_eq!(parents(&events[0].0), vec![report]);
     assert_eq!(events[0].0.class, Class::Open);
     assert!(state.forwarded.is_empty());
@@ -230,7 +249,9 @@ fn a_forwarded_delivery_cites_its_report_and_an_unknown_one_is_refused() {
 fn each_decision_owes_the_outlet_it_names() {
     let mut state = state();
     state.rules.insert("shown".into(), rule("shown", "notice"));
-    state.rules.insert("written".into(), rule("written", "value"));
+    state
+        .rules
+        .insert("written".into(), rule("written", "value"));
     state.rules.insert("run".into(), rule("run", "action"));
     let shown = delivery(
         PRODUCT,
@@ -320,7 +341,14 @@ fn each_decision_owes_the_outlet_it_names() {
     // Without desktop notifications, an interrupting decision owes nothing.
     let mut quiet = self::state();
     quiet.rules.insert("shown".into(), rule("shown", "notice"));
-    hand_off(&config(false), &mut quiet, handoffs(vec![shown]), mark(), at).unwrap();
+    hand_off(
+        &config(false),
+        &mut quiet,
+        handoffs(vec![shown]),
+        mark(),
+        at,
+    )
+    .unwrap();
     assert!(quiet.outbox.is_empty());
 }
 

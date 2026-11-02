@@ -70,12 +70,7 @@ async fn async_value_http_has_one_request_and_distinguishes_success_from_refusal
         ),
     ] {
         let server = server(status, None, None).await;
-        let result = http_value(
-            &server.url,
-            b"synthetic-value".to_vec(),
-            DEADLINE,
-        )
-        .await;
+        let result = http_value(&server.url, b"synthetic-value".to_vec(), DEADLINE).await;
         assert_eq!(result, expected);
         assert_eq!(server.requests.load(Ordering::SeqCst), 1);
     }
@@ -91,12 +86,7 @@ async fn async_value_http_does_not_follow_a_redirect() {
     )
     .await;
     assert_eq!(
-        http_value(
-            &redirect.url,
-            b"synthetic-value".to_vec(),
-            DEADLINE
-        )
-        .await,
+        http_value(&redirect.url, b"synthetic-value".to_vec(), DEADLINE).await,
         DeliveryOutcome::NotSent("value_http_status".into())
     );
     assert_eq!(redirect.requests.load(Ordering::SeqCst), 1);
@@ -111,7 +101,12 @@ async fn value_http_past_its_deadline_after_sending_is_unknown_and_sent_once() {
     let server = server(StatusCode::OK, None, Some(entered.clone())).await;
     let url = server.url.clone();
     let task = tokio::spawn(async move {
-        http_value(&url, b"synthetic-value".to_vec(), Duration::from_millis(500)).await
+        http_value(
+            &url,
+            b"synthetic-value".to_vec(),
+            Duration::from_millis(500),
+        )
+        .await
     });
     tokio::time::timeout(Duration::from_secs(3), entered.notified())
         .await
@@ -125,8 +120,7 @@ async fn file_value_is_synced_and_published_once_with_private_staging_cleanup() 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("value");
     assert_eq!(
-        file_value(&path, b"synthetic-value")
-        .await,
+        file_value(&path, b"synthetic-value").await,
         DeliveryOutcome::Delivered
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"synthetic-value");
@@ -171,12 +165,7 @@ async fn value_https_preserves_certificate_validation_and_sanitizes_its_receipt(
             }
         }
     });
-    let receipt = http_value(
-        &url,
-        b"synthetic-value".to_vec(),
-        DEADLINE,
-    )
-    .await;
+    let receipt = http_value(&url, b"synthetic-value".to_vec(), DEADLINE).await;
     assert_eq!(
         receipt,
         DeliveryOutcome::NotSent("value_http_connect".into())
@@ -207,12 +196,7 @@ async fn accepted_value_http_does_not_require_an_unrelated_streaming_response_bo
             .unwrap();
         std::future::pending::<()>().await;
     });
-    let result = http_value(
-        &url,
-        b"synthetic-value".to_vec(),
-        DEADLINE,
-    )
-    .await;
+    let result = http_value(&url, b"synthetic-value".to_vec(), DEADLINE).await;
     task.abort();
     let _ = task.await;
     assert_eq!(result, DeliveryOutcome::Delivered);

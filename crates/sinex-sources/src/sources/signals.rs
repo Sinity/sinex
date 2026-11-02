@@ -169,8 +169,8 @@ pub fn forwarded_reports(
     family: &str,
     at: Timestamp,
 ) -> Result<Vec<SignalRecord>, RecordError> {
-    let sinex_protocol::Ingress::Signals { reports, .. } =
-        serde_json::from_value(frame.clone()).map_err(|error| RecordError::new(error.to_string()))?
+    let sinex_protocol::Ingress::Signals { reports, .. } = serde_json::from_value(frame.clone())
+        .map_err(|error| RecordError::new(error.to_string()))?
     else {
         return Err(RecordError::new("not a signal frame"));
     };
