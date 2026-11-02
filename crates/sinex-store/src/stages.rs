@@ -44,7 +44,8 @@ pub async fn progress(
 ) -> Result<()> {
     let updated = sqlx::query!(
         r#"UPDATE core.operations
-           SET progress = $2 || jsonb_build_object('checkpoints', COALESCE(progress->'checkpoints', '{}'::jsonb))
+           SET progress = CASE WHEN progress ? 'checkpoints'
+             THEN $2 || jsonb_build_object('checkpoints', progress->'checkpoints') ELSE $2 END
            WHERE id = $1 AND kind = $3 AND result IS NULL"#,
         operation.0,
         inventory,
@@ -115,6 +116,10 @@ pub async fn reopen(conn: &mut PgConnection, operation: OperationId) -> Result<(
 
 /// Record how the stage ended: its final inventory, its totals and, when it
 /// stopped early, why.
+///
+/// A stage that stopped early keeps its bindings' checkpoints for `resume`;
+/// one that ended ok no longer needs them, since its products hold the
+/// totals.
 pub async fn end(
     conn: &mut PgConnection,
     operation: OperationId,
@@ -125,7 +130,8 @@ pub async fn end(
 ) -> Result<()> {
     let updated = sqlx::query!(
         r#"UPDATE core.operations SET result = $2, counts = $3, refusals = $5,
-             progress = $4 || jsonb_build_object('checkpoints', COALESCE(progress->'checkpoints', '{}'::jsonb)),
+             progress = CASE WHEN $2 <> $7 AND progress ? 'checkpoints'
+               THEN $4 || jsonb_build_object('checkpoints', progress->'checkpoints') ELSE $4 END,
              end_seq = (SELECT value FROM core.counters WHERE name = 'commit_seq')
            WHERE id = $1 AND kind = $6"#,
         operation.0,
@@ -134,6 +140,7 @@ pub async fn end(
         inventory,
         refusals,
         KIND,
+        OperationResult::Ok.as_db(),
     )
     .execute(conn)
     .await?;
