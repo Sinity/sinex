@@ -253,9 +253,9 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("media", "duration") => format!("({} / 1e3)", payload_number("duration_ms")),
         ("media", "stored") => payload_bool(name),
         ("curation", "item") => payload_text("target,item"),
-        ("curation", "kind" | "key" | "value" | "origin" | "author" | "request") => {
-            payload_text(name)
-        }
+        ("curation", "name") => payload_text("key"),
+        ("curation", "value_origin") => payload_text("origin"),
+        ("curation", "kind" | "value" | "author" | "request") => payload_text(name),
         ("figures", "metric" | "grain" | "day" | "dimension" | "dimension_value") => {
             payload_text(name)
         }

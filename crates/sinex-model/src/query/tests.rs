@@ -651,3 +651,20 @@ fn numeric_looking_payload_text_keeps_its_literal_spelling() {
 }
 
 mod literals;
+
+#[devkit::test]
+fn curation_fields_bind_without_shadowing_core_fields() {
+    let curation = Alias::from_name("curation").unwrap();
+    for field in curation.fields {
+        assert!(
+            Table::Events.field(field.name).is_none(),
+            "curation.{} is also a core event field",
+            field.name
+        );
+    }
+    q("curation where value_origin = imported");
+    q("curation where name = favourites AND kind = collection");
+    // `origin` stays the core field: material or derived.
+    q("curation where origin = material");
+    assert!(err("curation where origin = imported").message.contains("origin"));
+}

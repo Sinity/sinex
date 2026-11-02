@@ -538,12 +538,14 @@ pub const ALIASES: &[Alias] = &[
                 ]),
                 "kind",
             ),
-            f("key", FieldType::Text, "tag, property, scale or collection"),
+            // `key` and `origin` are core event fields (the equivalence key,
+            // material or derived), so the record's own are named apart.
+            f("name", FieldType::Text, "tag, property, scale or collection"),
             f("value", FieldType::Text, "value"),
             f(
-                "origin",
+                "value_origin",
                 FieldType::Enum(&["authored", "imported", "proposed"]),
-                "origin",
+                "authored, imported or proposed",
             ),
             f("author", FieldType::Text, "author"),
             f("request", FieldType::Text, "request"),
