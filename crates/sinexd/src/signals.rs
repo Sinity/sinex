@@ -24,6 +24,9 @@ pub(crate) const DELIVERIES: &str = "sinex.signals.deliveries";
 /// Why a withdrawn handoff was not sent: the readings it cited no longer
 /// stand under the current policy and lifecycle.
 const BASIS_CHANGED: &str = "basis_changed";
+/// How often a deliverer waiting for a privacy policy change to settle looks
+/// again.
+const POLICY_RECHECK_MS: i64 = 1_000;
 
 fn error(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -255,8 +258,10 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         .map_err(error)?
         .ready()
     {
+        // The new policy's outputs activate without a commit, so a deliverer
+        // waiting only for commits could miss it and leave due work undone.
         tx.rollback().await.map_err(error)?;
-        return Ok(Step::Wait(None));
+        return Ok(Step::Wait(Some(at.saturating_add(POLICY_RECHECK_MS))));
     }
     let read_mark = sinex_store::ReadMark::now(&mut tx).await.map_err(error)?;
     if revision.is_none() || reselect || state.observed_seq != seq {

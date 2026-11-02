@@ -261,10 +261,8 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     let socket = root.join("api.sock");
     std::fs::create_dir(root.join("tokens")).unwrap();
     std::fs::write(root.join("tokens/operator.token"), TOKEN).unwrap();
-    daemon::sources(
-        &root.join("sources.json"),
-        &["sinex.telemetry", "sinex.signals"],
-    );
+    // Only the deliverer commits, so nothing but its own wakeups moves it.
+    daemon::sources(&root.join("sources.json"), &["sinex.signals"]);
     let mut config: Value =
         serde_json::from_slice(&std::fs::read(root.join("sources.json")).unwrap()).unwrap();
     config["signals"] = json!({"interrupt_budget_per_hour":4,"quiet_hours":null,"notifications":null,"values":{},"actions":{},"outlet_timeout_ms":1000});
@@ -278,7 +276,7 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     let mut conn = PgConnection::connect(&database).await.unwrap();
     wait_scalar(&mut conn, "SELECT count(*) FROM core.signal_checkpoints", 1).await;
     let mut held = rule("held", "notice");
-    held["for"] = json!(3000);
+    held["for"] = json!(1000);
     ok(
         &socket,
         json!({"method":"signal","action":"add","name":"held","rule":held.to_string()}),
@@ -307,8 +305,12 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     )
     .await
     .unwrap();
+    // The firing falls due while the new policy's outputs are still being
+    // built, so the deliverer finds the policy unsettled and waits.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
     // This daemon runs no commit consumers, so the test settles the new
-    // policy's output projection itself.
+    // policy's output projection itself. Activation is not a commit; the
+    // deliverer must notice it without one.
     sinex_store::privacy::projection::ensure_current(&mut conn)
         .await
         .unwrap();
@@ -319,12 +321,10 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     .await
     .unwrap();
     assert!(after > before, "the policy change settled");
-    // A further rule is a commit, which wakes the deliverer.
-    ok(
-        &socket,
-        json!({"method":"signal","action":"add","name":"after","rule":rule("after","notice").to_string()}),
-    );
-    wait_scalar(&mut conn, ADOPTED, 2).await;
+    let head: i64 = sqlx::query_scalar("SELECT value FROM core.counters WHERE name='commit_seq'")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.events WHERE event_type='signal.outcome' AND payload->'outcome'->'result'->>'reason'='basis_changed'",
@@ -347,7 +347,22 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
         refired, 1,
         "the re-fire keeps the withdrawn delivery's identity"
     );
+    let first_commit: i64 = sqlx::query_scalar("SELECT min(commit_seq) FROM core.events WHERE event_type IN ('signal.outcome','signal.delivery') AND commit_seq > $1")
+        .bind(head)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        first_commit,
+        head + 1,
+        "the deliverer's own withdrawal is the first commit after activation"
+    );
 
+    ok(
+        &socket,
+        json!({"method":"signal","action":"add","name":"after","rule":rule("after","notice").to_string()}),
+    );
+    wait_scalar(&mut conn, ADOPTED, 2).await;
     ok(
         &socket,
         json!({"method":"mark","text":"synthetic later occurrence"}),
