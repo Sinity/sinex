@@ -267,6 +267,7 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         edges, retained,
         "the new edge index reproduces every retained parent exactly"
     );
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(crate::test_schema::catalog(&mut conn).await, catalog);
 }
 
