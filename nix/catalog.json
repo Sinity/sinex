@@ -26249,7 +26249,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One revision of an item. The live reading is the current revision; the\noriginal renditions describe its revisions. New bytes at the same item key\nmake a new revision; equal bytes at an unrelated key are a different item.",
+        "description": "One revision of an item. The live reading is the current revision; the\noriginal renditions describe its revisions. New bytes at the same item key\nmake a new revision; equal bytes at an unrelated key are a different item.\nAn item is a derived reading of the scans, not a curation record: the\n`library.items` derivation recomputes it when its copies change, and the\nnewer reading replaces the live one.",
         "properties": {
           "at": {
             "$ref": "#/$defs/Timestamp"
@@ -26308,7 +26308,7 @@
       "removed_rule": {
         "rule": "never"
       },
-      "replace_rule": "suppress_repeat",
+      "replace_rule": "replace_when_newer",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -26460,7 +26460,7 @@
       },
       "kind": {
         "name": "library.curation",
-        "version": 1
+        "version": 2
       },
       "normalization": "rust",
       "owned_blobs": [],
