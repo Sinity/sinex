@@ -307,12 +307,24 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     )
     .await
     .unwrap();
-    wait_scalar(
-        &mut conn,
-        &format!("SELECT count(*) FROM privacy.policy_state WHERE id AND desired_epoch=active_epoch AND active_epoch>{before}"),
-        1,
+    // This daemon runs no commit consumers, so the test settles the new
+    // policy's output projection itself.
+    sinex_store::privacy::projection::ensure_current(&mut conn)
+        .await
+        .unwrap();
+    let after: i64 = sqlx::query_scalar(
+        "SELECT active_epoch FROM privacy.policy_state WHERE id AND desired_epoch=active_epoch",
     )
-    .await;
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert!(after > before, "the policy change settled");
+    // A further rule is a commit, which wakes the deliverer.
+    ok(
+        &socket,
+        json!({"method":"signal","action":"add","name":"after","rule":rule("after","notice").to_string()}),
+    );
+    wait_scalar(&mut conn, ADOPTED, 2).await;
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.events WHERE event_type='signal.outcome' AND payload->'outcome'->'result'->>'reason'='basis_changed'",
@@ -336,11 +348,6 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
         "the re-fire keeps the withdrawn delivery's identity"
     );
 
-    ok(
-        &socket,
-        json!({"method":"signal","action":"add","name":"after","rule":rule("after","notice").to_string()}),
-    );
-    wait_scalar(&mut conn, ADOPTED, 2).await;
     ok(
         &socket,
         json!({"method":"mark","text":"synthetic later occurrence"}),
