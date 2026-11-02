@@ -260,11 +260,22 @@ pub async fn plan_drafts(
             .collect::<Vec<_>>(),
     );
     // A value its source already states is answered "already": importing
-    // the same sidecar again writes nothing.
+    // the same sidecar again writes nothing. A slot two drafts of this
+    // request write is planned as written, so the last draft decides it
+    // every time; a draft naming another draft's root keeps every draft.
+    let mut per_slot: BTreeMap<String, usize> = BTreeMap::new();
+    for slot in &slots {
+        *per_slot.entry(slot_digest(slot)).or_default() += 1;
+    }
+    let shortcut = !drafts.iter().any(|d| matches!(d.key, Key::Draft(_)));
     let mut stated: Vec<Option<Placed>> = Vec::with_capacity(drafts.len());
     let mut fresh = Vec::new();
     for draft in drafts {
-        let already = already_stated(&mut snapshot, caller, &draft)?;
+        let already = if shortcut {
+            already_stated(&mut snapshot, caller, &draft, &per_slot)?
+        } else {
+            None
+        };
         if already.is_none() {
             fresh.push(draft);
         }
@@ -296,6 +307,7 @@ fn already_stated(
     snapshot: &mut Snapshot,
     caller: &Caller,
     draft: &Draft,
+    per_slot: &BTreeMap<String, usize>,
 ) -> Result<Option<Placed>, PlanError> {
     let Key::Text(key) = &draft.key else {
         return Ok(None);
@@ -313,7 +325,11 @@ fn already_stated(
         cites: draft.cites.as_deref(),
     }
     .slots();
-    if slots.is_empty() {
+    if slots.is_empty()
+        || slots
+            .iter()
+            .any(|slot| per_slot.get(&slot_digest(slot)).copied().unwrap_or(0) > 1)
+    {
         return Ok(None);
     }
     let holders = snapshot.holders(&slots)?;

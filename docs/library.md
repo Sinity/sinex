@@ -461,7 +461,7 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 - **projection.equals-function**: the `library_shown` projection equals the precedence applied to every live curation record, after any generated sequence of writes, withdrawals, archives, restores and replays.
 - **order.dense**: 10,000 successive insertions between the same two neighbours yield distinct, ordered positions.
 - **tag.any-label**: any label with text, including one of punctuation (`-`, `!x`), is an ordinary tag.
-- **no-cross-material-replacement**: the library's views are the same whether or not a newer reading in another material would replace an older one, because no library kind depends on it.
+- **no-cross-material-replacement**: the library's views are the same whether or not a newer reading in another material would replace an older one, because no curation kind depends on it. Derived readings (`library.item`, `library.filename_hints`) are recomputed by their derivation, and the newer reading replaces the live one.
 - **conflict-on-same-revision**: two replacements from one revision, including empty and withdraw operations, give one success and one refusal naming the current revision; a plan admitted after another curation write committed under it is refused.
 - **atomic-actions**: a failed part of tag-plus-collect, or of any multi-record action, leaves none of its records.
 - **undo-refuses-dependents**: undo after a later dependent record reports a conflict and changes nothing.
