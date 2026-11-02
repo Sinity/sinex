@@ -40,7 +40,7 @@ pub struct CommandFused {
 
 /// One mail message stored by two or more mail sources of one account
 /// (Gmail, IMAP, Maildir, mbox, Outlook): its account and `Message-ID`
-/// identify it, and its `Date` is the same wherever it is stored.
+/// identify it, whatever dates its stores give it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 3, type = "mail.fused",
     key = ["record"],
