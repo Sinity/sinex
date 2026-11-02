@@ -348,14 +348,8 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<library::DocumentText>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
-    info::<library::Preview>(),
-    info::<library::Assignment>(),
-    info::<library::Collection>(),
-    info::<library::Entry>(),
-    info::<library::Rating>(),
-    info::<library::Comparison>(),
+    info::<library::Curation>(),
     info::<library::View>(),
-    info::<library::Dismissal>(),
 ];
 
 /// The registered type named `event_type`, for code that holds a type name

@@ -1,248 +1,108 @@
-//! Curation: tags, properties, collections, ratings, comparisons, views, and
-//! curation imported from other applications' sidecar files.
-use super::{Library, R, e};
+//! Curation requests, views, and curation imported from other applications'
+//! sidecar files. A request's acts are planned into curation records against
+//! one snapshot of the live records (`sinex_library::plan`), stored as the
+//! request's material, and admitted only if no curation record changed since
+//! that snapshot.
+use super::{Library, R, Stored, VIA_API, e};
 use serde_json::{Value, json};
+use sinex_library::plan::{self, Caller, Draft, Key, Outcome, Planned};
 use sinex_library::{import, items, reads};
 use sinex_model::Timestamp;
 use sinex_model::event_types::library::{
-    Assignment, Collection, Comparison, Entry, Level, LibraryRecord, Rating, Target, View,
+    Act, CurationKind, LibraryRecord, Target, ValueOrigin, View,
 };
 use sinex_sources::sources::library as library_source;
 use sqlx::PgConnection;
 use std::path::{Path, PathBuf};
 
+/// Imported values planned and admitted per request; an import continues
+/// over as many requests as it needs.
+const IMPORT_REQUEST_RECORDS: usize = 2000;
+
 impl Library<'_> {
-    pub(crate) async fn tag(
+    /// Plan, store and admit one curation request.
+    pub(crate) async fn curate(
         &self,
         conn: &mut PgConnection,
-        item: &str,
-        tag: &str,
+        request: Option<String>,
+        acts: &[Act],
         actor: &str,
     ) -> R<Value> {
-        self.item_or(conn, item).await?;
-        let tag = tag.trim();
-        if tag.is_empty() || tag == "-" {
-            return Err("a tag needs text".into());
+        if acts.is_empty() {
+            return Err("a curation request needs at least one write".into());
         }
-        let existing = reads::assignments(conn, item).await.map_err(e)?;
-        if existing.iter().any(|a| {
-            a.withdrawn_at.is_none()
-                && a.level == Level::Override
-                && a.field == "tag"
-                && a.value.as_deref() == Some(tag)
-                && a.by == actor
-        }) {
-            return Ok(json!({ "item": item, "tag": tag, "already": true }));
-        }
-        let a = Self::assignment(item, "tag", Some(tag.to_owned()), Level::Override, None);
-        let id = a.assignment.clone();
-        self.write(conn, vec![LibraryRecord::Assignment(a)], actor, "tag")
-            .await?;
-        Ok(json!({ "item": item, "tag": tag, "assignment": id }))
-    }
-
-    pub(crate) async fn untag(
-        &self,
-        conn: &mut PgConnection,
-        item: &str,
-        tag: &str,
-        actor: &str,
-    ) -> R<Value> {
-        let mine: Vec<Assignment> = reads::assignments(conn, item)
+        let caller = Caller {
+            author: actor.to_owned(),
+            via: VIA_API.to_owned(),
+        };
+        let _planning = self.writer.lock_curation().await;
+        let at = Timestamp::now();
+        match plan::plan(conn, request, acts, &caller, at)
             .await
             .map_err(e)?
-            .into_iter()
-            .filter(|a| {
-                a.withdrawn_at.is_none()
-                    && a.field == "tag"
-                    && a.value.as_deref() == Some(tag)
-                    && a.by == actor
-            })
-            .collect();
-        if mine.is_empty() {
-            return Err(format!(
-                "{actor} has no assignment of `{tag}` to {item}; to remove an imported tag, tag it `-{tag}`"
-            ));
-        }
-        let n = mine.len();
-        self.write(
-            conn,
-            mine.into_iter().map(Self::withdraw).collect(),
-            actor,
-            "untag",
-        )
-        .await?;
-        Ok(json!({ "item": item, "tag": tag, "withdrawn": n }))
-    }
-
-    pub(crate) async fn set(
-        &self,
-        conn: &mut PgConnection,
-        item: &str,
-        field: &str,
-        value: Option<String>,
-        actor: &str,
-    ) -> R<Value> {
-        self.item_or(conn, item).await?;
-        if field == "tag" {
-            return Err("tags are set with library-tag".into());
-        }
-        let mut records: Vec<LibraryRecord> = reads::assignments(conn, item)
-            .await
-            .map_err(e)?
-            .into_iter()
-            .filter(|a| {
-                a.withdrawn_at.is_none()
-                    && a.field == field
-                    && a.level == Level::Override
-                    && a.by == actor
-            })
-            .map(Self::withdraw)
-            .collect();
-        records.push(LibraryRecord::Assignment(Self::assignment(
-            item,
-            field,
-            value.clone(),
-            Level::Override,
-            None,
-        )));
-        self.write(conn, records, actor, "set").await?;
-        Ok(json!({ "item": item, "field": field, "value": value }))
-    }
-
-    pub(crate) async fn collect(
-        &self,
-        conn: &mut PgConnection,
-        collection: &str,
-        item: &str,
-        actor: &str,
-    ) -> R<Value> {
-        let it = self.item_or(conn, item).await?;
-        let mut records = Vec::new();
-        let c = match reads::collection_named(conn, collection).await.map_err(e)? {
-            Some(c) => c,
-            None => {
-                let c = Collection {
-                    collection: items::new_id(),
-                    name: collection.to_owned(),
-                    saved_query: None,
-                    selected_from: None,
-                    by: String::new(),
-                    at: Timestamp::now(),
-                    withdrawn_at: None,
-                };
-                records.push(LibraryRecord::Collection(c.clone()));
-                c
+        {
+            Outcome::Repeat(records) => Ok(json!({
+                "request": records[0].request,
+                "repeat": true,
+                "written": plan::written(&records),
+            })),
+            Outcome::Written(planned) => {
+                self.store_planned(conn, planned, actor, at, "curate").await
             }
-        };
-        let last = reads::entries(conn, &c.collection)
-            .await
-            .map_err(e)?
-            .iter()
-            .map(|en| en.position)
-            .fold(0.0f64, f64::max);
-        let entry = Entry {
-            entry: items::new_id(),
-            collection: c.collection.clone(),
-            target: Target {
-                item: item.to_owned(),
-                revision: Some(it.revision),
-                rendition: None,
-                part: None,
-            },
-            position: last + 1.0,
-            by: String::new(),
-            at: Timestamp::now(),
-            withdrawn_at: None,
-        };
-        let id = entry.entry.clone();
-        records.push(LibraryRecord::Entry(entry));
-        self.write(conn, records, actor, "collect").await?;
-        Ok(json!({ "collection": c.name, "entry": id, "position": last + 1.0 }))
+        }
     }
 
-    pub(crate) async fn uncollect(
+    async fn store_planned(
         &self,
         conn: &mut PgConnection,
-        collection: &str,
-        item: &str,
+        planned: Planned,
         actor: &str,
+        at: Timestamp,
+        action: &str,
     ) -> R<Value> {
-        let c = reads::collection_named(conn, collection)
-            .await
-            .map_err(e)?
-            .ok_or_else(|| format!("no collection named {collection}"))?;
-        let gone: Vec<LibraryRecord> = reads::entries(conn, &c.collection)
-            .await
-            .map_err(e)?
-            .into_iter()
-            .filter(|en| en.target.item == item)
-            .map(|mut en| {
-                en.withdrawn_at = Some(Timestamp::now());
-                LibraryRecord::Entry(en)
+        let placed: Vec<Value> = planned
+            .placed
+            .iter()
+            .map(|placed| match placed {
+                plan::Placed::Written { revision, revised } => json!({
+                    "written": revision.to_string(),
+                    "revised": revised.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                }),
+                plan::Placed::Already { heads } => json!({
+                    "already": heads.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                }),
             })
             .collect();
-        if gone.is_empty() {
-            return Err(format!("{item} is not in {collection}"));
-        }
-        let n = gone.len();
-        self.write(conn, gone, actor, "uncollect").await?;
-        Ok(json!({ "collection": collection, "item": item, "entries_withdrawn": n }))
-    }
-
-    pub(crate) async fn rate(
-        &self,
-        conn: &mut PgConnection,
-        item: &str,
-        value: f64,
-        scale: &str,
-        of: f64,
-        actor: &str,
-    ) -> R<Value> {
-        self.item_or(conn, item).await?;
-        if !(0.0..=of).contains(&value) {
-            return Err(format!("a rating on {scale} is between 0 and {of}"));
-        }
-        let r = Rating {
-            item: item.to_owned(),
-            scale: scale.to_owned(),
-            value,
-            of,
-            level: Level::Override,
-            by: String::new(),
-            at: Timestamp::now(),
-            withdrawn_at: None,
-        };
-        self.write(conn, vec![LibraryRecord::Rating(r)], actor, "rate")
+        let written = plan::written(&planned.records);
+        let records: Vec<LibraryRecord> = planned
+            .records
+            .into_iter()
+            .map(LibraryRecord::Curation)
+            .collect();
+        let stored = self
+            .write(
+                conn,
+                records,
+                actor,
+                Stored {
+                    action,
+                    via: if action == "import" {
+                        "import"
+                    } else {
+                        VIA_API
+                    },
+                    at,
+                    cited: Vec::new(),
+                    curation: true,
+                },
+            )
             .await?;
-        Ok(json!({ "item": item, "scale": scale, "value": value, "of": of }))
-    }
-
-    pub(crate) async fn compare(
-        &self,
-        conn: &mut PgConnection,
-        winner: &str,
-        loser: &str,
-        scale: &str,
-        actor: &str,
-    ) -> R<Value> {
-        if winner == loser {
-            return Err("an item is not compared with itself".into());
-        }
-        self.item_or(conn, winner).await?;
-        self.item_or(conn, loser).await?;
-        let c = Comparison {
-            comparison: items::new_id(),
-            scale: scale.to_owned(),
-            winner: winner.to_owned(),
-            loser: loser.to_owned(),
-            by: String::new(),
-            at: Timestamp::now(),
-            withdrawn_at: None,
-        };
-        self.write(conn, vec![LibraryRecord::Comparison(c)], actor, "compare")
-            .await?;
-        Ok(json!({ "scale": scale, "winner": winner, "loser": loser }))
+        Ok(json!({
+            "request": planned.request,
+            "writes": placed,
+            "written": written,
+            "material": stored.get("material").cloned().unwrap_or(Value::Null),
+        }))
     }
 
     pub(crate) async fn viewed(
@@ -253,6 +113,9 @@ impl Library<'_> {
         player: &str,
         actor: &str,
     ) -> R<Value> {
+        if seconds.is_some_and(|s| !s.is_finite() || s < 0.0) {
+            return Err("a view's duration is a finite number of seconds, zero or more".into());
+        }
         let it = self.item_or(conn, item).await?;
         let now = Timestamp::now();
         let started = seconds
@@ -270,15 +133,27 @@ impl Library<'_> {
             started_at: started,
             seconds,
             count: 1,
-            level: Level::Override,
             by: String::new(),
         };
-        self.write(conn, vec![LibraryRecord::View(v)], actor, "viewed")
-            .await?;
+        self.write(
+            conn,
+            vec![LibraryRecord::View(v)],
+            actor,
+            Stored {
+                action: "viewed",
+                via: VIA_API,
+                at: now,
+                cited: Vec::new(),
+                curation: false,
+            },
+        )
+        .await?;
         Ok(json!({ "item": item, "seconds": seconds, "player": player }))
     }
 
-    /// Bring in curation from sidecar files beside media under `path`.
+    /// Bring in curation from sidecar files beside media under `path`, as
+    /// imported values: they rank below the operator's and agents' authored
+    /// values, and the same sidecar imported again writes nothing.
     pub(crate) async fn import(
         &self,
         conn: &mut PgConnection,
@@ -314,8 +189,8 @@ impl Library<'_> {
             })
             .await
             .map_err(e)?;
-        let (mut matched, mut unmatched, mut values) = (0, 0, 0);
-        let mut records = Vec::new();
+        let (mut matched, mut unmatched) = (0, 0);
+        let mut drafts = Vec::new();
         for (file, content, sidecars) in found {
             let items = reads::items_with(conn, &content).await.map_err(e)?;
             if items.is_empty() {
@@ -324,41 +199,71 @@ impl Library<'_> {
             }
             matched += 1;
             for it in items {
-                let existing = reads::assignments(conn, &it.item).await.map_err(e)?;
                 for sc in &sidecars {
-                    let source_ref = sc
+                    let source = sc
                         .source_ref
                         .clone()
-                        .or_else(|| Some(file.display().to_string()));
+                        .unwrap_or_else(|| file.display().to_string());
                     for v in &sc.values {
-                        let dup = existing.iter().any(|a| {
-                            a.withdrawn_at.is_none()
-                                && a.level == Level::Import
-                                && a.field == v.field
-                                && a.value.as_deref() == Some(v.value.as_str())
+                        let tag = v.field == "tag";
+                        drafts.push(Draft {
+                            kind: if tag {
+                                CurationKind::Tag
+                            } else {
+                                CurationKind::Property
+                            },
+                            target: Some(Target {
+                                item: it.item.clone(),
+                                ..Target::default()
+                            }),
+                            key: Key::Text(if tag {
+                                v.value.clone()
+                            } else {
+                                v.field.clone()
+                            }),
+                            value: (!tag).then(|| Value::String(v.value.clone())),
+                            origin: ValueOrigin::Imported,
+                            cites: Some(source.clone()),
+                            revises: Vec::new(),
+                            withdraws: Vec::new(),
                         });
-                        if dup {
-                            continue;
-                        }
-                        values += 1;
-                        records.push(LibraryRecord::Assignment(Self::assignment(
-                            &it.item,
-                            &v.field,
-                            Some(v.value.clone()),
-                            Level::Import,
-                            source_ref.clone(),
-                        )));
                     }
                 }
             }
         }
-        for chunk in records.chunks(2000) {
-            self.write(conn, chunk.to_vec(), actor, "import").await?;
+        let caller = Caller {
+            author: actor.to_owned(),
+            via: "import".to_owned(),
+        };
+        let (mut written, mut already, mut requests) = (0, 0, Vec::new());
+        let mut remaining = drafts;
+        while !remaining.is_empty() {
+            let rest = remaining.split_off(remaining.len().min(IMPORT_REQUEST_RECORDS));
+            let _planning = self.writer.lock_curation().await;
+            let at = Timestamp::now();
+            let planned = plan::plan_drafts(conn, remaining, &caller, at)
+                .await
+                .map_err(e)?;
+            written += planned.records.len();
+            already += planned
+                .placed
+                .iter()
+                .filter(|p| matches!(p, plan::Placed::Already { .. }))
+                .count();
+            if !planned.records.is_empty() {
+                let answer = self
+                    .store_planned(conn, planned, actor, at, "import")
+                    .await?;
+                requests.push(answer["request"].clone());
+            }
+            remaining = rest;
         }
         Ok(json!({
             "files_with_sidecars_matched": matched,
             "files_with_sidecars_not_in_library": unmatched,
-            "values_imported": values,
+            "values_imported": written,
+            "values_already_imported": already,
+            "requests": requests,
         }))
     }
 }
@@ -382,3 +287,6 @@ fn media_files(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

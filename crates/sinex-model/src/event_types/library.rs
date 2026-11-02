@@ -14,10 +14,10 @@ use serde_json::{Map, Value};
 /// A file whose facts changed in a scan. Earlier visible changes remain
 /// evidence for the item and its original rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
+#[event(version = 3,
     type = "library.copy",
     key = ["host", "root", "path", "scan"],
-    replace = newer,
+    replace = repeat,
     time = scanned_at,
     quality = intrinsic,
     removed_when = vanished_at,
@@ -71,13 +71,12 @@ pub struct FileCopy {
 /// original renditions describe its revisions. New bytes at the same item key
 /// make a new revision; equal bytes at an unrelated key are a different item.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
+#[event(version = 3,
     type = "library.item",
     key = ["item"],
-    replace = newer,
+    replace = repeat,
     time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
+    quality = intrinsic
 )]
 pub struct Item {
     /// Opaque identifier computed from the item key.
@@ -94,7 +93,6 @@ pub struct Item {
     pub label: Option<String>,
     pub by: String,
     pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -106,22 +104,24 @@ pub enum RenditionRole {
     Transcode,
 }
 
-/// Bytes standing for an item revision: its original, or something made
-/// from it. A preview never answers a request for the original.
+/// Bytes standing for an item revision: its original, read from the scans
+/// by the `library.items` derivation, or something made from it (a preview,
+/// written by a preview request citing the stored bytes). A preview never
+/// answers a request for the original.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
+#[event(version = 3,
     type = "library.rendition",
     key = ["rendition"],
-    replace = newer,
+    replace = repeat,
     time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
+    quality = intrinsic
 )]
 pub struct Rendition {
     pub rendition: String,
     pub item: String,
     pub revision: String,
-    /// The first visible scan part observing this revision.
+    /// The first visible scan part observing this revision; for a rendition
+    /// made from another, that rendition's.
     pub part_index: u32,
     pub role: RenditionRole,
     pub content: String,
@@ -136,42 +136,13 @@ pub struct Rendition {
     pub made_with: Map<String, Value>,
     pub by: String,
     pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
 }
 
-/// A rendered preview submitted as evidence for a rendition.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "library.preview",
-    key = ["rendition"],
-    replace = newer,
-    time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
-)]
-pub struct Preview {
-    pub rendition: String,
-    pub item: String,
-    pub revision: String,
-    pub role: RenditionRole,
-    pub content: String,
-    pub media_type: String,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    pub duration_ms: Option<u64>,
-    /// The rendition it was made from; `None` for an original.
-    pub made_from: Option<String>,
-    /// How it was made: the tool and its settings.
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    pub made_with: Map<String, Value>,
-    pub by: String,
-    pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
-}
-
-/// What an assignment, entry or view is about: an item (following its
+/// What a curation record or view is about: an item (following its
 /// revisions), one revision, one rendition, or a part of a rendition.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Target {
     pub item: String,
     /// Fixed revision; `None` follows the item.
@@ -182,144 +153,284 @@ pub struct Target {
     pub part: Option<String>,
 }
 
-/// Who an assigned value comes from, highest first in the selection policy.
+/// What a curation record states. The kind decides what `key` and `value`
+/// hold and which records count as the same statement (its uniqueness key).
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum Level {
-    /// The operator's own value; wins over everything, an empty one included.
-    Override,
-    /// Brought in from another application or site.
-    Import,
-    /// A model's suggestion.
-    Proposal,
+pub enum CurationKind {
+    /// `key` is the tag. `value` is absent when the tag applies and `false`
+    /// when the author rejects it (an imported or proposed tag that is wrong).
+    Tag,
+    /// `key` is the property; `value` its value, `null` for an explicit empty.
+    Property,
+    /// `value` is the text.
+    Note,
+    /// `key` is the scale; `value` a number in its range or one of its choices.
+    Rating,
+    /// `key` is the scale; `value` holds `order`, the items best first with
+    /// ties as groups, each with its revision fixed, and `blind`.
+    Comparison,
+    /// One entry of a collection: `key` is the collection's root, `value`
+    /// holds the entry's order key, and the target fixes the revision.
+    Entry,
+    /// `key` is the collection's name.
+    Collection,
+    /// `key` is the scale's name; `value` holds its question and its range
+    /// or choices.
+    Scale,
+    /// `key` is the property's name; `value` holds its value type
+    /// (`text`, `number`, `boolean` or `choice`) and its choices.
+    PropertyDefinition,
+    /// `key` is the tag; `value` holds its namespace and description.
+    TagDefinition,
+    /// `key` is `alias` or `implies`; `value` is the two tags: an alias's in
+    /// sorted order, an implication's as `[tag, implied]`.
+    TagRelation,
+    /// A collection suggestion turned down: `key` is the collection's root,
+    /// `value` the saved query's revision it was offered under, and the
+    /// target the suggested item.
+    Dismissal,
+    /// Withdraws what `withdraws` names.
+    Withdrawal,
 }
 
-/// One value given to one field of a target: a tag (`field = "tag"`), or a
-/// property. A property can be set to empty (`value = None`), which stops
-/// fallback to lower levels. Withdrawing an assignment is a newer reading of
-/// it with `withdrawn_at` set.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "library.assignment",
-    key = ["assignment"],
-    replace = newer,
-    time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
-)]
-pub struct Assignment {
-    pub assignment: String,
-    pub target: Target,
-    /// `tag`, or the property's name.
-    pub field: String,
-    pub value: Option<String>,
-    pub level: Level,
-    /// Where an imported value came from: a sidecar file, a post URL.
-    pub source_ref: Option<String>,
-    pub by: String,
-    pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
+impl CurationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CurationKind::Tag => "tag",
+            CurationKind::Property => "property",
+            CurationKind::Note => "note",
+            CurationKind::Rating => "rating",
+            CurationKind::Comparison => "comparison",
+            CurationKind::Entry => "entry",
+            CurationKind::Collection => "collection",
+            CurationKind::Scale => "scale",
+            CurationKind::PropertyDefinition => "property_definition",
+            CurationKind::TagDefinition => "tag_definition",
+            CurationKind::TagRelation => "tag_relation",
+            CurationKind::Dismissal => "dismissal",
+            CurationKind::Withdrawal => "withdrawal",
+        }
+    }
 }
 
-/// A collection: an ordered list of entries, optionally with a saved query that
-/// offers suggestions. A fixed selection is a collection without a query whose
-/// entries were added from a query's results.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "library.collection",
-    key = ["collection"],
-    replace = newer,
-    time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
+/// Where a curated value comes from. With the author it decides which value
+/// is shown: the operator's authored value, then an agent's, then imported
+/// values, then proposals.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
-pub struct Collection {
-    pub collection: String,
-    pub name: String,
-    pub saved_query: Option<String>,
-    /// The query the entries were selected from, for a fixed selection.
-    pub selected_from: Option<String>,
-    pub by: String,
-    pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
+#[serde(rename_all = "snake_case")]
+pub enum ValueOrigin {
+    /// Written by its author through a library request.
+    Authored,
+    /// Brought in from another application's or site's records; `cites`
+    /// names them.
+    Imported,
+    /// A method's suggestion; `cites` names the method and its version.
+    Proposed,
 }
 
-/// One entry in a collection. Each insertion is a new entry, so the same item
-/// can appear twice; removing an entry withdraws it and keeps it inspectable.
+/// One revision of an authored library record: a tag, a property value, a
+/// note, a rating, a comparison, a collection entry, a collection, a scale or
+/// a withdrawal. A revision never changes. Which revisions are current
+/// follows from `revises` and `withdraws` alone (the descendant rule in the
+/// shared `authored` crate), never from time or from a newer reading.
+///
+/// `author`, `via` and `at` come from the request's manifest, which the daemon
+/// fills from the authenticated caller; no request line supplies them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "library.entry",
-    key = ["entry"],
-    replace = newer,
+#[event(version = 1,
+    type = "library.curation",
+    key = ["root", "rev"],
+    replace = repeat,
     time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
+    quality = intrinsic
 )]
-pub struct Entry {
-    pub entry: String,
-    pub collection: String,
-    /// The item, with the revision fixed when it was added.
-    pub target: Target,
-    /// Sort position; an entry inserted between two takes a value between
-    /// theirs.
-    pub position: f64,
-    pub by: String,
+pub struct Curation {
+    /// The record's identity: the ID of its first revision.
+    pub root: String,
+    /// This revision: `<request>` or `<request>.<n>`.
+    pub rev: String,
+    /// The revisions of the same record this one revises, as `<root>@<rev>`.
+    pub revises: Vec<String>,
+    /// What this record withdraws: `<root>` (every revision) or `<root>@<rev>`.
+    pub withdraws: Vec<String>,
+    pub kind: CurationKind,
+    pub target: Option<Target>,
+    pub key: Option<String>,
+    pub value: Option<Value>,
+    pub origin: ValueOrigin,
+    /// The imported records cited, or the proposing method and its version.
+    pub cites: Option<String>,
+    pub author: String,
+    /// The channel the request arrived on.
+    pub via: String,
     pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
+    /// The request that wrote this revision, and the digest of its content,
+    /// so a retried request is answered without writing again.
+    pub request: String,
+    pub request_digest: String,
+    /// Hex digests of the uniqueness slots the record occupies.
+    pub slots: Vec<String>,
 }
 
-/// A rating on a named scale (`stars`, `favourite`), one per rater.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "library.rating",
-    key = ["item", "scale", "by"],
-    replace = newer,
-    time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
-)]
-pub struct Rating {
-    pub item: String,
-    pub scale: String,
-    pub value: f64,
-    /// The top of the scale (5 stars, 1 for a like).
-    pub of: f64,
-    pub level: Level,
-    pub by: String,
-    pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
+/// One act of a library curation request, as the operator or an agent asks
+/// for it. The daemon turns acts into curation records: it finds what each
+/// act revises or withdraws and refuses the whole request when any act is
+/// refused. `expects` names the revision the caller saw (`<root>@<rev>`);
+/// a write against a revision that is no longer current is refused.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "act", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Act {
+    /// Apply a tag. Any non-empty label is a tag.
+    Tag {
+        target: Target,
+        tag: String,
+        #[serde(default)]
+        expects: Option<String>,
+    },
+    /// Withdraw your own application of a tag.
+    Untag {
+        target: Target,
+        tag: String,
+    },
+    /// State that a tag does not apply, above imported and proposed values.
+    Reject {
+        target: Target,
+        tag: String,
+    },
+    /// Set a property; `null` is an explicit empty, which stops imported and
+    /// proposed values showing.
+    Set {
+        target: Target,
+        property: String,
+        value: Value,
+        #[serde(default)]
+        expects: Option<String>,
+    },
+    Note {
+        target: Target,
+        text: String,
+    },
+    /// Rate on a defined scale: a number in its range or one of its choices.
+    Rate {
+        target: Target,
+        scale: String,
+        value: Value,
+        #[serde(default)]
+        expects: Option<String>,
+    },
+    /// Insert an entry into a collection (made when it does not exist), at
+    /// the end or next to an entry.
+    Collect {
+        target: Target,
+        collection: String,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        before: Option<String>,
+    },
+    /// Withdraw one entry; other entries of the same item stay.
+    Uncollect {
+        entry: String,
+    },
+    /// Move an entry next to another.
+    Move {
+        entry: String,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        before: Option<String>,
+    },
+    /// Order two or more items on a scale, best first; a group is a tie.
+    Judge {
+        scale: String,
+        order: Vec<Vec<Target>>,
+        #[serde(default)]
+        blind: bool,
+    },
+    /// Define a scale, or revise its question; a range only widens and
+    /// choices are only added.
+    DefineScale {
+        name: String,
+        question: String,
+        #[serde(default)]
+        range: Option<(f64, f64)>,
+        #[serde(default)]
+        choices: Option<Vec<String>>,
+    },
+    /// Declare a property's value type; values set afterwards are checked
+    /// against it. Choices are only added on a redefinition.
+    DefineProperty {
+        name: String,
+        value_type: PropertyType,
+        #[serde(default)]
+        choices: Option<Vec<String>>,
+    },
+    /// Declare a tag's namespace and description.
+    DefineTag {
+        tag: String,
+        #[serde(default)]
+        namespace: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    /// Relate two tags: `alias` makes them one shown tag, `implies` adds the
+    /// second wherever the first applies. An implication closing a cycle is
+    /// refused.
+    Relate {
+        relation: TagRelation,
+        tag: String,
+        other: String,
+    },
+    /// Turn down a collection suggestion offered by a saved query revision.
+    Dismiss {
+        collection: String,
+        target: Target,
+        query: String,
+    },
+    /// Withdraw a record (`<root>`) or one revision (`<root>@<rev>`).
+    /// Withdrawing a withdrawal restores what it withdrew. With `expects`,
+    /// refused unless that revision of the record is current.
+    Withdraw {
+        record: String,
+        #[serde(default)]
+        expects: Option<String>,
+    },
+    /// Withdraw everything a request wrote; refused while a later record
+    /// revises or withdraws any of it.
+    Undo {
+        request: String,
+    },
 }
 
-/// One pairwise judgement: `winner` is better than `loser` on `scale`. A
-/// ranking is fitted from all of them.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "library.comparison",
-    key = ["comparison"],
-    replace = newer,
-    time = at,
-    quality = intrinsic,
-    removed_when = withdrawn_at
-)]
-pub struct Comparison {
-    pub comparison: String,
-    pub scale: String,
-    pub winner: String,
-    pub loser: String,
-    pub by: String,
-    pub at: Timestamp,
-    pub withdrawn_at: Option<Timestamp>,
+/// The type of a declared property's values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PropertyType {
+    Text,
+    Number,
+    Boolean,
+    Choice,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TagRelation {
+    Alias,
+    Implies,
 }
 
 /// One time something was opened for viewing or playing. The target is fixed
 /// when the request is made.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
+#[event(version = 3,
     type = "library.view",
     key = ["view"],
-    replace = newer,
+    replace = repeat,
     time = started_at,
     quality = intrinsic
 )]
@@ -333,55 +444,21 @@ pub struct View {
     pub seconds: Option<f64>,
     /// Imported view counts carry how many views the record stands for.
     pub count: u32,
-    pub level: Level,
     pub by: String,
-}
-
-/// A collection suggestion the operator dismissed; remembered for that
-/// collection and query revision.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "library.dismissal",
-    key = ["collection", "item", "query"],
-    replace = newer,
-    time = at,
-    quality = intrinsic
-)]
-pub struct Dismissal {
-    pub collection: String,
-    pub item: String,
-    /// The saved query's text when the suggestion was seen.
-    pub query: String,
-    pub by: String,
-    pub at: Timestamp,
 }
 
 crate::payload_enum! {
     /// Whatever one line of a library request writes.
     #[derive(Clone, Debug, PartialEq)]
     pub enum LibraryRecord {
-        Preview(Preview),
-        Assignment(Assignment),
-        Collection(Collection),
-        Entry(Entry),
-        Rating(Rating),
-        Comparison(Comparison),
+        Rendition(Rendition),
+        Curation(Curation),
         View(View),
-        Dismissal(Dismissal),
     }
 }
 
 /// The event types library requests write.
-pub const REQUEST_TYPES: &[&str] = &[
-    "library.preview",
-    "library.assignment",
-    "library.collection",
-    "library.entry",
-    "library.rating",
-    "library.comparison",
-    "library.view",
-    "library.dismissal",
-];
+pub const REQUEST_TYPES: &[&str] = &["library.rendition", "library.curation", "library.view"];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "library.filename_hints", key = ["copy"], replace = newer)]

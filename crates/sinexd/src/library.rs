@@ -1,10 +1,11 @@
 //! Media library commands. Scans and previews feed the library derivation;
-//! authored curation goes through request intake. Reads use live events.
+//! curation goes through request intake as planned curation records. Reads
+//! use live events.
 use crate::writer::WriterHandle;
 use serde_json::{Value, json};
-use sinex_library::{items, reads};
+use sinex_library::reads;
 use sinex_model::Timestamp;
-use sinex_model::event_types::library::{Assignment, Item, Level, LibraryRecord, Target};
+use sinex_model::event_types::library::{Item, LibraryRecord};
 use sinex_protocol::Request;
 use sinex_sources::sources::library as library_source;
 use sinex_store::Blobs;
@@ -32,37 +33,48 @@ fn e(err: impl std::fmt::Display) -> String {
     err.to_string()
 }
 
+/// The channel every library request arrives on: the daemon's API. The
+/// API does not yet report whether the CLI, MCP or the web called it.
+const VIA_API: &str = "api";
+
+/// How one library request is stored and admitted.
+struct Stored<'a> {
+    action: &'a str,
+    via: &'a str,
+    at: Timestamp,
+    /// Stored bytes the records cite beyond their material (a preview).
+    cited: Vec<sinex_model::OwnedBlob>,
+    /// Planned curation records, verified against the stored ones inside
+    /// the admitting transaction.
+    curation: bool,
+}
+
 impl Library<'_> {
     /// Store and admit one library request. All its records commit together
-    /// or none do (one material, admitted in one batch when it fits).
-    pub(crate) async fn write(
+    /// or none do (one material, admitted in one batch).
+    async fn write(
         &self,
         conn: &mut PgConnection,
         records: Vec<LibraryRecord>,
         actor: &str,
-        action: &str,
-    ) -> R<Value> {
-        self.write_citing(conn, records, actor, action, Vec::new())
-            .await
-    }
-
-    /// [`Library::write`] for records that cite stored bytes beyond their
-    /// material (a preview), already written to the content store.
-    async fn write_citing(
-        &self,
-        conn: &mut PgConnection,
-        records: Vec<LibraryRecord>,
-        actor: &str,
-        action: &str,
-        cited: Vec<sinex_model::OwnedBlob>,
+        stored: Stored<'_>,
     ) -> R<Value> {
         if records.is_empty() {
             return Ok(json!({"records":0}));
         }
         let n = records.len();
         let binding = format!("library.request:{actor}@{}", self.host);
-        let mut acquired = library_source::request_material(&records, actor, self.host, action);
-        if !cited.is_empty() {
+        let mut acquired = library_source::request_material(
+            &records,
+            library_source::RequestWriter {
+                author: actor,
+                via: stored.via,
+            },
+            self.host,
+            stored.action,
+            stored.at,
+        );
+        if !stored.cited.is_empty() {
             acquired
                 .material
                 .as_mut()
@@ -71,22 +83,39 @@ impl Library<'_> {
                 .details
                 .insert(
                     "owned_blobs".into(),
-                    serde_json::to_value(cited).map_err(e)?,
+                    serde_json::to_value(stored.cited).map_err(e)?,
                 );
         }
         // Boxed: the intake future is the bulk of every library write, and
         // inline it gave each caller's debug-build poll frame a ~15 KiB slot
         // per await site, enough to overflow a 2 MiB thread stack.
-        let result = Box::pin(crate::intake::request(
-            conn,
-            self.writer,
-            self.blobs,
-            std::sync::Arc::new(library_source::request_source()),
-            &binding,
-            self.host,
-            acquired,
-        ))
-        .await?;
+        let source = std::sync::Arc::new(library_source::request_source());
+        let result = match stored.curation {
+            true => {
+                Box::pin(crate::intake::request_curation(
+                    conn,
+                    self.writer,
+                    self.blobs,
+                    source,
+                    &binding,
+                    self.host,
+                    acquired,
+                ))
+                .await?
+            }
+            false => {
+                Box::pin(crate::intake::request(
+                    conn,
+                    self.writer,
+                    self.blobs,
+                    source,
+                    &binding,
+                    self.host,
+                    acquired,
+                ))
+                .await?
+            }
+        };
         if result.outcome.failures > 0 {
             return Err(format!(
                 "{} of {n} library records failed to read back",
@@ -100,39 +129,10 @@ impl Library<'_> {
     }
 
     async fn item_or(&self, conn: &mut PgConnection, item: &str) -> R<Item> {
-        match reads::item(conn, item).await.map_err(e)? {
-            Some(i) if i.withdrawn_at.is_none() => Ok(i),
-            Some(_) => Err(format!("item {item} was withdrawn")),
-            None => Err(format!("no library item {item}")),
-        }
-    }
-
-    fn assignment(
-        item: &str,
-        field: &str,
-        value: Option<String>,
-        level: Level,
-        source_ref: Option<String>,
-    ) -> Assignment {
-        Assignment {
-            assignment: items::new_id(),
-            target: Target {
-                item: item.to_owned(),
-                ..Target::default()
-            },
-            field: field.to_owned(),
-            value,
-            level,
-            source_ref,
-            by: String::new(),
-            at: Timestamp::now(),
-            withdrawn_at: None,
-        }
-    }
-
-    fn withdraw(mut a: Assignment) -> LibraryRecord {
-        a.withdrawn_at = Some(Timestamp::now());
-        LibraryRecord::Assignment(a)
+        reads::item(conn, item)
+            .await
+            .map_err(e)?
+            .ok_or_else(|| format!("no library item {item}"))
     }
 }
 
@@ -154,19 +154,33 @@ pub(crate) async fn dispatch(
             | Request::LibraryRank { .. }
     );
     let writer = match (writer, reads_only) {
-        (Some(w), _) => w,
-        (None, true) => {
+        (_, true) => {
             return match request {
                 Request::LibraryItem { item } => item_view(conn, &item).await,
                 Request::LibraryCollection { collection } => {
                     collection_view(conn, collection.as_deref()).await
                 }
-                Request::LibraryRank { scale } => {
-                    rank_view(conn, scale.as_deref().unwrap_or("overall")).await
+                Request::LibraryRank {
+                    scale,
+                    judges,
+                    collection,
+                    k,
+                    rule,
+                } => {
+                    rank_view(
+                        conn,
+                        &scale,
+                        judges.as_deref(),
+                        collection.as_deref(),
+                        k,
+                        rule.as_deref(),
+                    )
+                    .await
                 }
                 _ => unreachable!("reads only"),
             };
         }
+        (Some(w), false) => w,
         (None, false) => {
             return Err("this daemon has no writer; writes go through `sinexd run`".into());
         }
@@ -193,72 +207,10 @@ pub(crate) async fn dispatch(
                 )
                 .await
         }
-        Request::LibraryItem { item } => item_view(conn, &item).await,
-        Request::LibraryTag { item, tag } => library.tag(conn, &item, &tag, actor).await,
-        Request::LibraryUntag { item, tag } => library.untag(conn, &item, &tag, actor).await,
-        Request::LibrarySet {
-            item,
-            field,
-            value,
-            empty,
-        } => {
-            let value = match (value, empty.unwrap_or(false)) {
-                (Some(_), true) => return Err("give a value or --empty, not both".into()),
-                (None, false) => return Err("give a value, or --empty".into()),
-                (v, _) => v,
-            };
-            library.set(conn, &item, &field, value, actor).await
-        }
-        Request::LibraryCollect { collection, item } => {
-            library.collect(conn, &collection, &item, actor).await
-        }
-        Request::LibraryUncollect { collection, item } => {
-            library.uncollect(conn, &collection, &item, actor).await
-        }
-        Request::LibraryCollection { collection } => {
-            collection_view(conn, collection.as_deref()).await
-        }
-        Request::LibraryRate {
-            item,
-            value,
-            scale,
-            of,
-        } => {
-            let value = number(&value, "a rating")?;
-            let of = of
-                .as_deref()
-                .map(|o| number(o, "--of"))
-                .transpose()?
-                .unwrap_or(5.0);
-            library
-                .rate(
-                    conn,
-                    &item,
-                    value,
-                    scale.as_deref().unwrap_or("stars"),
-                    of,
-                    actor,
-                )
-                .await
-        }
-        Request::LibraryCompare {
-            winner,
-            loser,
-            scale,
-        } => {
-            library
-                .compare(
-                    conn,
-                    &winner,
-                    &loser,
-                    scale.as_deref().unwrap_or("overall"),
-                    actor,
-                )
-                .await
-        }
-        Request::LibraryRank { scale } => {
-            rank_view(conn, scale.as_deref().unwrap_or("overall")).await
-        }
+        Request::LibraryCurate {
+            request: id,
+            writes,
+        } => library.curate(conn, id, &writes, actor).await,
         Request::LibraryOpen { item, rendition } => {
             library.open(conn, &item, rendition.as_deref()).await
         }

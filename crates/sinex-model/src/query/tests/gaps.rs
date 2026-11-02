@@ -177,9 +177,9 @@ fn unrepresentable_time_ranges_are_errors_without_panicking() {
 
 #[devkit::test]
 fn each_boolean_branch_uses_its_selected_event_schema() {
-    let text = "events where (event_type = metric.figure AND payload.value > 0) OR (event_type = library.assignment AND payload.value = synthetic)";
+    let text = "events where (event_type = metric.figure AND payload.value > 0) OR (event_type = library.curation AND payload.key = synthetic)";
     assert!(bind(text, &ctx()).is_ok());
-    assert!(err("events where (event_type = metric.figure AND payload.value = synthetic) OR (event_type = library.assignment AND payload.value = synthetic)").message.contains("number"));
+    assert!(err("events where (event_type = metric.figure AND payload.value = synthetic) OR (event_type = library.curation AND payload.key = synthetic)").message.contains("number"));
 }
 
 #[devkit::test]

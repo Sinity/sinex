@@ -4,7 +4,7 @@ use super::{Library, R, e};
 use serde_json::{Value, json};
 use sinex_library::{items, reads, render};
 use sinex_model::Timestamp;
-use sinex_model::event_types::library::{LibraryRecord, Preview, RenditionRole};
+use sinex_model::event_types::library::{LibraryRecord, Rendition, RenditionRole};
 use sinex_sources::sources::library as library_source;
 use sqlx::PgConnection;
 use std::path::PathBuf;
@@ -76,7 +76,7 @@ impl Library<'_> {
                     .await
                     .map_err(e)?
                     .into_iter()
-                    .find(|r| r.rendition == id && r.withdrawn_at.is_none())
+                    .find(|r| r.rendition == id)
                     .ok_or_else(|| format!("{item} has no rendition {id}"))?;
                 (r.content, r.media_type, Some(r.rendition), r.revision)
             }
@@ -113,12 +113,8 @@ impl Library<'_> {
         let renditions = reads::renditions(conn, item).await.map_err(e)?;
         let original = renditions
             .iter()
-            .find(|r| {
-                r.role == RenditionRole::Original
-                    && r.revision == it.revision
-                    && r.withdrawn_at.is_none()
-            })
-            .map(|r| r.rendition.clone());
+            .find(|r| r.role == RenditionRole::Original && r.revision == it.revision)
+            .ok_or_else(|| format!("{item} has no original rendition of {}", it.revision))?;
         let (input, _) = self.local_copy(conn, &it.content, &it.media_type).await?;
         let blobs = self.blobs.clone();
         let out = std::env::temp_dir().join(format!("sinex-preview-{}.webp", items::new_id()));
@@ -140,39 +136,35 @@ impl Library<'_> {
         .await
         .map_err(e)??;
         let content = stored.blob.clone();
-        let r = Preview {
+        let r = Rendition {
             rendition: items::new_id(),
             item: item.to_owned(),
             revision: it.revision.clone(),
+            part_index: original.part_index,
             role: RenditionRole::Preview,
             content: content.clone(),
             media_type: "image/webp".into(),
             width: w,
             height: h,
             duration_ms: None,
-            made_from: original,
+            made_from: Some(original.rendition.clone()),
             made_with: render::preview_settings(),
             by: String::new(),
             at: Timestamp::now(),
-            withdrawn_at: None,
         };
         let id = r.rendition.clone();
-        self.write_citing(
+        self.write(
             conn,
-            vec![LibraryRecord::Preview(r)],
+            vec![LibraryRecord::Rendition(r)],
             actor,
-            "preview",
-            vec![stored],
+            super::Stored {
+                action: "preview",
+                via: super::VIA_API,
+                at: Timestamp::now(),
+                cited: vec![stored],
+                curation: false,
+            },
         )
-        .await?;
-        Box::pin(crate::derivation_runner::compute_now(
-            conn,
-            self.writer,
-            &sinex_derivations::library::LibraryItems,
-            vec![json!(item)],
-            self.host,
-            self.time_settings.clone(),
-        ))
         .await?;
         Ok(json!({ "item": item, "rendition": id, "content": content, "width": w, "height": h }))
     }

@@ -2,8 +2,9 @@ use super::files::sniff;
 use super::*;
 use serde_json::{Map, Value, json};
 use sinex_model::Timestamp;
-use sinex_model::event_types::library::{Assignment, FileCopy, LibraryRecord, Preview};
-use sinex_model::event_types::library::{Level, Target};
+use sinex_model::event_types::library::{
+    Curation, CurationKind, FileCopy, LibraryRecord, Rendition, Target, ValueOrigin,
+};
 use sinex_model::{RecordOutcome, RecordState};
 use sinex_source_core::Parser;
 use sinex_source_core::drivers::Acquired;
@@ -289,23 +290,42 @@ fn sniffs_types_from_bytes_not_names() {
     assert_eq!(dimensions(gif, "image/gif").1, Some(240));
 }
 
+const OPERATOR: RequestWriter<'static> = RequestWriter {
+    author: "operator",
+    via: "api",
+};
+
 #[devkit::test]
 fn requests_take_author_and_time_from_the_manifest() {
-    let tag = Assignment {
-        assignment: "as1".into(),
-        target: Target {
+    let tag = Curation {
+        root: "r1".into(),
+        rev: "r1".into(),
+        revises: vec![],
+        withdraws: vec![],
+        kind: CurationKind::Tag,
+        target: Some(Target {
             item: "i1".into(),
             ..Target::default()
-        },
-        field: "tag".into(),
-        value: Some("place:croatia".into()),
-        level: Level::Override,
-        source_ref: None,
-        by: "forged".into(),
+        }),
+        key: Some("place:harbour".into()),
+        value: None,
+        origin: ValueOrigin::Authored,
+        cites: None,
+        author: "forged".into(),
+        via: "forged".into(),
         at: Timestamp::from_unix_secs(1).unwrap(),
-        withdrawn_at: Some(Timestamp::from_unix_secs(2).unwrap()),
+        request: "r1".into(),
+        request_digest: String::new(),
+        slots: vec![],
     };
-    let a = request_material(&[LibraryRecord::Assignment(tag)], "operator", "h", "test");
+    let written = Timestamp::from_unix_secs(1_000).unwrap();
+    let a = request_material(
+        &[LibraryRecord::Curation(tag)],
+        OPERATOR,
+        "h",
+        "test",
+        written,
+    );
     let m = a.material.as_ref().unwrap();
     let out = drain(
         &RequestParser,
@@ -331,19 +351,24 @@ fn requests_take_author_and_time_from_the_manifest() {
         })
         .collect();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_type, "library.assignment");
-    assert_eq!(events[0].payload["by"], "operator");
-    assert_ne!(events[0].payload["at"], json!("1970-01-01T00:00:01Z"));
-    assert_eq!(events[0].record_state, RecordState::Removed);
+    assert_eq!(events[0].event_type, "library.curation");
+    assert_eq!(events[0].payload["author"], "operator");
+    assert_eq!(events[0].payload["via"], "api");
+    assert_eq!(
+        events[0].payload["at"],
+        serde_json::to_value(written).unwrap()
+    );
+    assert_eq!(events[0].record_state, RecordState::Present);
 }
 
 #[devkit::test]
 fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_evidence() {
     let blob = format!("blake3:{}", blake3::hash(b"synthetic preview"));
-    let record = LibraryRecord::Preview(Preview {
+    let record = LibraryRecord::Rendition(Rendition {
         rendition: "r".into(),
         item: "i".into(),
         revision: "blake3:x".into(),
+        part_index: 0,
         role: sinex_model::event_types::library::RenditionRole::Preview,
         content: blob.clone(),
         media_type: "image/webp".into(),
@@ -354,9 +379,8 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
         made_with: Default::default(),
         by: String::new(),
         at: Timestamp::from_unix_secs(1).unwrap(),
-        withdrawn_at: None,
     });
-    let acquired = request_material(&[record], "operator", "h", "preview");
+    let acquired = request_material(&[record], OPERATOR, "h", "preview", Timestamp::now());
     let material = acquired.material.unwrap();
     let outcomes = |manifest: &sinex_model::Manifest| {
         drain(

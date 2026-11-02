@@ -32,9 +32,18 @@ impl Description {
         }
     }
 
+    /// The description just before the library curation upgrade.
+    pub(crate) fn before_library_curation() -> Self {
+        let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| crate::library_curation::before(statement));
+        description
+    }
+
     /// The description just before the lifecycle upgrade.
     pub(crate) fn before_lifecycle() -> Self {
-        let mut description = Self::current();
+        let mut description = Self::before_library_curation();
         description
             .tables
             .retain(|statement| crate::lifecycle::before(statement));

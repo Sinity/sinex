@@ -83,7 +83,7 @@ sinexctl 'failures where source = health.samsung'
 
 Aliases are payload projections over registered, produced event types: `commands`,
 `shell-sessions`, `activity-sessions`, `episodes`, `intervals`, `now`, `figures`,
-`focus`, `visits`, `plays`, `items`, `media`, `assignments`, and one for each
+`focus`, `visits`, `plays`, `items`, `media`, `curation`, and one for each
 [higher-layer](higher-layer.md) kind once its producer exists. An alias exists only with
 its producer, so an alias never answers from nothing. Every duration projection states
 its unit. `kinds [KIND]` lists which aliases expand to which event types.

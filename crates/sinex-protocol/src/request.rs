@@ -360,60 +360,30 @@ pub enum Request {
     LibraryItem {
         item: String,
     },
-    #[serde(rename = "library-tag")]
-    LibraryTag {
-        item: String,
-        tag: String,
-    },
-    #[serde(rename = "library-untag")]
-    LibraryUntag {
-        item: String,
-        tag: String,
-    },
-    #[serde(rename = "library-set")]
-    LibrarySet {
-        item: String,
-        field: String,
+    #[serde(rename = "library-curate")]
+    LibraryCurate {
+        /// The caller's ID for this request, reused on retry so it is
+        /// written once; a new one is chosen when absent.
         #[serde(default)]
-        value: Option<String>,
-        #[serde(default)]
-        empty: Option<bool>,
-    },
-    #[serde(rename = "library-collect")]
-    LibraryCollect {
-        collection: String,
-        item: String,
-    },
-    #[serde(rename = "library-uncollect")]
-    LibraryUncollect {
-        collection: String,
-        item: String,
+        request: Option<String>,
+        writes: Vec<sinex_model::event_types::library::Act>,
     },
     #[serde(rename = "library-collection")]
     LibraryCollection {
         #[serde(default)]
         collection: Option<String>,
     },
-    #[serde(rename = "library-rate")]
-    LibraryRate {
-        item: String,
-        value: String,
-        #[serde(default)]
-        scale: Option<String>,
-        #[serde(default)]
-        of: Option<String>,
-    },
-    #[serde(rename = "library-compare")]
-    LibraryCompare {
-        winner: String,
-        loser: String,
-        #[serde(default)]
-        scale: Option<String>,
-    },
     #[serde(rename = "library-rank")]
     LibraryRank {
+        scale: String,
         #[serde(default)]
-        scale: Option<String>,
+        judges: Option<String>,
+        #[serde(default)]
+        collection: Option<String>,
+        #[serde(default)]
+        k: Option<u64>,
+        #[serde(default)]
+        rule: Option<String>,
     },
     #[serde(rename = "library-open")]
     LibraryOpen {
@@ -510,14 +480,8 @@ impl Request {
             Request::Brief { .. } => "brief",
             Request::LibraryAdd { .. } => "library-add",
             Request::LibraryItem { .. } => "library-item",
-            Request::LibraryTag { .. } => "library-tag",
-            Request::LibraryUntag { .. } => "library-untag",
-            Request::LibrarySet { .. } => "library-set",
-            Request::LibraryCollect { .. } => "library-collect",
-            Request::LibraryUncollect { .. } => "library-uncollect",
+            Request::LibraryCurate { .. } => "library-curate",
             Request::LibraryCollection { .. } => "library-collection",
-            Request::LibraryRate { .. } => "library-rate",
-            Request::LibraryCompare { .. } => "library-compare",
             Request::LibraryRank { .. } => "library-rank",
             Request::LibraryOpen { .. } => "library-open",
             Request::LibraryViewed { .. } => "library-viewed",

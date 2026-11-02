@@ -16,31 +16,60 @@ The principles that shape every feature below:
 - **Missing content, uncertainty and conflicts are reported, never hidden.** A successful command or an imported catalog is not evidence of a useful library.
 - **Nothing expires.** There is no media tiering or retention: media is kept until the operator archives it.
 
-Decided target (2026-11-01). The current build is a file library whose curation kinds replace each other by newer readings with a `withdrawn_at` field, writes every caller's curation at the operator's level, positions collection entries as floating-point numbers and stores pairwise comparisons only. The decided design keeps this page's behaviour and changes four things: an item is anything with a native locator; encounters link every event to the item it touched; curation records share their revision rules with Polylogue's assertions through common's `authored` crate; and page capture, ranking and the Polylogue link are specified. Sections marked as decided target describe what is not built; their laws are the acceptance.
+Decided target (2026-11-01). The current build is a file library whose curation records share their revision rules with Polylogue's assertions through common's `authored` crate, with computed authorship, order-key entry positions and Plackett–Luce rankings. The decided design keeps this page's behaviour and adds three things: an item is anything with a native locator; encounters link every event to the item it touched; and page capture and the Polylogue link are specified. Sections marked as decided target describe what is not built; their laws are the acceptance.
 
 ## Curation as authored input
 
+### One record shape
+
+Every curation act writes **curation records** (`library.curation`), one shape for every kind, sharing the authored-record rules of the common `authored` crate with Polylogue's assertions:
+
+```
+{ root, rev, revises: [<root>@<rev>…], withdraws: [<root> | <root>@<rev>…],
+  kind, target?, key?, value?, origin: authored | imported | proposed, cites?,
+  author, via, at, request, request_digest, slots }
+```
+
+| Kind | `key` / `value` | Uniqueness (what counts as the same statement) |
+|---|---|---|
+| `tag` | tag / absent when it applies, `false` when it is rejected | target, tag, value, author, origin; writing it again answers "already" |
+| `property` | property / text, number, true or false, or `null` for an explicit empty | target, property, author, origin |
+| `note` | — / text | none (many) |
+| `rating` | scale / a number in its range or one of its choices | target, scale, author, origin |
+| `comparison` | scale / `order` (items best first, ties as groups, each with its revision fixed) and `blind` | none (every comparison counts) |
+| `entry` | collection's root / its order key; the target fixes the revision | none (repeats allowed) |
+| `collection`, `scale` | name / the scale's question and range or choices | name (identity is the root, so a name is revisable) |
+| `property_definition`, `tag_definition` | name / a property's value type and choices; a tag's namespace and description | name |
+| `tag_relation` | `alias` or `implies` / the two tags (an alias's sorted, an implication's ordered) | relation and pair; relating them again answers "already"; an implication closing a cycle is refused |
+| `dismissal` | collection's root / the saved query revision; the target is the suggested item | target, collection and query revision |
+| `withdrawal` | — | none |
+
+A record's identity is its **root** (the ID of its first revision); `sinex:curation/<root>@<rev>` names one revision. The origin and the imported source or proposing method are part of a statement's uniqueness, so each independent source keeps its own support and reimporting the same source record writes nothing.
+
 ### Requests and authorship
 
-Every library change (add, tag, property set, collect, rate, judge, note, withdraw) is a **request**. The request is stored as a material, and its records are admitted through the one writer with that material as their origin, like every other input ([admission](admission.md)).
+Every library change is a **request** of one or more acts (`library-curate`: tag, untag, reject, set, note, rate, collect, uncollect, move, judge, define_scale, define_property, define_tag, relate, dismiss, withdraw, undo). The daemon plans the acts against one snapshot of the live curation records, stores the planned records as the request's material, and admits them through the one writer with that material as their origin, like every other input ([admission](admission.md)).
 
-- The **author** of each record (the operator, a named agent, a named producer) is computed by the daemon from the caller's token and is never supplied by the caller ([callers](interfaces.md#callers)).
-- A curation record cites its subject (an item, revision, rendition, part, collection or another record) as a **typed reference in its payload**. It is never a derived event of the reading it describes or corrects, so replaying the subject does not break it; the reference resolves to the subject's new reading by its key.
-- Imported values keep their acquisition evidence, and proposals keep their producer; neither is relabelled as the operator's.
+- Write *n* of a request of several writes gets the revision `<request>.<n>`; a request of one write uses the request ID. A request commits all its records or none.
+- Inside the admitting transaction the planned records are checked again against the stored ones, by the uniqueness keys and bases: every base still current, no other record holding a slot a record claims, every withdrawal target live. A request that fails is refused naming the record, and can be sent again. Requests from one daemon are planned one at a time.
+- The caller may name the request ID and reuse it on retry: the same ID with the same content answers the original records without writing; the same ID with other content is refused.
+- The **author** of each record (the operator, an agent) and the channel are computed by the daemon from the caller and stored in the material's manifest, which the request parser reads; no request field names an author ([callers](interfaces.md#callers)).
+- A curation record cites its subject (an item, revision, rendition or part; a collection by its root) as a **typed reference in its payload**. It is never a derived event of the reading it describes or corrects, so replaying the subject does not break it; the reference resolves to the subject's new reading by its key.
+- Imported values keep their source citation, and proposals keep their method; neither is relabelled as the operator's. Imports and proposals fork on a stale base instead of being refused, so the order in which they arrive cannot change the result.
 
-### Withdrawals
+### Withdrawals and currency
 
-Untag, unset, uncollect, rating withdrawal, dismissal reversal and undo are each a **withdrawal record**: its own authored act that names the record and revision it withdraws, with its author.
+Untag, uncollect, a withdrawal and undo are each a **withdrawal record**: its own authored act naming the records or revisions it withdraws, with its author.
 
-- The withdrawn record stays live as history. The current value is a **view** computed from all live records by the descendant rule of common [`authored`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md): a revision is current when it is not withdrawn and no descendant through `revises` is current. Withdrawing a middle revision of a chain therefore leaves the newest one current.
-- Withdrawing a withdrawal restores the earlier record's effect.
-- **Undo** is a new withdrawal of the named action's effects. It never restores a snapshot. If a later record depends on those effects, undo reports a conflict and changes nothing.
-- A withdrawal is not deletion and does not use the lifecycle. Archiving and tombstoning remain the operator's deletion of materials and readings, and they apply to library request materials like to any other material ([the lifecycle](lifecycle.md)).
-- Library kinds never rely on a newer reading of the same key in another material replacing an older one. Records seen through different materials stay separate ([identity](events.md#identity)), and withdrawals carry the meaning a replacement would otherwise have to.
+- A revision is **withdrawn** while a withdrawal that is not itself withdrawn names it or its root, and **current** when it is not withdrawn and no revision descending from it through `revises` is not withdrawn (the descendant rule of common [`authored`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md)). In R1←R2←R3, withdrawing R2 leaves R3 current; withdrawing R3 as well makes R1 current; withdrawing the withdrawal of R2 makes R2 current again.
+- The withdrawn record stays live as history; the current value is computed from all live records. Withdrawing a withdrawal restores the earlier record's effect.
+- **Undo** of a request is a new withdrawal of every revision it wrote. It never restores a snapshot. If a later record revises or withdraws any of them, undo reports a conflict and changes nothing.
+- A withdrawal is not deletion and does not use the lifecycle. Archiving and tombstoning remain the operator's deletion of materials and readings, and they apply to library request materials like to any other material ([the lifecycle](lifecycle.md)); an archived record leaves the live side and currency is computed without it.
+- Curation records are never replaced by a newer reading (`replace = repeat`): records seen through different materials stay separate ([identity](events.md#identity)), and withdrawals carry the meaning a replacement would otherwise have to.
 
 ### Revisions and conflicts
 
-Every curation act is one record with common's authored-record header (decided target; the current build carries `replace = newer` and `withdrawn_at` instead):
+Every curation act is one record with common's authored-record header:
 
 ```
 { root, rev, revises?: [rev…], withdraws?: [rev…],
@@ -53,37 +82,41 @@ Its reference is `sinex:curation/<root>@<rev>`. A revision's payload never chang
 
 | Kind | `key` / `value` | Uniqueness slot (a write into an occupied slot revises it) |
 |---|---|---|
-| `tag` | tag ID / optional value | target, tag, author |
-| `property` | property ID / typed value, or an explicit empty | target, property, author |
+| `tag` | tag / `false` for a rejection | target, tag, value, author, origin (written again: "already") |
+| `property` | property / typed value, or an explicit empty | target, property, author, origin |
 | `note` | — / text, optional selector | none (Sinex's one [note](recall.md#notes) kind, with the target as `about`) |
-| `rating` | scale / number or choice | target, scale, author |
+| `rating` | scale / number or choice | target, scale, author, origin |
 | `comparison` | scale / an ordered list of k ≥ 2 targets, ties as groups, a `blind` flag | none: every comparison counts |
 | `entry` | collection / order key, pinned target | none: repeats allowed |
-| `collection`, `scale`, `property-definition`, `tag-definition` | name / declaration | name (labels are revisable; identity is the root) |
-| `tag-relation` | `alias` or `implies` / the two tag IDs | the pair and relation |
-| `duplicate` | — / `same` or `distinct` over a pair | the unordered pair, author |
+| `collection`, `scale`, `property_definition`, `tag_definition` | name / declaration | name (labels are revisable; identity is the root) |
+| `tag_relation` | `alias` or `implies` / the two tag IDs | the pair and relation |
 | `dismissal` | collection or saved query revision / — | target, scope |
+| `withdrawal` | — / the withdrawn roots or revisions | none |
 
-- **Stale base.** A request that changes a value carries `expects: <revision>`. The writer checks it against the current records inside the admission transaction. Of two clients replacing the same value from the same revision, the first succeeds and the second receives a structured conflict naming the current revision and its author. No policy picks a winner by timestamp; two current heads in one slot are a conflict.
+- A write into a held uniqueness slot revises every current revision of the record holding it (which also resolves a conflict); a tag written again answers "already".
+- A write may carry `expects: <root>@<rev>`, the revision the caller saw. It is refused, naming the current revisions, when that revision is no longer current or when the write would move into a slot another record holds. Of two clients replacing the same value from the same revision, the first succeeds and the second receives that refusal. No policy picks a winner by timestamp.
+- Two or more current revisions of one record are a **conflict**, shown with every revision and resolved by one revision that revises them all.
 - **Atomic requests.** One request carries several writes, numbered `<request>.<n>`, committed together or not at all (tag plus collect, a bulk act over an explicit selection).
-- **Computed authorship.** The author comes from the caller's token; no surface accepts one.
-- Uniqueness is enforced in the admission transaction, never by a read before the write.
+- **Computed authorship.** The author comes from the caller; no surface accepts one.
+- Uniqueness and stale bases are checked again in the admission transaction, not only by the read that planned the request.
 
 ### Shown values
 
-The value the library shows for a property or tag is computed from every live assignment by a precedence with two axes, both computed by the daemon:
+The shown values are kept in the `library_shown` projection: one row per target and tag or property with its state, level, value and supporters. The writer refreshes it inside every transaction that admits, archives or restores a curation record (a request, a replay, a lifecycle operation), for the items those records are about and every record their withdrawals reach, so it equals the precedence over the live records at every commit and needs no rebuild.
+
+The value the library shows for a property or tag is computed from the current curation records of its target by a precedence with two axes, both computed by the daemon:
 
 - **origin**: authored, imported, proposed;
 - **author**: the operator, an agent, a named producer.
 
-The default order is the operator's authored value (an explicit empty included), then an agent's authored value, then imported values, then proposals. Each property declares its type, cardinality and selection policy, and a per-property policy can raise or lower agents' level. Agents keep every curation power; only precedence differs, so an agent's tag never counts as the operator's.
+The order is the operator's authored value (an explicit empty included), then an agent's authored value, then imported values, then proposals. Each property declares its type, cardinality and selection policy, and a per-property policy can raise or lower agents' level (property definitions are not built yet). Agents keep every curation power; only precedence differs, so an agent's tag never counts as the operator's.
 
 - Two different values at the winning level are a **conflict**; no value at any level is **unknown**. Unknown, withheld, conflicting, explicitly empty and a real empty string are five distinguishable states.
 - An explicit empty stops fallback to lower levels; withdrawing it permits fallback again.
-- A tag applies while at least one live, non-withdrawn assignment supports it: withdrawing the operator's assignment leaves an agent's. Reads show every supporting assignment and its author, even when the values agree.
-- Rejecting an imported or proposed value is its own explicit record, not a reserved leading character in a tag label.
+- A tag applies while its deciding level applies it: withdrawing the operator's application leaves an agent's or an import's. Reads show every supporting record and its author, even when the values agree.
+- Rejecting an imported or proposed tag is its own explicit record (`reject`: a tag record whose value is `false`), not a reserved leading character in a tag label; any label with text, punctuation included, is an ordinary tag.
 - Shown-value precedence is the library's own: Polylogue's assertions have no imported level to rank, while booru imports, catalog sidecars and reading-service tags make imported values the library's common case.
-- **The shown-value projection** (`library_shown`: item, field, value, level, state, supporters) is maintained by the writer in the admission transaction for the targets a request touches, through the common currency function, so reads never recompute currency over the archive.
+- **The shown-value projection** (`library_shown`: item, target, tag or property, state, level, value, supporters) is maintained by the writer in every transaction that admits, archives or restores curation records, through the common currency function, so reads never recompute currency over the archive.
 - Proposals (classifier or model output) are the lowest level and never overwrite an authored value. Model execution follows [the model-calling contract](derivations.md#model-calling); imported model outputs are captured regardless.
 
 ## Items, locators and copies
@@ -175,6 +208,7 @@ A compound rendition lists its members, each member's role, relative path, order
 Every original, crop, preview or transcode fixes the item revision, its exact content, media type, optional dimensions or duration, its parent rendition, and the tool, settings and version that made it.
 
 - An original request resolves only the original.
+- Originals are readings of the scans (the `library.items` derivation); a preview is a `library.rendition` record written by its preview request, citing the rendered bytes. One kind holds both; archiving a scan archives the originals read from it and leaves a preview its request wrote.
 - A **part** names one exact rendition and declares its units: a half-open time range, or an image region checked against known bounds. Selectors use W3C Media Fragments (`#t=start,end`, `#xywh=`) and W3C Web Annotation text selectors (a quote with its position), parsed by common [`references`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/references/README.md); an out-of-range selector is invalid, never clamped. `item:<id>@<rev>#t=95,140` names a clip that tags, notes, entries and Polylogue assertions can target. Changed item bytes do not move old regions or time ranges, so an old crop stays attached to the earlier bytes.
 - Rendering uses existing decoders and players. A render request records its fixed input before execution and publishes a successful stored output through admission. Transformations are derivations over stored evidence, with the external output recorded when a renderer cannot be rerun deterministically.
 - Unsupported decoder, corrupt input, unavailable original, cancellation and incomplete output are distinct outcomes. Partial temporary files are never usable renditions. Rendering progress and extraction failures stay visible.
@@ -183,11 +217,11 @@ Every original, crop, preview or transcode fixes the item revision, its exact co
 ## Tags and properties
 
 - **Property definitions** declare type, cardinality, allowed choices where applicable (a single-choice property allows exactly one) and the selection rule used for shown values.
-- **Tags** have stable identity, labels and namespaces. Renaming a tag is a label revision that keeps its assignments. Any non-empty label is an ordinary label, including one that begins with or consists of punctuation.
-- **Tag relations** (decided target): `alias` makes two tag IDs one shown tag, so merging two tags is an alias; `implies` adds the implied tag to the shown set, marked `implied by <tag>`, at the implying assignment's level. A cycle is refused at write. `tag:x` matches direct and implied assignments; `tag_direct:x` matches direct ones only.
-- **Assignments** target an item, a fixed revision, a rendition or a validated part, and carry author, level, source evidence, stable ID, immutable revision and the revision they replace. Two assignments to two distinct regions of one rendition are two assignments.
+- **Tags** have stable identity, labels, namespaces and aliases. Renaming a tag keeps its tag records. Real labels that begin with punctuation are ordinary labels.
+- **Tag relations**: `alias` makes two tag IDs one shown tag, so merging two tags is an alias; `implies` adds the implied tag to the shown set, marked `implied by <tag>`, at the implying assignment's level. A cycle is refused at write. `tag:x` matches direct and implied assignments; `tag_direct:x` matches direct ones only. Relations are recorded and cycles refused today; shown tags do not yet follow aliases and implications.
+- **Tag and property records** target an item, a fixed revision, a rendition or a part, and carry author, origin, source evidence, root, immutable revision and the revisions they revise. Two records about two distinct regions of one rendition are two records.
 - Rescanning, reimporting and rerunning a classifier keep the operator's corrections, because those are authored records ranked above imported and proposed values.
-- Filters and queries read shown values with selectable provenance and conflict states; raw assignment search stays separately available.
+- Filters and queries read shown values with selectable provenance and conflict states; the `curation` query unit reads every live curation record.
 
 ## Notes and edits
 
@@ -201,9 +235,9 @@ A **collection** is an ordered list of entries with a stable ID independent of i
 
 - Every insertion creates an **entry** with its own ID, even for an item already in the collection, so A, B, A has three entries.
 - Each entry fixes the revision and rendition selected at insertion and can include a part. Editing the source item does not change what an existing entry opens.
-- Order is explicit and deterministic. Entry positions are common `authored` order keys: base-62 fractions with a key between any two, ties broken by the entry's root, so repeated insertion between neighbours never ties or runs out of precision (decided target; the current build's floating-point positions tie after about fifty halvings). A reorder is a revision of one entry's position.
+- Order is explicit and deterministic: each entry holds an order key, a fraction written in base-62 digits (the common `authored` order keys), so a key always exists strictly between two neighbours with no precision limit, and two writers inserting into one gap get distinct keys. Equal keys, which only imports can produce, are ordered by the entry's root. A move is a revision of that one entry.
 - Insert, reorder, rename, remove one entry, remove explicitly selected entries and inspect withdrawn entries are all operations; removal addresses entries, not items.
-- Concurrent inserts and reorders compare against the observed collection revision, succeed atomically or report a conflict, and keep every successful insertion.
+- Concurrent inserts never conflict and keep every successful insertion; a concurrent move of the same entry from a stale revision is refused.
 - Looking a collection up by name reports ambiguity rather than picking the first match.
 
 ## Saved queries and kept results
@@ -216,7 +250,7 @@ A **collection** is an ordered list of entries with a stable ID independent of i
 
 ## Ratings
 
-- A **scale** declares its name, meaning, numeric range or enumerated choices, and units. Redefining a scale incompatibly is refused.
+- A **scale** declares its name, the question a judge answers, and a numeric range or enumerated choices. Ratings and comparisons need a defined scale. Redefining a scale so that it refuses a value it accepted is refused: a range only widens and choices are only added.
 - A **direct rating** is one attributed statement per rater, target and scale. Its revisions, imports and withdrawal stay inspectable; several raters coexist; fractional and zero ratings are values, and an unavailable rating is not zero.
 - Non-finite numbers and values outside the scale's range are refused explicitly.
 - A site's "content rating" is catalog metadata, independent of the operator's stars or preference. A provider rating or an aggregate count is never relabelled as the operator's own vote.
@@ -226,13 +260,14 @@ A **collection** is an ordered list of entries with a stable ID independent of i
 
 A **scale** declares its name and the question a judge answers on it (shown on every comparison card and stored with each comparison's scale revision), and a numeric range or choices. A **ranking** orders a chosen set of eligible items on one scale from attributed comparison records. A ranking is a computed answer, never stored as a record.
 
-- A **comparison** is an ordered list of k ≥ 2 targets with optional tie groups, on one scale, by one computed judge, optionally `blind` (no existing ratings, tags or authors shown). A pair is the case k = 2. `judge` is the verb that writes it; `compare` is only the read. Comparisons are withdrawn and corrected like any curation record; repeated legitimate comparisons are all kept, while a retried request is not another vote.
-- **The fit** is common [`ranking`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/ranking/README.md)'s Plackett–Luce model (decided target, replacing the current pairwise Bradley–Terry fit). It reduces exactly to Bradley–Terry for pairs and uses a k-ordering as one observation, without the bias of expanding it into independent pairs. A weak symmetric prior keeps the fit finite for unbeaten items and disconnected groups. Each item reports its score, an interval, its rank range, its support (comparisons involving it) and its component; the answer reports the fit status and the judge set.
-- **Judge sets** are a query parameter: the operator (default), a named author, a lens, or all judges. The operator's ranking stays his own; agents' comparisons are usable through their own judge set and never mixed in unless asked.
-- **Next set** (`judge next`) proposes the pair or k-set with the largest expected reduction in ranking uncertainty within the chosen set, falling back to an uncompared item against its nearest neighbour. Every proposal names its rule, and `rule: random` and `rule: uncompared-first` are available. Uncompared items stay in the chosen set and are listed as unranked, never hidden.
-- Empty and one-item sets are valid. Contradictory cycles and disconnected groups are shown as they are. A stable display tie-break does not imply a known preference.
-- Direct ratings and comparisons are separate inputs unless a named method combines them. A method such as quantile levels can bin a fitted ranking into discrete levels on a derived scale; its output is a proposed rating attributed to the method and version, never the operator's own rating.
-- Preference is not truth or objective quality, and the library does not present it as such. Rebuilding from the same comparisons yields the same ranking.
+- A **comparison** is one judge's ordering of two or more items on a scale, best first, with ties as groups and each item's revision fixed. A pair is the case of two. Comparisons can be withdrawn and corrected; repeated legitimate comparisons are all kept, while a retried request is not another vote.
+- The fit is **Plackett–Luce** (the common `ranking` crate): a k-ordering is one judgment, never expanded into its implied pairs, and pairs reduce to Bradley–Terry. A weak prior of one virtual win and one virtual loss against a reference keeps scores finite for unbeaten items and unconnected groups.
+- Each ranked item carries its score, a 95 % interval from the observed information, its rank and the range of ranks the intervals allow, its support (comparisons naming it) and its group of connected items. The answer states the method, the comparisons counted, and the fit status, `converged` or `stopped` with its last change; a stopped fit is never reported as converged and drops no input.
+- A ranking is computed per scale and per **judge set**: the operator (the default), named authors, or all judges. Another judge's comparisons change nothing in a set that does not count them.
+- Ranking a collection includes every item in it, compared or not; uncompared items are counted as unranked and proposed first for judging. The **next set** names its rule: the largest expected reduction in uncertainty (default), a seeded random draw, or uncompared first then nearest scores.
+- Direct ratings and comparisons are separate inputs unless an explicit method combines them. An explicit method can bin a fitted ranking into discrete levels on a named scale; its output is a proposed rating attributed to the method and its version, never the operator's own rating.
+- Preference is not truth or objective quality, and the library does not present it as such.
+- Rebuilding from the same comparisons yields the same ranking.
 
 ## Imports and catalog metadata
 
@@ -401,18 +436,10 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 | part | rendition, units, half-open time range or bounded image region |
 | property definition | type, cardinality, allowed choices, selection rule, agent level policy |
 | tag | stable ID, label, namespace, aliases |
-| assignment | target (item, revision, rendition or part), property or tag, value, author, origin, source evidence, root, revision, revised and withdrawn revisions |
-| note | Sinex's one note kind, with the target as `about` |
-| withdrawal | withdrawn revisions or roots, author |
-| tag relation | `alias` or `implies`, the two tags |
-| collection | stable ID, name, revision |
-| collection entry | entry ID, collection, pinned revision and rendition, optional part, position |
+| curation record (`library.curation`) | root, revision, revised revisions, withdrawn records or revisions, kind (tag, property, note, rating, comparison, entry, collection, scale, withdrawal), target (item, revision, rendition or part), key, value, origin and what it cites, author, channel, time, request and its digest, uniqueness slot digests |
 | saved query | query text, arguments, revision, label |
 | fixed selection | a kept result (`result:<id>`) |
-| suggestion dismissal | collection, target, saved query revision |
-| scale | name, meaning, range or choices, units |
-| rating | rater, target, scale, value, origin |
-| comparison | judge, scale, k ordered targets with tie groups and fixed revisions, `blind` |
+| suggestion dismissal | collection, target, saved query revision (not built yet) |
 | derived rating | method and version, scale, value, source ranking; origin `proposed` |
 | duplicate decision | pair, `same` or `distinct`, author |
 | caption, OCR text, face candidate | rendition part, content, producer, model, run |
@@ -430,8 +457,12 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 - **unavailable-is-not-gone**: a disconnected root or an incomplete traversal never marks a copy deleted.
 - **intake-matches-bytes**: a file mutated during acquisition ends as a complete acquisition whose stored bytes match its digest, or as a visible retry or failure.
 - **withdrawal-keeps-history**: untag, uncollect and undo leave the withdrawn record live and inspectable, the view excludes it, and withdrawing the withdrawal restores it.
+- **currency.shared**: the library's current records equal the common `authored` currency function on generated histories, read back from storage one record at a time, including withdrawal of a middle revision (R1←R2←R3, withdraw R2 → R3 current).
+- **projection.equals-function**: the `library_shown` projection equals the precedence applied to every live curation record, after any generated sequence of writes, withdrawals, archives, restores and replays.
+- **order.dense**: 10,000 successive insertions between the same two neighbours yield distinct, ordered positions.
+- **tag.any-label**: any label with text, including one of punctuation (`-`, `!x`), is an ordinary tag.
 - **no-cross-material-replacement**: the library's views are the same whether or not a newer reading in another material would replace an older one, because no library kind depends on it.
-- **conflict-on-same-revision**: two concurrent replacements from one revision, including empty and withdraw operations, give one success and one structured conflict naming the current revision.
+- **conflict-on-same-revision**: two replacements from one revision, including empty and withdraw operations, give one success and one refusal naming the current revision; a plan admitted after another curation write committed under it is refused.
 - **atomic-actions**: a failed part of tag-plus-collect, or of any multi-record action, leaves none of its records.
 - **undo-refuses-dependents**: undo after a later dependent record reports a conflict and changes nothing.
 - **computed-authorship**: no request can set its author; by default an agent's value ranks below the operator's and above an import, two agents disagreeing is a conflict shown with both supporters, and reads list every supporter.
@@ -444,6 +475,7 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 - **exact-use**: opening revision A, changing the item to B and exiting records a view of A, played from A's bytes.
 - **unknown-is-not-zero**: an unknown view duration, rating or dimension is never shown or summed as 0.
 - **rankings**: A > B > C, cycles, disconnected groups, unbeaten items, two uncompared items and zero comparisons each give a deterministic result with fit status and support; the judge set changes the result only through its comparisons, and rebuilding from the same comparisons gives the same ranking.
+- **rank.judge-isolation**: adding an agent's comparisons changes the operator's ranking not at all.
 - **derived-ratings-attributed**: a rating produced from a ranking is attributed to its method and version, never to the operator.
 - **import-preserves-unknown-fields**: fields an importer does not interpret survive in the stored sidecar bytes, and reimporting the same record changes nothing.
 - **privacy-parity**: with one rule configured, item reads, search, previews, thumbnails and handoffs apply it identically; with none, nothing is hidden.

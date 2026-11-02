@@ -66,6 +66,7 @@ pub(crate) const NAMED: &[&str] = &[
     "source_declarations",
     "model_effect_accounting",
     "lifecycle",
+    "library_curation",
 ];
 
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
@@ -126,6 +127,7 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps.push(crate::source_declarations::statements());
     steps.push(crate::model_calls::statements());
     steps.push(crate::lifecycle::statements());
+    steps.push(crate::library_curation::statements());
     steps
 }
 

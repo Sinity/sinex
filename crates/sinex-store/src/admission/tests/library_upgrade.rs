@@ -1,26 +1,51 @@
 use super::*;
-use sinex_model::event_types::library::{Assignment, Level, Target};
+use sinex_model::event_types::library::{Curation, CurationKind, Target, ValueOrigin};
 
 #[devkit::test]
 async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_decided(
     db: devkit::pg::TestDatabase,
 ) {
+    refused_from(db, 5, "request-created item IDs").await;
+}
+
+/// The curation record and the changed library kinds are never read from
+/// records written before them.
+#[devkit::test]
+async fn the_curation_upgrade_refuses_a_database_holding_library_records(
+    db: devkit::pg::TestDatabase,
+) {
+    refused_from(
+        db,
+        sinex_schema::VERSION - 1,
+        "library records predate the curation record",
+    )
+    .await;
+}
+
+async fn refused_from(db: devkit::pg::TestDatabase, previous_version: i32, message: &str) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let assignment = Assignment {
-        assignment: "assignment".into(),
-        target: Target {
+    let assignment = Curation {
+        root: "record".into(),
+        rev: "record".into(),
+        revises: vec![],
+        withdraws: vec![],
+        kind: CurationKind::Tag,
+        target: Some(Target {
             item: "existing-item".into(),
             ..Default::default()
-        },
-        field: "tag".into(),
-        value: Some("synthetic".into()),
-        level: Level::Override,
-        source_ref: None,
-        by: "operator".into(),
+        }),
+        key: Some("synthetic".into()),
+        value: None,
+        origin: ValueOrigin::Authored,
+        cites: None,
+        author: "operator".into(),
+        via: "api".into(),
         at: Timestamp::from_unix_secs(1).unwrap(),
-        withdrawn_at: None,
+        request: "record".into(),
+        request_digest: String::new(),
+        slots: vec![],
     };
     let event = Event::build(
         &assignment,
@@ -38,7 +63,6 @@ async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_d
     )
     .unwrap();
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
-    let previous_version = 5;
     sqlx::query("UPDATE sinex_schema.applied SET version = $1")
         .bind(previous_version)
         .execute(&mut conn)
@@ -46,10 +70,7 @@ async fn a_populated_library_upgrade_keeps_every_record_until_id_continuity_is_d
         .unwrap();
     let before = sinex_schema::catalog(&mut conn).await.unwrap();
     let error = sinex_schema::apply(&mut conn).await.unwrap_err();
-    assert!(
-        error.to_string().contains("request-created item IDs"),
-        "{error}"
-    );
+    assert!(error.to_string().contains(message), "{error}");
     assert_eq!(sinex_schema::catalog(&mut conn).await.unwrap(), before);
     let payload: serde_json::Value =
         sqlx::query_scalar("SELECT payload FROM core.events WHERE id = $1")

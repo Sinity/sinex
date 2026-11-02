@@ -565,6 +565,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
     }
     tables.push(crate::source_declarations::TABLE.into());
     tables.extend(crate::model_calls::tables());
+    tables.extend(crate::library_curation::tables());
     tables.extend(crate::vectors::tables());
     tables.extend(crate::privacy_epoch::tables());
     tables.extend(crate::owner_protocol::statements());

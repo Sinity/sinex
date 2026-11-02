@@ -11,10 +11,10 @@
 //! not moved, gets a vanished line.
 //!
 //! **Requests** (`library.request`): what the operator or an agent writes to
-//! the library (previews, assignments, collections, ratings, views), stored as
-//! the request's own JSON lines and read back by the request parser. The
-//! parser takes the author and time from the material's manifest, which the
-//! daemon fills from the authenticated caller, never from the lines.
+//! the library (previews, curation records, views), stored as the request's
+//! own JSON lines and read back by the request parser. The parser takes the
+//! author, channel and time from the material's manifest, which the daemon
+//! fills from the authenticated caller, never from the lines.
 use serde_json::json;
 use sinex_model::Class;
 use sinex_source_core::registry::{Driver, SourceSpec};
@@ -24,7 +24,9 @@ mod requests;
 mod scan;
 
 pub use files::{Digests, digest, dimensions};
-pub use requests::{RequestParser, RequestPayload, request_material, request_source};
+pub use requests::{
+    RequestParser, RequestPayload, RequestWriter, request_material, request_source,
+};
 pub use scan::{Known, LibraryReader, LibraryScan, ScanParser, ScanState, scan_source, skipped};
 
 pub const SCAN: SourceSpec = SourceSpec {

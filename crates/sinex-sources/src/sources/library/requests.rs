@@ -2,9 +2,7 @@
 use super::REQUEST;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sinex_model::event_types::library::{
-    Assignment, Collection, Comparison, Dismissal, Entry, LibraryRecord, Preview, Rating, View,
-};
+use sinex_model::event_types::library::{Curation, LibraryRecord, Rendition, View};
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
@@ -13,19 +11,15 @@ use sinex_source_core::drivers::{Acquired, NewMaterial};
 use sinex_source_core::registry::DeclaredSource;
 use sinex_source_core::{Parser, RecordError};
 
-/// One request line: a record tagged with its kind. `by` and `at` in the line
-/// are ignored; the parser fills them from the manifest.
+/// One request line: a record tagged with its kind. Who wrote it, the
+/// channel and the time in the line are ignored; the parser fills them from
+/// the manifest.
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
 enum Line {
-    Preview(Preview),
-    Assignment(Assignment),
-    Collection(Collection),
-    Entry(Entry),
-    Rating(Rating),
-    Comparison(Comparison),
+    Rendition(Rendition),
+    Curation(Curation),
     View(View),
-    Dismissal(Dismissal),
 }
 
 /// The bytes of a request: one JSON line per record, in order. Admission
@@ -35,14 +29,9 @@ fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>) {
     let mut spans = Vec::new();
     for r in records {
         let line = match r.clone() {
-            LibraryRecord::Preview(x) => Line::Preview(x),
-            LibraryRecord::Assignment(x) => Line::Assignment(x),
-            LibraryRecord::Collection(x) => Line::Collection(x),
-            LibraryRecord::Entry(x) => Line::Entry(x),
-            LibraryRecord::Rating(x) => Line::Rating(x),
-            LibraryRecord::Comparison(x) => Line::Comparison(x),
+            LibraryRecord::Rendition(x) => Line::Rendition(x),
+            LibraryRecord::Curation(x) => Line::Curation(x),
             LibraryRecord::View(x) => Line::View(x),
-            LibraryRecord::Dismissal(x) => Line::Dismissal(x),
         };
         let start = bytes.len();
         serde_json::to_writer(&mut bytes, &line).expect("library records serialize");
@@ -52,13 +41,20 @@ fn request_bytes(records: &[LibraryRecord]) -> (Vec<u8>, Vec<(usize, usize)>) {
     (bytes, spans)
 }
 
-/// The manifest of a request material: who wrote it and when.
-fn request_manifest(actor: &str, host: &str, at: Timestamp, action: &str) -> sinex_model::Manifest {
+/// The manifest of a request material: who wrote it, through which
+/// channel, and when.
+fn request_manifest(
+    writer: &RequestWriter<'_>,
+    host: &str,
+    at: Timestamp,
+    action: &str,
+) -> sinex_model::Manifest {
     sinex_model::Manifest::from_json(json!({
         "path": "library",
         "host": host,
         "media_type": "application/x-sinex-library-request",
-        "actor": actor,
+        "actor": writer.author,
+        "via": writer.via,
         "action": action,
         "written_at_ns": at.unix_ns().to_string(),
         "read_at_ns": i64::try_from(at.unix_ns()).unwrap_or(i64::MAX),
@@ -115,24 +111,39 @@ impl Parser for RequestParser {
             .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
             .ok_or_else(|| RecordError::new("library request manifest has no time"))?;
         let mut object = record.clone();
-        object.insert("by".into(), Value::String(by.clone()));
-        if !matches!(object.get("record").and_then(Value::as_str), Some("view")) {
-            object.insert(
-                "at".into(),
-                serde_json::to_value(at).expect("time serializes"),
-            );
+        match object.get("record").and_then(Value::as_str) {
+            Some("curation") => {
+                let via = context
+                    .manifest
+                    .details
+                    .get("via")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| RecordError::new("library request manifest has no channel"))?
+                    .to_owned();
+                object.insert("author".into(), Value::String(by));
+                object.insert("via".into(), Value::String(via));
+                object.insert(
+                    "at".into(),
+                    serde_json::to_value(at).expect("time serializes"),
+                );
+            }
+            Some("view") => {
+                object.insert("by".into(), Value::String(by));
+            }
+            _ => {
+                object.insert("by".into(), Value::String(by));
+                object.insert(
+                    "at".into(),
+                    serde_json::to_value(at).expect("time serializes"),
+                );
+            }
         }
         let line: Line = serde_json::from_value(Value::Object(object))
             .map_err(|e| RecordError::new(format!("not a library record: {e}")))?;
         let record = match line {
-            Line::Preview(x) => LibraryRecord::Preview(x),
-            Line::Assignment(x) => LibraryRecord::Assignment(x),
-            Line::Collection(x) => LibraryRecord::Collection(x),
-            Line::Entry(x) => LibraryRecord::Entry(x),
-            Line::Rating(x) => LibraryRecord::Rating(x),
-            Line::Comparison(x) => LibraryRecord::Comparison(x),
+            Line::Rendition(x) => LibraryRecord::Rendition(x),
+            Line::Curation(x) => LibraryRecord::Curation(x),
             Line::View(x) => LibraryRecord::View(x),
-            Line::Dismissal(x) => LibraryRecord::Dismissal(x),
         };
         let citation = match context.manifest.details.get("owned_blobs") {
             None => None,
@@ -155,7 +166,7 @@ impl Parser for RequestParser {
                     ));
                 }
                 match &record {
-                    LibraryRecord::Preview(rendition) => Some(
+                    LibraryRecord::Rendition(rendition) => Some(
                         facts
                             .into_iter()
                             .find(|fact| fact.blob == rendition.content)
@@ -178,17 +189,24 @@ pub fn request_source() -> DeclaredSource<RequestParser> {
     }
 }
 
+/// Who writes a request, computed by the daemon from the caller.
+#[derive(Clone, Copy, Debug)]
+pub struct RequestWriter<'a> {
+    pub author: &'a str,
+    pub via: &'a str,
+}
+
 /// A request as a material ready for `drivers::batches`: the request lines
-/// and their manifest.
+/// and their manifest, written at `at` (the time its records carry).
 pub fn request_material(
     records: &[LibraryRecord],
-    actor: &str,
+    writer: RequestWriter<'_>,
     host: &str,
     action: &str,
+    at: Timestamp,
 ) -> Acquired {
-    let at = Timestamp::now();
     let (bytes, spans) = request_bytes(records);
-    let manifest = request_manifest(actor, host, at, action);
+    let manifest = request_manifest(&writer, host, at, action);
     let order = i64::try_from(at.unix_ns()).unwrap_or(i64::MAX);
     Acquired {
         input: InputRef {

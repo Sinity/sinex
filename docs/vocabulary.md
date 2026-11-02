@@ -175,7 +175,10 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **move candidates**: missing and new equal-byte paths whose correspondence is ambiguous; curation stays separate.
 - **scan record**: a file's changed facts or removal in a captured scan part; part order is independent of wall-clock order.
 - **item revision**: an item's content hash; returning to the same bytes reuses the revision while preserving the transition history.
-- **preview evidence**: the stored result of rendering a revision, from which the library derives a rendition.
+- **preview**: a rendition with role `preview`, written by a preview request that cites the rendered bytes; one kind (`library.rendition`) holds originals and everything made from them.
+- **curation record**: one revision of an authored library statement (tag, property, note, rating, comparison, collection entry, collection, scale, withdrawal), current by the descendant rule shared with Polylogue's assertions.
+- **origin**: whether a curated value is authored, imported or proposed; with the author it decides the shown value.
+- **order key**: a base-62 fraction placing a collection entry; a key exists between any two.
 
 ## Development tooling
 
