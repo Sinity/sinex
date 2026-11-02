@@ -83,8 +83,11 @@ pub(super) async fn read_shared(
         .map(|stored| (stored.blob.clone(), stored.length));
     let mut routes = Vec::new();
     let mut slots = Vec::new();
-    let mut totals: Vec<Result<Totals, String>> =
-        pass.indices.iter().map(|_| Ok(Totals::default())).collect();
+    let mut totals: Vec<Result<Totals, String>> = pass
+        .indices
+        .iter()
+        .map(|&index| Ok(Totals::committed(readers[index].committed.clone())))
+        .collect();
     for (slot, &index) in pass.indices.iter().enumerate() {
         let route = async {
             let b = &mut readers[index];

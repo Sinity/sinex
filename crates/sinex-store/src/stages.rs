@@ -35,14 +35,17 @@ pub async fn begin(
     Ok(())
 }
 
-/// Save the inventory as it stands while the stage runs.
+/// Save the inventory as it stands while the stage runs. The bindings'
+/// checkpoints, which the writer saves with their batches, are kept.
 pub async fn progress(
     conn: &mut PgConnection,
     operation: OperationId,
     inventory: &Value,
 ) -> Result<()> {
     let updated = sqlx::query!(
-        "UPDATE core.operations SET progress = $2 WHERE id = $1 AND kind = $3 AND result IS NULL",
+        r#"UPDATE core.operations
+           SET progress = $2 || jsonb_build_object('checkpoints', COALESCE(progress->'checkpoints', '{}'::jsonb))
+           WHERE id = $1 AND kind = $3 AND result IS NULL"#,
         operation.0,
         inventory,
         KIND,
@@ -52,6 +55,58 @@ pub async fn progress(
     if updated.rows_affected() != 1 {
         return Err(Error::Invalid(format!(
             "operation {} is not a running stage",
+            operation.0
+        )));
+    }
+    Ok(())
+}
+
+/// Save what one staged binding's committed batches account for under
+/// `progress.checkpoints.<binding>`, in the transaction that commits the
+/// batch and its cursor.
+pub async fn checkpoint(
+    conn: &mut PgConnection,
+    operation: OperationId,
+    binding: &str,
+    checkpoint: &Value,
+) -> Result<()> {
+    let updated = sqlx::query!(
+        r#"UPDATE core.operations
+           SET progress = jsonb_set(
+             progress || jsonb_build_object('checkpoints', COALESCE(progress->'checkpoints', '{}'::jsonb)),
+             ARRAY['checkpoints', $2::text], $3)
+           WHERE id = $1 AND kind = $4 AND result IS NULL"#,
+        operation.0,
+        binding,
+        checkpoint,
+        KIND,
+    )
+    .execute(conn)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(Error::Invalid(format!(
+            "operation {} is not a running stage",
+            operation.0
+        )));
+    }
+    Ok(())
+}
+
+/// Open again a stage that stopped early, to be resumed: it has no result
+/// until it ends again. A stage that ended ok is not reopened.
+pub async fn reopen(conn: &mut PgConnection, operation: OperationId) -> Result<()> {
+    let updated = sqlx::query!(
+        r#"UPDATE core.operations SET result = NULL, refusals = '[]'::jsonb, end_seq = NULL
+           WHERE id = $1 AND kind = $2 AND (result IS NULL OR result <> $3)"#,
+        operation.0,
+        KIND,
+        OperationResult::Ok.as_db(),
+    )
+    .execute(conn)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(Error::Invalid(format!(
+            "operation {} is not a stage that can be resumed",
             operation.0
         )));
     }
@@ -69,7 +124,8 @@ pub async fn end(
     refusals: &Value,
 ) -> Result<()> {
     let updated = sqlx::query!(
-        r#"UPDATE core.operations SET result = $2, counts = $3, progress = $4, refusals = $5,
+        r#"UPDATE core.operations SET result = $2, counts = $3, refusals = $5,
+             progress = $4 || jsonb_build_object('checkpoints', COALESCE(progress->'checkpoints', '{}'::jsonb)),
              end_seq = (SELECT value FROM core.counters WHERE name = 'commit_seq')
            WHERE id = $1 AND kind = $6"#,
         operation.0,

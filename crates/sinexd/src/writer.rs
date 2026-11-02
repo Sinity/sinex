@@ -62,7 +62,7 @@ enum WriterJob {
     Admit(Batch),
     Signals(Batch, Box<sinex_store::signals::Commit>),
     Checked(Batch, AdmissionCheck),
-    Source(Batch, AdmissionCheck),
+    Source(Batch, AdmissionCheck, Option<StageCheckpoint>),
     Replay(Box<ReplaySequence>),
     Lifecycle {
         operation: Box<lifecycle::Operation>,
@@ -82,6 +82,24 @@ enum WriterJob {
     Stage(StageWrite),
 }
 
+/// A staged binding's accounting once a batch commits, short of admission's
+/// decisions for that batch: the writer adds them and saves it under the
+/// batch's binding in the transaction that saves its cursor, so a
+/// resumed stage's accounting includes exactly what was committed.
+#[derive(Clone, Debug)]
+pub(crate) struct StageCheckpoint {
+    pub operation: OperationId,
+    pub accounting: sinex_model::Accounting,
+}
+
+/// What a commit saves beside its batch.
+#[derive(Clone, Copy)]
+enum Saved<'a> {
+    Nothing,
+    Signals(&'a sinex_store::signals::Commit),
+    Stage(&'a StageCheckpoint),
+}
+
 /// What a stage operation writes besides its batches: its record in the
 /// operations log, and the files it stores with no parser.
 pub(crate) enum StageWrite {
@@ -94,6 +112,10 @@ pub(crate) enum StageWrite {
     Progress {
         operation: OperationId,
         inventory: Value,
+    },
+    /// A stage that stopped early is being resumed: it has no result again.
+    Reopen {
+        operation: OperationId,
     },
     End {
         operation: OperationId,
@@ -161,8 +183,12 @@ impl WriterHandle {
         priority: Priority,
         batch: Batch,
         check: AdmissionCheck,
+        stage: Option<StageCheckpoint>,
     ) -> Result<Outcome, WriteError> {
-        match self.send(priority, WriterJob::Source(batch, check)).await? {
+        match self
+            .send(priority, WriterJob::Source(batch, check, stage))
+            .await?
+        {
             Done::Admitted(outcome) => Ok(outcome),
             _ => unreachable!("source admission returns its outcome"),
         }
@@ -392,7 +418,7 @@ pub(crate) async fn run_notifying(
             WriterJob::Admit(batch)
             | WriterJob::Signals(batch, _)
             | WriterJob::Checked(batch, _)
-            | WriterJob::Source(batch, _) => Some(batch.event_count()),
+            | WriterJob::Source(batch, _, _) => Some(batch.event_count()),
             _ => None,
         };
         let service_started = std::time::Instant::now();
@@ -414,7 +440,7 @@ pub(crate) async fn run_notifying(
                 store,
                 &|| Ok(()),
                 false,
-                Some(&checkpoint),
+                Saved::Signals(&checkpoint),
             )
             .await
             .map(Done::Admitted),
@@ -428,11 +454,17 @@ pub(crate) async fn run_notifying(
             )
             .await
             .map(Done::Admitted),
-            WriterJob::Source(batch, check) => {
-                admit_checked(&mut connection, &batch, keys.as_ref(), store, &*check, true)
-                    .await
-                    .map(Done::Admitted)
-            }
+            WriterJob::Source(batch, check, stage) => admit_with_checkpoint(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &*check,
+                true,
+                stage.as_ref().map_or(Saved::Nothing, Saved::Stage),
+            )
+            .await
+            .map(Done::Admitted),
             WriterJob::Replay(mut sequence) => {
                 replay_sequence(&mut connection, &mut sequence, keys.as_ref())
                     .await
@@ -524,7 +556,16 @@ async fn admit_checked(
     check: &(dyn Fn() -> Result<(), String> + Send + Sync),
     record_refusals: bool,
 ) -> Result<Outcome, WriteError> {
-    admit_with_checkpoint(connection, batch, keys, store, check, record_refusals, None).await
+    admit_with_checkpoint(
+        connection,
+        batch,
+        keys,
+        store,
+        check,
+        record_refusals,
+        Saved::Nothing,
+    )
+    .await
 }
 
 async fn admit_with_checkpoint(
@@ -534,8 +575,16 @@ async fn admit_with_checkpoint(
     store: Option<&Blobs>,
     check: &(dyn Fn() -> Result<(), String> + Send + Sync),
     record_refusals: bool,
-    checkpoint: Option<&sinex_store::signals::Commit>,
+    saved: Saved<'_>,
 ) -> Result<Outcome, WriteError> {
+    let checkpoint = match saved {
+        Saved::Signals(checkpoint) => Some(checkpoint),
+        Saved::Nothing | Saved::Stage(_) => None,
+    };
+    let stage = match saved {
+        Saved::Stage(stage) => Some(stage),
+        Saved::Nothing | Saved::Signals(_) => None,
+    };
     let unavailable = |e: &dyn std::fmt::Display| WriteError::Unavailable(e.to_string());
     let checks_started = std::time::Instant::now();
     check().map_err(WriteError::Refused)?;
@@ -704,6 +753,12 @@ async fn admit_with_checkpoint(
                     return Err(store_error(error));
                 }
             }
+            if let Some(stage) = stage
+                && let Err(error) = save_stage(tx.connection(), batch, stage, &outcome).await
+            {
+                tx.rollback().await.map_err(store_error)?;
+                return Err(store_error(error));
+            }
             let started = std::time::Instant::now();
             tx.commit().await.map_err(store_error)?;
             outcome.timings.insert("commit", started.elapsed());
@@ -723,6 +778,11 @@ async fn admit_with_checkpoint(
                 let mut tx = connection.begin().await.map_err(store_error)?;
                 let outcome = tx.admit(&failed, keys).await.map_err(store_error)?;
                 check().map_err(WriteError::Refused)?;
+                if let Some(stage) = stage {
+                    save_stage(tx.connection(), &failed, stage, &outcome)
+                        .await
+                        .map_err(store_error)?;
+                }
                 tx.commit().await.map_err(store_error)?;
                 return Ok(outcome);
             }
@@ -925,6 +985,30 @@ async fn record_replay(
     Ok(Outcome::default())
 }
 
+/// Save a staged binding's accounting, with admission's decisions for the
+/// batch. The cursor stays in `raw.positions`, saved by the same transaction.
+async fn save_stage(
+    conn: &mut PgConnection,
+    batch: &Batch,
+    stage: &StageCheckpoint,
+    outcome: &Outcome,
+) -> Result<(), sinex_store::Error> {
+    let sinex_model::BatchKind::Source(progress) = &batch.kind else {
+        return Err(sinex_store::Error::Invalid(
+            "a stage checkpoint comes with a source batch".into(),
+        ));
+    };
+    let mut accounting = stage.accounting.clone();
+    crate::stage::decided(&mut accounting, outcome);
+    sinex_store::stages::checkpoint(
+        conn,
+        stage.operation,
+        &progress.binding,
+        &serde_json::json!({ "accounting": accounting }),
+    )
+    .await
+}
+
 async fn stage_write(
     connection: &mut AdmissionContext,
     write: StageWrite,
@@ -943,6 +1027,7 @@ async fn stage_write(
             operation,
             inventory,
         } => stages::progress(tx.connection(), *operation, inventory).await,
+        StageWrite::Reopen { operation } => stages::reopen(tx.connection(), *operation).await,
         StageWrite::End {
             operation,
             result,

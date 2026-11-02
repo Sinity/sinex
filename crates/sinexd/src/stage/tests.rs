@@ -490,6 +490,148 @@ async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
     ctx.close().await.unwrap();
 }
 
+/// law: sx.stage.idempotent-progress
+/// law: sx.acct.identity
+#[devkit::test]
+async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
+    db: devkit::pg::TestDatabase,
+) {
+    const SOURCE: &str = "terminal.zsh-history";
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store");
+    // A small file gives the readings one record makes.
+    let sample = dir.path().join("sample_history");
+    std::fs::write(
+        &sample,
+        ": 1500000000:0;sample one\n: 1500000001:0;sample two\n",
+    )
+    .unwrap();
+    let small = accounting(
+        &files(&stage(&db, &store, vec![detected(&sample)]).await)[0],
+        SOURCE,
+    );
+    assert_eq!(small.framed, 2);
+    assert_eq!(small.readings % 2, 0);
+    let per_record = small.readings / 2;
+    assert!(per_record > 0);
+
+    // One material of several batches (10,000 records each).
+    let records = 50_000u64;
+    let history = dir.path().join("history");
+    {
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&history).unwrap());
+        for i in 0..records {
+            writeln!(file, ": {}:0;synthetic command {i}", 1_600_000_000 + i).unwrap();
+        }
+        file.flush().unwrap();
+    }
+    let request = request(vec![detected(&history)]);
+    let operation = OperationId::new();
+    let mut ctx =
+        crate::reader_context::ReaderContext::open(&db.url(None), &store, time_settings())
+            .await
+            .unwrap();
+    let mut watcher = <PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+
+    // Stop the stage once a batch has committed, as the daemon's shutdown
+    // does.
+    let (stopping, stop) = watch::channel(false);
+    let (begun, _) = tokio::sync::oneshot::channel();
+    let mut first = Staging {
+        read_conn: &mut ctx.read_conn,
+        blobs: &ctx.blobs,
+        writer: &ctx.writer,
+        access: Access::default(),
+        stop,
+    };
+    let staging = first.run(
+        operation,
+        "operator",
+        &request,
+        request.plan().unwrap(),
+        begun,
+    );
+    let interrupt = async {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "no batch of the stage committed within two minutes"
+            );
+            let committed: Option<bool> = sqlx::query_scalar(
+                "SELECT progress ? 'checkpoints' FROM core.operations WHERE id = $1",
+            )
+            .bind(operation.0)
+            .fetch_optional(&mut watcher)
+            .await
+            .unwrap();
+            if committed == Some(true) {
+                stopping.send(true).unwrap();
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    };
+    let (interrupted, ()) = tokio::join!(staging, interrupt);
+    let interrupted = interrupted.unwrap();
+    drop(first);
+    assert_eq!(interrupted.result, OperationResult::StoppedEarly);
+    let saved = sinex_store::stages::show(&mut watcher, operation)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.result, Some(OperationResult::StoppedEarly));
+    let checkpoints = saved.inventory["checkpoints"].as_object().unwrap();
+    assert_eq!(checkpoints.len(), 1, "{checkpoints:?}");
+    let before: Accounting =
+        serde_json::from_value(checkpoints.values().next().unwrap()["accounting"].clone()).unwrap();
+    // The checkpoint is part of the file, and balances on its own.
+    assert!(before.framed > 0 && before.framed < records, "{before:?}");
+    before.balanced().unwrap();
+
+    let (_running, stop) = watch::channel(false);
+    let (begun, _) = tokio::sync::oneshot::channel();
+    let resumed = Staging {
+        read_conn: &mut ctx.read_conn,
+        blobs: &ctx.blobs,
+        writer: &ctx.writer,
+        access: Access::default(),
+        stop,
+    }
+    .resume(
+        operation,
+        &request,
+        request.plan().unwrap(),
+        &saved.inventory,
+        begun,
+    )
+    .await
+    .unwrap();
+    assert!(resumed.failures.is_empty(), "{:?}", resumed.failures);
+    assert_eq!(resumed.result, OperationResult::Ok);
+    // Every record is accounted for once, before and after the interruption.
+    let whole = accounting(&files(&resumed)[0], SOURCE);
+    whole.balanced().unwrap();
+    assert_eq!(
+        (whole.framed, whole.read, whole.headers, whole.failures),
+        (records, records, 0, 0),
+        "{whole:?}"
+    );
+    assert_eq!(whole.readings, records * per_record, "{whole:?}");
+    assert_eq!((whole.new, whole.same), (whole.readings, 0), "{whole:?}");
+    let total: Accounting =
+        serde_json::from_value(resumed.report["counts"]["accounting"].clone()).unwrap();
+    assert_eq!(total, whole);
+    let ended = sinex_store::stages::show(&mut watcher, operation)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ended.result, Some(OperationResult::Ok));
+    ctx.close().await.unwrap();
+}
+
 async fn material_count(conn: &mut PgConnection) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM raw.materials")
         .fetch_one(conn)

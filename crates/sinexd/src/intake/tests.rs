@@ -174,7 +174,7 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
         acquisition("first"),
         Value::Null,
         &mut Totals::default(),
-        |batch, check| {
+        |batch, check, _| {
             // Cancellation after the caller's final check must still refuse admission.
             stopped.store(true, Ordering::SeqCst);
             let writer = &ctx.writer;
@@ -307,35 +307,40 @@ async fn overlap(fail_first: bool) {
     let mut anchors = Vec::new();
     let mut totals = Totals::default();
     let result = intake
-        .submit_using(three_records(), Value::Null, &mut totals, |batch, check| {
-            submitted += 1;
-            let first = submitted == 1;
-            let second = second.clone();
-            let parsed = parsed.clone();
-            let location = match &batch.records[0] {
-                RecordOutcome::Events { location, .. } => location.unwrap(),
-                RecordOutcome::Failure { .. } => panic!("synthetic records must parse"),
-            };
-            anchors.push(location.anchor);
-            async move {
-                check()?;
-                if first {
-                    // The admission answer is held until the blocking parser produces batch two.
-                    tokio::time::timeout(std::time::Duration::from_secs(5), second.notified())
-                        .await
-                        .unwrap();
-                    assert_eq!(parsed.load(Ordering::SeqCst), 2);
-                    if fail_first {
-                        return Err("first commit failed".into());
+        .submit_using(
+            three_records(),
+            Value::Null,
+            &mut totals,
+            |batch, check, _| {
+                submitted += 1;
+                let first = submitted == 1;
+                let second = second.clone();
+                let parsed = parsed.clone();
+                let location = match &batch.records[0] {
+                    RecordOutcome::Events { location, .. } => location.unwrap(),
+                    RecordOutcome::Failure { .. } => panic!("synthetic records must parse"),
+                };
+                anchors.push(location.anchor);
+                async move {
+                    check()?;
+                    if first {
+                        // The admission answer is held until the blocking parser produces batch two.
+                        tokio::time::timeout(std::time::Duration::from_secs(5), second.notified())
+                            .await
+                            .unwrap();
+                        assert_eq!(parsed.load(Ordering::SeqCst), 2);
+                        if fail_first {
+                            return Err("first commit failed".into());
+                        }
                     }
+                    check()?;
+                    Ok(Outcome {
+                        admitted: batch.event_count(),
+                        ..Outcome::default()
+                    })
                 }
-                check()?;
-                Ok(Outcome {
-                    admitted: batch.event_count(),
-                    ..Outcome::default()
-                })
-            }
-        })
+            },
+        )
         .await;
     assert!(
         closed.load(Ordering::SeqCst),
@@ -494,7 +499,7 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
                 three_records(),
                 Value::Null,
                 &mut Totals::default(),
-                |batch, check| {
+                |batch, check, _| {
                     let writer = worker_writer.clone();
                     let queued = worker_queued.clone();
                     let first = std::mem::take(&mut first);

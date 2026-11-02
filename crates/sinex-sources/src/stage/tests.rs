@@ -409,3 +409,81 @@ fn extended_history_lines_and_nothing_else() {
     assert!(!zsh::extended_line(b"#1600000000"));
     assert!(!zsh::extended_line(b"- cmd: ls"));
 }
+
+/// Bytes this thread has written through `write` calls, from
+/// `/proc/thread-self/io`: a temporary file the listing spilled to would count.
+fn bytes_written() -> u64 {
+    let io = std::fs::read_to_string("/proc/thread-self/io").unwrap();
+    io.lines()
+        .find_map(|line| line.strip_prefix("wchar: "))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// A gzip-compressed tar (Takeout's `.tgz` parts) is inventoried by
+/// streaming its headers through the decoder and skipping each member's
+/// data: nothing is written while it is listed, even with a member far
+/// larger than the archive, and members after it are reached.
+///
+/// law: sx.stage.inventory-total
+#[devkit::test]
+fn a_tgz_is_inventoried_without_writing_its_members_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("takeout-20300101T000000Z-001.tgz");
+    let large: u64 = 256 << 20;
+    {
+        let file = std::fs::File::create(&path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        let mut builder = tar::Builder::new(encoder);
+        let mut append = |name: &str, size: u64, data: &mut dyn std::io::Read| {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(size);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, name, data).unwrap();
+        };
+        append(
+            "Takeout/Drive/Large.bin",
+            large,
+            &mut std::io::Read::take(std::io::repeat(0), large),
+        );
+        let note = br#"{"title":"after the large member"}"#;
+        append("Takeout/Keep/Note.json", note.len() as u64, &mut &note[..]);
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+    let compressed = std::fs::metadata(&path).unwrap().len();
+    assert!(compressed < large / 64, "{compressed} bytes compressed");
+
+    let before = bytes_written();
+    let plan = plan(sources::formats(), &[item(&path)], &settings()).unwrap();
+    let written = bytes_written() - before;
+    assert!(
+        written < 1 << 20,
+        "listing wrote {written} bytes for a {large}-byte member"
+    );
+
+    let file = &plan.files[0];
+    assert_eq!(file.container, Some(Container::TarGzip));
+    let names: Vec<(&str, Option<u64>)> = file
+        .members
+        .iter()
+        .map(|m| (m.name.as_str(), m.size))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("Takeout/Drive/Large.bin", Some(large)),
+            ("Takeout/Keep/Note.json", Some(34)),
+        ]
+    );
+    assert_eq!(
+        disposition(file, "Takeout/Keep/Note.json"),
+        &read_by(google_takeout::keep::SPEC.name)
+    );
+    assert_eq!(
+        disposition(file, "Takeout/Drive/Large.bin"),
+        &not_interpreted()
+    );
+}

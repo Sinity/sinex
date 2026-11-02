@@ -378,13 +378,8 @@ impl Api {
             Err(e) => return refused(e.to_string()),
         };
         drop(conn);
-        if let Some(result) = stored.result {
-            use sinex_model::DbCheck;
-            return refused(format!(
-                "stage {} already ended {}",
-                operation.0,
-                result.as_db()
-            ));
+        if stored.result == Some(sinex_model::lifecycle::OperationResult::Ok) {
+            return refused(format!("stage {} already ended ok", operation.0));
         }
         match crate::stage::Request::from_scope(&stored.scope) {
             Ok(request) => {

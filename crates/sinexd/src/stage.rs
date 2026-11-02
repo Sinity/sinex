@@ -11,7 +11,9 @@
 //! unchanged path again reads nothing new, and a newer export is a new path.
 //! An interrupted stage is read again from its recorded plan (`resume`): the
 //! files it finished keep their accounting, files it stored are not stored
-//! again, and every binding continues from its committed cursor.
+//! again, and every binding continues from its committed cursor with the
+//! accounting committed with it ([`Committed`]), so the stage's accounting
+//! covers everything read before and after the interruption.
 use crate::material_access::{Access, Sink};
 use crate::writer::{self, StageWrite, WriterHandle};
 use serde_json::{Value, json};
@@ -214,12 +216,14 @@ struct Product {
     accounting: Accounting,
 }
 
-/// A stage's progress: the plan, each file's products, and the material a
-/// file with no parser was stored as.
+/// A stage's progress: the plan, each file's products, the material a file
+/// with no parser was stored as, and what each binding's committed batches
+/// accounted for before the stage was interrupted.
 struct Progress {
     plan: StagePlan,
     products: Vec<BTreeMap<String, Product>>,
     stored: Vec<Option<MaterialId>>,
+    checkpoints: BTreeMap<String, Accounting>,
 }
 
 impl Progress {
@@ -239,16 +243,25 @@ impl Progress {
             plan,
             products,
             stored,
+            checkpoints: BTreeMap::new(),
         }
     }
 
     /// The progress a stage saved before it was interrupted: what each
-    /// file's products read, and which files it stored. A file whose
-    /// products all read is not read again; a product read in part starts
-    /// over from its committed cursor, and its accounting then covers what
-    /// is read after the resume.
+    /// file's products read, which files it stored, and each binding's
+    /// checkpoint. A file whose products all read is not read again; a
+    /// product read in part continues from its bindings' committed cursors,
+    /// starting from the accounting committed with them.
     fn resumed(plan: StagePlan, saved: &Value) -> Result<Self, String> {
         let mut progress = Self::new(plan);
+        if let Some(checkpoints) = saved["checkpoints"].as_object() {
+            for (binding, checkpoint) in checkpoints {
+                let accounting: Accounting =
+                    serde_json::from_value(checkpoint["accounting"].clone())
+                        .map_err(|e| format!("saved stage checkpoint of {binding}: {e}"))?;
+                progress.checkpoints.insert(binding.clone(), accounting);
+            }
+        }
         let saved_files = saved["files"].as_array().cloned().unwrap_or_default();
         for (index, file) in progress.plan.files.iter().enumerate() {
             let Some(before) = saved_files.iter().find(|f| f["path"] == json!(file.path)) else {
@@ -268,6 +281,17 @@ impl Progress {
                     && let Some(current) = progress.products[index].get_mut(&source)
                 {
                     *current = product;
+                }
+            }
+        }
+        // A product read in part starts from what its bindings committed.
+        for (file, products) in progress.plan.files.iter().zip(&mut progress.products) {
+            for (_, binding) in &file.bindings {
+                if let Some(product) = products.get_mut(&binding.source)
+                    && product.state != ProductState::Read
+                    && let Some(committed) = progress.checkpoints.get(&binding.name)
+                {
+                    product.accounting.add(committed);
                 }
             }
         }
@@ -368,6 +392,10 @@ impl Staging<'_> {
         begun: tokio::sync::oneshot::Sender<Value>,
     ) -> Result<Outcome, String> {
         let progress = Progress::resumed(plan, saved)?;
+        self.writer
+            .stage(StageWrite::Reopen { operation })
+            .await
+            .map_err(|e| e.to_string())?;
         self.read(operation, request, progress, begun).await
     }
 
@@ -404,7 +432,17 @@ impl Staging<'_> {
                 let mut readers = Vec::new();
                 for (format, binding) in planned {
                     match crate::binding_reader::BindingReader::new(format, binding.clone()) {
-                        Ok(reader) => readers.push(reader),
+                        Ok(mut reader) => {
+                            reader.committed = Some(Committed {
+                                operation,
+                                accounting: progress
+                                    .checkpoints
+                                    .get(&binding.name)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            });
+                            readers.push(reader);
+                        }
                         Err(error) => {
                             fail(&mut progress, index, &binding.source, &error, &mut failures);
                         }
@@ -637,6 +675,47 @@ pub(crate) struct Totals {
     files_stored: u64,
     pass_decoded_bytes: u64,
     pass_record_bytes: u64,
+    /// A staged binding's accounting as it is committed, with its cursor.
+    pub(crate) committed: Option<Committed>,
+}
+
+impl Totals {
+    pub(crate) fn committed(committed: Option<Committed>) -> Self {
+        Self {
+            committed,
+            ..Self::default()
+        }
+    }
+}
+
+/// What a staged binding's committed batches account for in the stage, saved
+/// with each batch's cursor in the same transaction ([`writer::StageCheckpoint`]).
+/// A resumed stage starts each binding from it, so the accounting covers what
+/// was read before the interruption as well as after.
+///
+/// A material being read counts its committed records as framed: a resumed
+/// driver frames only the records after the committed cursor. Once all of a
+/// material is committed, the driver's own count replaces them in the
+/// binding's later checkpoints. The stage's reported accounting comes from
+/// the driver's counts of what each run read, so its identity compares the
+/// driver with the drain; only the part of a material committed before an
+/// interruption is counted by its committed records.
+#[derive(Clone, Debug)]
+pub(crate) struct Committed {
+    pub(crate) operation: OperationId,
+    pub(crate) accounting: Accounting,
+}
+
+/// What admission decided for a batch's readings. Admission counts a reading
+/// that replaced the live one among those it admitted, and offers a removed
+/// reading for each live reading of a record the source dropped.
+pub(crate) fn decided(a: &mut Accounting, out: &sinex_store::Outcome) {
+    a.readings += out.removed_at_source as u64;
+    a.new += out.admitted.saturating_sub(out.replaced) as u64;
+    a.revised += out.replaced as u64;
+    a.same += out.repeats as u64;
+    a.older += out.older as u64;
+    a.superseded += out.superseded as u64;
 }
 
 /// Store `b`'s source, input and settings under its name.
@@ -667,8 +746,9 @@ pub(crate) async fn drive(
     minimum_class: sinex_model::Class,
     reader: &mut crate::binding_reader::polled::PolledReader,
     stop: tokio::sync::watch::Receiver<bool>,
+    committed: Option<Committed>,
 ) -> Result<Totals, String> {
-    let mut totals = Totals::default();
+    let mut totals = Totals::committed(committed);
     let started = Instant::now();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
@@ -765,34 +845,12 @@ impl Totals {
 
     /// What the parser made of each record of a batch.
     pub(crate) fn records(&mut self, batch: &sinex_model::Batch) {
-        for record in &batch.records {
-            match record {
-                sinex_model::RecordOutcome::Events { events, .. } if events.is_empty() => {
-                    self.accounting.headers += 1;
-                }
-                sinex_model::RecordOutcome::Events { .. } => self.accounting.read += 1,
-                sinex_model::RecordOutcome::Failure { reason, .. } => {
-                    self.accounting.failures += 1;
-                    if self.accounting.first_failure.is_none() {
-                        self.accounting.first_failure = Some(reason.clone());
-                    }
-                }
-            }
-        }
+        self.accounting.records(&batch.records);
     }
 
-    /// What admission decided for a batch's readings. Admission counts a
-    /// reading that replaced the live one among those it admitted, and
-    /// offers a removed reading for each live reading of a record the
-    /// source dropped.
+    /// What admission decided for a batch's readings.
     pub(crate) fn add_outcome(&mut self, out: &sinex_store::Outcome) {
-        let a = &mut self.accounting;
-        a.readings += out.removed_at_source as u64;
-        a.new += out.admitted.saturating_sub(out.replaced) as u64;
-        a.revised += out.replaced as u64;
-        a.same += out.repeats as u64;
-        a.older += out.older as u64;
-        a.superseded += out.superseded as u64;
+        decided(&mut self.accounting, out);
         self.dirty_keys += out.dirty_keys;
     }
 

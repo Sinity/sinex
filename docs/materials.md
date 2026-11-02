@@ -129,7 +129,7 @@ An archive is decided member by member. Every format whose layout an archive has
 
 ### Inventory and accounting
 
-A stage records what it holds before any record is parsed: its **inventory**. Every member of every staged file appears in it exactly once, read the archive's own listing (a ZIP's central directory is read without decompressing any member), with its disposition:
+A stage records what it holds before any record is parsed: its **inventory**. Every member of every staged file appears in it exactly once, read from the archive's own listing, with its disposition. A ZIP's central directory is read without decompressing any member. A tar, or a gzip-compressed tar such as a Takeout `.tgz` part, is listed by streaming its headers through the decoder and skipping each member's data, so listing writes nothing and holds no member:
 
 | Disposition | Meaning |
 |---|---|
@@ -148,7 +148,7 @@ stage 0190…  ok
 /exports/takeout-20300101T000000Z-003.zip  1 member(s)  stored, not interpreted (no parser)
 ```
 
-`stage` answers with the operation and the inventory as soon as the stage is recorded and reads on in the daemon; with `--follow` it answers when the stage ends, with the final inventory and accounting. `stage-list [--active]` and `stage-show OPERATION` read them later. A binding is read by one stage at a time, and a path the daemon reads continuously is not staged again. A stage that stopped early, or whose daemon stopped while it read, ends `stopped_early` or without a result and is read again with `resume OPERATION`: it plans the recorded scope again, keeps the accounting of the files it finished and the materials it stored, and each binding continues from its committed cursor.
+`stage` answers with the operation and the inventory as soon as the stage is recorded and reads on in the daemon; with `--follow` it answers when the stage ends, with the final inventory and accounting. `stage-list [--active]` and `stage-show OPERATION` read them later. A binding is read by one stage at a time, and a path the daemon reads continuously is not staged again. A stage that stopped early, or whose daemon stopped while it read, ends `stopped_early` or without a result and is read again with `resume OPERATION`: it plans the recorded scope again, keeps the accounting of the files it finished and the materials it stored, and each binding continues from its committed cursor. Each batch's transaction also saves the binding's accounting so far under the stage's `checkpoints`, and a resumed binding starts from it, so a product interrupted partway accounts for everything read before and after the interruption. The part of a material committed before the interruption counts its committed records as framed, because a resumed driver frames only the records after the cursor; everything else counts the driver's own framing. A stage that ended ok is not resumed.
 
 ### Staging before a parser exists
 

@@ -26,6 +26,9 @@ pub(crate) struct BindingReader {
     /// An append-only file's facts when a poll last read it to its end: while
     /// they hold, nothing was appended and the poll is skipped.
     settled: Option<sinex_model::ObservationFacts>,
+    /// For a binding a stage reads: the stage and what the binding's
+    /// committed batches have accounted for so far.
+    pub committed: Option<stage::Committed>,
 }
 impl BindingReader {
     pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
@@ -53,6 +56,7 @@ impl BindingReader {
             remembered: false,
             history_floor: Class::Open,
             settled: None,
+            committed: None,
         })
     }
 }
@@ -332,6 +336,7 @@ pub(crate) async fn read(
                 b.history_floor,
                 reader,
                 stop.clone(),
+                b.committed.clone(),
             )
             .await;
             let result = match result {

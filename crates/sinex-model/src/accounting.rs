@@ -62,6 +62,24 @@ impl Accounting {
         }
     }
 
+    /// What the parser made of each of a batch's records.
+    pub fn records(&mut self, records: &[crate::RecordOutcome]) {
+        for record in records {
+            match record {
+                crate::RecordOutcome::Events { events, .. } if events.is_empty() => {
+                    self.headers += 1;
+                }
+                crate::RecordOutcome::Events { .. } => self.read += 1,
+                crate::RecordOutcome::Failure { reason, .. } => {
+                    self.failures += 1;
+                    if self.first_failure.is_none() {
+                        self.first_failure = Some(reason.clone());
+                    }
+                }
+            }
+        }
+    }
+
     /// The two identities: every framed record is read, a header or a
     /// failure; every reading offered is new, the same, revised, older or
     /// superseded. `Err` names each identity that does not hold.
