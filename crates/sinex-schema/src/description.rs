@@ -457,8 +457,8 @@ impl Description {
 /// would copy every event and rebuild every index while capture waits. The
 /// declared column is added beside the narrow one; its constant default costs
 /// no write, so only rows holding another value are copied, then the narrow
-/// column is dropped. Event rows are otherwise immutable, so the guard is off
-/// for that copy only. The column's constraints move with it.
+/// column is dropped. Event rows are otherwise immutable, so the guard admits
+/// that copy only. The column's constraints move with it.
 fn widen_beside(
     table: &str,
     column: &str,
@@ -492,12 +492,16 @@ fn widen_beside(
     let (schema, relation) = table.split_once('.').expect("a qualified table");
     changes.extend([
         add,
-        format!("ALTER TABLE {table} DISABLE TRIGGER event_guard"),
+        // TimescaleDB refuses to disable a trigger on a hypertable with
+        // compression, so the guard's body admits updates for the copy and
+        // its saved definition is restored after it.
+        "CREATE TEMPORARY TABLE event_guard_definition ON COMMIT DROP AS SELECT pg_get_functiondef('core.event_guard()'::regprocedure) AS definition".into(),
+        "CREATE OR REPLACE FUNCTION core.event_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF; RAISE EXCEPTION 'events are not deleted while an upgrade widens a column'; END $$".into(),
         // A compressed batch holding a copied row is decompressed; the copy
         // is bounded by the store, not by a per-statement row limit.
         "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0".into(),
         format!("UPDATE {table} SET {column} = {narrow} WHERE {narrow} <> {default}"),
-        format!("ALTER TABLE {table} ENABLE TRIGGER event_guard"),
+        "DO $$ BEGIN EXECUTE (SELECT definition FROM event_guard_definition); END $$".into(),
         format!("ALTER TABLE {table} DROP COLUMN {narrow}"),
         // The added column's NOT NULL constraint was named while the narrow
         // column still held the fresh name; give it that name back.

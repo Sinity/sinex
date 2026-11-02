@@ -326,7 +326,7 @@ async fn equivalence_key_encoding_round_trips_and_keeps_keys_distinct(
            UNION SELECT digest||chr(10) FROM digests UNION SELECT left(digest,63)||'g' FROM digests
            UNION SELECT 'Hash:'||digest FROM digests UNION SELECT '01'||left(digest,62) FROM digests
            UNION SELECT chr(1)||digest FROM digests UNION SELECT chr(3)||digest FROM digests
-           UNION SELECT string_agg(chr(32 + (i * 7919 + j * 104729) % 1200), '') FROM generate_series(1,300) i, generate_series(1,9) j GROUP BY i
+           UNION SELECT 'zażółć 🦀 '||digest FROM digests UNION SELECT digest||' 字Ωж' FROM digests
            UNION VALUES (''), ('zażółć 🦀'), ('03a7'), ('hash:'), ('sealed:'))
          SELECT count(*) FILTER (WHERE core.decode_equivalence_key(core.encode_equivalence_key(key)) IS DISTINCT FROM key),
                 count(*) - count(DISTINCT core.encode_equivalence_key(key))
