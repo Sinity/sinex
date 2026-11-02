@@ -1,9 +1,11 @@
 //! Preserve ordinal values, dependent views and compressed chunks while widening storage.
+//! Event chunks stay compressed: the wide event column is added beside the
+//! narrow one, which needs no decompression.
 use crate::description::Description;
 
 pub(super) fn statements() -> Vec<String> {
     let mut statements = vec![
-        // A column type cannot change under a view. Keep actual definitions,
+        // A column cannot change type or be dropped under a view. Keep actual definitions,
         // including outside views, their owners and explicit access grants.
         r#"CREATE TEMPORARY TABLE ordinal_views ON COMMIT DROP AS
            WITH RECURSIVE dependent(oid,depth,path) AS (
@@ -35,12 +37,6 @@ pub(super) fn statements() -> Vec<String> {
              END LOOP;
            END $$"#
             .into(),
-        r#"CREATE TEMPORARY TABLE ordinal_chunks ON COMMIT DROP AS
-           SELECT format('%I.%I',chunk_schema,chunk_name) AS name
-           FROM timescaledb_information.chunks
-           WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed"#
-            .into(),
-        "SELECT decompress_chunk(name::regclass) FROM ordinal_chunks".into(),
     ];
     statements.extend(Description::output_ordinal_changes());
     statements.extend([
@@ -78,7 +74,6 @@ pub(super) fn statements() -> Vec<String> {
                END IF;
              END LOOP;
            END $$"#.into(),
-        "SELECT compress_chunk(name::regclass) FROM ordinal_chunks".into(),
     ]);
     statements
 }
