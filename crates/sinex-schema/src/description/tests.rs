@@ -16,13 +16,13 @@ fn kind_upgrade_uses_the_current_column_definitions() {
     let current = Description::before_foundations();
     let before = Description::before_kind_declarations();
     let changes = current.changes_from(&before, &["registry.event_types"]);
+    // Both columns arrive in one statement, so their checks share one scan.
     for table in ["core.events", "core.admission_stage"] {
-        assert!(changes.iter().any(|sql| sql.starts_with(&format!(
-            "ALTER TABLE {table} ADD COLUMN kind_version bigint NOT NULL"
-        ))));
-        assert!(changes.iter().any(|sql| sql.starts_with(&format!(
-            "ALTER TABLE {table} ADD COLUMN validation text NOT NULL"
-        ))));
+        assert!(
+            changes.iter().any(|sql| sql.starts_with(&format!(
+                "ALTER TABLE {table} ADD COLUMN kind_version bigint NOT NULL"
+            )) && sql.contains(", ADD COLUMN validation text NOT NULL"))
+        );
     }
     for kind in &current.kinds {
         assert!(

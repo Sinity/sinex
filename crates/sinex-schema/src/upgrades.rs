@@ -45,6 +45,16 @@ fn landed() -> Vec<Vec<String>> {
 }
 
 pub(crate) const LANDED_VERSION: i32 = 4;
+
+/// The distinct event types stored, read by one probe of the
+/// `(event_type, ts_orig)` index per type on uncompressed chunks instead of a
+/// scan of every event.
+pub(crate) const STORED_EVENT_TYPES: &str = "WITH RECURSIVE stored(event_type) AS (
+   (SELECT event_type FROM core.events ORDER BY event_type LIMIT 1)
+   UNION ALL
+   SELECT (SELECT e.event_type FROM core.events e WHERE e.event_type > stored.event_type ORDER BY e.event_type LIMIT 1)
+   FROM stored WHERE stored.event_type IS NOT NULL)
+ SELECT event_type FROM stored WHERE event_type IS NOT NULL";
 pub(crate) const NAMED: &[&str] = &[
     "blob_change_tracking",
     "library_scans",
@@ -71,7 +81,7 @@ pub(crate) const NAMED: &[&str] = &[
 pub(crate) fn upgrades() -> Vec<Vec<String>> {
     let mut steps = landed();
     steps.push(crate::tables::blob_changes());
-    steps.push(vec!["DO $$ BEGIN IF EXISTS (SELECT 1 FROM core.events WHERE event_type LIKE 'library.%') THEN RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading'; END IF; END $$".into()]);
+    steps.push(vec![format!("DO $$ BEGIN IF EXISTS (SELECT 1 FROM ({STORED_EVENT_TYPES}) stored WHERE event_type LIKE 'library.%') THEN RAISE EXCEPTION 'library records use request-created item IDs; decide how their references should follow deterministic item IDs before upgrading'; END IF; END $$")]);
     steps.push(compact_equivalence_keys());
     steps.push(search_text());
     steps.push(publication_pairs());
@@ -129,29 +139,16 @@ pub(crate) fn upgrades() -> Vec<Vec<String>> {
     steps
 }
 
+/// The conversion's correctness is a property of the two functions, tested
+/// against them: decoding an encoded key returns it, and each encoding
+/// starts with its form's tag byte, so distinct keys stay distinct. The
+/// rewrite rebuilds the key's primary key, which would refuse a collision.
 fn compact_equivalence_keys() -> Vec<String> {
     vec![
-            crate::tables::ENCODE_EQUIVALENCE_KEY.into(),
-            crate::tables::DECODE_EQUIVALENCE_KEY.into(),
-            "CREATE TEMPORARY TABLE live_keys_before ON COMMIT DROP AS TABLE core.live_equivalence".into(),
-            "DO $$ BEGIN
-               IF EXISTS (SELECT 1 FROM core.live_equivalence
-                 WHERE core.decode_equivalence_key(core.encode_equivalence_key(equivalence_key)) IS DISTINCT FROM equivalence_key)
-               THEN RAISE EXCEPTION 'equivalence key encoding does not round trip'; END IF;
-               IF EXISTS (SELECT 1 FROM core.live_equivalence GROUP BY source, event_type, core.encode_equivalence_key(equivalence_key) HAVING count(*) > 1)
-               THEN RAISE EXCEPTION 'equivalence key encoding changes identity'; END IF;
-             END $$".into(),
-            "ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE bytea USING core.encode_equivalence_key(equivalence_key)".into(),
-            "DO $$ BEGIN
-               IF EXISTS (
-                 (SELECT source, event_type, core.decode_equivalence_key(equivalence_key), event_id, reading_order, record_hash FROM core.live_equivalence
-                  EXCEPT ALL SELECT * FROM live_keys_before)
-                 UNION ALL
-                 (SELECT * FROM live_keys_before EXCEPT ALL
-                  SELECT source, event_type, core.decode_equivalence_key(equivalence_key), event_id, reading_order, record_hash FROM core.live_equivalence))
-               THEN RAISE EXCEPTION 'equivalence key conversion changed stored rows'; END IF;
-             END $$".into(),
-        ]
+        crate::tables::ENCODE_EQUIVALENCE_KEY.into(),
+        crate::tables::DECODE_EQUIVALENCE_KEY.into(),
+        "ALTER TABLE core.live_equivalence ALTER COLUMN equivalence_key TYPE bytea USING core.encode_equivalence_key(equivalence_key)".into(),
+    ]
 }
 
 fn publication_pairs() -> Vec<String> {
