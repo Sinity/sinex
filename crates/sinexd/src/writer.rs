@@ -668,7 +668,7 @@ async fn signal_step(
     if let Some(batch) = batch {
         outcome += tx.admit(batch, keys).await.map_err(store_error)?;
     }
-    for handed in &commit.deliveries {
+    if let Some(handed) = &commit.deliveries {
         for (event, read) in &handed.events {
             let delivery = Batch {
                 run: handed.run,

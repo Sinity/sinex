@@ -10,7 +10,7 @@ pub(crate) use config::Config;
 use sinex_model::event_types::signal::{
     DeliveryRecorded, OutcomeRecorded, ReportReceived, SignalRecord,
 };
-use sinex_model::{Class, EventId, EventPayload, Timestamp};
+use sinex_model::{Class, EventPayload, Timestamp};
 use sinex_store::signals::{Checkpoint, Commit, Deliveries, Forwarded, Pending};
 use sqlx::Connection;
 use std::collections::BTreeSet;

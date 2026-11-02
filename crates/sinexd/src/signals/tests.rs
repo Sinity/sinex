@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use sinex_model::EventId;
 
 fn config(desktop: bool) -> Config {
     serde_json::from_value(json!({
