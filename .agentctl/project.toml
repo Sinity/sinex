@@ -126,6 +126,16 @@ scratch = "nvme"
 cache = "none"
 cap = "cargo"
 
+[operations.measure_run]
+description = "Run a measurement that compiles nothing (a database restore, a benchmark of prebuilt binaries) in the measure queue; it holds no cargo cap place"
+exec = ["env"]
+arguments = "required"
+pool = "measure"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
+
 [operations.compile]
 description = "Selected package or target compilation against the schema database"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "compile"]
