@@ -25484,26 +25484,30 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "hledger"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "transaction.posted",
         "journal.directive",
         "journal.imported"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 2592000
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "hledger"
       ],
       "name": "finance.hledger",
-      "purpose": "journal transactions and their postings"
+      "purpose": "journal transactions and their postings",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "guarded",
@@ -25520,24 +25524,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "text-history"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "command.imported"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "text-history"
       ],
       "name": "terminal.text-history",
-      "purpose": "explicit untimed command history"
+      "purpose": "explicit untimed command history",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "guarded",
@@ -25558,24 +25566,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "documents"
         }
       ],
-      "drivers": [
-        "dir-snapshot"
-      ],
       "eventTypes": [
         "document.captured"
       ],
+      "expect": {
+        "everySeconds": 3600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "documents"
       ],
       "name": "knowledge.documents",
-      "purpose": "configured document bytes for recall and text extraction"
+      "purpose": "configured document bytes for recall and text extraction",
+      "shapes": [
+        "dir-snapshot"
+      ]
     },
     {
       "class": "guarded",
@@ -25592,8 +25604,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "transcript-json"
@@ -25610,8 +25620,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "whisper-json"
@@ -25628,8 +25636,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "transcript-text"
@@ -25646,8 +25652,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "webvtt"
@@ -25664,19 +25668,20 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "srt"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "transcript.cue"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "transcript-json",
         "whisper-json",
@@ -25685,7 +25690,10 @@
         "srt"
       ],
       "name": "media.transcripts",
-      "purpose": "imported timed speech text"
+      "purpose": "imported timed speech text",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "guarded",
@@ -25702,8 +25710,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "ocr-json"
@@ -25720,8 +25726,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "ocr-tsv"
@@ -25738,26 +25742,30 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "ocr-text"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "ocr.text"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "ocr-json",
         "ocr-tsv",
         "ocr-text"
       ],
       "name": "media.ocr-imports",
-      "purpose": "imported OCR text and geometry"
+      "purpose": "imported OCR text and geometry",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -25776,8 +25784,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -25789,17 +25795,23 @@
           "format": "udev"
         }
       ],
-      "drivers": [
-        "live-stream"
-      ],
       "eventTypes": [
         "device.changed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 2592000
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "udev"
       ],
       "name": "machine.udev",
-      "purpose": "which devices were attached when, peripheral and storage history"
+      "purpose": "which devices were attached when, peripheral and storage history",
+      "shapes": [
+        "live-stream"
+      ]
     },
     {
       "class": "open",
@@ -25816,24 +25828,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "taskwarrior"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "task.revised"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "taskwarrior"
       ],
       "name": "tasks.taskwarrior",
-      "purpose": "tasks and their completion"
+      "purpose": "tasks and their completion",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "guarded",
@@ -25854,15 +25870,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "router"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "router_log.line",
@@ -25870,11 +25881,20 @@
         "device_traffic.sampled",
         "wifi_client.sampled"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 21600
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "router"
       ],
       "name": "network.router",
-      "purpose": "which devices were on the home network, their traffic and the router's log"
+      "purpose": "which devices were on the home network, their traffic and the router's log",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -25891,24 +25911,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "reddit-archive"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "post.published"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "reddit-archive"
       ],
       "name": "social.reddit-archive",
-      "purpose": "what the operator wrote at Reddit, including what the GDPR export lacks"
+      "purpose": "what the operator wrote at Reddit, including what the GDPR export lacks",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -25925,24 +25949,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "messenger-sqlite"
         }
       ],
-      "drivers": [
-        "sqlite-rows"
-      ],
       "eventTypes": [
         "conversation.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "messenger-sqlite"
       ],
       "name": "communication.messenger-sqlite",
-      "purpose": "conversations with people"
+      "purpose": "conversations with people",
+      "shapes": [
+        "sqlite-rows"
+      ]
     },
     {
       "class": "open",
@@ -25963,26 +25991,30 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-telemetry"
         }
-      ],
-      "drivers": [
-        "sqlite-rows"
       ],
       "eventTypes": [
         "resource.sampled",
         "process.killed",
         "hardware.state"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 3600
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-telemetry"
       ],
       "name": "machine.telemetry",
-      "purpose": "resource figures and what the machine was doing: power, temperatures, memory, IO and pressure per service and process, and OOM kills"
+      "purpose": "resource figures and what the machine was doing: power, temperatures, memory, IO and pressure per service and process, and OOM kills",
+      "shapes": [
+        "sqlite-rows"
+      ]
     },
     {
       "class": "open",
@@ -26003,24 +26035,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "generation.activated"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.generations",
-      "purpose": "which system configuration ran when, for attributing changes in behavior"
+      "purpose": "which system configuration ran when, for attributing changes in behavior",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26041,24 +26077,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "backup.checked"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.backup-checks",
-      "purpose": "backup health over time"
+      "purpose": "backup health over time",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26079,24 +26119,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "backup.drilled"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 1209600
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.restore-drills",
-      "purpose": "evidence that the backups restore"
+      "purpose": "evidence that the backups restore",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26117,24 +26161,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "backup.task_store_drilled"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 1209600
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.task-store-drills",
-      "purpose": "evidence that the task store restores from the backups"
+      "purpose": "evidence that the task store restores from the backups",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26155,24 +26203,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "sandbox_audit.finding"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.sandbox-audit",
-      "purpose": "unit and capture-lane health over time"
+      "purpose": "unit and capture-lane health over time",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26193,25 +26245,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "usage.assessed",
         "usage_census.taken"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 2592000
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.usage-census",
-      "purpose": "deciding what in the machine configuration is used and what to remove"
+      "purpose": "deciding what in the machine configuration is used and what to remove",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26232,24 +26288,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "config_drift.checked"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.config-drift",
-      "purpose": "whether the live machine matches its configuration"
+      "purpose": "whether the live machine matches its configuration",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26270,25 +26330,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "machine-records"
         }
-      ],
-      "drivers": [
-        "dir-snapshot"
       ],
       "eventTypes": [
         "experiment.started",
         "experiment.run"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "machine-records"
       ],
       "name": "machine.experiments",
-      "purpose": "machine experiment results with the conditions they ran under"
+      "purpose": "machine experiment results with the conditions they ran under",
+      "shapes": [
+        "dir-snapshot"
+      ]
     },
     {
       "class": "open",
@@ -26307,15 +26371,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "github"
         }
-      ],
-      "drivers": [
-        "api-cursor"
       ],
       "eventTypes": [
         "github.pull_request",
@@ -26324,11 +26383,20 @@
         "github.workflow_run",
         "github.issue"
       ],
+      "expect": {
+        "everySeconds": 21600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "github"
       ],
       "name": "code.github",
-      "purpose": "the outcome of work: pull requests, reviews, checks and CI runs beside the commits"
+      "purpose": "the outcome of work: pull requests, reviews, checks and CI runs beside the commits",
+      "shapes": [
+        "api-cursor"
+      ]
     },
     {
       "class": "guarded",
@@ -26345,24 +26413,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "freedom"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "domain.usage"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "freedom"
       ],
       "name": "desktop.freedom",
-      "purpose": "domain usage reported by Freedom, for attention analysis"
+      "purpose": "domain usage reported by Freedom, for attention analysis",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -26379,24 +26451,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "beads"
         }
       ],
-      "drivers": [
-        "api-cursor"
-      ],
       "eventTypes": [
         "task.revised"
       ],
+      "expect": {
+        "everySeconds": 3600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "beads"
       ],
       "name": "work.beads",
-      "purpose": "the issues work was planned and tracked in, beside the commits and jobs that did it"
+      "purpose": "the issues work was planned and tracked in, beside the commits and jobs that did it",
+      "shapes": [
+        "api-cursor"
+      ]
     },
     {
       "class": "open",
@@ -26413,24 +26489,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "agentctl"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "agentctl.event"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "agentctl"
       ],
       "name": "work.agentctl",
-      "purpose": "the builds, tests and agent jobs run on this host, and how they ended"
+      "purpose": "the builds, tests and agent jobs run on this host, and how they ended",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26447,24 +26527,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "atuin"
         }
       ],
-      "drivers": [
-        "sqlite-rows"
-      ],
       "eventTypes": [
         "command.executed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "atuin"
       ],
       "name": "terminal.atuin-history",
-      "purpose": "command fusion and shell recall"
+      "purpose": "command fusion and shell recall",
+      "shapes": [
+        "sqlite-rows"
+      ]
     },
     {
       "class": "open",
@@ -26481,24 +26565,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "zsh"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "command.imported"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "zsh"
       ],
       "name": "terminal.zsh-history",
-      "purpose": "command fusion and shell recall"
+      "purpose": "command fusion and shell recall",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26515,24 +26603,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "bash"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "command.imported"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "bash"
       ],
       "name": "terminal.bash-history",
-      "purpose": "command fusion and shell recall"
+      "purpose": "command fusion and shell recall",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -26549,24 +26641,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "fish"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "command.imported"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "fish"
       ],
       "name": "terminal.fish-history",
-      "purpose": "command fusion and shell recall"
+      "purpose": "command fusion and shell recall",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "guarded",
@@ -26580,8 +26676,6 @@
             "credentials": [],
             "locations": [],
             "owner": "session",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -26593,9 +26687,6 @@
           "format": "hyprland"
         }
       ],
-      "drivers": [
-        "live-stream"
-      ],
       "eventTypes": [
         "window.focused",
         "window.opened",
@@ -26606,11 +26697,20 @@
         "monitor.focused",
         "desktop.other"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "hyprland"
       ],
       "name": "desktop.hyprland",
-      "purpose": "focus intervals, attention and recall"
+      "purpose": "focus intervals, attention and recall",
+      "shapes": [
+        "live-stream"
+      ]
     },
     {
       "class": "guarded",
@@ -26629,8 +26729,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -26647,9 +26745,6 @@
           "format": "journald"
         }
       ],
-      "drivers": [
-        "live-stream"
-      ],
       "eventTypes": [
         "journal.entry",
         "unit.started",
@@ -26660,11 +26755,20 @@
         "sleep.ended",
         "shutdown.started"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 3600
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "journald"
       ],
       "name": "machine.journald",
-      "purpose": "machine timeline, service health, unit and boot intervals, and recall"
+      "purpose": "machine timeline, service health, unit and boot intervals, and recall",
+      "shapes": [
+        "live-stream"
+      ]
     },
     {
       "class": "guarded",
@@ -26676,8 +26780,6 @@
             "credentials": [],
             "locations": [],
             "owner": "session",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [
@@ -26691,17 +26793,23 @@
           "format": "file-watch"
         }
       ],
-      "drivers": [
-        "live-stream"
-      ],
       "eventTypes": [
         "file.changed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 86400
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "file-watch"
       ],
       "name": "machine.file-watch",
-      "purpose": "work episodes, project attribution and recall"
+      "purpose": "work episodes, project attribution and recall",
+      "shapes": [
+        "live-stream"
+      ]
     },
     {
       "class": "guarded",
@@ -26718,15 +26826,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "activitywatch"
         }
-      ],
-      "drivers": [
-        "sqlite-rows"
       ],
       "eventTypes": [
         "window.span",
@@ -26734,11 +26837,20 @@
         "browser.tab_active",
         "activitywatch.other"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "activitywatch"
       ],
       "name": "desktop.activitywatch",
-      "purpose": "attention, presence and recall"
+      "purpose": "attention, presence and recall",
+      "shapes": [
+        "sqlite-rows"
+      ]
     },
     {
       "class": "open",
@@ -26755,25 +26867,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "repository"
         }
       ],
-      "drivers": [
-        "api-cursor"
-      ],
       "eventTypes": [
         "git.commit",
         "git.ref_updated"
       ],
+      "expect": {
+        "everySeconds": 3600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "repository"
       ],
       "name": "code.git",
-      "purpose": "work episodes, project attribution and recall"
+      "purpose": "work episodes, project attribution and recall",
+      "shapes": [
+        "api-cursor"
+      ]
     },
     {
       "class": "open",
@@ -26806,24 +26922,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "chromium"
         }
-      ],
-      "drivers": [
-        "sqlite-rows"
       ],
       "eventTypes": [
         "browser.visit"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": 7776000,
       "formats": [
         "chromium"
       ],
       "name": "browser.chromium-visits",
-      "purpose": "browsing recall and the attention stream"
+      "purpose": "browsing recall and the attention stream",
+      "shapes": [
+        "sqlite-rows"
+      ]
     },
     {
       "class": "open",
@@ -26856,24 +26976,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "chromium"
         }
       ],
-      "drivers": [
-        "sqlite-rows"
-      ],
       "eventTypes": [
         "browser.url"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": 7776000,
       "formats": [
         "chromium"
       ],
       "name": "browser.chromium-urls",
-      "purpose": "browsing recall and page titles"
+      "purpose": "browsing recall and page titles",
+      "shapes": [
+        "sqlite-rows"
+      ]
     },
     {
       "class": "open",
@@ -26890,24 +27014,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout-chrome"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "browser.history_entry"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout-chrome"
       ],
       "name": "browser.takeout-chrome-history",
-      "purpose": "browsing recall before live capture"
+      "purpose": "browsing recall before live capture",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -26924,24 +27052,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "spotify"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "music.played"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "spotify"
       ],
       "name": "media.spotify-history",
-      "purpose": "listening history and the attention stream"
+      "purpose": "listening history and the attention stream",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -26958,24 +27090,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "raindrop"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "bookmark.saved"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "raindrop"
       ],
       "name": "reading.raindrop",
-      "purpose": "saved reading and URL recall"
+      "purpose": "saved reading and URL recall",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -26992,24 +27128,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "notes"
         }
       ],
-      "drivers": [
-        "dir-snapshot"
-      ],
       "eventTypes": [
         "note.document"
       ],
+      "expect": {
+        "everySeconds": 3600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "notes"
       ],
       "name": "knowledge.notes-vault",
-      "purpose": "note recall and the library"
+      "purpose": "note recall and the library",
+      "shapes": [
+        "dir-snapshot"
+      ]
     },
     {
       "class": "open",
@@ -27026,24 +27166,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "mbox"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "mail.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "mbox"
       ],
       "name": "communication.mbox",
-      "purpose": "mail recall and correspondence history"
+      "purpose": "mail recall and correspondence history",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27060,24 +27204,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "maildir"
         }
       ],
-      "drivers": [
-        "dir-snapshot"
-      ],
       "eventTypes": [
         "mail.message"
       ],
+      "expect": {
+        "everySeconds": 3600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "maildir"
       ],
       "name": "communication.maildir",
-      "purpose": "mail recall and correspondence history"
+      "purpose": "mail recall and correspondence history",
+      "shapes": [
+        "dir-snapshot"
+      ]
     },
     {
       "class": "open",
@@ -27096,24 +27244,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "imap"
         }
       ],
-      "drivers": [
-        "api-cursor"
-      ],
       "eventTypes": [
         "mail.message"
       ],
+      "expect": {
+        "everySeconds": 3600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "imap"
       ],
       "name": "communication.imap",
-      "purpose": "mail recall and correspondence history"
+      "purpose": "mail recall and correspondence history",
+      "shapes": [
+        "api-cursor"
+      ]
     },
     {
       "class": "guarded",
@@ -27134,15 +27286,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "gmail"
         }
-      ],
-      "drivers": [
-        "api-cursor"
       ],
       "eventTypes": [
         "mail.message",
@@ -27151,11 +27298,20 @@
         "mail.history_gap",
         "mail.provider_missing"
       ],
+      "expect": {
+        "everySeconds": 3600,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "gmail"
       ],
       "name": "communication.gmail",
-      "purpose": "mail and provider history"
+      "purpose": "mail and provider history",
+      "shapes": [
+        "api-cursor"
+      ]
     },
     {
       "class": "open",
@@ -27172,24 +27328,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "outlook"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "mail.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "outlook"
       ],
       "name": "communication.outlook",
-      "purpose": "mail recall and correspondence history"
+      "purpose": "mail recall and correspondence history",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27206,24 +27366,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "outlook-csv"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "mail.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "outlook-csv"
       ],
       "name": "communication.outlook-csv",
-      "purpose": "mail recall and correspondence history"
+      "purpose": "mail recall and correspondence history",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27240,24 +27404,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "weechat"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "chat.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 604800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "weechat"
       ],
       "name": "communication.weechat-log",
-      "purpose": "chat recall and correspondence history"
+      "purpose": "chat recall and correspondence history",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -27278,24 +27446,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "calendar"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "calendar.event"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "calendar"
       ],
       "name": "calendar.export",
-      "purpose": "planned events beside what happened"
+      "purpose": "planned events beside what happened",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27312,24 +27484,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "action.recorded"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.my-activity",
-      "purpose": "searches, visits and app use recorded by the Google account"
+      "purpose": "searches, visits and app use recorded by the Google account",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27346,25 +27522,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "video.watched",
         "video.searched"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.youtube-history",
-      "purpose": "videos watched and searched for"
+      "purpose": "videos watched and searched for",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27381,24 +27561,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "note.observed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.keep",
-      "purpose": "notes and checklists kept in Keep"
+      "purpose": "notes and checklists kept in Keep",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27415,24 +27599,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "note.observed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.assistant",
-      "purpose": "notes and lists kept through Google Assistant"
+      "purpose": "notes and lists kept through Google Assistant",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27449,24 +27637,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "task.revised"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.tasks",
-      "purpose": "tasks and their completion"
+      "purpose": "tasks and their completion",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27483,24 +27675,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "purchase.observed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.play-store",
-      "purpose": "apps installed, bought and reviewed"
+      "purpose": "apps installed, bought and reviewed",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27517,24 +27713,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "purchase.observed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.purchases",
-      "purpose": "orders and reservations"
+      "purpose": "orders and reservations",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27551,24 +27751,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "location.sample"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.location-history",
-      "purpose": "where the operator was"
+      "purpose": "where the operator was",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27585,24 +27789,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "takeout"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "health.record"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "takeout"
       ],
       "name": "google.fit",
-      "purpose": "steps, activity, heart and location samples Fit recorded"
+      "purpose": "steps, activity, heart and location samples Fit recorded",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27619,24 +27827,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "goodreads"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "book.status"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "goodreads"
       ],
       "name": "reading.goodreads",
-      "purpose": "books shelved and read, for long-horizon interest"
+      "purpose": "books shelved and read, for long-horizon interest",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27653,24 +27865,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "messenger"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "conversation.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "messenger"
       ],
       "name": "communication.messenger",
-      "purpose": "conversations with people"
+      "purpose": "conversations with people",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27687,24 +27903,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sleep-as-android"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "health.record"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sleep-as-android"
       ],
       "name": "health.sleep-as-android",
-      "purpose": "sleep sessions and their phases"
+      "purpose": "sleep sessions and their phases",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27721,15 +27941,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "wykop"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "post.published",
@@ -27738,11 +27953,20 @@
         "notification.received",
         "account.setting"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "wykop"
       ],
       "name": "social.wykop",
-      "purpose": "what the operator wrote and voted on at Wykop"
+      "purpose": "what the operator wrote and voted on at Wykop",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27759,15 +27983,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "reddit"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "post.published",
@@ -27775,11 +27994,20 @@
         "bookmark.saved",
         "conversation.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "reddit"
       ],
       "name": "social.reddit",
-      "purpose": "what the operator wrote, voted on, saved and sent at Reddit"
+      "purpose": "what the operator wrote, voted on, saved and sent at Reddit",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27796,24 +28024,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "samsung-health"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "health.record"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "samsung-health"
       ],
       "name": "health.samsung-export",
-      "purpose": "sleep, heart, activity and body measurements"
+      "purpose": "sleep, heart, activity and body measurements",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27830,24 +28062,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "samsung-sms"
         }
       ],
-      "drivers": [
-        "export-archive"
-      ],
       "eventTypes": [
         "conversation.message"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "samsung-sms"
       ],
       "name": "phone.samsung-sms",
-      "purpose": "text messages sent and received"
+      "purpose": "text messages sent and received",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27864,15 +28100,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "samsung-account"
         }
-      ],
-      "drivers": [
-        "export-archive"
       ],
       "eventTypes": [
         "health.record",
@@ -27880,11 +28111,20 @@
         "task.revised",
         "account.row"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "samsung-account"
       ],
       "name": "account.samsung",
-      "purpose": "what the operator's Samsung account kept: health sync, settings, backups"
+      "purpose": "what the operator's Samsung account kept: health sync, settings, backups",
+      "shapes": [
+        "export-archive"
+      ]
     },
     {
       "class": "open",
@@ -27901,24 +28141,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "arbtt"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "window.sampled"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "arbtt"
       ],
       "name": "desktop.arbtt",
-      "purpose": "which window was in use, sampled every interval"
+      "purpose": "which window was in use, sampled every interval",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -27935,25 +28179,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "asciinema"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "terminal.session",
         "terminal.output"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "asciinema"
       ],
       "name": "terminal.asciinema",
-      "purpose": "what terminals showed and what was typed, replayable"
+      "purpose": "what terminals showed and what was typed, replayable",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -27970,24 +28218,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "asciinema"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "terminal.reported"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "asciinema"
       ],
       "name": "terminal.capture-events",
-      "purpose": "shell commands around a terminal recording"
+      "purpose": "shell commands around a terminal recording",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "guarded",
@@ -28004,25 +28256,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "kitty-scrollback"
         }
       ],
-      "drivers": [
-        "dir-snapshot"
-      ],
       "eventTypes": [
         "scrollback.captured",
         "scrollback.window"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "kitty-scrollback"
       ],
       "name": "terminal.kitty-scrollback",
-      "purpose": "terminal recall: what kitty windows showed"
+      "purpose": "terminal recall: what kitty windows showed",
+      "shapes": [
+        "dir-snapshot"
+      ]
     },
     {
       "class": "guarded",
@@ -28039,15 +28295,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "input-log"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "key.pressed",
@@ -28057,11 +28308,20 @@
         "pointer.scrolled",
         "input.logger"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "input-log"
       ],
       "name": "desktop.input-log",
-      "purpose": "keystroke timing, typing and pointer activity"
+      "purpose": "keystroke timing, typing and pointer activity",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28078,24 +28338,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "raw-log"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "operator_log.entry"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 604800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "raw-log"
       ],
       "name": "operator.raw-log",
-      "purpose": "the operator's quick notes, as primary data"
+      "purpose": "the operator's quick notes, as primary data",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28112,24 +28376,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "steering"
         }
       ],
-      "drivers": [
-        "sqlite-rows"
-      ],
       "eventTypes": [
         "steering.row"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 2592000
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "steering"
       ],
       "name": "operator.steering",
-      "purpose": "commitments, forecasts and reviews the operator keeps"
+      "purpose": "commitments, forecasts and reviews the operator keeps",
+      "shapes": [
+        "sqlite-rows"
+      ]
     },
     {
       "class": "guarded",
@@ -28146,8 +28414,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
@@ -28162,8 +28428,6 @@
             "credentials": [],
             "locations": [],
             "owner": "session",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -28190,21 +28454,27 @@
           "format": "clipboard"
         }
       ],
-      "drivers": [
-        "append-file",
-        "live-stream"
-      ],
       "eventTypes": [
         "lake.observed",
         "capture.gap",
         "clipboard.copied"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake",
         "clipboard"
       ],
       "name": "desktop.clipboard",
-      "purpose": "recall, prompt provenance"
+      "purpose": "recall, prompt provenance",
+      "shapes": [
+        "append-file",
+        "live-stream"
+      ]
     },
     {
       "class": "guarded",
@@ -28221,8 +28491,6 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
@@ -28237,8 +28505,6 @@
             "credentials": [],
             "locations": [],
             "owner": "session",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -28250,10 +28516,6 @@
           "format": "notifications"
         }
       ],
-      "drivers": [
-        "append-file",
-        "live-stream"
-      ],
       "eventTypes": [
         "lake.observed",
         "capture.gap",
@@ -28261,12 +28523,22 @@
         "notification.closed",
         "notification.action"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake",
         "notifications"
       ],
       "name": "desktop.notifications",
-      "purpose": "recall, interruption analysis"
+      "purpose": "recall, interruption analysis",
+      "shapes": [
+        "append-file",
+        "live-stream"
+      ]
     },
     {
       "class": "open",
@@ -28283,25 +28555,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "lake.observed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "desktop.media",
-      "purpose": "listening and attention timeline"
+      "purpose": "listening and attention timeline",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28318,25 +28594,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "lake.observed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "desktop.a11y",
-      "purpose": "what was on screen, recall"
+      "purpose": "what was on screen, recall",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28353,25 +28633,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "lake.observed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 2592000
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "desktop.idle-inhibitor",
-      "purpose": "presence and AFK evidence"
+      "purpose": "presence and AFK evidence",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28388,25 +28672,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "lake.observed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "media.screen",
-      "purpose": "screen recall and OCR"
+      "purpose": "screen recall and OCR",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28423,25 +28711,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "lake.observed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "media.audio",
-      "purpose": "audio recall, speech index, device state"
+      "purpose": "audio recall, speech index, device state",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28458,25 +28750,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "link.followed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "browser.navigation",
-      "purpose": "browsing trails, recall"
+      "purpose": "browsing trails, recall",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28493,25 +28789,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "reading_stack.changed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 2592000
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "reading.stack",
-      "purpose": "reading queue"
+      "purpose": "reading queue",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28528,25 +28828,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "display.sampled",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "desktop.display",
-      "purpose": "machine state timeline"
+      "purpose": "machine state timeline",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28563,25 +28867,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "lake.observed",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "network.netflow",
-      "purpose": "network flows by connection"
+      "purpose": "network flows by connection",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28598,26 +28906,30 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
-      ],
-      "drivers": [
-        "append-file"
       ],
       "eventTypes": [
         "battery.sampled",
         "bluetooth_audio.sampled",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "machine.peripheral",
-      "purpose": "battery and audio device state"
+      "purpose": "battery and audio device state",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "open",
@@ -28634,25 +28946,29 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": []
           },
           "format": "sinnix-lake"
         }
       ],
-      "drivers": [
-        "append-file"
-      ],
       "eventTypes": [
         "air.sampled",
         "capture.gap"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinnix-lake"
       ],
       "name": "environment.awair",
-      "purpose": "room air, sleep and focus analysis"
+      "purpose": "room air, sleep and focus analysis",
+      "shapes": [
+        "append-file"
+      ]
     },
     {
       "class": "guarded",
@@ -28667,8 +28983,6 @@
             "credentials": [],
             "locations": [],
             "owner": "session",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -28680,17 +28994,23 @@
           "format": "players"
         }
       ],
-      "drivers": [
-        "live-stream"
-      ],
       "eventTypes": [
         "player.changed"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 604800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "players"
       ],
       "name": "media.mpris",
-      "purpose": "listening and watching history, attention"
+      "purpose": "listening and watching history, attention",
+      "shapes": [
+        "live-stream"
+      ]
     },
     {
       "class": "guarded",
@@ -28704,8 +29024,6 @@
             "credentials": [],
             "locations": [],
             "owner": "session",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -28717,19 +29035,25 @@
           "format": "integration-socket"
         }
       ],
-      "drivers": [
-        "live-stream"
-      ],
       "eventTypes": [
         "editor.reported",
         "terminal.reported",
         "scrollback.captured"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "integration-socket"
       ],
       "name": "session.integrations",
-      "purpose": "recall: files edited, commands run in the terminal and what they printed"
+      "purpose": "recall: files edited, commands run in the terminal and what they printed",
+      "shapes": [
+        "live-stream"
+      ]
     },
     {
       "class": "guarded",
@@ -28741,8 +29065,6 @@
             "credentials": [],
             "locations": [],
             "owner": "session",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [
@@ -28775,17 +29097,23 @@
           "format": "media"
         }
       ],
-      "drivers": [
-        "media"
-      ],
       "eventTypes": [
         "media.segment"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "media"
       ],
       "name": "session.media",
-      "purpose": "recall: what was on screen and said; screen text and transcripts"
+      "purpose": "recall: what was on screen and said; screen text and transcripts",
+      "shapes": [
+        "media"
+      ]
     },
     {
       "class": "open",
@@ -28802,26 +29130,28 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [
-              "library.request"
-            ],
             "streams": []
           },
           "format": "library"
         }
-      ],
-      "drivers": [
-        "dir-snapshot"
       ],
       "eventTypes": [
         "library.copy"
       ],
+      "expect": {
+        "everySeconds": 86400,
+        "kind": "cadence",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "library"
       ],
       "name": "library.scan",
-      "purpose": "the media library"
+      "purpose": "the media library",
+      "shapes": [
+        "dir-snapshot"
+      ]
     },
     {
       "class": "open",
@@ -28838,17 +29168,10 @@
               }
             ],
             "owner": "system",
-            "request_only": false,
-            "requests": [
-              "library.request"
-            ],
             "streams": []
           },
           "format": "library"
         }
-      ],
-      "drivers": [
-        "api-request"
       ],
       "eventTypes": [
         "library.preview",
@@ -28860,11 +29183,18 @@
         "library.view",
         "library.dismissal"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "library"
       ],
       "name": "library.request",
-      "purpose": "the media library"
+      "purpose": "the media library",
+      "shapes": []
     },
     {
       "class": "open",
@@ -28876,24 +29206,26 @@
             "credentials": [],
             "locations": [],
             "owner": "system",
-            "request_only": true,
-            "requests": [],
             "streams": []
           },
           "format": "source-observation"
         }
       ],
-      "drivers": [
-        "api-request"
-      ],
       "eventTypes": [
         "source.coverage"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "source-observation"
       ],
       "name": "source.observation",
-      "purpose": "source read outcomes and coverage evidence"
+      "purpose": "source read outcomes and coverage evidence",
+      "shapes": []
     },
     {
       "class": "guarded",
@@ -28905,25 +29237,27 @@
             "credentials": [],
             "locations": [],
             "owner": "system",
-            "request_only": true,
-            "requests": [],
             "streams": []
           },
           "format": "forecast"
         }
       ],
-      "drivers": [
-        "api-request"
-      ],
       "eventTypes": [
         "forecast.issued",
         "forecast.resolved"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "forecast"
       ],
       "name": "forecast.request",
-      "purpose": "submitted probability forecasts"
+      "purpose": "submitted probability forecasts",
+      "shapes": []
     },
     {
       "class": "guarded",
@@ -28935,25 +29269,27 @@
             "credentials": [],
             "locations": [],
             "owner": "system",
-            "request_only": true,
-            "requests": [],
             "streams": []
           },
           "format": "query"
         }
       ],
-      "drivers": [
-        "api-request"
-      ],
       "eventTypes": [
         "operator.mark",
         "query.saved"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "query"
       ],
       "name": "query.request",
-      "purpose": "moment marks and saved queries"
+      "purpose": "moment marks and saved queries",
+      "shapes": []
     },
     {
       "class": "open",
@@ -28965,24 +29301,26 @@
             "credentials": [],
             "locations": [],
             "owner": "system",
-            "request_only": true,
-            "requests": [],
             "streams": []
           },
           "format": "analysis"
         }
       ],
-      "drivers": [
-        "api-request"
-      ],
       "eventTypes": [
         "analysis.request"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "analysis"
       ],
       "name": "analysis.request",
-      "purpose": "canonical analysis questions"
+      "purpose": "canonical analysis questions",
+      "shapes": []
     },
     {
       "class": "open",
@@ -28994,17 +29332,10 @@
             "credentials": [],
             "locations": [],
             "owner": "system",
-            "request_only": true,
-            "requests": [
-              "signal"
-            ],
             "streams": []
           },
           "format": "signals"
         }
-      ],
-      "drivers": [
-        "api-request"
       ],
       "eventTypes": [
         "signal.rule",
@@ -29018,11 +29349,18 @@
         "signal.receipt",
         "signal.desktop_receipt"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "signals"
       ],
       "name": "sinex.signals",
-      "purpose": "canonical signal rules and host delivery receipts"
+      "purpose": "canonical signal rules and host delivery receipts",
+      "shapes": []
     },
     {
       "class": "guarded",
@@ -29034,24 +29372,28 @@
             "credentials": [],
             "locations": [],
             "owner": "system",
-            "request_only": true,
-            "requests": [],
             "streams": []
           },
           "format": "page-crawl"
         }
       ],
-      "drivers": [
-        "api-cursor"
-      ],
       "eventTypes": [
         "page.fetched"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "page-crawl"
       ],
       "name": "browser.page-crawl",
-      "purpose": "page content for recall and search over what was read"
+      "purpose": "page content for recall and search over what was read",
+      "shapes": [
+        "api-cursor"
+      ]
     },
     {
       "class": "open",
@@ -29063,8 +29405,6 @@
             "credentials": [],
             "locations": [],
             "owner": "system",
-            "request_only": false,
-            "requests": [],
             "streams": [
               {
                 "capabilities": [],
@@ -29076,17 +29416,23 @@
           "format": "sinex-telemetry"
         }
       ],
-      "drivers": [
-        "live-stream"
-      ],
       "eventTypes": [
         "sinex.telemetry"
       ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 3600
+      },
+      "expiresAfterSeconds": null,
       "formats": [
         "sinex-telemetry"
       ],
       "name": "sinex.telemetry",
-      "purpose": "Sinex's sampled state"
+      "purpose": "Sinex's sampled state",
+      "shapes": [
+        "live-stream"
+      ]
     }
   ]
 }
