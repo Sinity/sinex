@@ -310,6 +310,11 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     // The firing falls due while the new policy's outputs are still being
     // built, so the deliverer finds the policy unsettled and waits.
     tokio::time::sleep(Duration::from_millis(2500)).await;
+    // Activation is not a commit, so the head before it is the head after it.
+    let head: i64 = sqlx::query_scalar("SELECT value FROM core.counters WHERE name='commit_seq'")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
     // This daemon runs no commit consumers, so the test settles the new
     // policy's output projection itself. Activation is not a commit; its
     // announcement alone must wake the deliverer.
@@ -323,10 +328,6 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     .await
     .unwrap();
     assert!(after > before, "the policy change settled");
-    let head: i64 = sqlx::query_scalar("SELECT value FROM core.counters WHERE name='commit_seq'")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.events WHERE event_type='signal.outcome' AND payload->'outcome'->'result'->>'reason'='basis_changed'",
