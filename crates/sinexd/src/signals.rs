@@ -922,8 +922,10 @@ async fn policy_activations(
     let (announce, activated) = watch::channel(());
     let task = tokio::spawn(async move {
         loop {
-            // `None` is a lost connection, reconnected on the next call; an
-            // announcement may have been missed, so it wakes the deliverer too.
+            // `None` is a lost connection, already reconnected and listening
+            // again; an announcement may have been missed in the gap, so it
+            // wakes the deliverer, whose next step reads the epoch afresh. A
+            // failed reconnection ends the worker, which stops the daemon.
             if let Err(failure) = listener.try_recv().await {
                 return format!("policy activation listener: {failure}");
             }
