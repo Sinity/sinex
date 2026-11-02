@@ -36,6 +36,15 @@ pub enum Pending {
     },
 }
 
+/// The readings one matched row was computed from, and the read mark of the
+/// snapshot they were read in: a delivery is admitted under that mark, so an
+/// input archived since then is detected.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Inputs {
+    pub parents: Vec<EventId>,
+    pub read: crate::ReadMark,
+}
+
 /// A firing another product forwarded that the host policy still holds: the
 /// report reading that carried it becomes its delivery's parent.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,7 +68,7 @@ pub struct Checkpoint {
     /// when first seen: the reading itself, or every reading a group or
     /// aggregate selected. Kept while the row is in the answer or a held
     /// firing cites it, so a delivery cites what it matched.
-    pub inputs: BTreeMap<String, BTreeMap<String, Vec<EventId>>>,
+    pub inputs: BTreeMap<String, BTreeMap<String, Inputs>>,
     /// Handed-off current-state deliveries whose condition has not cleared:
     /// a released or cleared outcome refers back to them.
     pub open: BTreeMap<String, ::signals::Delivery>,
@@ -72,12 +81,11 @@ pub struct Checkpoint {
 }
 
 /// The deliveries one step handed off: derived events, each citing its rule
-/// or forwarded report and the readings its rows matched, written by the
-/// deliverer's derivation run under the read mark of the step's snapshot.
+/// or forwarded report and the readings its rows matched, with the read mark
+/// those readings were selected under, written by the deliverer's run.
 pub struct Deliveries {
     pub run: sinex_model::RunId,
-    pub read_mark: crate::ReadMark,
-    pub events: Vec<sinex_model::Event>,
+    pub events: Vec<(sinex_model::Event, crate::ReadMark)>,
 }
 
 /// A writer-owned state transition, never deserialized from an authored rule.

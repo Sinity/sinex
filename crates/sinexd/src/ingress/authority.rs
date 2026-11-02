@@ -99,6 +99,11 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
         {
             return Err(format!("invalid write family capability for {identity}"));
         }
+        if write.forward_signals && write.family == "sinex" {
+            return Err(format!(
+                "signal forwarding cannot use the sinex family, this host's own product, for {identity}"
+            ));
+        }
         if write.forward_signals && write.canonical_prefixes.is_empty() {
             return Err(format!(
                 "signal forwarding requires the canonical family namespace for {identity}"

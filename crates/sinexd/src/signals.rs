@@ -255,7 +255,7 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
     }
     let read_mark = sinex_store::ReadMark::now(&mut tx).await.map_err(error)?;
     if revision.is_none() || state.observed_seq != seq {
-        evaluate::evaluate(api, &mut tx, &mut state, now, seq, calendar).await?;
+        evaluate::evaluate(api, &mut tx, &mut state, now, seq, read_mark, calendar).await?;
     }
     absorb_reports(&mut tx, &mut state, seq).await?;
     tx.commit().await.map_err(error)?;
@@ -267,13 +267,12 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         state.evaluator.resume(at, calendar, &mut state.host)
     }
     .map_err(error)?;
-    let (deliveries, records) = hand_off(config, &mut state, handoffs, now)?;
+    let (deliveries, records) = hand_off(config, &mut state, handoffs, read_mark, now)?;
     let commit = Commit {
         host: api.host.clone(),
         class: Class::Guarded,
         deliveries: (!deliveries.is_empty()).then_some(Deliveries {
             run: host.run,
-            read_mark,
             events: deliveries,
         }),
         expected_revision: revision,
@@ -285,7 +284,8 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         Err(reason)
             if reason.contains("signal evaluation input snapshot changed")
                 || reason.contains("signal checkpoint changed")
-                || reason.contains("derivation_policy_epoch_changed") =>
+                || reason.contains("derivation_policy_epoch_changed")
+                || reason.contains("signal delivery inputs stopped being available") =>
         {
             Ok(Step::Again)
         }
@@ -319,6 +319,23 @@ async fn absorb_reports(
         let Ok(received) = serde_json::from_value::<ReportReceived>(report.payload) else {
             continue;
         };
+        // A producer clears only its own product's deliveries.
+        if let ::signals::Report::Cleared { delivery, .. } = &received.report {
+            let product = state
+                .open
+                .get(delivery)
+                .map(|open| &open.fired.trigger.rule.product)
+                .or_else(|| {
+                    state
+                        .host
+                        .held()
+                        .find(|held| held.fired.id == *delivery)
+                        .map(|held| &held.fired.trigger.rule.product)
+                });
+            if product != Some(&received.family) {
+                continue;
+            }
+        }
         if let ::signals::Report::Fired(fired) = &received.report {
             state.forwarded.insert(
                 fired.id.clone(),
@@ -337,12 +354,14 @@ async fn absorb_reports(
 /// Turn one advance's handoffs into events and outlet work: a derived
 /// delivery event per handoff, an outcome record per outcome, and the
 /// notices, clears, values and actions the outlets still owe.
+#[allow(clippy::type_complexity)]
 fn hand_off(
     config: &Config,
     state: &mut Checkpoint,
     handoffs: ::signals::Handoffs,
+    read_mark: sinex_store::ReadMark,
     now: Timestamp,
-) -> Result<(Vec<sinex_model::Event>, Vec<SignalRecord>), String> {
+) -> Result<(Vec<(sinex_model::Event, sinex_store::ReadMark)>, Vec<SignalRecord>), String> {
     let mut deliveries = Vec::new();
     let mut records = Vec::new();
     let desktop = config.notifications.is_some();
@@ -362,26 +381,29 @@ fn hand_off(
                 ));
             }
         };
-        // The readings each matched row was computed from.
+        // The readings each matched row was computed from, under the read
+        // mark they were selected with.
+        let mut read = read_mark;
         if let Some(inputs) = state.inputs.get(&rule.id).filter(|_| own.is_some()) {
-            parents.extend(
-                delivery
-                    .fired
-                    .basis
-                    .iter()
-                    .filter_map(|row| inputs.get(&row.occurrence.id))
-                    .flatten()
-                    .copied(),
-            );
+            let matched: Vec<_> = delivery
+                .fired
+                .basis
+                .iter()
+                .filter_map(|row| inputs.get(&row.occurrence.id))
+                .collect();
+            if let Some(first) = matched.first() {
+                read = first.read;
+            }
+            parents.extend(matched.iter().flat_map(|inputs| inputs.parents.iter().copied()));
         }
         parents.sort_unstable();
         parents.dedup();
         let recorded = DeliveryRecorded {
             delivery_id: id.clone(),
             delivery: delivery.clone(),
-            handed_at: now,
+            handed_at: timestamp(delivery.at)?,
         };
-        deliveries.push(
+        deliveries.push((
             sinex_model::Event::build(
                 &recorded,
                 sinex_sources::sources::signals::SPEC.name,
@@ -391,7 +413,8 @@ fn hand_off(
                 class,
             )
             .map_err(error)?,
-        );
+            read,
+        ));
         match &delivery.decision {
             decision if decision.interrupts() => {
                 if desktop {
@@ -404,13 +427,7 @@ fn hand_off(
                 }
             }
             ::signals::Decision::Run => {
-                let reference = delivery
-                    .fired
-                    .basis
-                    .first()
-                    .map(|row| row.reference.clone())
-                    .filter(|reference| !reference.is_empty())
-                    .unwrap_or_else(|| evaluate::rule_reference(&delivery.fired.rule_name));
+                let reference = outlets::reference(&delivery);
                 let rule = own.as_ref().map(|own| &own.active.rule);
                 let pending = match delivery.fired.channel {
                     ::signals::Channel::Value => rule
@@ -453,10 +470,13 @@ fn hand_off(
             ::signals::Outcome::Cleared => {
                 state.open.remove(&id);
                 // A notice not yet shown is never shown; one shown is closed.
-                if matches!(state.outbox.get(&id), Some(Pending::Notice { .. })) {
+                // A notice already handed to the desktop deliverer but not yet
+                // begun is closed too: requests reach it in order.
+                let owed = matches!(state.outbox.get(&id), Some(Pending::Notice { .. }));
+                if owed {
                     state.outbox.remove(&id);
                 }
-                if state.notifications.attempt(&id).is_some() {
+                if owed || state.notifications.attempt(&id).is_some() {
                     state.outbox.insert(id.clone(), Pending::Clear);
                 }
             }
@@ -543,9 +563,11 @@ fn settle(state: &mut Checkpoint) {
         Pending::Notice { notice } => notifications
             .attempt(id)
             .is_none_or(|attempt| attempt.notice.showing < notice.showing),
+        // Kept until the deliverer has closed it, or while its notice may
+        // still be on the way to the deliverer.
         Pending::Clear => notifications
             .attempt(id)
-            .is_some_and(|attempt| attempt.active),
+            .is_none_or(|attempt| attempt.active),
         Pending::Value { .. } | Pending::Action { .. } => true,
     });
 }
@@ -584,7 +606,7 @@ async fn persist(
 /// receipts append to their deliveries.
 async fn persist_update(
     host: &Host<'_>,
-    update: ::signals::notifications::NotificationUpdate,
+    update: signal_delivery::NotificationUpdate,
 ) -> Result<(), String> {
     let api = host.api;
     let _serial = api
@@ -631,11 +653,17 @@ async fn dispatch(
     notices: &mpsc::UnboundedSender<signal_delivery::NotificationRequest>,
     requested: &mut BTreeSet<String>,
 ) -> Result<(), String> {
-    let outbox = {
+    let state = {
         let mut conn = host.api.reads.acquire().await.map_err(error)?;
-        load(host, &mut conn).await?.1.outbox
+        load(host, &mut conn).await?.1
     };
-    for (id, pending) in outbox {
+    requested.retain(|request| {
+        request
+            .split(' ')
+            .nth(1)
+            .is_some_and(|id| state.outbox.contains_key(id))
+    });
+    for (id, pending) in state.outbox {
         match pending {
             Pending::Notice { notice } => {
                 if requested.insert(format!("show {id} {}", notice.showing)) {
@@ -647,6 +675,16 @@ async fn dispatch(
                 }
             }
             Pending::Clear => {
+                // A clear for a notice never sent from this process, and never
+                // begun, has nothing to close.
+                if state.notifications.attempt(&id).is_none()
+                    && !requested.iter().any(|request| {
+                        request.starts_with("show ") && request.split(' ').nth(1) == Some(&id)
+                    })
+                {
+                    forget(host, &id).await?;
+                    continue;
+                }
                 if requested.insert(format!("clear {id}")) {
                     notices
                         .send(signal_delivery::NotificationRequest::Clear(id))
@@ -666,6 +704,37 @@ async fn dispatch(
         }
     }
     Ok(())
+}
+
+/// Drop an outbox entry that owes nothing any more.
+async fn forget(host: &Host<'_>, id: &str) -> Result<(), String> {
+    let api = host.api;
+    let _serial = api
+        .writer
+        .as_ref()
+        .ok_or("signals require the writer")?
+        .lock_signals()
+        .await;
+    let mut conn = api.reads.acquire().await.map_err(error)?;
+    let (revision, mut state) = load(host, &mut conn).await?;
+    if state.outbox.remove(id).is_none() {
+        return Ok(());
+    }
+    persist(
+        api,
+        &mut conn,
+        vec![],
+        Commit {
+            host: api.host.clone(),
+            class: Class::Guarded,
+            deliveries: None,
+            expected_revision: revision,
+            observed_seq: None,
+            checkpoint: state,
+        },
+        Timestamp::now(),
+    )
+    .await
 }
 
 /// Record one outlet attempt for a value or action. The first record, the

@@ -644,38 +644,35 @@ async fn admit_signals(
         if let Some(batch) = batch {
             outcome += tx.admit(batch, keys).await.map_err(store_error)?;
         }
-        if let Some(handed) = &commit.deliveries {
-            let deliveries = Batch {
-                run: handed.run,
+        let handed = commit.deliveries.iter().flat_map(|handed| {
+            handed
+                .events
+                .iter()
+                .map(move |(event, read)| (handed.run, event, read))
+        });
+        for (run, event, read) in handed {
+            let delivery = Batch {
+                run,
                 kind: sinex_model::BatchKind::Derived {
                     derivation: crate::signals::DELIVERIES.into(),
                     scope: sinex_store::DerivedScope::Keys {
-                        keys: handed
-                            .events
-                            .iter()
-                            .map(|event| sinex_store::ComputedKey {
-                                key: event.payload["delivery_id"].clone(),
-                                dirty_seq: commit.observed_seq.unwrap_or(0),
-                                waiting: false,
-                                refresh_at: None,
-                            })
-                            .collect(),
-                        read: handed.read_mark,
+                        keys: vec![sinex_store::ComputedKey {
+                            key: event.payload["delivery_id"].clone(),
+                            dirty_seq: commit.observed_seq.unwrap_or(0),
+                            waiting: false,
+                            refresh_at: None,
+                        }],
+                        read: *read,
                     }
                     .to_value(),
                 },
-                records: handed
-                    .events
-                    .iter()
-                    .cloned()
-                    .map(|event| sinex_model::RecordOutcome::Events {
-                        location: None,
-                        events: vec![event],
-                    })
-                    .collect(),
+                records: vec![sinex_model::RecordOutcome::Events {
+                    location: None,
+                    events: vec![event.clone()],
+                }],
                 archive: vec![],
             };
-            let admitted = tx.admit(&deliveries, keys).await.map_err(store_error)?;
+            let admitted = tx.admit(&delivery, keys).await.map_err(store_error)?;
             if admitted.superseded_input != 0 {
                 return Err(WriteError::Refused(
                     "signal delivery inputs stopped being available".into(),

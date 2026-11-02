@@ -2,7 +2,7 @@
 //! ordinary authenticated ingress journal.
 use super::*;
 use serde_json::json;
-use sinex_model::{EventPayload, MaterialId, Origin, Payloads, ReadingOrder, RecordLocation};
+use sinex_model::{MaterialId, Origin, Payloads, ReadingOrder, RecordLocation};
 
 impl Ingest {
     pub(super) async fn signal_run(

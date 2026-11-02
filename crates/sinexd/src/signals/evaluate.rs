@@ -13,6 +13,7 @@ pub(super) async fn evaluate(
     state: &mut Checkpoint,
     at: Timestamp,
     seq: i64,
+    read: sinex_store::ReadMark,
     calendar: &::signals::DayCalendar,
 ) -> Result<(), String> {
     let now = millis(at)?;
@@ -56,7 +57,15 @@ pub(super) async fn evaluate(
         match state.rules.get_mut(&key) {
             // A replayed rule keeps its revision under a new reading.
             Some(prior) if prior.active.version == rule.version => prior.event = event,
-            _ => {
+            prior => {
+                // An archived newest revision leaves an older one current: it
+                // is adopted afresh, since the evaluator only moves forward
+                // within one rule's revisions.
+                if let Some(prior) = prior
+                    && prior.active.version.revision > rule.version.revision
+                {
+                    state.evaluator.withdraw(&prior.active.version);
+                }
                 state
                     .evaluator
                     .replace_rule(rule.clone(), now, calendar)
@@ -123,9 +132,14 @@ pub(super) async fn evaluate(
             let prior = state.rows.get(&key);
             let inputs = state.inputs.entry(key.clone()).or_default();
             for row in answer.rows {
-                inputs
-                    .entry(row.identity.clone())
-                    .or_insert_with(|| row.event.map_or_else(|| answer.parents.clone(), |event| vec![event]));
+                inputs.entry(row.identity.clone()).or_insert_with(|| {
+                    sinex_store::signals::Inputs {
+                        parents: row
+                            .event
+                            .map_or_else(|| answer.parents.clone(), |event| vec![event]),
+                        read,
+                    }
+                });
                 let old = prior.and_then(|rows| rows.get(&row.identity));
                 let start = row
                     .start

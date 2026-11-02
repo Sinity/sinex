@@ -483,8 +483,9 @@ its conformance cases run in Sinex. What Sinex supplies:
 Sinex is the one deliverer on its host. A product whose grant has `forward_signals`
 (Polylogue on Sinex) sends its evaluator's reports (firings, cleared conditions, rule
 revisions and withdrawals, progress) in a signals frame through the producer path; each
-report is stored as a `signal.report` naming its authenticated producer, and a report
-about any product but the producer's own family is refused. Sinex's host policy takes
+report is stored as a `signal.report` naming its authenticated producer and family. A
+report about any product but that family is refused, a cleared report takes effect only
+on that product's deliveries, and the `sinex` family cannot forward. Sinex's host policy takes
 them in beside its own rules' reports and routes their firings under the host's
 attention, budget and quiet hours; a forwarded current-state firing is held until its
 producer reports being up to date. A forwarded value or action is recorded not sent,

@@ -3,9 +3,9 @@
 //! deployment configuration. Each attempt is recorded unknown before it runs.
 use super::*;
 use ::signals::DeliveryOutcome;
-use ::signals::notifications::{Notice, NotificationConfig, NotificationUpdate, RouteCommand};
+use ::signals::notifications::{Notice, NotificationConfig, RouteCommand};
 use config::{Command, ValueTarget};
-use signal_delivery::{Deliverer, NotificationRequest};
+use signal_delivery::{Deliverer, NotificationRequest, NotificationUpdate};
 use std::time::Duration;
 
 /// Start the host's one desktop deliverer with its persisted state. Committed
@@ -59,14 +59,21 @@ pub(super) async fn notifications(
 
 /// The desktop notice for one delivery the route function decided to show
 /// or send away.
-pub(super) fn notice(delivery: &::signals::Delivery, showing: u32) -> Notice {
-    let fired = &delivery.fired;
-    let reference = fired
+/// What a delivery is about: its first matched row's reference, else its
+/// rule's citation.
+pub(super) fn reference(delivery: &::signals::Delivery) -> String {
+    delivery
+        .fired
         .basis
         .first()
         .map(|row| row.reference.clone())
         .filter(|reference| !reference.is_empty())
-        .unwrap_or_else(|| evaluate::rule_reference(&fired.rule_name));
+        .unwrap_or_else(|| evaluate::rule_reference(&delivery.fired.rule_name))
+}
+
+pub(super) fn notice(delivery: &::signals::Delivery, showing: u32) -> Notice {
+    let fired = &delivery.fired;
+    let reference = reference(delivery);
     let what = match (&fired.change, fired.value) {
         (Some(change), _) => format!("{} joined, {} left", change.joined.len(), change.left.len()),
         (None, Some(value)) => format!("{value}"),

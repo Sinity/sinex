@@ -40,12 +40,14 @@ pub struct OutcomeRecorded {
 }
 
 /// An evaluator report another product forwarded to this host's deliverer,
-/// with the authenticated producer that sent it.
+/// with the authenticated producer and family that sent it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
 #[event(version=2,type="signal.report",key=location,replace=repeat,time=received_at,quality=captured)]
 pub struct ReportReceived {
     pub producer: String,
+    /// The producer's authenticated family: the only product it may report for.
+    pub family: String,
     pub report: signals::Report,
     pub received_at: Timestamp,
 }

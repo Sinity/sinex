@@ -54,6 +54,7 @@ fn forwarded_reports_carry_their_producer_and_refuse_another_product() {
         records,
         vec![SignalRecord::Report(Box::new(ReportReceived {
             producer: "primary".into(),
+            family: "polylogue".into(),
             report: own,
             received_at: at,
         }))]

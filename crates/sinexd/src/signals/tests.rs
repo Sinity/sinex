@@ -121,6 +121,10 @@ fn parents(event: &sinex_model::Event) -> Vec<EventId> {
     }
 }
 
+fn mark() -> sinex_store::ReadMark {
+    sinex_store::ReadMark::default()
+}
+
 fn handoffs(deliveries: Vec<::signals::Delivery>) -> ::signals::Handoffs {
     ::signals::Handoffs {
         deliveries,
@@ -138,9 +142,22 @@ fn a_delivery_cites_its_rule_and_the_readings_its_row_was_computed_from() {
     let rule_event = own.event;
     state.rules.insert("grouped".into(), own);
     let selected = vec![EventId::new(), EventId::new()];
+    // The mark the row was first read under, older than the handoff's.
+    let read = sinex_store::ReadMark {
+        changes: 3,
+        tombstoned: 0,
+        policy_epoch: Some(1),
+    };
     state.inputs.insert(
         "grouped".into(),
-        [("group-a".to_string(), selected.clone())].into(),
+        [(
+            "group-a".to_string(),
+            sinex_store::signals::Inputs {
+                parents: selected.clone(),
+                read,
+            },
+        )]
+        .into(),
     );
     let handed = delivery(
         PRODUCT,
@@ -156,15 +173,17 @@ fn a_delivery_cites_its_rule_and_the_readings_its_row_was_computed_from() {
         &config(true),
         &mut state,
         handoffs(vec![handed.clone()]),
+        mark(),
         Timestamp::from_unix_secs(1_800_000_000).unwrap(),
     )
     .unwrap();
     assert!(records.is_empty());
     let mut expected = vec![rule_event, selected[0], selected[1]];
     expected.sort_unstable();
-    assert_eq!(parents(&events[0]), expected);
-    assert_eq!(events[0].payload["delivery_id"], handed.fired.id);
-    assert_eq!(events[0].class, Class::Guarded);
+    assert_eq!(parents(&events[0].0), expected);
+    assert_eq!(events[0].0.payload["delivery_id"], handed.fired.id);
+    assert_eq!(events[0].0.class, Class::Guarded);
+    assert_eq!(events[0].1, read, "admitted under the mark its row was read with");
     // A passive notice owes no outlet, and the row left the answer.
     assert!(state.outbox.is_empty());
     assert!(state.inputs.is_empty());
@@ -187,7 +206,7 @@ fn a_forwarded_delivery_cites_its_report_and_an_unknown_one_is_refused() {
         false,
     );
     let at = Timestamp::from_unix_secs(1_800_000_000).unwrap();
-    assert!(hand_off(&config(true), &mut state, handoffs(vec![handed.clone()]), at).is_err());
+    assert!(hand_off(&config(true), &mut state, handoffs(vec![handed.clone()]), mark(), at).is_err());
     let report = EventId::new();
     state.forwarded.insert(
         handed.fired.id.clone(),
@@ -196,9 +215,9 @@ fn a_forwarded_delivery_cites_its_report_and_an_unknown_one_is_refused() {
             class: Class::Open,
         },
     );
-    let (events, _) = hand_off(&config(true), &mut state, handoffs(vec![handed]), at).unwrap();
-    assert_eq!(parents(&events[0]), vec![report]);
-    assert_eq!(events[0].class, Class::Open);
+    let (events, _) = hand_off(&config(true), &mut state, handoffs(vec![handed]), mark(), at).unwrap();
+    assert_eq!(parents(&events[0].0), vec![report]);
+    assert_eq!(events[0].0.class, Class::Open);
     assert!(state.forwarded.is_empty());
 }
 
@@ -262,6 +281,7 @@ fn each_decision_owes_the_outlet_it_names() {
             run.clone(),
             forwarded.clone(),
         ]),
+        mark(),
         at,
     )
     .unwrap();
@@ -300,13 +320,14 @@ fn each_decision_owes_the_outlet_it_names() {
     // Without desktop notifications, an interrupting decision owes nothing.
     let mut quiet = self::state();
     quiet.rules.insert("shown".into(), rule("shown", "notice"));
-    hand_off(&config(false), &mut quiet, handoffs(vec![shown]), at).unwrap();
+    hand_off(&config(false), &mut quiet, handoffs(vec![shown]), mark(), at).unwrap();
     assert!(quiet.outbox.is_empty());
 }
 
 /// law: signal-cleared-closes-or-never-shows
 /// A cleared current-state delivery that was shown is closed; one whose
-/// notice was not begun yet is never shown.
+/// notice was not begun yet is never shown on its own: its owed notice is
+/// replaced by a clear.
 #[devkit::test]
 fn a_cleared_delivery_is_closed_once_shown_and_never_shown_otherwise() {
     let mut state = state();
@@ -332,6 +353,7 @@ fn a_cleared_delivery_is_closed_once_shown_and_never_shown_otherwise() {
         &config(true),
         &mut state,
         handoffs(vec![shown.clone(), unsent.clone()]),
+        mark(),
         at,
     )
     .unwrap();
@@ -355,11 +377,14 @@ fn a_cleared_delivery_is_closed_once_shown_and_never_shown_otherwise() {
             outcomes: vec![cleared(shown.id()), cleared(unsent.id())],
             ..Default::default()
         },
+        mark(),
         at,
     )
     .unwrap();
     assert_eq!(records.len(), 2);
     assert_eq!(state.outbox.get(shown.id()), Some(&Pending::Clear));
-    assert!(!state.outbox.contains_key(unsent.id()));
+    // The unsent notice is never shown: its notice is replaced by a clear,
+    // which closes it if it is already on the way to the deliverer.
+    assert_eq!(state.outbox.get(unsent.id()), Some(&Pending::Clear));
     assert!(state.open.is_empty());
 }
