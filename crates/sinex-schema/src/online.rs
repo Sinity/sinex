@@ -27,6 +27,9 @@ pub(crate) const SEARCH_REWRITE_MARK: &str = "CREATE TABLE sinex_schema.search_t
 pub enum Progress {
     /// One batch was read; `rewritten` of its rows changed. More may remain.
     Advanced { rewritten: u64 },
+    /// A session that has ended on our side, such as a stopped daemon's, is
+    /// still building the index; call again once it has finished.
+    IndexBuildRunning,
     /// No work remains.
     Done,
 }
@@ -46,7 +49,9 @@ pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error
     if let Some(rewritten) = rewrite_batch(conn, batch).await? {
         return Ok(Progress::Advanced { rewritten });
     }
-    rebuild_trigram_index(conn).await?;
+    if !rebuild_trigram_index(conn).await? {
+        return Ok(Progress::IndexBuildRunning);
+    }
     sqlx::raw_sql("DROP TABLE sinex_schema.search_trigram_rewrite")
         .execute(&mut *conn)
         .await?;
@@ -55,8 +60,15 @@ pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error
 
 /// Run [`step`] until no work remains.
 pub async fn finish(conn: &mut PgConnection) -> Result<(), Error> {
-    while step(conn, BATCH).await? != Progress::Done {}
-    Ok(())
+    loop {
+        match step(conn, BATCH).await? {
+            Progress::Advanced { .. } => {}
+            Progress::IndexBuildRunning => {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await
+            }
+            Progress::Done => return Ok(()),
+        }
+    }
 }
 
 /// Rewrite the next rows after the mark and move the mark, in one
@@ -119,16 +131,28 @@ async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64
 /// eligible rows, without blocking reads or writes. Each state an
 /// interruption can leave is a starting point: an invalid partial build is
 /// dropped and built again, a valid one is kept, and a finished drop only
-/// needs the rename.
-async fn rebuild_trigram_index(conn: &mut PgConnection) -> Result<(), Error> {
-    let (whole, partial_valid): (Option<bool>, Option<bool>) = sqlx::query_as(
+/// needs the rename. A build another session still runs (a stopped daemon's
+/// backend keeps building after its client is gone) is waited for, not
+/// dropped: `false` means it is still running.
+///
+/// The build holds a lock that the search consumer's own lock waits for, so
+/// search maintenance, and a tombstone queued behind it, wait for the build;
+/// the search position reports that delay.
+async fn rebuild_trigram_index(conn: &mut PgConnection) -> Result<bool, Error> {
+    let (whole, partial_valid, building): (Option<bool>, Option<bool>, bool) = sqlx::query_as(
         "SELECT (SELECT indpred IS NULL FROM pg_index WHERE indexrelid = to_regclass('core.search_text_trigram')),
-                (SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('core.search_text_trigram_partial'))",
+                (SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('core.search_text_trigram_partial')),
+                EXISTS (SELECT 1 FROM pg_stat_progress_create_index
+                        WHERE index_relid = to_regclass('core.search_text_trigram_partial')
+                          AND pid <> pg_backend_pid())",
     )
     .fetch_one(&mut *conn)
     .await?;
     if whole == Some(false) {
-        return Ok(());
+        return Ok(true);
+    }
+    if building {
+        return Ok(false);
     }
     let mut partial_valid = partial_valid;
     if partial_valid == Some(false) {
@@ -152,5 +176,5 @@ async fn rebuild_trigram_index(conn: &mut PgConnection) -> Result<(), Error> {
     sqlx::raw_sql("ALTER INDEX core.search_text_trigram_partial RENAME TO search_text_trigram")
         .execute(&mut *conn)
         .await?;
-    Ok(())
+    Ok(true)
 }

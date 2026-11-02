@@ -6,8 +6,9 @@ use sqlx::PgConnection;
 use std::time::Duration;
 use tokio::sync::watch;
 
-/// How long a failed step waits before it is tried again. An index build
-/// that failed restarts from the beginning, so retries are not immediate.
+/// How long a failed step, or one waiting for another session's index build,
+/// waits before it is tried again. A failed index build restarts from the
+/// beginning, so retries are not immediate.
 const RETRY: Duration = Duration::from_secs(60);
 
 /// Run the remaining steps, then wait for `stop`.
@@ -26,6 +27,12 @@ pub(crate) async fn run(
                 rewritten += rows;
                 worked = true;
                 tokio::task::yield_now().await;
+            }
+            Ok(Progress::IndexBuildRunning) => {
+                tokio::select! {
+                    _ = tokio::time::sleep(RETRY) => {}
+                    _ = stop.changed() => {}
+                }
             }
             Ok(Progress::Done) => break,
             Err(error) => {

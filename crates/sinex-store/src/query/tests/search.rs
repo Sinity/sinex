@@ -184,6 +184,9 @@ async fn search_answers_and_position_hold_while_trigram_rewrite_runs(
         match sinex_schema::online::step(&mut conn, 1).await.unwrap() {
             sinex_schema::online::Progress::Advanced { .. } => {}
             sinex_schema::online::Progress::Done => break,
+            sinex_schema::online::Progress::IndexBuildRunning => {
+                panic!("no other session builds the index")
+            }
         }
     }
     assert_eq!(stages.len(), 4, "one search row per step, then the index");
