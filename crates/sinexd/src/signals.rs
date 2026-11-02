@@ -24,9 +24,6 @@ pub(crate) const DELIVERIES: &str = "sinex.signals.deliveries";
 /// Why a withdrawn handoff was not sent: the readings it cited no longer
 /// stand under the current policy and lifecycle.
 const BASIS_CHANGED: &str = "basis_changed";
-/// How often a deliverer waiting for a privacy policy change to settle looks
-/// again.
-const POLICY_RECHECK_MS: i64 = 1_000;
 
 fn error(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -112,6 +109,7 @@ pub(crate) async fn run(
         run,
     };
     let (notices, mut updates, worker) = outlets::notifications(&api, &config).await?;
+    let (mut activated, mut activations) = policy_activations(&api).await?;
     let mut resumed = false;
     // Requests sent to the desktop deliverer by this process, so a request
     // whose result is not persisted yet is not sent again.
@@ -121,30 +119,34 @@ pub(crate) async fn run(
             if *stop.borrow() || worker.is_finished() {
                 break;
             }
+            if activations.is_finished() {
+                return Err((&mut activations).await.map_err(error)?);
+            }
             // Desktop state commits before the deliverer goes on.
             if let Ok(update) = updates.try_recv() {
                 persist_update(&host, update).await?;
                 continue;
             }
+            // An activation during the step wakes the wait after it.
+            activated.mark_unchanged();
             match step(&host, resumed).await? {
                 Step::Committed => {
                     resumed = true;
                     dispatch(&host, &notices, &mut requested).await?;
                 }
                 Step::Again => {}
-                Step::Wait(due) => tokio::select! {
-                    _ = commits.changed() => {}
-                    _ = stop.changed() => {}
-                    update = updates.recv() => if let Some(update) = update {
+                Step::Wait(due) => {
+                    let woken = wait(due, &mut commits, &mut activated, &mut stop, &mut updates);
+                    if let Some(update) = woken.await {
                         persist_update(&host, update).await?;
-                    },
-                    _ = wait_until(due) => {}
-                },
+                    }
+                }
             }
         }
         Ok::<_, String>(())
     }
     .await;
+    activations.abort();
     // Closing the channel stops the deliverer; what it reports until then is
     // still persisted.
     drop(notices);
@@ -258,10 +260,10 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         .map_err(error)?
         .ready()
     {
-        // The new policy's outputs activate without a commit, so a deliverer
-        // waiting only for commits could miss it and leave due work undone.
+        // Nothing is handed off under an unsettled policy; its activation
+        // wakes the deliverer.
         tx.rollback().await.map_err(error)?;
-        return Ok(Step::Wait(Some(at.saturating_add(POLICY_RECHECK_MS))));
+        return Ok(Step::Wait(None));
     }
     let read_mark = sinex_store::ReadMark::now(&mut tx).await.map_err(error)?;
     if revision.is_none() || reselect || state.observed_seq != seq {
@@ -901,6 +903,53 @@ async fn record_effect(
     )
     .await?;
     Ok(true)
+}
+
+/// Announcements of activated privacy policy epochs, as a watch. Activation
+/// is not a commit, so without them a deliverer that found the policy
+/// unsettled would wait for an unrelated commit. The task ends only with the
+/// listener's error.
+async fn policy_activations(
+    api: &Api,
+) -> Result<(watch::Receiver<()>, tokio::task::JoinHandle<String>), String> {
+    let mut listener = sqlx::postgres::PgListener::connect_with(&api.reads)
+        .await
+        .map_err(error)?;
+    listener
+        .listen(sinex_store::privacy::projection::ACTIVATED)
+        .await
+        .map_err(error)?;
+    let (announce, activated) = watch::channel(());
+    let task = tokio::spawn(async move {
+        loop {
+            // `None` is a lost connection, reconnected on the next call; an
+            // announcement may have been missed, so it wakes the deliverer too.
+            if let Err(failure) = listener.try_recv().await {
+                return format!("policy activation listener: {failure}");
+            }
+            announce.send_replace(());
+        }
+    });
+    Ok((activated, task))
+}
+
+/// Wait until something makes another step worth taking: a commit, a policy
+/// activation, a stop, the next due instant, or an update from the desktop
+/// deliverer, which is returned to be persisted. Nothing else ends it.
+async fn wait(
+    due: Option<i64>,
+    commits: &mut watch::Receiver<u64>,
+    activated: &mut watch::Receiver<()>,
+    stop: &mut watch::Receiver<bool>,
+    updates: &mut mpsc::UnboundedReceiver<signal_delivery::NotificationUpdate>,
+) -> Option<signal_delivery::NotificationUpdate> {
+    tokio::select! {
+        _ = commits.changed() => None,
+        _ = activated.changed() => None,
+        _ = stop.changed() => None,
+        update = updates.recv() => update,
+        _ = wait_until(due) => None,
+    }
 }
 
 async fn wait_until(due: Option<i64>) {

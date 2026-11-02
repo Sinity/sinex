@@ -17,6 +17,10 @@ impl Epoch {
         self.desired == self.active
     }
 }
+/// The notification channel on which an activated policy epoch is announced.
+/// Activation is not a commit, so a component waiting for one listens here.
+pub const ACTIVATED: &str = "sinex_policy_activated";
+
 /// Read inside the caller's snapshot; proof issuance must require ready().
 pub async fn epoch(conn: &mut PgConnection) -> Result<Epoch> {
     let (desired, active) =
@@ -347,12 +351,20 @@ async fn build_page(conn: &mut PgConnection) -> Result<bool> {
     if activated {
         // Same-epoch catch-up advances projection coverage without changing the
         // policy row version seen by repeatable-read effect authorization.
-        sqlx::query(
+        let changed = sqlx::query(
             "UPDATE privacy.policy_state SET active_epoch=$1 WHERE id AND desired_epoch=$1 AND active_epoch<>$1",
         )
         .bind(policy.desired)
         .execute(&mut *activation)
         .await?;
+        if changed.rows_affected() > 0 {
+            // Delivered on commit, to every listener in any process.
+            sqlx::query("SELECT pg_notify($1, $2::text)")
+                .bind(ACTIVATED)
+                .bind(policy.desired)
+                .execute(&mut *activation)
+                .await?;
+        }
         sqlx::query("DELETE FROM privacy.output_builds WHERE epoch<>$1")
             .bind(policy.desired)
             .execute(&mut *activation)

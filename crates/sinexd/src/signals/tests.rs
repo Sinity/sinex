@@ -515,3 +515,29 @@ fn a_handoff_whose_basis_changed_is_withdrawn_and_the_rest_go_ahead() {
         )]
     );
 }
+
+/// While the policy is unsettled and nothing else happens the deliverer takes
+/// no step: its wait does not end. The policy's activation alone ends it.
+#[devkit::test]
+async fn an_unsettled_policy_is_waited_out_until_its_activation() {
+    let (_commit, mut commits) = watch::channel(0u64);
+    let (announce, mut activated) = watch::channel(());
+    let (_stopping, mut stop) = watch::channel(false);
+    let (_updater, mut updates) = mpsc::unbounded_channel();
+    let idle = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        wait(None, &mut commits, &mut activated, &mut stop, &mut updates),
+    )
+    .await;
+    assert!(idle.is_err(), "nothing happened, so no step is taken");
+    announce.send_replace(());
+    let woken = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        wait(None, &mut commits, &mut activated, &mut stop, &mut updates),
+    )
+    .await;
+    assert!(
+        matches!(woken, Ok(None)),
+        "the activation wakes the deliverer"
+    );
+}

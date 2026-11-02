@@ -309,8 +309,8 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     // built, so the deliverer finds the policy unsettled and waits.
     tokio::time::sleep(Duration::from_millis(2500)).await;
     // This daemon runs no commit consumers, so the test settles the new
-    // policy's output projection itself. Activation is not a commit; the
-    // deliverer must notice it without one.
+    // policy's output projection itself. Activation is not a commit; its
+    // announcement alone must wake the deliverer.
     sinex_store::privacy::projection::ensure_current(&mut conn)
         .await
         .unwrap();
