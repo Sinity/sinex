@@ -74,7 +74,10 @@ impl Library<'_> {
                     serde_json::to_value(cited).map_err(e)?,
                 );
         }
-        let result = crate::intake::request(
+        // Boxed: the intake future is the bulk of every library write, and
+        // inline it gave each caller's debug-build poll frame a ~15 KiB slot
+        // per await site, enough to overflow a 2 MiB thread stack.
+        let result = Box::pin(crate::intake::request(
             conn,
             self.writer,
             self.blobs,
@@ -82,7 +85,7 @@ impl Library<'_> {
             &binding,
             self.host,
             acquired,
-        )
+        ))
         .await?;
         if result.outcome.failures > 0 {
             return Err(format!(

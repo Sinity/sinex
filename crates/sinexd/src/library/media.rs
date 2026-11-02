@@ -165,14 +165,14 @@ impl Library<'_> {
             vec![stored],
         )
         .await?;
-        crate::derivation_runner::compute_now(
+        Box::pin(crate::derivation_runner::compute_now(
             conn,
             self.writer,
             &sinex_derivations::library::LibraryItems,
             vec![json!(item)],
             self.host,
             self.time_settings.clone(),
-        )
+        ))
         .await?;
         Ok(json!({ "item": item, "rendition": id, "content": content, "width": w, "height": h }))
     }
