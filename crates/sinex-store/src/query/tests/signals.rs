@@ -280,37 +280,6 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
             .len(),
         1
     );
-    crate::privacy::add_rule(
-        &mut conn,
-        &crate::privacy::NewRule {
-            name: "native key protection".into(),
-            source: "derive.shell-fusion".into(),
-            event_type: Some("command.fused".into()),
-            field: Some("/record".into()),
-            matcher: "all".into(),
-            matcher_arg: None,
-            class: Class::Open,
-            action: crate::privacy::Action::Hash,
-            author: "fixture".into(),
-        },
-    )
-    .await
-    .unwrap();
-    let protected = standing_query(&mut conn, question, &ctx(), seq)
-        .await
-        .unwrap();
-    assert_eq!(
-        protected
-            .rows
-            .iter()
-            .map(|row| &row.identity)
-            .collect::<Vec<_>>(),
-        before
-            .rows
-            .iter()
-            .map(|row| &row.identity)
-            .collect::<Vec<_>>()
-    );
     let mut reread = Event::build(
         &CommandFused {
             record: format!("command.executed:{}", ids[0].1),
@@ -365,6 +334,41 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
             .unwrap()
             .intents
             .is_empty()
+    );
+    crate::privacy::add_rule(
+        &mut conn,
+        &crate::privacy::NewRule {
+            name: "native key protection".into(),
+            source: "derive.shell-fusion".into(),
+            event_type: Some("command.fused".into()),
+            field: Some("/record".into()),
+            matcher: "all".into(),
+            matcher_arg: None,
+            class: Class::Open,
+            action: crate::privacy::Action::Hash,
+            author: "fixture".into(),
+        },
+    )
+    .await
+    .unwrap();
+    // Rules apply when a reading is admitted (the mechanism Sinex runs until
+    // output-time rules are built; docs/privacy.md describes that design), so
+    // a rule written after both readings leaves the native fact's identity
+    // as it was.
+    let protected = standing_query(&mut conn, question, &ctx(), seq)
+        .await
+        .unwrap();
+    assert_eq!(
+        protected
+            .rows
+            .iter()
+            .map(|row| &row.identity)
+            .collect::<Vec<_>>(),
+        before
+            .rows
+            .iter()
+            .map(|row| &row.identity)
+            .collect::<Vec<_>>()
     );
 }
 

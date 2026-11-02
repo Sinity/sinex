@@ -315,10 +315,16 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
         .unwrap();
     let ids = world(&mut conn).await;
     let before = current_seq(&mut conn).await.unwrap();
+    // The command is archived at its source record; its fused record follows
+    // as part of the chain (docs/lifecycle.md: "It moves the scope's live
+    // readings and their whole live chains"). Archiving only the fused record
+    // would leave its member to be read as the command (docs/derivations.md:
+    // "A consumer of a fused family reads the fused records plus the family's
+    // unmatched source records").
     crate::lifecycle::move_events(
         &mut conn,
         sinex_model::lifecycle::Act::Archive,
-        vec![EventId(ids[0].0)],
+        vec![EventId(ids[0].1)],
         &NoDerivations,
     )
     .await;
@@ -341,7 +347,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
     assert_eq!(old.total, 1);
     assert_eq!(old.resolved.commit_seq, before - 1);
     let archive = ask(&mut conn, "archive where reason = archive").await;
-    assert_eq!(archive.total, 1);
+    assert_eq!(archive.total, 2, "the source record and its fused record");
 }
 
 #[devkit::test]

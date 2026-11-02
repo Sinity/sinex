@@ -484,10 +484,9 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     let mut tx = conn.begin().await.unwrap();
     let out = tx.admit(&batch(events), &ByDay).await.unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(
-        out.dirty_keys, 4,
-        "both original and projected input keys are marked for each event"
-    );
+    // One stored payload per event, so one key per event (docs/privacy.md:
+    // "Stored payloads stay raw"; there is no second, projected payload).
+    assert_eq!(out.dirty_keys, 2, "each event marks its one input key");
     let n: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM derivation.dirty WHERE derivation = 'daily'"#
     )

@@ -227,10 +227,11 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("commands", "exit_code") => payload_number("exit_code"),
         ("commands", "duration") => format!("({} / 1e9)", payload_number("duration_ns")),
         ("commands", "start") => payload_time("started_at"),
-        // A history file records no duration field: its command is an instant.
+        // A command without a recorded duration (a history file, or a shell
+        // that did not report one) is placed at its start instant; an unknown
+        // end must not read as a command still running.
         ("commands", "end") => format!(
-            "(CASE WHEN jsonb_exists({{t}}.payload, 'duration_ns') \
-              THEN ({start} + make_interval(secs => {} / 1e9)) ELSE {start} END)",
+            "coalesce({start} + make_interval(secs => {} / 1e9), {start})",
             payload_number("duration_ns"),
             start = payload_time("started_at"),
         ),

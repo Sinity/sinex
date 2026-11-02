@@ -96,14 +96,20 @@ async fn wide_ordinals_upgrade_preserves_compressed_records_views_and_grants(
         .await
         .unwrap();
     assert_eq!(current_citations, old_citations);
-    let stale = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM public.ordinal_citations")
-        .fetch_one(&mut conn)
+    // Reads apply class grants only, so the dependent view reads every stored
+    // ordinal at once (docs/privacy.md: "a rule change takes effect at the
+    // next read with nothing to reclassify, replay or rewrite").
+    let through_view: Vec<i64> =
+        sqlx::query_scalar("SELECT output_index FROM public.ordinal_citations ORDER BY id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    let stored: Vec<i64> = sqlx::query_scalar("SELECT output_index FROM core.events ORDER BY id")
+        .fetch_all(&mut conn)
         .await
-        .unwrap_err();
-    assert_eq!(
-        stale.as_database_error().unwrap().code().as_deref(),
-        Some("55000")
-    );
+        .unwrap();
+    assert!(through_view.contains(&i64::from(i16::MAX)));
+    assert_eq!(through_view, stored);
     let after:Vec<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(v) FROM (SELECT schemaname,viewname,viewowner,definition FROM pg_views WHERE schemaname='public' ORDER BY 1,2) v").fetch_all(&mut conn).await.unwrap();
     assert_eq!(after, views);
     let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events' AND is_compressed").fetch_one(&mut conn).await.unwrap();

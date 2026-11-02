@@ -423,20 +423,39 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     sinex_store::privacy::add_rule(
         &mut conn,
         &sinex_store::privacy::NewRule {
-            name: "synthetic-sealed-command".into(),
+            name: "synthetic-hidden-command".into(),
             source,
             event_type: Some("command.imported".into()),
             field: Some("/command".into()),
             matcher: "all".into(),
             matcher_arg: None,
-            class: sinex_model::Class::Sealed,
+            class: sinex_model::Class::Guarded,
             action: sinex_store::privacy::Action::DropField,
             author: "synthetic-test".into(),
         },
     )
     .await
     .unwrap();
-    let (sealed, frame) = h.material_frame("sealed-material", b"synthetic sealed raw bytes\n");
+    // A raw range is refused while a rule in force transforms a record of
+    // its source (docs/privacy.md, range-read-refused-by-rule).
+    let refused = fetch(material).await.unwrap();
+    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Denied));
+    assert!(refused.material.is_none());
+    assert!(refused.extents.is_empty());
+    assert!(refused.refusal.unwrap().contains("privacy rules"));
+    // The rule applies once, to a reading admitted while it is in force.
+    // The producer's first frame after a rule change is refused so it
+    // reconnects and checks its configuration; the next one is admitted.
+    let (_, frame) = h.material_frame("hidden-material", b"synthetic hidden raw bytes\n");
+    assert!(
+        h.send("kitty", &frame)
+            .await
+            .refusal
+            .unwrap()
+            .contains("privacy configuration changed")
+    );
+    let (hidden, frame) =
+        h.material_frame("hidden-material-again", b"synthetic hidden raw bytes\n");
     assert_eq!(h.send("kitty", &frame).await.refusal, None);
     let receipt = h
         .send(
@@ -444,27 +463,64 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             &Ingress::Events {
                 source: Some(test_source("kitty")),
                 coverage: None,
-                frame: "sealed-event".into(),
-                events: vec![imported(sealed, 0, "synthetic sealed raw bytes")],
+                frame: "hidden-event".into(),
+                events: vec![imported(hidden, 0, "synthetic hidden raw bytes")],
                 failures: vec![],
             },
         )
         .await;
     assert_eq!(receipt.refusal, None);
+    let hidden_event = receipt.admitted[0];
     let (class, payload): (String, serde_json::Value) =
         sqlx::query_as("SELECT class,payload FROM core.events WHERE id=$1")
-            .bind(receipt.admitted[0].0)
+            .bind(hidden_event.0)
             .fetch_one(&mut conn)
             .await
             .unwrap();
-    assert_eq!(class, "sealed", "admission applied the rule once");
+    assert_eq!(class, "guarded", "admission applied the rule once");
     assert!(payload.get("command").is_none());
-    let refused = fetch(sealed).await.unwrap();
+    let fetched: FetchEventReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_event("replica"),
+        "replica",
+        &FetchEvent {
+            event: hidden_event,
+        },
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    let fetched = fetched.event.unwrap();
+    assert!(fetched.payload.get("command").is_none());
+    assert!(fetched.projection.verifies(&fetched.payload));
+    sinex_store::privacy::end_rule(&mut conn, "synthetic-hidden-command", "synthetic-test")
+        .await
+        .unwrap();
+    assert!(fetch(material).await.unwrap().material.is_some());
+    // A material holding a reading stored sealed is locked whatever the
+    // caller's class grants. Stored rows are immutable, so the sealed reading
+    // is a second synthetic output of the same record.
+    let (columns, values): (String, String) = sqlx::query_as(
+        "SELECT string_agg(quote_ident(column_name), ',' ORDER BY ordinal_position), \
+         string_agg('sealed.' || quote_ident(column_name), ',' ORDER BY ordinal_position) \
+         FROM information_schema.columns \
+         WHERE table_schema='core' AND table_name='events' AND is_generated='NEVER'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "INSERT INTO core.events ({columns}) SELECT {values} FROM core.events e, \
+         jsonb_populate_record(NULL::core.events, to_jsonb(e) || jsonb_build_object(\
+         'id', uuidv7(), 'output_index', e.output_index + 1, 'class', 'sealed')) sealed \
+         WHERE e.id=$1"
+    ))
+    .bind(event.0)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let refused = fetch(material).await.unwrap();
     assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Locked));
     assert!(refused.material.is_none());
     assert!(refused.extents.is_empty());
-    assert!(
-        fetch(material).await.unwrap().material.is_some(),
-        "a later rule leaves readings admitted before it unchanged"
-    );
 }
