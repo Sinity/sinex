@@ -297,10 +297,12 @@ async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
         .fetch_one(&mut conn)
         .await
         .unwrap();
+    // A policy change about another source: the mark stays readable, so the
+    // rule still finds it, but every output is rebuilt under a new epoch.
     sinex_store::privacy::set_source_class(
         &mut conn,
-        "query.request",
-        sinex_model::Class::Sealed,
+        "sinex.telemetry",
+        sinex_model::Class::Guarded,
         "synthetic-operator",
     )
     .await

@@ -99,13 +99,25 @@ fn example_at(schema: &Value, root: &Value, optional: bool, refs: &mut Vec<Strin
             return Value::Null;
         }
         refs.push(reference.into());
-        let value = example_at(
+        let mut value = example_at(
             root.pointer(reference.strip_prefix('#').unwrap()).unwrap(),
             root,
             optional,
             refs,
         );
         refs.pop();
+        // Properties beside a reference add to it, as an internally tagged
+        // variant's tag does to the struct it names.
+        if schema.get("properties").is_some() {
+            let mut beside = schema.clone();
+            beside.as_object_mut().unwrap().remove("$ref");
+            if let (Some(fields), Value::Object(extra)) = (
+                value.as_object_mut(),
+                example_at(&beside, root, optional, refs),
+            ) {
+                fields.extend(extra);
+            }
+        }
         return value;
     }
     if let Some(v) = schema.get("const") {
