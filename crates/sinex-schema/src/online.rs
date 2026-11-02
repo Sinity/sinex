@@ -52,7 +52,8 @@ pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error
     if !rebuild_trigram_index(conn).await? {
         return Ok(Progress::IndexBuildRunning);
     }
-    sqlx::raw_sql("DROP TABLE sinex_schema.search_trigram_rewrite")
+    sqlx::query("DROP TABLE sinex_schema.search_trigram_rewrite")
+        .persistent(false)
         .execute(&mut *conn)
         .await?;
     Ok(Progress::Done)
@@ -87,44 +88,54 @@ async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64
     .await?;
     // Each bound is spelled out so it stays an index range under a generic
     // plan, and so the events join reads only the chunks the range covers.
-    let after = |column: &str| match mark {
-        Some(_) => format!("{column} > $1::uuid"),
-        None => "$1::text IS NULL".into(),
-    };
-    let last: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT event_id::text FROM (
-           SELECT event_id FROM core.search_text WHERE {} ORDER BY event_id LIMIT $2
-         ) batch ORDER BY event_id DESC LIMIT 1",
-        after("event_id")
-    ))
-    .bind(&mark)
-    .bind(batch.max(1))
-    .fetch_optional(&mut *tx)
-    .await?;
+    let resumed = mark.is_some();
+    let (next_batch, rewrite) = (
+        format!(
+            "SELECT event_id::text FROM (
+               SELECT event_id FROM core.search_text WHERE {} ORDER BY event_id LIMIT $2
+             ) batch ORDER BY event_id DESC LIMIT 1",
+            after("event_id", resumed)
+        ),
+        format!(
+            "UPDATE core.search_text s SET trigram_indexed = false
+             FROM core.events e
+             WHERE e.id = s.event_id AND s.trigram_indexed AND e.event_type = ANY($3)
+               AND {} AND s.event_id <= $2::uuid AND {} AND e.id <= $2::uuid",
+            after("s.event_id", resumed),
+            after("e.id", resumed)
+        ),
+    );
+    let last: Option<String> = sqlx::query_scalar(next_batch.as_str())
+        .bind(&mark)
+        .bind(batch.max(1))
+        .fetch_optional(&mut *tx)
+        .await?;
     let Some(last) = last else {
         tx.commit().await?;
         return Ok(None);
     };
-    let rewritten = sqlx::query(&format!(
-        "UPDATE core.search_text s SET trigram_indexed = false
-         FROM core.events e
-         WHERE e.id = s.event_id AND s.trigram_indexed AND e.event_type = ANY($3)
-           AND {} AND s.event_id <= $2::uuid AND {} AND e.id <= $2::uuid",
-        after("s.event_id"),
-        after("e.id")
-    ))
-    .bind(&mark)
-    .bind(&last)
-    .bind(&excluded)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    let rewritten = sqlx::query(rewrite.as_str())
+        .bind(&mark)
+        .bind(&last)
+        .bind(&excluded)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     sqlx::query("UPDATE sinex_schema.search_trigram_rewrite SET rewritten_through = $1::uuid")
         .bind(&last)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
     Ok(Some(rewritten))
+}
+
+/// The lower key bound after the mark, or none before the first batch.
+fn after(column: &str, resumed: bool) -> String {
+    if resumed {
+        format!("{column} > $1::uuid")
+    } else {
+        "$1::text IS NULL".into()
+    }
 }
 
 /// Replace the trigram index over every row with the declared one over
@@ -156,24 +167,28 @@ async fn rebuild_trigram_index(conn: &mut PgConnection) -> Result<bool, Error> {
     }
     let mut partial_valid = partial_valid;
     if partial_valid == Some(false) {
-        sqlx::raw_sql("DROP INDEX CONCURRENTLY core.search_text_trigram_partial")
+        sqlx::query("DROP INDEX CONCURRENTLY core.search_text_trigram_partial")
+            .persistent(false)
             .execute(&mut *conn)
             .await?;
         partial_valid = None;
     }
     if partial_valid.is_none() {
-        sqlx::raw_sql(
+        sqlx::query(
             "CREATE INDEX CONCURRENTLY search_text_trigram_partial ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed",
         )
+        .persistent(false)
         .execute(&mut *conn)
         .await?;
     }
     if whole == Some(true) {
-        sqlx::raw_sql("DROP INDEX CONCURRENTLY core.search_text_trigram")
+        sqlx::query("DROP INDEX CONCURRENTLY core.search_text_trigram")
+            .persistent(false)
             .execute(&mut *conn)
             .await?;
     }
-    sqlx::raw_sql("ALTER INDEX core.search_text_trigram_partial RENAME TO search_text_trigram")
+    sqlx::query("ALTER INDEX core.search_text_trigram_partial RENAME TO search_text_trigram")
+        .persistent(false)
         .execute(&mut *conn)
         .await?;
     Ok(true)
