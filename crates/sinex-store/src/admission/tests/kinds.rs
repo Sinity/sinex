@@ -331,6 +331,7 @@ async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
             to: sinex_schema::VERSION
         }
     );
+    sinex_schema::online::finish(&mut *conn).await.unwrap();
     assert_eq!(crate::test_schema::catalog(&mut *conn).await, schema_before);
     let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut *conn).await.unwrap();
     assert_eq!(still_compressed, compressed);

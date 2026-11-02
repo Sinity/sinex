@@ -67,6 +67,38 @@ async fn search_version_two(conn: &mut PgConnection) {
         .unwrap();
 }
 
+/// Startup never upgrades: it refuses an older version, names the upgrade
+/// command and leaves the store as it was; the explicit apply then upgrades.
+#[devkit::test]
+async fn startup_refuses_an_older_version_and_leaves_it_unchanged(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    search_version_two(&mut conn).await;
+    let owners = crate::kinds::Owners::default();
+    let error = start(&mut conn, &owners).await.unwrap_err();
+    assert!(matches!(error, Error::UpgradeNeeded { found: 2 }));
+    assert!(error.to_string().contains("sinexd admin upgrade"));
+    assert!(matches!(
+        require_current(&mut conn).await,
+        Err(Error::UpgradeNeeded { found: 2 })
+    ));
+    let version: Option<i32> = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(version, Some(2));
+    assert_eq!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Upgraded {
+            from: 2,
+            to: VERSION
+        }
+    );
+    assert_eq!(
+        start(&mut conn, &owners).await.unwrap(),
+        Applied::Current { version: VERSION }
+    );
+}
+
 #[devkit::test]
 async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -108,6 +140,25 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
     .await
     .unwrap();
     assert_eq!(after, before);
+    // The upgrade rewrites no stored row and leaves the index over every row;
+    // both wait for the work after start.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM core.search_text WHERE NOT trigram_indexed"
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT indexdef FROM pg_indexes WHERE schemaname='core' AND indexname='search_text_trigram'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)"
+    );
+    crate::online::finish(&mut conn).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, serde_json::Value>(
             "SELECT to_jsonb(e)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint' FROM core.events e ORDER BY id"
@@ -189,13 +240,13 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
         .execute(&mut writer)
         .await
         .unwrap();
-    conn.execute("CREATE INDEX search_text_trigram_partial ON core.search_text(event_id)")
+    // A later step's index already exists, so the upgrade fails after the
+    // search step and every earlier statement.
+    conn.execute("CREATE INDEX events_feed ON core.events(id)")
         .await
         .unwrap();
     assert!(apply(&mut conn).await.is_err());
-    conn.execute("DROP INDEX core.search_text_trigram_partial")
-        .await
-        .unwrap();
+    conn.execute("DROP INDEX core.events_feed").await.unwrap();
     assert_eq!(catalog(&mut conn).await.unwrap(), before);
     assert_eq!(
         sqlx::query_scalar::<_, i32>("SELECT max(version) FROM sinex_schema.applied")
@@ -213,6 +264,7 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
     );
 }
 
+mod online;
 mod preservation;
 
 #[devkit::test]

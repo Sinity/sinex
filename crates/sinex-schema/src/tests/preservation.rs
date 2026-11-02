@@ -150,6 +150,7 @@ async fn every_upgrade_keeps_populated_records_and_matches_fresh_definitions(
             .values()
             .all(|kind| kind.payload_schema.is_none() && kind.key_rule.is_none())
     );
+    crate::online::finish(&mut conn).await.unwrap();
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     assert_eq!(
         apply(&mut conn).await.unwrap(),

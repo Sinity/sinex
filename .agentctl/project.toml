@@ -9,7 +9,7 @@ command = ["nix", "develop", "--command"]
 inherit = ["HOME", "USER", "LANG", "PATH", "TMPDIR", "XDG_RUNTIME_DIR", "CARGO_TARGET_DIR"]
 unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
 [environment.values]
-# Two builds share the host cargo cap; each uses two compiler workers.
+# Each build uses two compiler workers.
 CARGO_BUILD_JOBS = "2"
 # Incremental state is half of each target directory and the drive is write-bound;
 # agent builds rarely reuse it across commits.
@@ -18,12 +18,11 @@ CARGO_INCREMENTAL = "0"
 [operations.check]
 description = "Format check, dependency boundaries and clippy against the schema database"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "check"]
-pool = "normal"
+pool = "compile"
 result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.test]
@@ -36,17 +35,29 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.baseline]
-description = "All Rust tests on the master-baseline checkout; the host queues it on each new master head"
-exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
-pool = "bulk"
+description = "Warm build of master (test binaries and clippy, nothing run) that seeds new checkouts; the host queues it on each new master head"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "warm"]
+# Its own one-slot pool: a 23-60 minute build never holds a slot lanes use.
+pool = "baseline"
 result = "exit"
-# The same full suite as test needs the same cold-build and runtime budget.
+# A cold warm build took over 30 minutes for Polylogue and 23 for Sinex
+# (2026-11-02).
+timeout_seconds = 3600
+scratch = "nvme"
+cache = "none"
+cap = "cargo"
+unit_properties = ["MemoryHigh=8G"]
+
+[operations.catalog]
+description = "Regenerate nix/catalog.json from the source declarations (sinexd admin catalog, compiled against the schema database)"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "db", "exec", "--", "bash", "-c", "cargo run --locked --quiet -p sinexd -- admin catalog > nix/catalog.json.new && mv nix/catalog.json.new nix/catalog.json"]
+pool = "compile"
+result = "exit"
 timeout_seconds = 1800
-scratch = "tmpfs"
+scratch = "nvme"
 cache = "none"
 cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
@@ -60,7 +71,6 @@ result = "exit"
 timeout_seconds = 900
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.private_history]
@@ -72,7 +82,6 @@ result = "exit"
 timeout_seconds = 900
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.package]
@@ -83,7 +92,6 @@ result = "exit"
 timeout_seconds = 2400
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 
 [operations.fmt]
 description = "Format the workspace"
@@ -113,7 +121,6 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.bench]
@@ -125,18 +132,26 @@ result = "exit"
 timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
+
+[operations.measure_run]
+description = "Run a measurement that compiles nothing (a database restore, a benchmark of prebuilt binaries) in the measure queue"
+exec = ["env"]
+arguments = "required"
+pool = "measure"
+result = "exit"
+timeout_seconds = 7200
+scratch = "nvme"
+cache = "none"
 
 [operations.compile]
 description = "Selected package or target compilation against the schema database"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "compile"]
 arguments = "required"
-pool = "normal"
+pool = "compile"
 result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.codex]
@@ -156,7 +171,6 @@ result = "exit"
 timeout_seconds = 7200
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.verify]
@@ -167,7 +181,6 @@ result = "exit"
 timeout_seconds = 2700
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.vm]
@@ -179,7 +192,6 @@ result = "exit"
 timeout_seconds = 7200
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.development]
@@ -202,5 +214,4 @@ result = "exit"
 timeout_seconds = 3600
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]

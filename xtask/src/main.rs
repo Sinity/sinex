@@ -23,6 +23,9 @@ enum Cli {
     Run(development::Development),
     /// LLVM line coverage with explicit output and optional threshold.
     Coverage(devkit::coverage::Coverage),
+    /// Build every test binary and the clippy of every target without
+    /// running any test: the warm target that new checkouts copy.
+    Warm,
     /// Compile selected packages or targets against the schema database.
     Compile {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
@@ -78,6 +81,11 @@ fn main() -> ExitCode {
             })
         }),
         Cli::Check => recorded("check", &[], check),
+        Cli::Warm => recorded("warm", &[], |run| {
+            // A lint failure on master must not leave the test builds cold.
+            let tests = build_tests(run);
+            clippy(run).and(tests)
+        }),
         Cli::Compile { args } => recorded("compile", &args, |run| compile(run, &args)),
         Cli::Test { no_run: true, .. } => recorded("test", &["--no-run".into()], build_tests),
         Cli::Test { args, .. } => {
@@ -147,6 +155,12 @@ fn check(run: &mut Run) -> Result {
         devkit::cargo_command().args(["fmt", "--all", "--", "--check"]),
     )?;
     run.step("boundaries", |run| Ok(boundaries::check(&run.root)?))?;
+    clippy(run)
+}
+
+/// Clippy of the workspace and of the fuzz targets, against the schema
+/// database.
+fn clippy(run: &mut Run) -> Result {
     let mut prepared = None;
     run.step("database", |run| {
         prepared = Some(database::prepare(&run.root)?);

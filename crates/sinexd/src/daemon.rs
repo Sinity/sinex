@@ -277,6 +277,14 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         )
     });
 
+    let (online_conn, s) = (connect(&o.database).await?, stop.clone());
+    tasks.spawn(async move {
+        (
+            "upgrade work after start",
+            crate::online_upgrade::run(online_conn, s).await,
+        )
+    });
+
     let publisher_conn = connect(&o.database).await?;
     let (c, s, sj) = (commits.clone(), stop.clone(), subjects.clone());
     tasks.spawn(async move {

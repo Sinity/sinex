@@ -4,8 +4,8 @@ fn committed_catalog_is_current() {
     let committed = std::fs::read_to_string(path).unwrap_or_default();
     assert!(
         committed == super::render(),
-        "nix/catalog.json is stale; regenerate it with \
-         `sinexd admin catalog > nix/catalog.json`"
+        "nix/catalog.json is stale; regenerate it with `cargo xtask db exec -- \
+         bash -c 'cargo run --locked --quiet -p sinexd -- admin catalog > nix/catalog.json'`"
     );
 }
 

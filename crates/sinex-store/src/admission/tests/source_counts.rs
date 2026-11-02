@@ -142,6 +142,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         3,
         "every stored event of the run"
     );
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(
         without_positions(crate::test_schema::catalog(&mut conn).await),
         fresh
@@ -219,6 +220,7 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
         .await
         .unwrap();
     assert_eq!(before, after);
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
 }
 

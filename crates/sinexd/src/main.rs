@@ -21,6 +21,7 @@ mod intake;
 mod library;
 mod lifecycle;
 mod material_access;
+mod online_upgrade;
 mod public_context;
 mod publisher;
 mod reader_context;

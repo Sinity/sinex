@@ -31,7 +31,7 @@ agentctl job start /path/to/checkout private_history \
 
 The checkout path selects the operation declared in that checkout. The
 operation passes the directory through `SINEX_TEST_HISTORY_DIR` and runs
-only this ignored test, with one test thread, under the normal Cargo cap.
+only this ignored test, with one test thread.
 
 The fixture and expected answers stay outside Git. The comparison assertions
 report counts and omit command text.
