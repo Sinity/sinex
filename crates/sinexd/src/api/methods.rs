@@ -742,15 +742,19 @@ impl Api {
         )
         .await
         .map_err(|error| error.to_string())?;
-        // Ambiguity per fusion family: pairs awaiting a judgment, judged
+        // Ambiguity per fusion family: pairs awaiting a decision, decided
         // pairs, and fused records chosen among several candidates.
         let fusion_families: Vec<(String, String)> = sinex_derivations::fusion::families()
             .iter()
             .map(|f| (f.name.to_owned(), f.output.to_owned()))
             .collect();
-        let fusion = sinex_store::diagnostics::fusion_ambiguity(&mut conn, &fusion_families)
-            .await
-            .map_err(|error| error.to_string())?;
+        let fusion = sinex_store::diagnostics::fusion_ambiguity(
+            &mut conn,
+            &fusion_families,
+            sinex_model::event_types::fused::ConsideredPair::EVENT_TYPE,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
         drop(conn);
         let sources = match self
