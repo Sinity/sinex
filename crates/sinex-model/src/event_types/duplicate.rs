@@ -28,7 +28,7 @@ pub enum Decision {
 /// One revision of a duplicate decision, or a withdrawal of one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(version = 1, type = "curation.duplicate",
+#[event(version = 2, type = "curation.duplicate",
     key = ["rev"],
     replace = repeat,
     time = pair_at,

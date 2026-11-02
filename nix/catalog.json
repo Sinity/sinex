@@ -5738,7 +5738,7 @@
       },
       "kind": {
         "name": "command.reported",
-        "version": 1
+        "version": 2
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -14671,7 +14671,7 @@
       },
       "kind": {
         "name": "fusion.considered_pair",
-        "version": 1
+        "version": 2
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -14834,7 +14834,7 @@
       },
       "kind": {
         "name": "curation.duplicate",
-        "version": 1
+        "version": 2
       },
       "normalization": "rust",
       "owned_blobs": [],

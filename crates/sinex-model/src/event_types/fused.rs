@@ -143,7 +143,7 @@ pub enum PairState {
 /// Written by the fusion pass with its fused records and queried as
 /// `duplicates`. The pair is cited by records, never readings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 1, type = "fusion.considered_pair",
+#[event(version = 2, type = "fusion.considered_pair",
     key = ["family", "left", "right"],
     replace = newer,
     time = at,

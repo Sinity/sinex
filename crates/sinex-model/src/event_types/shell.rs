@@ -48,7 +48,7 @@ pub struct CommandExecuted {
 /// for the same execution is recorded beside it, so fusion matches these
 /// observers by identifier instead of by time.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 1,
+#[event(version = 2,
     type = "command.reported",
     key = ["host", "execution"],
     replace = repeat,
