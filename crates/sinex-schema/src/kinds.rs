@@ -274,7 +274,12 @@ pub async fn upgrade_historical(conn: &mut PgConnection, owners: &Owners) -> Res
     if !exists {
         return Ok(());
     }
-    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM registry.unversioned_event_types UNION SELECT event_type FROM core.events").fetch_all(&mut *conn).await?;
+    let names: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT name FROM registry.unversioned_event_types UNION SELECT event_type FROM ({}) stored",
+        crate::upgrades::STORED_EVENT_TYPES
+    ))
+    .fetch_all(&mut *conn)
+    .await?;
     let mut grouped: BTreeMap<String, Vec<KindDeclaration>> = BTreeMap::new();
     for name in names {
         let mut d = KindDeclaration::historical(name);
