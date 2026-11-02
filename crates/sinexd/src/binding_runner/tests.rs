@@ -461,7 +461,7 @@ async fn an_input_not_present_yet_is_not_missing_coverage(db: devkit::pg::TestDa
     std::fs::write(&blocker, b"").unwrap();
     let blocked = blocker.join("export.zip");
     let configuration = config(
-        json!({"sources":{"media.spotify-history":{"paths":[absent.clone(), blocked.clone()]}}}),
+        json!({"discovery":{"inputs":{"spotify":[absent.clone(), blocked.clone()]}}}),
     );
     let mut context = crate::reader_context::ReaderContext::open(
         &db.url(None),
