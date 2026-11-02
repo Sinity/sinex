@@ -129,8 +129,7 @@
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
-        "library.copy",
-        "library.preview"
+        "library.copy"
       ],
       "kind": "keyed",
       "name": "library.items",
@@ -661,14 +660,8 @@
         "document.text",
         "library.item",
         "library.rendition",
-        "library.preview",
-        "library.assignment",
-        "library.collection",
-        "library.entry",
-        "library.rating",
-        "library.comparison",
-        "library.view",
-        "library.dismissal"
+        "library.curation",
+        "library.view"
       ],
       "kind": "keyed",
       "name": "recall.products",
@@ -783,16 +776,10 @@
         "key.pressed",
         "key.released",
         "lake.observed",
-        "library.assignment",
-        "library.collection",
-        "library.comparison",
         "library.copy",
-        "library.dismissal",
-        "library.entry",
+        "library.curation",
         "library.filename_hints",
         "library.item",
-        "library.preview",
-        "library.rating",
         "library.rendition",
         "library.view",
         "link.followed",
@@ -25946,7 +25933,7 @@
       },
       "kind": {
         "name": "library.copy",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [
@@ -26129,7 +26116,7 @@
         "field": "vanished_at",
         "rule": "when_present"
       },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -26250,7 +26237,7 @@
       },
       "kind": {
         "name": "library.item",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -26304,16 +26291,6 @@
           },
           "revision": {
             "type": "string"
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
@@ -26329,10 +26306,9 @@
         "type": "object"
       },
       "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
+        "rule": "never"
       },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -26354,7 +26330,7 @@
       },
       "kind": {
         "name": "library.rendition",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -26375,7 +26351,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "Bytes standing for an item revision: its original, or something made\nfrom it. A preview never answers a request for the original.",
+        "description": "Bytes standing for an item revision: its original, read from the scans\nby the `library.items` derivation, or something made from it (a preview,\nwritten by a preview request citing the stored bytes). A preview never\nanswers a request for the original.",
         "properties": {
           "at": {
             "$ref": "#/$defs/Timestamp"
@@ -26421,7 +26397,7 @@
             "type": "string"
           },
           "part_index": {
-            "description": "The first visible scan part observing this revision.",
+            "description": "The first visible scan part observing this revision; for a rendition\nmade from another, that rendition's.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -26442,16 +26418,6 @@
               "integer",
               "null"
             ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
@@ -26469,10 +26435,9 @@
         "type": "object"
       },
       "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
+        "rule": "never"
       },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -26488,173 +26453,91 @@
       "keep_known": [],
       "key_rule": {
         "fields": [
-          "rendition"
+          "root",
+          "rev"
         ],
         "rule": "fields"
       },
       "kind": {
-        "name": "library.preview",
-        "version": 2
+        "name": "library.curation",
+        "version": 1
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
-          "RenditionRole": {
-            "enum": [
-              "original",
-              "crop",
-              "preview",
-              "transcode"
-            ],
-            "type": "string"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A rendered preview submitted as evidence for a rendition.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "content": {
-            "type": "string"
-          },
-          "duration_ms": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "height": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "item": {
-            "type": "string"
-          },
-          "made_from": {
-            "description": "The rendition it was made from; `None` for an original.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "made_with": {
-            "additionalProperties": true,
-            "description": "How it was made: the tool and its settings.",
-            "type": "object"
-          },
-          "media_type": {
-            "type": "string"
-          },
-          "rendition": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "string"
-          },
-          "role": {
-            "$ref": "#/$defs/RenditionRole"
-          },
-          "width": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "rendition",
-          "item",
-          "revision",
-          "role",
-          "content",
-          "media_type",
-          "by",
-          "at"
-        ],
-        "title": "Preview",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "assignment"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.assignment",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Level": {
-            "description": "Who an assigned value comes from, highest first in the selection policy.",
+          "CurationKind": {
+            "description": "What a curation record states. The kind decides what `key` and `value`\nhold and which records count as the same statement (its uniqueness key).",
             "oneOf": [
               {
-                "const": "override",
-                "description": "The operator's own value; wins over everything, an empty one included.",
+                "const": "tag",
+                "description": "`key` is the tag. `value` is absent when the tag applies and `false`\nwhen the author rejects it (an imported or proposed tag that is wrong).",
                 "type": "string"
               },
               {
-                "const": "import",
-                "description": "Brought in from another application or site.",
+                "const": "property",
+                "description": "`key` is the property; `value` its value, `null` for an explicit empty.",
                 "type": "string"
               },
               {
-                "const": "proposal",
-                "description": "A model's suggestion.",
+                "const": "note",
+                "description": "`value` is the text.",
+                "type": "string"
+              },
+              {
+                "const": "rating",
+                "description": "`key` is the scale; `value` a number in its range or one of its choices.",
+                "type": "string"
+              },
+              {
+                "const": "comparison",
+                "description": "`key` is the scale; `value` holds `order`, the items best first with\nties as groups, each with its revision fixed, and `blind`.",
+                "type": "string"
+              },
+              {
+                "const": "entry",
+                "description": "One entry of a collection: `key` is the collection's root, `value`\nholds the entry's order key, and the target fixes the revision.",
+                "type": "string"
+              },
+              {
+                "const": "collection",
+                "description": "`key` is the collection's name.",
+                "type": "string"
+              },
+              {
+                "const": "scale",
+                "description": "`key` is the scale's name; `value` holds its question and its range\nor choices.",
+                "type": "string"
+              },
+              {
+                "const": "property_definition",
+                "description": "`key` is the property's name; `value` holds its value type\n(`text`, `number`, `boolean` or `choice`) and its choices.",
+                "type": "string"
+              },
+              {
+                "const": "tag_definition",
+                "description": "`key` is the tag; `value` holds its namespace and description.",
+                "type": "string"
+              },
+              {
+                "const": "tag_relation",
+                "description": "`key` is `alias` or `implies`; `value` is the two tags: an alias's in\nsorted order, an implication's as `[tag, implied]`.",
+                "type": "string"
+              },
+              {
+                "const": "dismissal",
+                "description": "A collection suggestion turned down: `key` is the collection's root,\n`value` the saved query's revision it was offered under, and the\ntarget the suggested item.",
+                "type": "string"
+              },
+              {
+                "const": "withdrawal",
+                "description": "Withdraws what `withdraws` names.",
                 "type": "string"
               }
             ]
           },
           "Target": {
-            "description": "What an assignment, entry or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
+            "description": "What a curation record or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
             "properties": {
               "item": {
                 "type": "string"
@@ -26688,459 +26571,129 @@
           "Timestamp": {
             "format": "date-time",
             "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One value given to one field of a target: a tag (`field = \"tag\"`), or a\nproperty. A property can be set to empty (`value = None`), which stops\nfallback to lower levels. Withdrawing an assignment is a newer reading of\nit with `withdrawn_at` set.",
-        "properties": {
-          "assignment": {
-            "type": "string"
           },
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "field": {
-            "description": "`tag`, or the property's name.",
-            "type": "string"
-          },
-          "level": {
-            "$ref": "#/$defs/Level"
-          },
-          "source_ref": {
-            "description": "Where an imported value came from: a sidecar file, a post URL.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target": {
-            "$ref": "#/$defs/Target"
-          },
-          "value": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "assignment",
-          "target",
-          "field",
-          "level",
-          "by",
-          "at"
-        ],
-        "title": "Assignment",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "collection"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.collection",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A collection: an ordered list of entries, optionally with a saved query that\noffers suggestions. A fixed selection is a collection without a query whose\nentries were added from a query's results.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "collection": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "saved_query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "selected_from": {
-            "description": "The query the entries were selected from, for a fixed selection.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "collection",
-          "name",
-          "by",
-          "at"
-        ],
-        "title": "Collection",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "entry"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.entry",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Target": {
-            "description": "What an assignment, entry or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
-            "properties": {
-              "item": {
-                "type": "string"
-              },
-              "part": {
-                "description": "A selector inside the rendition: `t=12.5-40` (seconds, half-open) or\n`xywh=10,10,200,120` (pixels).",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "rendition": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "revision": {
-                "description": "Fixed revision; `None` follows the item.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "item"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One entry in a collection. Each insertion is a new entry, so the same item\ncan appear twice; removing an entry withdraws it and keeps it inspectable.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "collection": {
-            "type": "string"
-          },
-          "entry": {
-            "type": "string"
-          },
-          "position": {
-            "description": "Sort position; an entry inserted between two takes a value between\ntheirs.",
-            "format": "double",
-            "type": "number"
-          },
-          "target": {
-            "$ref": "#/$defs/Target",
-            "description": "The item, with the revision fixed when it was added."
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "entry",
-          "collection",
-          "target",
-          "position",
-          "by",
-          "at"
-        ],
-        "title": "Entry",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "item",
-          "scale",
-          "by"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.rating",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Level": {
-            "description": "Who an assigned value comes from, highest first in the selection policy.",
+          "ValueOrigin": {
+            "description": "Where a curated value comes from. With the author it decides which value\nis shown: the operator's authored value, then an agent's, then imported\nvalues, then proposals.",
             "oneOf": [
               {
-                "const": "override",
-                "description": "The operator's own value; wins over everything, an empty one included.",
+                "const": "authored",
+                "description": "Written by its author through a library request.",
                 "type": "string"
               },
               {
-                "const": "import",
-                "description": "Brought in from another application or site.",
+                "const": "imported",
+                "description": "Brought in from another application's or site's records; `cites`\nnames them.",
                 "type": "string"
               },
               {
-                "const": "proposal",
-                "description": "A model's suggestion.",
+                "const": "proposed",
+                "description": "A method's suggestion; `cites` names the method and its version.",
                 "type": "string"
               }
             ]
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A rating on a named scale (`stars`, `favourite`), one per rater.",
+        "description": "One revision of an authored library record: a tag, a property value, a\nnote, a rating, a comparison, a collection entry, a collection, a scale or\na withdrawal. A revision never changes. Which revisions are current\nfollows from `revises` and `withdraws` alone (the descendant rule in the\nshared `authored` crate), never from time or from a newer reading.\n\n`author`, `via` and `at` come from the request's manifest, which the daemon\nfills from the authenticated caller; no request line supplies them.",
         "properties": {
           "at": {
             "$ref": "#/$defs/Timestamp"
           },
-          "by": {
+          "author": {
             "type": "string"
           },
-          "item": {
+          "cites": {
+            "description": "The imported records cited, or the proposing method and its version.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/CurationKind"
+          },
+          "origin": {
+            "$ref": "#/$defs/ValueOrigin"
+          },
+          "request": {
+            "description": "The request that wrote this revision, and the digest of its content,\nso a retried request is answered without writing again.",
             "type": "string"
           },
-          "level": {
-            "$ref": "#/$defs/Level"
-          },
-          "of": {
-            "description": "The top of the scale (5 stars, 1 for a like).",
-            "format": "double",
-            "type": "number"
-          },
-          "scale": {
+          "request_digest": {
             "type": "string"
           },
-          "value": {
-            "format": "double",
-            "type": "number"
+          "rev": {
+            "description": "This revision: `<request>` or `<request>.<n>`.",
+            "type": "string"
           },
-          "withdrawn_at": {
+          "revises": {
+            "description": "The revisions of the same record this one revises, as `<root>@<rev>`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "root": {
+            "description": "The record's identity: the ID of its first revision.",
+            "type": "string"
+          },
+          "slots": {
+            "description": "Hex digests of the uniqueness slots the record occupies.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "target": {
             "anyOf": [
               {
-                "$ref": "#/$defs/Timestamp"
+                "$ref": "#/$defs/Target"
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "value": true,
+          "via": {
+            "description": "The channel the request arrived on.",
+            "type": "string"
+          },
+          "withdraws": {
+            "description": "What this record withdraws: `<root>` (every revision) or `<root>@<rev>`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
-          "item",
-          "scale",
-          "value",
-          "of",
-          "level",
-          "by",
-          "at"
+          "root",
+          "rev",
+          "revises",
+          "withdraws",
+          "kind",
+          "origin",
+          "author",
+          "via",
+          "at",
+          "request",
+          "request_digest",
+          "slots"
         ],
-        "title": "Rating",
+        "title": "Curation",
         "type": "object"
       },
       "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
+        "rule": "never"
       },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "comparison"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.comparison",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One pairwise judgement: `winner` is better than `loser` on `scale`. A\nranking is fitted from all of them.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "comparison": {
-            "type": "string"
-          },
-          "loser": {
-            "type": "string"
-          },
-          "scale": {
-            "type": "string"
-          },
-          "winner": {
-            "type": "string"
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "comparison",
-          "scale",
-          "winner",
-          "loser",
-          "by",
-          "at"
-        ],
-        "title": "Comparison",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -27162,34 +26715,14 @@
       },
       "kind": {
         "name": "library.view",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
-          "Level": {
-            "description": "Who an assigned value comes from, highest first in the selection policy.",
-            "oneOf": [
-              {
-                "const": "override",
-                "description": "The operator's own value; wins over everything, an empty one included.",
-                "type": "string"
-              },
-              {
-                "const": "import",
-                "description": "Brought in from another application or site.",
-                "type": "string"
-              },
-              {
-                "const": "proposal",
-                "description": "A model's suggestion.",
-                "type": "string"
-              }
-            ]
-          },
           "Target": {
-            "description": "What an assignment, entry or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
+            "description": "What a curation record or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
             "properties": {
               "item": {
                 "type": "string"
@@ -27237,9 +26770,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "level": {
-            "$ref": "#/$defs/Level"
-          },
           "player": {
             "description": "The program it was handed to.",
             "type": "string"
@@ -27268,7 +26798,6 @@
           "player",
           "started_at",
           "count",
-          "level",
           "by"
         ],
         "title": "View",
@@ -27277,79 +26806,11 @@
       "removed_rule": {
         "rule": "never"
       },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
           "started_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "collection",
-          "item",
-          "query"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.dismissal",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A collection suggestion the operator dismissed; remembered for that\ncollection and query revision.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "collection": {
-            "type": "string"
-          },
-          "item": {
-            "type": "string"
-          },
-          "query": {
-            "description": "The saved query's text when the suggestion was seen.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "collection",
-          "item",
-          "query",
-          "by",
-          "at"
-        ],
-        "title": "Dismissal",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
         ],
         "quality": "intrinsic",
         "rule": "first_present"
@@ -30747,14 +30208,9 @@
         "api-request"
       ],
       "eventTypes": [
-        "library.preview",
-        "library.assignment",
-        "library.collection",
-        "library.entry",
-        "library.rating",
-        "library.comparison",
-        "library.view",
-        "library.dismissal"
+        "library.rendition",
+        "library.curation",
+        "library.view"
       ],
       "formats": [
         "library"
