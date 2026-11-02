@@ -157,7 +157,7 @@ pub async fn authorize_raw(conn: &mut PgConnection, material: MaterialId) -> Res
         && manifest.get("media_type").and_then(|value| value.as_str())
             == Some("application/x-sinex-signals-frame")
     {
-        return Err(crate::Error::Invalid("signal intent evidence requires current derived visibility; raw copied frame ranges are withheld".into()));
+        return Err(crate::Error::Invalid("forwarded signal reports are read through their events; raw signal frames are withheld".into()));
     }
     let rows:Vec<(String,Option<String>,Option<i64>,Option<bool>,Option<String>)>=sqlx::query_as("SELECT DISTINCT e.source,o.class,o.epoch,o.changed,o.state FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.material_id=$1")
         .bind(material.0).fetch_all(&mut *conn).await?;

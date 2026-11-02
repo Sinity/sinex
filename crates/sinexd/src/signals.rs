@@ -393,8 +393,13 @@ fn hand_off(
                 .iter()
                 .filter_map(|row| inputs.get(&row.occurrence.id))
                 .collect();
-            if let Some(first) = matched.first() {
-                read = first.read;
+            // The oldest mark, so admission checks every cited reading.
+            if let Some(oldest) = matched
+                .iter()
+                .map(|inputs| inputs.read)
+                .min_by_key(|read| (read.changes, read.tombstoned))
+            {
+                read = oldest;
             }
             parents.extend(
                 matched

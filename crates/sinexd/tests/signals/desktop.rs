@@ -142,6 +142,21 @@ async fn an_unanswered_notification_stays_unknown_and_never_holds_admission() {
         json!({"method":"mark","text":"synthetic admission during desktop timeout"}),
     );
     assert!(another["event"].as_str().is_some());
+    let mut policy_conn = PgConnection::connect(&database).await.unwrap();
+    let policy = tokio::spawn(async move {
+        sinex_store::privacy::set_source_class(
+            &mut policy_conn,
+            "query.request",
+            sinex_model::Class::Sealed,
+            "synthetic-operator",
+        )
+        .await
+        .unwrap()
+    });
+    tokio::time::timeout(Duration::from_millis(1000), policy)
+        .await
+        .expect("an unanswered Notify must not block an operator policy change")
+        .unwrap();
     let shown:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.delivery' AND payload->'delivery'->'decision'->>'decision'='show'").fetch_one(&mut conn).await.unwrap();
     assert!(shown >= 1, "the first mark was handed off to be shown");
     // The unknown is recorded before the call, and again when the call's
@@ -152,6 +167,16 @@ async fn an_unanswered_notification_stays_unknown_and_never_holds_admission() {
         .await
         .unwrap();
     assert_eq!(delivered, 0, "timeout remains unknown");
+    let unknown: i64 = sqlx::query_scalar(&attempts("interrupt", "unknown"))
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(unknown, 2, "one attempt, recorded before and after its call");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "an unknown attempt is terminal and never sent again"
+    );
     process.stop().await;
 }
 
