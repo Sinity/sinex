@@ -176,9 +176,10 @@ pub(crate) async fn admit(
         }
         _ => None,
     };
-    if let BatchKind::Ingress(frame) = &batch.kind {
-        crate::read_coverage::validate(conn, frame).await?;
-    }
+    let validated_epoch = match &batch.kind {
+        BatchKind::Ingress(frame) => crate::read_coverage::validate(conn, frame).await?,
+        _ => None,
+    };
 
     let provenance = register::provenance(conn, batch, frame_number).await?;
     let mut outcome = Outcome::default();
