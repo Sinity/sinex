@@ -16,6 +16,7 @@ use sqlx::{Connection, Executor, PgConnection};
 
 mod lifecycle;
 mod model_calls;
+pub mod online;
 mod owner_protocol;
 mod privacy_epoch;
 mod query_cursors;
