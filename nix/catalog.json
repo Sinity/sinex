@@ -3028,6 +3028,28 @@
                 "type": "object"
               },
               {
+                "description": "A delivery the product's writer refused because its cited basis\nchanged. Every record of it is dropped, so the trigger can fire afresh.",
+                "properties": {
+                  "at": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "delivery": {
+                    "type": "string"
+                  },
+                  "report": {
+                    "const": "retracted",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "report",
+                  "delivery",
+                  "at"
+                ],
+                "type": "object"
+              },
+              {
                 "description": "The active revision of a rule, and whether it runs.",
                 "properties": {
                   "enabled": {
