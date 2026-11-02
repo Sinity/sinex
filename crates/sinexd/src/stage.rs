@@ -414,6 +414,8 @@ impl Staging<'_> {
         }));
         let mut failures = Vec::new();
         let mut per_source: Vec<(String, Totals)> = Vec::new();
+        // One run per source, parser version and host for the whole stage.
+        let mut rounds = crate::binding_reader::Rounds::default();
         for index in 0..progress.plan.files.len() {
             let path = progress.plan.files[index].path.clone();
             let planned = progress.plan.files[index].bindings.clone();
@@ -454,6 +456,7 @@ impl Staging<'_> {
                     self.writer,
                     &Sink(self.blobs.clone()),
                     &mut readers,
+                    &mut rounds,
                     self.stop.clone(),
                     self.access,
                     &mut |_, _| {},
@@ -489,6 +492,9 @@ impl Staging<'_> {
                 })
                 .await
                 .map_err(|e| e.to_string())?;
+        }
+        if let Err(error) = rounds.end(&mut *self.read_conn).await {
+            failures.push(error);
         }
         let result = if failures.is_empty() {
             OperationResult::Ok
