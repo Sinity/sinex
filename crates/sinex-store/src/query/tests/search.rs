@@ -123,9 +123,7 @@ async fn flags(conn: &mut PgConnection) -> Vec<(String, bool)> {
 /// during the rewrite equal those of the fully rewritten store, and its flags
 /// equal those of a store indexed from the start.
 #[devkit::test]
-async fn search_answers_and_position_hold_while_trigram_rewrite_runs(
-    db: devkit::pg::TestDatabase,
-) {
+async fn search_answers_and_position_hold_while_trigram_rewrite_runs(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -197,7 +195,10 @@ async fn search_answers_and_position_hold_while_trigram_rewrite_runs(
         rewritten.push((answer.total, answer.rows));
     }
     assert_eq!(
-        rewritten.iter().map(|(total, _)| *total).collect::<Vec<_>>(),
+        rewritten
+            .iter()
+            .map(|(total, _)| *total)
+            .collect::<Vec<_>>(),
         totals
     );
     for (stage, answers) in stages.iter().enumerate() {
