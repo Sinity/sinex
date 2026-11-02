@@ -509,7 +509,10 @@ because its configured outlet belongs to its own product. Polylogue shows only i
   handing its firing off, the handoff is withdrawn: no delivery is recorded and no
   outlet runs, only an outcome `not_sent` with reason `basis_changed`. Its evidence was
   read under a policy or from readings that no longer hold, so it is never certified
-  under the current ones, and the deliverer never retries it.
+  under the current ones. The evaluator retracts the firing and the rules are read
+  again: if the rule still finds the occurrence, it fires afresh under the same
+  delivery identity, citing the readings selected now; a threshold, change or daily
+  firing fires again only on a new crossing, change or day.
 - **Any producer may notify** (decided target, not built). A credentialed producer submits a `notice.submitted` fact
   (title, body, reference or URL, an interrupt request, a `key` for grouping and
   replacement, an optional `clears` key); it is a delivery of the implicit rule

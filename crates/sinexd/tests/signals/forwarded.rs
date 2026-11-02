@@ -298,7 +298,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         &subjects,
         "polylogue",
         "caught-up",
-        vec![progress(now + 600_000)],
+        vec![progress(millis())],
     )
     .await;
     assert!(caught_up.refusal.is_none(), "{caught_up:?}");

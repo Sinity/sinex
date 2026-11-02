@@ -179,9 +179,9 @@ pub fn forwarded_reports(
         .map(|report| {
             let product = match &report {
                 signals::Report::Fired(fired) => &fired.trigger.rule.product,
-                // Which product a cleared delivery belongs to is checked by
-                // the deliverer, which knows its deliveries.
-                signals::Report::Cleared { .. } => family,
+                // Which product a cleared or retracted delivery belongs to is
+                // checked by the deliverer, which knows its deliveries.
+                signals::Report::Cleared { .. } | signals::Report::Retracted { .. } => family,
                 signals::Report::Rule { version, .. }
                 | signals::Report::RearmedLate { rule: version, .. } => &version.product,
                 signals::Report::Withdrawn { product, .. }

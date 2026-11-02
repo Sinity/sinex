@@ -67,7 +67,8 @@ pub struct Checkpoint {
     /// For each rule and occurrence, the readings its row was computed from
     /// when first seen: the reading itself, or every reading a group or
     /// aggregate selected. Kept while the row is in the answer or a held
-    /// firing cites it, so a delivery cites what it matched.
+    /// firing cites it, so a delivery cites what it matched; forgotten when a
+    /// firing citing them is withdrawn, so the row is selected afresh.
     pub inputs: BTreeMap<String, BTreeMap<String, Inputs>>,
     /// Handed-off current-state deliveries whose condition has not cleared:
     /// a released or cleared outcome refers back to them.

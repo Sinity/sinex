@@ -247,10 +247,11 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
 
 /// law: signal-basis-changed-withdraws
 /// A firing held past a privacy policy change is withdrawn rather than
-/// delivered with evidence read under the earlier policy, and the deliverer
-/// goes on delivering other rules instead of retrying it.
+/// delivered with evidence read under the earlier policy; while its condition
+/// holds it fires again from rows read under the current policy, and the
+/// deliverer goes on delivering other rules instead of retrying it.
 #[devkit::test]
-async fn a_firing_whose_policy_changed_is_withdrawn_and_delivery_goes_on() {
+async fn a_firing_whose_policy_changed_is_withdrawn_then_fires_again() {
     let db = devkit::pg::test_database().unwrap();
     let database = db.url(None);
     let nats = devkit::nats::test_nats().unwrap();
@@ -318,12 +319,22 @@ async fn a_firing_whose_policy_changed_is_withdrawn_and_delivery_goes_on() {
         1,
     )
     .await;
-    let delivered: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.delivery'")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(delivered, 0, "the withdrawn firing is never delivered");
+    // The condition still holds, so the rule fires again under the same
+    // identity, from rows read under the current policy.
+    wait_scalar(
+        &mut conn,
+        "SELECT count(*) FROM core.events WHERE event_type='signal.delivery' AND payload->'delivery'->'fired'->>'rule_name'='held'",
+        1,
+    )
+    .await;
+    let refired: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events d JOIN core.events o ON o.payload->>'delivery_id'=d.payload->>'delivery_id' WHERE d.event_type='signal.delivery' AND o.event_type='signal.outcome' AND o.payload->'outcome'->'result'->>'reason'='basis_changed'")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        refired, 1,
+        "the re-fire keeps the withdrawn delivery's identity"
+    );
 
     ok(
         &socket,

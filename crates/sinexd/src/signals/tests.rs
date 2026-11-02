@@ -420,8 +420,9 @@ fn a_cleared_delivery_is_closed_once_shown_and_never_shown_otherwise() {
 
 /// law: signal-basis-changed-withdraws
 /// A handoff whose cited readings no longer stand is withdrawn: no delivery
-/// event, no outlet work, one outcome saying its basis changed. The others in
-/// the same step are untouched.
+/// event, no outlet work, one outcome saying its basis changed, and its rows'
+/// readings forgotten so the rules are read again. The others in the same step
+/// are untouched.
 #[devkit::test]
 fn a_handoff_whose_basis_changed_is_withdrawn_and_the_rest_go_ahead() {
     let mut state = state();
@@ -446,6 +447,24 @@ fn a_handoff_whose_basis_changed_is_withdrawn_and_the_rest_go_ahead() {
         show,
         true,
     );
+    for (rule, delivery) in [("changed", &changed), ("kept", &kept)] {
+        let row = delivery.fired.basis[0].clone();
+        let occurrence = row.occurrence.id.clone();
+        state.rows.insert(
+            rule.into(),
+            std::collections::BTreeMap::from([(occurrence.clone(), row)]),
+        );
+        state.inputs.insert(
+            rule.into(),
+            std::collections::BTreeMap::from([(
+                occurrence,
+                sinex_store::signals::Inputs {
+                    parents: vec![EventId::new()],
+                    read: mark(),
+                },
+            )]),
+        );
+    }
     let at = Timestamp::from_unix_secs(1_800_000_000).unwrap();
     let (deliveries, mut records) = hand_off(
         &config(true),
@@ -458,9 +477,16 @@ fn a_handoff_whose_basis_changed_is_withdrawn_and_the_rest_go_ahead() {
     assert_eq!(deliveries.len(), 2);
     assert!(state.outbox.contains_key(changed.id()));
     assert!(state.open.contains_key(changed.id()));
+    assert!(!rows_lack_inputs(&state));
 
     let withdrawn = BTreeSet::from([changed.id().to_owned()]);
-    let deliveries = withdraw(&mut state, deliveries, &mut records, &withdrawn, at);
+    let deliveries = withdraw(&mut state, deliveries, &mut records, &withdrawn, at).unwrap();
+
+    // The withdrawn row's readings are forgotten, so the rules are read again
+    // and a re-fire cites readings selected afresh; the kept row's stay.
+    assert!(!state.inputs.contains_key("changed"));
+    assert!(state.inputs.contains_key("kept"));
+    assert!(rows_lack_inputs(&state));
 
     let ids: Vec<String> = deliveries
         .iter()

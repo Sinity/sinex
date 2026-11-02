@@ -235,9 +235,11 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         .chain(state.host.next_due())
         .filter(|due| *due > state.evaluator.now())
         .min();
+    let reselect = rows_lack_inputs(&state);
     if revision.is_some()
         && resumed
         && !settings_changed
+        && !reselect
         && state.observed_seq == seq
         && due.is_none_or(|due| due > at)
     {
@@ -257,7 +259,7 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         return Ok(Step::Wait(None));
     }
     let read_mark = sinex_store::ReadMark::now(&mut tx).await.map_err(error)?;
-    if revision.is_none() || state.observed_seq != seq {
+    if revision.is_none() || reselect || state.observed_seq != seq {
         evaluate::evaluate(api, &mut tx, &mut state, now, seq, read_mark, calendar).await?;
     }
     absorb_reports(&mut tx, &mut state, seq).await?;
@@ -272,7 +274,7 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
     .map_err(error)?;
     let (deliveries, mut records) = hand_off(config, &mut state, handoffs, read_mark, now)?;
     let changed = changed_basis(&mut conn, &deliveries).await?;
-    let deliveries = withdraw(&mut state, deliveries, &mut records, &changed, now);
+    let deliveries = withdraw(&mut state, deliveries, &mut records, &changed, now)?;
     let commit = Commit {
         host: api.host.clone(),
         class: Class::Guarded,
@@ -323,8 +325,10 @@ async fn absorb_reports(
         let Ok(received) = serde_json::from_value::<ReportReceived>(report.payload) else {
             continue;
         };
-        // A producer clears only its own product's deliveries.
-        if let ::signals::Report::Cleared { delivery, .. } = &received.report {
+        // A producer clears or retracts only its own product's deliveries.
+        if let ::signals::Report::Cleared { delivery, .. }
+        | ::signals::Report::Retracted { delivery, .. } = &received.report
+        {
             let product = state
                 .open
                 .get(delivery)
@@ -596,22 +600,40 @@ fn delivery_id(event: &sinex_model::Event) -> Result<String, String> {
 
 /// Withdraw handoffs whose basis changed: no delivery event and no outlet
 /// work, only an outcome saying why it was not sent. Admitting one would
-/// certify evidence the current policy or lifecycle no longer holds, and
-/// retrying it would meet the same refusal every time.
+/// certify evidence the current policy or lifecycle no longer holds. The
+/// evaluator retracts the firing, and the readings its rows cited are
+/// forgotten, so the next evaluation selects them afresh and the rule fires
+/// again from its current rows if it still finds them.
 fn withdraw(
     state: &mut Checkpoint,
     deliveries: Vec<(sinex_model::Event, sinex_store::ReadMark)>,
     records: &mut Vec<SignalRecord>,
     changed: &BTreeSet<String>,
     now: Timestamp,
-) -> Vec<(sinex_model::Event, sinex_store::ReadMark)> {
+) -> Result<Vec<(sinex_model::Event, sinex_store::ReadMark)>, String> {
     if changed.is_empty() {
-        return deliveries;
+        return Ok(deliveries);
     }
-    for id in changed {
-        state.outbox.remove(id);
-        state.open.remove(id);
+    let at = state.evaluator.now();
+    let mut kept = Vec::with_capacity(deliveries.len());
+    for (event, read) in deliveries {
+        let id = delivery_id(&event)?;
+        if !changed.contains(&id) {
+            kept.push((event, read));
+            continue;
+        }
+        let recorded: DeliveryRecorded = serde_json::from_value(event.payload).map_err(error)?;
+        let fired = &recorded.delivery.fired;
+        if let Some(inputs) = state.inputs.get_mut(&fired.trigger.rule.id) {
+            for row in &fired.basis {
+                inputs.remove(&row.occurrence.id);
+            }
+        }
+        state.evaluator.retract(&id, at).map_err(error)?;
+        state.outbox.remove(&id);
+        state.open.remove(&id);
     }
+    state.inputs.retain(|_, inputs| !inputs.is_empty());
     records.retain(|record| {
         !matches!(record, SignalRecord::Outcome(recorded) if changed.contains(&recorded.delivery_id))
     });
@@ -624,10 +646,30 @@ fn withdraw(
             now,
         )
     }));
-    deliveries
+    Ok(kept)
+}
+
+/// A row of a readable rule without its cited readings: a withdrawn firing
+/// forgot them, so the rules are evaluated again before anything else is
+/// handed off. A rule that cannot be read now is evaluated again when its
+/// data changes.
+fn rows_lack_inputs(state: &Checkpoint) -> bool {
+    let unreadable: BTreeSet<String> = state
+        .evaluator
+        .incomplete()
         .into_iter()
-        .filter(|(event, _)| delivery_id(event).is_ok_and(|id| !changed.contains(&id)))
-        .collect()
+        .filter(|version| version.product == PRODUCT)
+        .map(|version| version.id)
+        .collect();
+    state
+        .rows
+        .iter()
+        .filter(|(rule, _)| !unreadable.contains(*rule))
+        .any(|(rule, rows)| {
+            let inputs = state.inputs.get(rule);
+            rows.keys()
+                .any(|occurrence| inputs.is_none_or(|inputs| !inputs.contains_key(occurrence)))
+        })
 }
 
 fn outcome(delivery: &str, outcome: ::signals::Outcome, at: Timestamp) -> SignalRecord {
