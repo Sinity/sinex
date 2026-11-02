@@ -259,18 +259,74 @@ pub async fn plan_drafts(
             .map(|d| json!([d.kind, d.target, d.value, d.cites]))
             .collect::<Vec<_>>(),
     );
+    // A value its source already states is answered "already": importing
+    // the same sidecar again writes nothing.
+    let mut stated: Vec<Option<Placed>> = Vec::with_capacity(drafts.len());
+    let mut fresh = Vec::new();
+    for draft in drafts {
+        let already = already_stated(&mut snapshot, caller, &draft)?;
+        if already.is_none() {
+            fresh.push(draft);
+        }
+        stated.push(already);
+    }
     let arrival = Arrival {
         author: caller.author.clone(),
         via: caller.via.clone(),
         at: millis(at),
         on_stale: OnStale::Fork,
     };
-    let (records, placed) = place(&mut snapshot, &id, &digest, drafts, arrival, at)?;
+    let (records, placed) = place(&mut snapshot, &id, &digest, fresh, arrival, at)?;
+    let mut placed = placed.into_iter();
+    let placed = stated
+        .into_iter()
+        .map(|already| already.or_else(|| placed.next()))
+        .collect::<Option<Vec<_>>>()
+        .expect("one placement per draft");
     Ok(Planned {
         request: id,
         records,
         placed,
     })
+}
+
+/// The current revisions of the one record holding this draft's slot, when
+/// every one of them already states the draft's value.
+fn already_stated(
+    snapshot: &mut Snapshot,
+    caller: &Caller,
+    draft: &Draft,
+) -> Result<Option<Placed>, PlanError> {
+    let Key::Text(key) = &draft.key else {
+        return Ok(None);
+    };
+    if !draft.revises.is_empty() || !draft.withdraws.is_empty() {
+        return Ok(None);
+    }
+    let slots = Statement {
+        kind: draft.kind,
+        target: draft.target.as_ref(),
+        key: Some(key),
+        value: draft.value.as_ref(),
+        author: &caller.author,
+        origin: draft.origin,
+        cites: draft.cites.as_deref(),
+    }
+    .slots();
+    if slots.is_empty() {
+        return Ok(None);
+    }
+    let holders = snapshot.holders(&slots)?;
+    let mut holders = holders.into_values();
+    let (Some(heads), None) = (holders.next(), holders.next()) else {
+        return Ok(None);
+    };
+    let same = heads.iter().all(|head| {
+        snapshot
+            .record(head)
+            .is_some_and(|record| record.value == draft.value && record.cites == draft.cites)
+    });
+    Ok(same.then_some(Placed::Already { heads }))
 }
 
 fn millis(at: Timestamp) -> i64 {

@@ -423,10 +423,14 @@ async fn a_stale_base_or_withdrawal_expectation_is_refused_inside_admission(
         author: "operator".into(),
         via: "api".into(),
     };
-    for acts in [
-        json!([{"act": "set", "target": t(&a), "property": "medium", "value": "late"}]),
-        json!([{"act": "withdraw", "record": root(&written(&first, 0)), "expects": written(&first, 0)}]),
-    ] {
+    // The statement's current revision when each stale request is planned.
+    let mut current = written(&first, 0);
+    for withdrawal in [false, true] {
+        let acts = if withdrawal {
+            json!([{"act": "withdraw", "record": root(&current), "expects": current}])
+        } else {
+            json!([{"act": "set", "target": t(&a), "property": "medium", "value": "late"}])
+        };
         let acts = serde_json::from_value::<Vec<_>>(acts).unwrap();
         let at = Timestamp::now();
         let Outcome::Written(stale) = plan::plan(&mut w.conn, None, &acts, &caller, at)
@@ -436,10 +440,11 @@ async fn a_stale_base_or_withdrawal_expectation_is_refused_inside_admission(
             panic!("a new request")
         };
         // Another request revises the record after the plan read it.
-        w.curate(
-            json!([{"act": "set", "target": t(&a), "property": "medium", "value": "between"}]),
-        )
-        .await;
+        let value = if withdrawal { "later" } else { "between" };
+        let between = w
+            .curate(json!([{"act": "set", "target": t(&a), "property": "medium", "value": value}]))
+            .await;
+        current = written(&between, 0);
         let library = Library {
             writer: &w.writer,
             blobs: &w.blobs,
@@ -456,7 +461,7 @@ async fn a_stale_base_or_withdrawal_expectation_is_refused_inside_admission(
     }
     assert_eq!(
         view(&mut w, &a).await["properties"]["medium"]["value"],
-        "between"
+        "later"
     );
 }
 

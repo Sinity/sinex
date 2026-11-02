@@ -70,11 +70,14 @@ pub struct FileCopy {
 /// One revision of an item. The live reading is the current revision; the
 /// original renditions describe its revisions. New bytes at the same item key
 /// make a new revision; equal bytes at an unrelated key are a different item.
+/// An item is a derived reading of the scans, not a curation record: the
+/// `library.items` derivation recomputes it when its copies change, and the
+/// newer reading replaces the live one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 3,
     type = "library.item",
     key = ["item"],
-    replace = repeat,
+    replace = newer,
     time = at,
     quality = intrinsic
 )]
@@ -242,7 +245,7 @@ pub enum ValueOrigin {
 /// `author`, `via` and `at` come from the request's manifest, which the daemon
 /// fills from the authenticated caller; no request line supplies them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 1,
+#[event(version = 2,
     type = "library.curation",
     key = ["root", "rev"],
     replace = repeat,

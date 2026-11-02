@@ -54,6 +54,14 @@ impl Supporter {
     }
 }
 
+/// Supporters in one order whatever order the records came in: highest
+/// level first, then by record, so the stored projection and a fresh
+/// computation agree.
+fn sorted(mut supporters: Vec<Supporter>) -> Vec<Supporter> {
+    supporters.sort_by(|a, b| (a.level, &a.record).cmp(&(b.level, &b.record)));
+    supporters
+}
+
 /// The shown value of one property of one target.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -93,10 +101,14 @@ pub fn property(records: &[&Curation]) -> Shown {
     if values.len() > 1 {
         return Shown::Conflict {
             level: deciding,
-            values: values.into_values().collect(),
+            values: values
+                .into_values()
+                .map(|(value, supporters)| (value, sorted(supporters)))
+                .collect(),
         };
     }
     let (value, supporters) = values.into_values().next().expect("one value");
+    let supporters = sorted(supporters);
     if value.is_null() {
         Shown::Empty {
             level: deciding,
@@ -171,8 +183,8 @@ pub fn tags(records: &[&Curation]) -> Vec<Tag> {
                 tag: tag.to_owned(),
                 state,
                 level: deciding,
-                applied_by: applied_by.into_iter().map(Supporter::of).collect(),
-                rejected_by: rejected_by.into_iter().map(Supporter::of).collect(),
+                applied_by: sorted(applied_by.into_iter().map(Supporter::of).collect()),
+                rejected_by: sorted(rejected_by.into_iter().map(Supporter::of).collect()),
             }
         })
         .collect()
