@@ -90,6 +90,7 @@ Its reference is `sinex:curation/<root>@<rev>`. A revision's payload never chang
 | `entry` | collection / order key, pinned target | none: repeats allowed |
 | `collection`, `scale`, `property_definition`, `tag_definition` | name / declaration | name (labels are revisable; identity is the root) |
 | `tag_relation` | `alias` or `implies` / the two tag IDs | the pair and relation |
+| `duplicate` | — / `same` or `distinct` over a pair | the unordered pair, author (decided target: the shared `curation.duplicate` kind from fusion, not built here) |
 | `dismissal` | collection or saved query revision / — | target, scope |
 | `withdrawal` | — / the withdrawn roots or revisions | none |
 
