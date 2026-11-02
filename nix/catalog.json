@@ -14071,7 +14071,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One mail message, from every mail source that holds it (IMAP, Maildir,\nmbox, Outlook): its `Message-ID` and `Date` are the same wherever it is\nstored.",
+        "description": "One mail message stored by two or more mail sources of one account\n(Gmail, IMAP, Maildir, mbox, Outlook): its account and `Message-ID`\nidentify it, and its `Date` is the same wherever it is stored.",
         "properties": {
           "account": {
             "type": [
