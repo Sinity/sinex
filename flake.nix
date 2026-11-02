@@ -168,7 +168,11 @@
         RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
         LLVM_COV = "${llvmTools}/llvm-cov";
         LLVM_PROFDATA = "${llvmTools}/llvm-profdata";
-        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+        # mold compresses the debug sections it writes: a 137 MB test binary
+        # becomes 75.5 MB, and panic backtraces keep file and line (std reads
+        # zlib-compressed DWARF). On the write-bound /realm drive, link output
+        # is build time.
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold -C link-arg=-Wl,--compress-debug-sections=zlib";
         shellHook = ''
           # Optional host placement; an explicit CARGO_TARGET_DIR is left as is.
           if [ -z "''${CARGO_TARGET_DIR:-}" ] && command -v sinnix-cargo-target >/dev/null 2>&1; then
