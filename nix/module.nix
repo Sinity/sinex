@@ -566,8 +566,9 @@ in
       };
 
       # Extensions and roles need the superuser. The sinex user then creates
-      # or upgrades the schema in sinexd's preStart (`sinexd admin schema`),
-      # before the daemon itself starts; the daemon refuses any other version.
+      # the schema or keeps it current in sinexd's preStart (`sinexd admin
+      # schema`). Startup never upgrades: an older schema stops sinexd with the
+      # upgrade command, and the deploy runs `sinex-schema-upgrade` itself.
       systemd.services.sinex-db-setup = {
         description = "Sinex database extensions and roles";
         after = [ "postgresql.service" "postgresql-setup.service" ];
@@ -583,6 +584,27 @@ in
         script = ''
           exec ${cfg.package}/bin/sinexd admin prepare-database \
             --database ${escapeShellArg dbUrl} --owner ${escapeShellArg cfg.user}
+        '';
+      };
+
+      # The explicit schema upgrade, started by the operator with sinexd
+      # stopped: `systemctl start sinex-schema-upgrade`. Nothing starts it on
+      # its own. It is one transaction; a writer holding the database refuses
+      # it, and a failure leaves the previous version.
+      systemd.services.sinex-schema-upgrade = {
+        description = "Sinex schema upgrade";
+        after = [ "sinex-db-setup.service" ];
+        requires = [ "sinex-db-setup.service" ];
+        restartIfChanged = false;
+        serviceConfig = {
+          Type = "oneshot";
+          User = cfg.user;
+          Group = cfg.group;
+          # An upgrade can read every stored event; a timeout would roll it back.
+          TimeoutStartSec = "infinity";
+        };
+        script = ''
+          exec ${cfg.package}/bin/sinexd admin upgrade --database ${escapeShellArg dbUrl}
         '';
       };
 
@@ -644,9 +666,6 @@ in
           RuntimeDirectoryMode = "0770";
           LoadCredential = [ "nats:${cfg.nats.daemonPasswordFile}" ];
           UMask = "0007";
-          # A schema upgrade can read every stored event; a start timeout
-          # would roll it back and begin it again.
-          TimeoutStartSec = "infinity";
         } // lib.optionalAttrs cfg.readAnyFile {
           AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
           CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];

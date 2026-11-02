@@ -97,6 +97,11 @@ let
     (fails { services.sinex.journald.enable = true; })
     (fails { services.sinex.captureNode.journald = true; })
     (!(evaluate { services.sinex.exclude."machine.journald".reason = "fixture"; }).systemd.services ? sinex-capture-journald)
+    # Startup never upgrades; the upgrade is its own unit that nothing starts.
+    (lib.hasInfix "sinexd admin schema " config.systemd.services.sinexd.preStart)
+    (!(lib.hasInfix "admin upgrade" config.systemd.services.sinexd.preStart))
+    (lib.hasInfix "sinexd admin upgrade " config.systemd.services.sinex-schema-upgrade.script)
+    (config.systemd.services.sinex-schema-upgrade.wantedBy == [ ])
   ];
 in
 assert lib.all (result: result) tests;

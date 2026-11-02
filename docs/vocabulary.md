@@ -91,7 +91,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **writer**: the daemon task that runs admission, one commit group at a time.
 - **commit log**: committed changes in commit order; each has a **commit position**.
 - **read model**: a table maintained by admission for reading (liveness, detector hits, `duplicates`).
-- **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinex-schema apply`.
+- **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinexd admin upgrade` while the daemon is stopped.
 
 ## Producers and transport
 

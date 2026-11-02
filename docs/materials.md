@@ -90,7 +90,7 @@ Small materials that predate large parts are joined into larger ones once, as on
 2. replay the old materials' records onto the new material ([replay](lifecycle.md#replay)): new record coordinates, a recorded old-to-new map so record citations still resolve, unchanged source record keys;
 3. release the old materials' bytes only after the step has checked that the new material reproduces every byte.
 
-The step runs inside `sinex-schema apply` like any data step; a dry run of the upgrade reports its counts and writes nothing. Materials written as large parts never need it. Offsets in input-offset keys count across all chained parts, so re-chunking leaves keys unchanged ([key kinds](events.md#key-kinds)).
+The step runs inside `sinexd admin upgrade` like any data step; a dry run of the upgrade reports its counts and writes nothing. Materials written as large parts never need it. Offsets in input-offset keys count across all chained parts, so re-chunking leaves keys unchanged ([key kinds](events.md#key-kinds)).
 
 ## Staging
 
