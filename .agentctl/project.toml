@@ -9,7 +9,7 @@ command = ["nix", "develop", "--command"]
 inherit = ["HOME", "USER", "LANG", "PATH", "TMPDIR", "XDG_RUNTIME_DIR", "CARGO_TARGET_DIR"]
 unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
 [environment.values]
-# Two builds share the host cargo cap; each uses two compiler workers.
+# Each build uses two compiler workers.
 CARGO_BUILD_JOBS = "2"
 # Incremental state is half of each target directory and the drive is write-bound;
 # agent builds rarely reuse it across commits.
@@ -35,7 +35,6 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.baseline]
@@ -47,7 +46,6 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.focused]
@@ -59,7 +57,6 @@ result = "exit"
 timeout_seconds = 900
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.private_history]
@@ -71,7 +68,6 @@ result = "exit"
 timeout_seconds = 900
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.package]
@@ -82,7 +78,6 @@ result = "exit"
 timeout_seconds = 2400
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 
 [operations.fmt]
 description = "Format the workspace"
@@ -112,7 +107,6 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.bench]
@@ -124,10 +118,9 @@ result = "exit"
 timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 
 [operations.measure_run]
-description = "Run a measurement that compiles nothing (a database restore, a benchmark of prebuilt binaries) in the measure queue; it holds no cargo cap place"
+description = "Run a measurement that compiles nothing (a database restore, a benchmark of prebuilt binaries) in the measure queue"
 exec = ["env"]
 arguments = "required"
 pool = "measure"
@@ -164,7 +157,6 @@ result = "exit"
 timeout_seconds = 7200
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.verify]
@@ -175,7 +167,6 @@ result = "exit"
 timeout_seconds = 2700
 scratch = "tmpfs"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.vm]
@@ -187,7 +178,6 @@ result = "exit"
 timeout_seconds = 7200
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.development]
@@ -210,5 +200,4 @@ result = "exit"
 timeout_seconds = 3600
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
