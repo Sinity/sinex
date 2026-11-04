@@ -53,7 +53,8 @@ pub(crate) fn statements() -> Vec<String> {
         "DROP INDEX core.events_ts_orig_idx".into(),
         "DROP INDEX core.events_source_ts_orig_idx".into(),
         "DROP INDEX core.events_material_id_anchor_idx".into(),
-        "DROP INDEX core.events_coverage".into(),
+        "DROP INDEX IF EXISTS core.events_coverage".into(),
+        "DROP TABLE IF EXISTS sinex_schema.events_coverage_pending".into(),
         RECORD_LOCATION.into(),
     ]
 }

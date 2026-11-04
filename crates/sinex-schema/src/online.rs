@@ -34,19 +34,16 @@ pub enum Task {
     FeedIndex,
     /// The parent edges of events stored before the upgrade.
     EventChildren,
-    /// The index coverage probes read.
-    CoverageIndex,
     /// Search rows of kinds outside the trigram index leave it, and the index
     /// is rebuilt over the rest.
     SearchRewrite,
 }
 
 impl Task {
-    pub const ALL: [Task; 5] = [
+    pub const ALL: [Task; 4] = [
         Task::PublishedKey,
         Task::FeedIndex,
         Task::EventChildren,
-        Task::CoverageIndex,
         Task::SearchRewrite,
     ];
 
@@ -56,7 +53,6 @@ impl Task {
             Task::PublishedKey => "published key",
             Task::FeedIndex => "feed index",
             Task::EventChildren => "event children",
-            Task::CoverageIndex => "coverage index",
             Task::SearchRewrite => "search rewrite",
         }
     }
@@ -66,7 +62,6 @@ impl Task {
             Task::PublishedKey => "sinex_schema.published_key_pending",
             Task::FeedIndex => "sinex_schema.events_feed_pending",
             Task::EventChildren => "sinex_schema.event_children_fill",
-            Task::CoverageIndex => "sinex_schema.events_coverage_pending",
             Task::SearchRewrite => "sinex_schema.search_trigram_rewrite",
         }
     }
@@ -141,7 +136,6 @@ async fn run(conn: &mut PgConnection, task: Task, batch: i64) -> Result<Progress
     match task {
         Task::PublishedKey => published_key::step(conn).await?,
         Task::FeedIndex => event_indexes::step(conn, &event_indexes::FEED).await?,
-        Task::CoverageIndex => event_indexes::step(conn, &event_indexes::COVERAGE).await?,
         Task::EventChildren => {
             if let Some(rows) = event_children::step(conn, batch).await? {
                 return Ok(Progress::Advanced { task, rows });

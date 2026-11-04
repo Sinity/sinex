@@ -34,13 +34,9 @@ fn landed() -> Vec<Vec<String>> {
             "GRANT SELECT ON core.excised_materials TO sinex_reader, sinex_writer".into(),
             "GRANT INSERT, UPDATE, DELETE ON core.excised_materials TO sinex_writer".into(),
         ],
-        // 2 to 3: coverage probes each run through one covering index, built
-        // after start; until then they read the (source, ts_orig) index.
-        [
-            vec!["DROP INDEX IF EXISTS core.events_coverage".into()],
-            crate::online::begin(crate::online::Task::CoverageIndex),
-        ]
-        .concat(),
+        // 2 to 3 used a coverage index. Current coverage reads counters;
+        // retain the version position without building a retired index.
+        vec![],
         // Version four added kind rows and views, installed from the current description.
         vec![],
     ]

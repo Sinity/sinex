@@ -4,8 +4,8 @@
 //! marked invalid, which is dropped and built again.
 //!
 //! Readers stay correct without them. Feed pages scan the chunks the index
-//! does not cover yet, so the feed index is built first; coverage probes use
-//! the `(source, ts_orig)` index meanwhile.
+//! does not cover yet. Coverage reads the source and run counters and needs
+//! no event index.
 use super::Task;
 use crate::Error;
 use sqlx::PgConnection;
@@ -21,12 +21,6 @@ pub(super) const FEED: EventIndex = EventIndex {
     task: Task::FeedIndex,
     name: "events_feed",
     definition: crate::tables::EVENTS_FEED,
-};
-
-pub(super) const COVERAGE: EventIndex = EventIndex {
-    task: Task::CoverageIndex,
-    name: "events_coverage",
-    definition: crate::tables::COVERAGE_RUNS,
 };
 
 pub(super) async fn step(conn: &mut PgConnection, index: &EventIndex) -> Result<(), Error> {

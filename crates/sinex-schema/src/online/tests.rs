@@ -186,11 +186,7 @@ async fn work_after_start_resumes_in_order_and_walks_answer_as_filled(
     assert_eq!(mark, ids[8]);
     assert_eq!(
         remaining(&mut conn).await.unwrap(),
-        [
-            Task::EventChildren,
-            Task::CoverageIndex,
-            Task::SearchRewrite
-        ]
+        [Task::EventChildren, Task::SearchRewrite]
     );
     // An edge admission already wrote is not written again.
     conn.execute(
@@ -283,10 +279,12 @@ async fn interrupted_index_builds_are_rebuilt_and_finished_ones_kept(db: devkit:
     assert_ne!(index_oid(&mut conn, "core.events_feed").await, invalid);
 
     // A build that finished just before its task ended is kept.
-    conn.execute(crate::tables::COVERAGE_RUNS).await.unwrap();
-    let built = index_oid(&mut conn, "core.events_coverage").await;
+    conn.execute(&begin(Task::FeedIndex).join("; "))
+        .await
+        .unwrap();
+    let built = index_oid(&mut conn, "core.events_feed").await;
     finish(&mut conn).await.unwrap();
-    assert_eq!(index_oid(&mut conn, "core.events_coverage").await, built);
+    assert_eq!(index_oid(&mut conn, "core.events_feed").await, built);
     let invalid: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname IN ('core', '_timescaledb_internal') AND NOT i.indisvalid",
@@ -328,18 +326,14 @@ async fn plan(conn: &mut PgConnection, query: &str) -> String {
     plan.join("\n")
 }
 
-/// Readers do not need the indexes built after start: coverage probes can
-/// read the (source, ts_orig) index, and feed pages read the chunks in commit
-/// order without the feed index and through it once it exists.
+/// Feed pages read the chunks in commit order without the feed index and
+/// through it once it exists, with identical results.
 #[devkit::test]
 async fn readers_use_other_indexes_until_event_indexes_exist(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     upgraded_with_lineage(&mut conn).await;
     assert_eq!(index_oid(&mut conn, "core.events_feed").await, None);
     assert_eq!(index_oid(&mut conn, "core.events_coverage").await, None);
-    let coverage = "SELECT max(ts_orig) FROM core.events WHERE source = 'test' AND run_id = '00000000-0000-7000-8000-000000000001'";
-    let probe = plan(&mut conn, coverage).await;
-    assert!(probe.contains("source_ts_orig_idx"), "{probe}");
     let feed =
         "SELECT id::text FROM core.events WHERE commit_seq > 3 ORDER BY commit_seq, id LIMIT 5";
     let unindexed = plan(&mut conn, feed).await;
@@ -348,8 +342,6 @@ async fn readers_use_other_indexes_until_event_indexes_exist(db: devkit::pg::Tes
     finish(&mut conn).await.unwrap();
     let indexed = plan(&mut conn, feed).await;
     assert!(indexed.contains("events_feed"), "{indexed}");
-    let probe = plan(&mut conn, coverage).await;
-    assert!(probe.contains("events_coverage"), "{probe}");
     let after: Vec<String> = sqlx::query_scalar(feed).fetch_all(&mut conn).await.unwrap();
     assert_eq!(before, after);
     assert_eq!(after.len(), 5);
