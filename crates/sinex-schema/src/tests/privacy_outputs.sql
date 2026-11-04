@@ -1,4 +1,7 @@
--- This fixture stands before parser-free staging, which the forward chain reruns.
+-- This fixture stands before source expectations, parser-free staging and
+-- library curation. Source expectations replaces its table; undo the other
+-- later additions before replaying that forward chain.
+DROP TABLE core.library_shown;
 ALTER TABLE raw.materials DROP CONSTRAINT parser_with_version,
   ALTER COLUMN parser SET NOT NULL, ALTER COLUMN parser_version SET NOT NULL;
 -- The objects the two emptied upgrade steps created, with synthetic rows.
