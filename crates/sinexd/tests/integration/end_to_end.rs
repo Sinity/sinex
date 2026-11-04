@@ -1589,7 +1589,24 @@ async fn every_lake_line_is_read_once() {
     );
     assert_eq!(scalar(&mut c, "SELECT count(*) FROM raw.failures").await, 1);
     assert_eq!(
-        scalar(&mut c, "SELECT count(*) FROM audit.archived").await,
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id
+             WHERE e.event_type <> 'source.coverage'"
+        )
+        .await,
+        0,
+        "no lake reading is read again"
+    );
+    // Coverage keeps one current reading per binding (sources.md,
+    // coverage-on-change): a reading leaves only when a newer one replaces it.
+    assert_eq!(
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id
+             WHERE e.event_type = 'source.coverage' AND a.reason <> 'newer_reading'"
+        )
+        .await,
         0
     );
     consistent(&mut c).await;
