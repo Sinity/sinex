@@ -45,7 +45,17 @@ fn derived(parents: &[EventId], name: &str) -> Event {
             session: None,
             duration_ns: None,
             exit_code: None,
-            observed_by: vec!["fixture".into()],
+            execution: None,
+            members: vec![sinex_model::event_types::fused::Member {
+                record: format!("fixture:{}", "fixture"),
+                source: "fixture".into(),
+                event_type: "command.executed".into(),
+                joined: sinex_model::event_types::fused::Joined::Lead,
+            }],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         },
         "fixture.derived",
         Origin::Derived {

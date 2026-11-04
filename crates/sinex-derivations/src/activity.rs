@@ -6,7 +6,6 @@
 //! them ([`crate::observed`]); commands as fused commands plus the command
 //! records no fused command joins, so a command two shells saw counts once.
 use crate::derived_event::{derived, record_identity};
-use crate::fusion::rules::COMMANDS;
 use crate::observed::{FOCUS, PLAYS, REST};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
@@ -37,6 +36,7 @@ const INPUTS: &[&str] = &[
     "presence.span",
     "window.span",
     "command.fused",
+    "command.reported",
     "command.executed",
     "command.imported",
     "browser.visit",
@@ -117,7 +117,9 @@ pub(crate) fn scope(payload: &Value, kind: &str) -> String {
 
 fn interval_end(kind: &str) -> Option<IntervalEnd> {
     match kind {
-        "command.fused" | "command.executed" => Some(IntervalEnd::AfterNs("duration_ns")),
+        "command.fused" | "command.reported" | "command.executed" => {
+            Some(IntervalEnd::AfterNs("duration_ns"))
+        }
         "work.act" => Some(IntervalEnd::EndOrInstant("ended_at")),
         "health.record" => Some(IntervalEnd::At("end")),
         "input.coverage" | "presence.span" | "presence.interval" | "window.span"
@@ -249,9 +251,12 @@ fn counts<'a>(
         }
         *counts.records.entry(event.event_type.clone()).or_default() += 1;
         *counts.sources.entry(event.source.clone()).or_default() += 1;
-        if let Some(observers) = event.payload.get("observed_by").and_then(Value::as_array) {
-            let observers: std::collections::BTreeSet<_> =
-                observers.iter().filter_map(Value::as_str).collect();
+        // A fused record was observed by each of its members' sources.
+        if let Some(members) = event.payload.get("members").and_then(Value::as_array) {
+            let observers: std::collections::BTreeSet<_> = members
+                .iter()
+                .filter_map(|m| m.get("source").and_then(Value::as_str))
+                .collect();
             for observer in observers {
                 *counts.observers.entry(observer.into()).or_default() += 1;
             }

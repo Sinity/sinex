@@ -23,6 +23,7 @@ pub mod coverage;
 pub mod dbus;
 #[cfg(feature = "full")]
 pub mod documents;
+pub mod duplicate_decision;
 pub(crate) mod fields;
 pub mod file_watch;
 #[cfg(feature = "full")]
@@ -240,6 +241,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &library::FORMAT,
         &coverage::FORMAT,
         &forecast::FORMAT,
+        &duplicate_decision::FORMAT,
         &query::FORMAT,
         &analysis::FORMAT,
         &signals::FORMAT,

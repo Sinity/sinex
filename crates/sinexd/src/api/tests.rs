@@ -872,6 +872,8 @@ mod archive_history;
 
 mod forecast;
 
+mod fusion;
+
 mod queries;
 
 mod enable_status;

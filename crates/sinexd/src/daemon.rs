@@ -196,6 +196,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .or_default()
         .push(telemetry_spool.clone());
     let configuration = sources.derivation_configuration();
+    // Fusion runs only the families with a written definition; an invalid
+    // declaration refuses to start, naming the family and the reason.
+    sinex_derivations::fusion::declaration::check().map_err(|refused| refused.to_string())?;
     let (keyed, per_event) = (
         crate::analysis::keyed_with(&configuration),
         derivation_runner::per_event_with(&configuration)?,

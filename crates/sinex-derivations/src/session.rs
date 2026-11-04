@@ -10,7 +10,7 @@
 //! configured start, 04:00 by default). A session never crosses a day start;
 //! the rule says nothing about attention or real task boundaries.
 use crate::derived_event::derived;
-use crate::fusion::rules::{COMMANDS, command_host};
+use crate::fusion::{Command, commands};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::{CommandFused, ShellSession};
@@ -34,17 +34,20 @@ impl Keyed for ShellSessions {
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[
         CommandFused::EVENT_TYPE,
+        "command.reported",
         "command.executed",
         "command.imported",
+        "terminal.reported",
     ];
     const OUTPUTS: &'static [&'static str] = &[ShellSession::EVENT_TYPE];
 
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
-        let (Some(host), Some(t)) = (command_host(input.payload), input.ts_orig) else {
+        let host = commands().field_of(input.event_type, input.payload, "host");
+        let (Some(Value::String(host)), Some(t)) = (host, input.ts_orig) else {
             return vec![];
         };
         // A command's fused record may start in the neighbouring day.
-        let margin = COMMANDS.margin();
+        let margin = commands().margin();
         let days = [t.unix_ns() - margin, t.unix_ns() + margin]
             .into_iter()
             .filter_map(|ns| Timestamp::from_unix_ns(ns).ok())
@@ -61,9 +64,9 @@ impl Keyed for ShellSessions {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let (_, day) = key_parts(key)?;
-        let margin = COMMANDS.margin();
+        let margin = commands().margin();
         Some(InputQuery::of(
-            COMMANDS.kinds(),
+            commands().kinds(),
             Timestamp::from_unix_ns(env.time_settings.day_start(day).ok()?.unix_ns() - margin)
                 .ok()?,
             Timestamp::from_unix_ns(env.time_settings.day_end(day).ok()?.unix_ns() + margin)
@@ -81,19 +84,18 @@ impl Keyed for ShellSessions {
         ) else {
             return Computed::default();
         };
-        let mut commands: Vec<(&Event, CommandFused)> = COMMANDS
+        let mut commands: Vec<(&Event, Command)> = commands()
             .occurrences(inputs)
             .into_iter()
             .filter_map(|o| {
-                let command =
-                    serde_json::from_value::<CommandFused>(o.payload.into_owned()).ok()?;
+                let command = serde_json::from_value::<Command>(o.payload.into_owned()).ok()?;
                 Some((o.event, command))
             })
             .filter(|(_, c)| c.host == host && day_start <= c.started_at && c.started_at < day_end)
             .collect();
         commands.sort_by_key(|(e, c)| (c.started_at, e.id));
 
-        let mut groups: Vec<Vec<(&Event, CommandFused)>> = Vec::new();
+        let mut groups: Vec<Vec<(&Event, Command)>> = Vec::new();
         let mut latest_end: i128 = i128::MIN;
         for (e, c) in commands {
             let start = c.started_at.unix_ns();

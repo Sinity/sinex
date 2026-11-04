@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 use sinex_source_core::Reader;
 use std::io::{Read, Write};
 
@@ -65,6 +66,93 @@ fn kitty_command_output_and_scrollback_are_read_as_plain_text() {
     assert!(
         parse(r#"{"source":"kitty","event":"scrollback","window_id":7,"from_line":0}"#).is_err()
     );
+}
+
+#[devkit::test]
+fn shell_integration_lines_become_reported_commands() {
+    let started =
+        serde_json::to_value(Timestamp::from_unix_ns(1_700_000_000_123_456_789).unwrap()).unwrap();
+    let line = json!({
+        "source": "shell", "event": "command",
+        "execution": "01900000-0000-7000-8000-000000000001", "shell": "zsh", "host": "box",
+        "command": "  echo 'a  b'  ", "cwd": "/work", "started_at": started,
+        "duration_ns": 2_000_000, "exit_code": -9, "session": "4242", "atuin_id": "row-1",
+        "git_identity": {"common_dir": "/work/.git", "root_commits": ["abc"], "head": "def", "branch": "main"},
+        "terminal": "kitty"
+    });
+    let Produced::Command(c) = parse(&line.to_string()).unwrap() else {
+        panic!()
+    };
+    assert_eq!(c.execution, "01900000-0000-7000-8000-000000000001");
+    // The command line is kept byte for byte, outer spaces included.
+    assert_eq!(c.command, "  echo 'a  b'  ");
+    assert_eq!(c.started_at.unix_ns(), 1_700_000_000_123_456_789);
+    assert_eq!((c.duration_ns, c.exit_code), (Some(2_000_000), Some(-9)));
+    assert_eq!(c.atuin_id.as_deref(), Some("row-1"));
+    assert_eq!(c.git_identity.unwrap().root_commits, ["abc"]);
+    assert_eq!(c.extra["terminal"], "kitty");
+    // A line without its token or start is a record failure, never a guess.
+    for missing in ["execution", "started_at", "host", "command"] {
+        let mut partial = line.clone();
+        partial.as_object_mut().unwrap().remove(missing);
+        let error = parse(&partial.to_string()).unwrap_err().to_string();
+        assert!(error.contains(missing), "{missing}: {error}");
+    }
+}
+
+#[devkit::test]
+fn a_shell_report_written_by_the_integration_reads_back_as_itself() {
+    let report = ShellReport {
+        execution: "01900000-0000-7000-8000-000000000002".into(),
+        shell: "bash".into(),
+        host: "box".into(),
+        command: "printf '%s\\n' \"a  b\"".into(),
+        cwd: None,
+        started_at: Timestamp::from_unix_ns(1_700_000_000_000_000_001).unwrap(),
+        duration_ns: None,
+        exit_code: Some(1),
+        session: Some("77".into()),
+        atuin_id: None,
+        git_identity: None,
+    };
+    let Produced::Command(c) = parse(&shell_line(&report).to_string()).unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        (
+            c.execution,
+            c.shell,
+            c.host,
+            c.command,
+            c.started_at,
+            c.exit_code,
+            c.session
+        ),
+        (
+            report.execution,
+            report.shell,
+            report.host,
+            report.command,
+            report.started_at,
+            report.exit_code,
+            report.session
+        )
+    );
+    assert!(c.extra.is_empty());
+}
+
+#[devkit::test]
+fn sending_without_a_listener_fails_fast_and_a_listener_receives_one_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("session.sock");
+    let line = json!({"source": "shell", "event": "command"});
+    assert!(send(&socket, &line, Duration::from_millis(200)).is_err());
+    let listener = UnixListener::bind(&socket).unwrap();
+    send(&socket, &line, Duration::from_millis(200)).unwrap();
+    let (mut stream, _) = listener.accept().unwrap();
+    let mut received = String::new();
+    stream.read_to_string(&mut received).unwrap();
+    assert_eq!(received, format!("{line}\n"));
 }
 
 #[devkit::test]

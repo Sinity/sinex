@@ -41,7 +41,7 @@ through its registered bindings. The field list will be rendered into
 | `gaps` | one gap interval of a binding: `binding`, `from`, `to`, `state` (`gap`, `unknown`, `estimated`), `reason`, `missing_count` (known or unknown) |
 | `shapes` | one observed payload shape of a binding over an interval: fields added, removed and retyped against the declaration and the previous shape |
 | `failures` | one refused or failed record: material, anchor, binding, source, reason |
-| `duplicates` | one ambiguous fusion pair and its decision state ([fusion](derivations.md#fusion)) |
+| `duplicates` | one considered fusion pair and its decision state ([fusion](derivations.md#fusion)) |
 | `coverage` | one source, input and hour in the [coverage vocabulary](sources.md#completeness) (decided target) |
 | `stages` | one stage operation with its inventory and accounting ([staging](materials.md#inventory-and-progress); decided target) |
 | `hosts` | one host and producer with contact, held data, spool and clock offset ([hosts](hosts.md); decided target) |
@@ -82,15 +82,17 @@ sinexctl 'failures where source = health.samsung'
 ### Aliases
 
 Aliases are payload projections over registered, produced event types: `commands`,
-`shell-sessions`, `activity-sessions`, `episodes`, `intervals`, `now`, `figures`,
+`duplicates`, `shell-sessions`, `activity-sessions`, `episodes`, `intervals`, `now`, `figures`,
 `focus`, `visits`, `plays`, `items`, `media`, `assignments`, and one for each
 [higher-layer](higher-layer.md) kind once its producer exists. An alias exists only with
 its producer, so an alias never answers from nothing. Every duration projection states
 its unit. `kinds [KIND]` lists which aliases expand to which event types.
 
 `commands` reads a [fusion family](derivations.md#fusion): its fused commands plus the
-shell records no fused command joins, so each command is one row and `observed_by`
-names the shells that saw it. `focus` (compositor focus intervals and ActivityWatch
+shell records no fused command joins (the shell integration's reports, Atuin and the
+history files), so each command is one row and `observed_by` names the sources that
+saw it. `duplicates` lists the pairs a fusion family had to choose about, with their
+decision state; `same`, `distinct` and `withdraw-decision` decide them. `focus` (compositor focus intervals and ActivityWatch
 window spans), `visits` (browser history, history exports and followed links) and
 `plays` (streaming history and the player's reports while playing) have no fusion:
 each source's records are rows of their own, so counts across sources are per source.

@@ -112,7 +112,7 @@ more affordances" (cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:
 | Act | Rule | Reason |
 |---|---|---|
 | confirming a tombstone's cascade preview | any caller requests and previews; the operator confirms interactively (default; open operator question) | tombstoning is the one irreversible deletion ([tombstone](lifecycle.md#tombstone)) |
-| `same`/`distinct` duplicate decisions that govern fusion | every caller records them; the operator's govern, and a per-rule setting admits others' | duplicate decisions shape every fused record ([fusion](derivations.md#fusion)) |
+| `same`/`distinct` duplicate decisions that govern fusion | every caller records decisions; the operator's govern, and a per-family setting admits others' | duplicate decisions shape every fused record ([fusion](derivations.md#fusion)) |
 
 ### Computed authorship
 

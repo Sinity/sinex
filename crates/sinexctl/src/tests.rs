@@ -97,11 +97,9 @@ fn stage_takes_several_paths_and_its_options() {
 }
 
 #[devkit::test]
-fn cli_discovery_omits_unimplemented_operations_and_keeps_recall() {
-    for name in ["same", "distinct"] {
-        assert!(cli().find_subcommand(name).is_none(), "{name}");
-        let error = cli().try_get_matches_from(["sinexctl", name]).unwrap_err();
-        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+fn cli_discovery_lists_stage_decisions_and_recall() {
+    for name in ["stage", "same", "distinct", "withdraw-decision"] {
+        assert!(cli().find_subcommand(name).is_some(), "{name}");
     }
     let matches = cli()
         .try_get_matches_from(["sinexctl", "recall", "yesterday"])

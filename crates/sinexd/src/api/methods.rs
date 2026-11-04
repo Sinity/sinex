@@ -13,6 +13,7 @@ use sqlx::PgPool;
 
 mod analysis;
 mod forecast;
+mod fusion;
 mod kinds;
 mod operations;
 mod privacy;
@@ -595,9 +596,12 @@ impl Api {
                 }
             }
             Request::StageShow { operation } => self.stage_show(caller, &operation).await,
-            Request::Same { .. } | Request::Distinct { .. } => not_built(
-                "duplicate decisions need the fusion derivation's decision records, not built yet",
-            ),
+            r @ (Request::Same { .. }
+            | Request::Distinct { .. }
+            | Request::WithdrawDecision { .. }) => match self.decide_pair(r, caller).await {
+                Ok(v) => data(v),
+                Err(e) => refused(e),
+            },
             r @ (Request::PrivacyRules { .. }
             | Request::PrivacyRule { .. }
             | Request::PrivacyEnd { .. }
@@ -791,6 +795,19 @@ impl Api {
         )
         .await
         .map_err(|error| error.to_string())?;
+        // Ambiguity per fusion family: pairs awaiting a decision, decided
+        // pairs, and fused records chosen among several candidates.
+        let fusion_families: Vec<(String, String)> = sinex_derivations::fusion::families()
+            .iter()
+            .map(|f| (f.name.to_owned(), f.output.to_owned()))
+            .collect();
+        let fusion = sinex_store::diagnostics::fusion_ambiguity(
+            &mut conn,
+            &fusion_families,
+            sinex_model::event_types::fused::ConsideredPair::EVENT_TYPE,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
         drop(conn);
         let sources = match self
@@ -852,6 +869,7 @@ impl Api {
             "telemetry": telemetry,
             "producer_versions": producer_versions,
             "signals":signals,
+            "fusion":fusion,
             "discovery": discovery,
             "exclusions": exclusions,
         }))

@@ -336,6 +336,7 @@ impl Parser for EventsParser {
                 terminal: text("terminal").unwrap_or_else(|| "capture".into()),
                 event,
                 window_id: None,
+                execution: None,
                 cwd: text("cwd"),
                 cmdline: text("command"),
                 exit_status: row.get("exit_code").and_then(Value::as_i64),

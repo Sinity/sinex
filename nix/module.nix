@@ -353,6 +353,11 @@ in
         type = types.listOf types.str;
         default = [ "graphical-session.target" ];
       };
+      shellIntegration = mkOption {
+        type = types.bool;
+        default = cfg.session.user != "";
+        description = "Load Sinex's shell integration into interactive zsh, bash (with bash-preexec) and fish: one execution token per command, reported to the session socket and handed to kitty, so command fusion joins by identifier.";
+      };
     };
 
     stagingRoots = mkOption {
@@ -713,6 +718,18 @@ in
       systemd.tmpfiles.settings.sinex-session = lib.mkIf (cfg.session.user != "" && !sessionStateInHome) {
         "${cfg.session.stateDir}".d = { mode = "0700"; user = cfg.session.user; group = config.users.users.${cfg.session.user}.group; };
       };
+      # The hooks report through `sinex-session report-command`; without a
+      # listening session socket a report is dropped.
+      programs.zsh.interactiveShellInit = mkIf cfg.session.shellIntegration ''
+        SINEX_SESSION_BIN=${cfg.package}/bin/sinex-session source ${self}/integrations/shell/sinex.zsh
+      '';
+      programs.bash.interactiveShellInit = mkIf cfg.session.shellIntegration ''
+        SINEX_SESSION_BIN=${cfg.package}/bin/sinex-session source ${self}/integrations/shell/sinex.bash
+      '';
+      programs.fish.interactiveShellInit = mkIf cfg.session.shellIntegration ''
+        set -g SINEX_SESSION_BIN ${cfg.package}/bin/sinex-session
+        source ${self}/integrations/shell/sinex.fish
+      '';
       systemd.user.services.sinex-session = mkIf (cfg.session.user != "") {
         description = "Sinex session sources";
         wantedBy = cfg.session.wantedBy;

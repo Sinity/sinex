@@ -27,7 +27,7 @@ replaces their original bytes.
 
 A terminal record carries session and host, native sequence and code, original relative time and its precision, the resolved absolute time when the header supplies it, the exact data or a material byte range, and any supplied resize, exit or marker fields. Unknown codes keep their payload. A plain rendering is optional derived text.
 
-Commands are read through the command fusion family (Atuin and the shell's own history) and through the terminal records directly. Native event counts equal cast record counts.
+Commands are read through the command fusion family (the shell integration's reports, Atuin and the shells' own history) and through the terminal records directly. The shell integration mints one execution token per command; kitty records it on the command's start and end, and the report records the Atuin row started for it, so those observers are matched by identifier rather than by time. Native event counts equal cast record counts.
 
 ## Desktop state
 
@@ -382,6 +382,7 @@ Each entry names the source, its family, the native format and capture mechanism
 | [shell](#shell-history-and-terminal-recordings) | `terminal.fish-history` | Native Fish history records. Append/rewrite reader. | command.imported | Escaped multiline command and path list. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.nushell-history` | Native history SQLite rows/schema. Committed row polling. | command.executed | Session ID, extra columns and mutable completion. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.text-history` | Explicit untimed text lines. Append/rewrite reader. | command.imported | Literal timestamp-looking command and equal repetitions. |
+| [shell](#shell-history-and-terminal-recordings) | `session.integrations` (shell) | One record per finished command from the shell integration Sinex ships (zsh, bash, fish), with its execution token and the Atuin row started for it. Session integration producer. | command.reported | Token joins its Atuin row by identifier; command line kept byte for byte. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.kitty-osc-live` | Native shell-integration socket records and OSC bytes. Session integration producer. | terminal.reported; command.executed derived | OSC 133 pairing, missing cwd and sequence restart. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.asciinema` | Asciicast v2/v3 header and each event. Automatic native recorder plus append reader. | terminal.session; terminal.output per native record | Count every native input/output/resize/marker/exit. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.kitty-scrollback` | ANSI buffers and native metadata. All-window buffer acquisition; snapshot reader. | scrollback.captured; scrollback.window | Alternate screen, buffer clear and window reuse. |

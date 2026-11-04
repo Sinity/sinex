@@ -49,6 +49,7 @@ pub(super) fn inputs(key: &Value, env: &Env) -> Option<InputQuery> {
             }],
             per: None,
             count: 1,
+            lifetime: None,
         });
         query.before.push(Neighbour {
             kinds: kinds
@@ -64,6 +65,7 @@ pub(super) fn inputs(key: &Value, env: &Env) -> Option<InputQuery> {
                 None
             },
             count: 1,
+            lifetime: None,
         });
     } else if let Some(cursor) = key["unknown_record"].as_str() {
         query = query.only("cursor", json!(cursor));

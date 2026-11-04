@@ -2,7 +2,7 @@
 //! A command record a fused command joins is linked through the fused one.
 use crate::activity::{evidence, stable};
 use crate::derived_event::{derived, record_identity};
-use crate::fusion::rules::COMMANDS;
+use crate::fusion::commands;
 use crate::observed::FOCUS;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
@@ -29,8 +29,10 @@ impl Keyed for MarkLinks {
     const INPUTS: &'static [&'static str] = &[
         "operator.mark",
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
+        "terminal.reported",
         "state.interval",
         "window.span",
         "shell.session",
@@ -42,8 +44,8 @@ impl Keyed for MarkLinks {
             return vec![];
         };
         // A command's fused record may lie in the neighbouring day.
-        let margin = if COMMANDS.reads(input.event_type, input.payload) {
-            COMMANDS.margin()
+        let margin = if commands().reads(input.event_type) {
+            commands().margin()
         } else {
             0
         };
@@ -69,13 +71,13 @@ impl Keyed for MarkLinks {
     }
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let day = key["day"].as_str()?.parse().ok()?;
-        let margin = COMMANDS.margin();
+        let margin = commands().margin();
         let mut kinds = vec![
             Kind::all("operator.mark"),
             Kind::all("shell.session"),
             Kind::all("activity.session"),
         ];
-        kinds.extend(COMMANDS.kinds());
+        kinds.extend(commands().kinds());
         kinds.extend(FOCUS.kinds());
         let mut query = InputQuery::of(
             kinds,
@@ -101,7 +103,7 @@ impl Keyed for MarkLinks {
         KeyState::Closed
     }
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let commands: Vec<_> = COMMANDS
+        let commands: Vec<_> = commands()
             .occurrences(inputs)
             .into_iter()
             .map(|o| (o.event, "command_record"))
@@ -132,9 +134,14 @@ impl Keyed for MarkLinks {
             }
             let by_record = records.iter().filter_map(|(target, field)| {
                 let record = mark.payload[*field].as_str()?;
+                // A fused command is the record of each of its members.
+                let member = target.payload["members"]
+                    .as_array()
+                    .is_some_and(|members| members.iter().any(|m| m["record"] == record));
                 (record == record_identity(target)
-                    || target.payload["record"].as_str() == Some(record))
-                .then_some((*target, "native_record_key"))
+                    || target.payload["record"].as_str() == Some(record)
+                    || member)
+                    .then_some((*target, "native_record_key"))
             });
             let by_session = sessions.clone().filter_map(|target| {
                 if host(&target.payload).as_deref() != mark.payload["host"].as_str() {

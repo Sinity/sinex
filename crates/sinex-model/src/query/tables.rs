@@ -43,6 +43,8 @@ const RUN_STATUS: &[&str] = &["running", "finished"];
 /// Unix epoch itself, which a reader that found no time often writes. A label
 /// only; the time is kept as stated.
 const TIME_SUSPECT: &[&str] = &["future", "epoch zero"];
+const DUPLICATE_STRATEGIES: &[&str] = &["identifier", "window", "fallback", "decision"];
+const PAIR_STATES: &[&str] = &["undecided", "same", "distinct"];
 
 macro_rules! event_fields {
     ($($extra:expr),* $(,)?) => {
@@ -395,7 +397,12 @@ pub const ALIASES: &[Alias] = &[
     },
     Alias {
         name: "commands",
-        kinds: &["command.fused", "command.executed", "command.imported"],
+        kinds: &[
+            "command.fused",
+            "command.reported",
+            "command.executed",
+            "command.imported",
+        ],
         phrase: "commands, each once however many shells saw it",
         fields: &[
             f("command", FieldType::Text, "command"),
@@ -410,6 +417,36 @@ pub const ALIASES: &[Alias] = &[
         spans: true,
         only: None,
         fused: Some("command.fused"),
+        kind_rows: &[],
+    },
+    Alias {
+        name: "duplicates",
+        kinds: &["fusion.considered_pair"],
+        phrase: "pairs a fusion family had to choose about, and their duplicate decisions",
+        fields: &[
+            f("family", FieldType::Text, "fusion family"),
+            f("left", FieldType::Text, "first record"),
+            f("right", FieldType::Text, "second record"),
+            f("left_source", FieldType::Text, "first record's source"),
+            f("right_source", FieldType::Text, "second record's source"),
+            f(
+                "strategy",
+                FieldType::Enum(DUPLICATE_STRATEGIES),
+                "matching strategy",
+            ),
+            f("candidates", FieldType::Integer, "candidates chosen among"),
+            f("distance", FieldType::Number, "time distance in seconds"),
+            f("chosen", FieldType::Bool, "joined in a fused record"),
+            f(
+                "decision",
+                FieldType::Enum(PAIR_STATES),
+                "duplicate decision",
+            ),
+            f("decided_by", FieldType::Text, "decision author"),
+        ],
+        spans: false,
+        only: None,
+        fused: None,
         kind_rows: &[],
     },
     Alias {

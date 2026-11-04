@@ -14,6 +14,7 @@ pub mod coverage;
 pub mod derived;
 pub mod desktop;
 pub mod documents;
+pub mod duplicate;
 pub mod embedding;
 pub mod environment;
 pub mod finance;
@@ -46,7 +47,7 @@ pub use derived::{
 };
 pub use fused::CommandFused;
 use serde_json::Value;
-pub use shell::{CommandExecuted, CommandImported, ShellSession};
+pub use shell::{CommandExecuted, CommandImported, CommandReported, ShellSession};
 
 /// A registered event type, as the schema registry stores it.
 #[derive(Clone, Debug)]
@@ -179,6 +180,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
     info::<CommandImported>(),
+    info::<CommandReported>(),
     info::<finance::TransactionPosted>(),
     info::<finance::JournalDirective>(),
     info::<finance::JournalImported>(),
@@ -271,6 +273,8 @@ pub const ALL: &[RegisteredEventType] = &[
     // Derived
     info::<CommandFused>(),
     info::<fused::MailFused>(),
+    info::<fused::ConsideredPair>(),
+    info::<duplicate::Duplicate>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),

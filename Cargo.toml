@@ -61,6 +61,9 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 rmcp = { version = "3", features = ["server", "transport-io"] }
 schemars = { version = "1", features = ["uuid1"] }
+# Pinned apart from the other shared crates until their lock moves to a
+# common commit that has it.
+authored = { git = "https://github.com/Sinity/polylogue-sinex-common", rev = "8c22e127bb1f5c10d8c1740de4c4f0bfe53ffdb7" }
 query-language = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 signals = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 signal-delivery = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }

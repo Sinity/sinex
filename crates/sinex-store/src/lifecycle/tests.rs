@@ -918,6 +918,66 @@ async fn undo_swaps_forever(db: devkit::pg::TestDatabase) {
     );
 }
 
+/// An undone archive never brings an old aggregate back beside the one
+/// recomputed from what is live (docs/lifecycle.md: "Keyed aggregates are
+/// not restored as rows").
+#[devkit::test]
+async fn an_undone_archive_leaves_keyed_aggregates_archived_and_dirties_their_keys(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = context(&db).await;
+    let root = reading("removed.fusion", 1, 1, MaterialId::new(), 0);
+    admit(&mut conn, &batch(vec![root.clone()])).await;
+    let figure = derived("metric.hourly", 2, &[&root]);
+    admit(&mut conn, &batch(vec![figure.clone()])).await;
+    sqlx::query(
+        "INSERT INTO derivation.outputs (derivation, key, event_id) VALUES ('metric.hourly', '{\"hour\": 1}', $1)",
+    )
+    .bind(figure.id.0)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let archived = operation_ok(
+        operate(
+            &mut conn,
+            Act::Archive,
+            Scope::Source {
+                source: "removed.fusion".into(),
+                after: None,
+                before: None,
+            },
+            16,
+        )
+        .await,
+    );
+    assert_eq!(state(&mut conn, &figure).await, "archived");
+    sqlx::query("DELETE FROM derivation.dirty")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    operate(
+        &mut conn,
+        Act::Undo,
+        Scope::Operation {
+            operation: archived,
+        },
+        16,
+    )
+    .await;
+    assert_eq!(state(&mut conn, &root).await, "live");
+    assert_eq!(state(&mut conn, &figure).await, "archived");
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT count(*) FROM derivation.dirty WHERE derivation = 'metric.hourly' AND key = '{\"hour\": 1}'"
+        )
+        .await,
+        1,
+        "the aggregate is derived again from what is live"
+    );
+    assert_state_order(&mut conn).await;
+}
+
 /// Keys of one keyed derivation, one per event type.
 struct OneKey;
 

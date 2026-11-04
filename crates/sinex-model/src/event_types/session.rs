@@ -159,10 +159,14 @@ pub struct EditorReport {
 
 /// Something the terminal reported (a kitty watcher callback).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "terminal.reported", key = location, replace = repeat, time = received_at, quality = captured)]
+#[event(version = 3, type = "terminal.reported", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct TerminalReport {
     pub received_at: Timestamp,
     pub terminal: String,
+    /// The execution token Sinex's shell integration minted for the command
+    /// (`cmd_start`, `cmd_end`), when the shell ran the integration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<String>,
     /// `cmd_start`, `cmd_end`, `focus`, `close`, `title`…
     pub event: String,
     pub window_id: Option<i64>,

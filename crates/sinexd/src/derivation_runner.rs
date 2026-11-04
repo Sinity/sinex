@@ -98,6 +98,7 @@ pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
         kinds: kinds(&n.kinds),
         per: n.per,
         count: i64::from(n.count),
+        lifetime: n.lifetime,
     };
     Window {
         unknown_times: q.unknown_times,
@@ -227,7 +228,53 @@ impl DerivationRunner {
                 .await
                 .map_err(|e| e.to_string())?;
         }
+        runner.archive_retired_outputs().await?;
         Ok(runner)
+    }
+
+    /// Archive, through the lifecycle, the outputs of every registered
+    /// derivation the build no longer has, such as the undefined fusion
+    /// families, then end its registration. One archive operation per removed
+    /// producer, once: a later start finds no registration, so an undo of the
+    /// archive stands. A refused or interrupted archive keeps the registration
+    /// and is resumed at the next start.
+    async fn archive_retired_outputs(&mut self) -> Result<(), String> {
+        // Every derivation the build has, and any this runner was started
+        // with beyond them, is current.
+        let mut known = crate::catalog::derivation_names();
+        known.extend(self.runs.keys().cloned());
+        let retired = registry::retired_derivations(&mut self.read, &known)
+            .await
+            .map_err(|e| e.to_string())?;
+        for producer in retired {
+            match crate::lifecycle::run(
+                &mut self.read,
+                &self.writer,
+                sinex_model::lifecycle::Act::Archive,
+                "sinex",
+                sinex_model::lifecycle::Scope::Source {
+                    source: producer.clone(),
+                    after: None,
+                    before: None,
+                },
+                false,
+            )
+            .await?
+            {
+                crate::lifecycle::Answer::Done(_) => {
+                    registry::forget_derivation(&mut self.read, &producer)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                // A refusal names what blocked it and leaves the operation
+                // resumable; the daemon still starts.
+                crate::lifecycle::Answer::Refused(reason)
+                | crate::lifecycle::Answer::StoppedEarly(reason, _) => {
+                    eprintln!("sinexd: archiving a retired derivation's outputs stopped: {reason}");
+                }
+            }
+        }
+        Ok(())
     }
 
     fn env(&self) -> Env {

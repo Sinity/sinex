@@ -219,12 +219,15 @@ impl Kind {
 
 /// One neighbour request: of `kinds`, the `count` nearest events to the
 /// window edge; with `per` set, the `count` nearest for each value of that
-/// payload field seen in the window.
+/// payload field seen in the window. With `lifetime` set, each value is a
+/// start-minted token and its read stops at the token's lifetime, as the
+/// window records holding it bound it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Neighbour {
     pub kinds: Vec<Kind>,
     pub per: Option<&'static str>,
     pub count: u32,
+    pub lifetime: Option<sinex_model::TokenLifetime>,
 }
 
 /// Whether a key can still receive inputs. Joins take closed, settled inputs
@@ -553,9 +556,9 @@ pub fn keyed_with(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
 }
 
 fn builtin(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
-    let mut all: Vec<Box<dyn AnyKeyed>> = fusion::rules::RULES
+    let mut all: Vec<Box<dyn AnyKeyed>> = fusion::families()
         .iter()
-        .map(|rule| Box::new(fusion::Fusion(rule)) as Box<dyn AnyKeyed>)
+        .map(|family| Box::new(fusion::Fusion(family)) as Box<dyn AnyKeyed>)
         .collect();
     all.extend::<[Box<dyn AnyKeyed>; 22]>([
         Box::new(library::LibraryItems),

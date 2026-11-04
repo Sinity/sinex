@@ -10,10 +10,15 @@
 //! `scrollback` lines carry a window's new scrollback lines and become
 //! `scrollback.captured`, the type the lake's snapshots have; its other
 //! lines are `terminal.reported`, a `cmd_end` with the command's output.
+//! The shell integration (`integrations/shell`, sent by `sinex-session
+//! report-command`) writes one `shell` line per finished command execution,
+//! which becomes `command.reported`.
 use crate::sources::terminal_text::strip_escapes;
 use serde_json::{Map, Value};
+use sinex_model::event_types::CommandReported;
 use sinex_model::event_types::machine::ScrollbackCaptured;
 use sinex_model::event_types::session::{EditorReport, TerminalReport};
+use sinex_model::event_types::work::GitIdentity;
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
@@ -34,11 +39,12 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Paths, command lines and terminal output.
     class: Class::Guarded,
     parser: "session-socket",
-    parser_version: 3,
+    parser_version: 4,
     event_types: &[
         "editor.reported",
         "terminal.reported",
         "scrollback.captured",
+        "command.reported",
     ],
     framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
@@ -49,6 +55,7 @@ sinex_model::payload_enum! {
         Editor(EditorReport),
         Terminal(TerminalReport),
         Scrollback(ScrollbackCaptured),
+        Command(CommandReported),
     }
 }
 
@@ -285,6 +292,7 @@ impl Parser for SessionSocketParser {
                 terminal: source,
                 event,
                 window_id: take_i64(&mut m, "window_id"),
+                execution: take_str(&mut m, "execution"),
                 cwd: take_str(&mut m, "cwd"),
                 cmdline: take_str(&mut m, "cmdline"),
                 exit_status: take_i64(&mut m, "exit_status"),
@@ -292,10 +300,160 @@ impl Parser for SessionSocketParser {
                 output: take_str(&mut m, "output").map(|ansi| plain(&ansi)),
                 extra: m,
             }),
+            "shell" if event == "command" => Produced::Command(command(m)?),
             other => return Err(RecordError::new(format!("unknown producer `{other}`"))),
         };
         Ok((vec![out], ()))
     }
+}
+
+/// One finished execution the shell integration reported. The execution
+/// token, shell, host, command and start are required; the rest may be
+/// unknown.
+fn command(mut m: Map<String, Value>) -> Result<CommandReported, RecordError> {
+    let required = |m: &mut Map<String, Value>, key: &str| {
+        take_str(m, key).ok_or_else(|| RecordError::new(format!("no `{key}`")))
+    };
+    let execution = required(&mut m, "execution")?;
+    let shell = required(&mut m, "shell")?;
+    let host = required(&mut m, "host")?;
+    // The command line is kept exactly as the shell received it.
+    let command = match m.remove("command") {
+        Some(Value::String(command)) => command,
+        _ => return Err(RecordError::new("no `command`")),
+    };
+    let started_at: Timestamp = m
+        .remove("started_at")
+        .and_then(|v| serde_json::from_value(v).ok())
+        .ok_or_else(|| RecordError::new("no readable `started_at`"))?;
+    let git_identity = match m.remove("git_identity") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            serde_json::from_value::<GitIdentity>(value)
+                .map_err(|e| RecordError::new(format!("unreadable `git_identity`: {e}")))?,
+        ),
+    };
+    Ok(CommandReported {
+        execution,
+        shell,
+        host,
+        command,
+        cwd: take_str(&mut m, "cwd"),
+        started_at,
+        duration_ns: take_i64(&mut m, "duration_ns"),
+        exit_code: take_i64(&mut m, "exit_code"),
+        session: take_str(&mut m, "session"),
+        atuin_id: take_str(&mut m, "atuin_id"),
+        git_identity,
+        extra: m,
+    })
+}
+
+/// One finished execution as the shell integration reports it, before it
+/// is written to the socket.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellReport {
+    pub execution: String,
+    pub shell: String,
+    pub host: String,
+    pub command: String,
+    pub cwd: Option<String>,
+    pub started_at: Timestamp,
+    pub duration_ns: Option<i64>,
+    pub exit_code: Option<i64>,
+    pub session: Option<String>,
+    pub atuin_id: Option<String>,
+    pub git_identity: Option<GitIdentity>,
+}
+
+/// The socket line for a report: what [`SessionSocketParser`] reads as
+/// `command.reported`.
+pub fn shell_line(report: &ShellReport) -> Value {
+    let mut line = Map::new();
+    line.insert("source".into(), Value::from("shell"));
+    line.insert("event".into(), Value::from("command"));
+    line.insert("execution".into(), Value::from(report.execution.clone()));
+    line.insert("shell".into(), Value::from(report.shell.clone()));
+    line.insert("host".into(), Value::from(report.host.clone()));
+    line.insert("command".into(), Value::from(report.command.clone()));
+    line.insert(
+        "started_at".into(),
+        serde_json::to_value(report.started_at).expect("times serialize"),
+    );
+    let mut optional = |key: &str, value: Option<Value>| {
+        if let Some(value) = value {
+            line.insert(key.into(), value);
+        }
+    };
+    optional("cwd", report.cwd.clone().map(Value::from));
+    optional("duration_ns", report.duration_ns.map(Value::from));
+    optional("exit_code", report.exit_code.map(Value::from));
+    optional("session", report.session.clone().map(Value::from));
+    optional("atuin_id", report.atuin_id.clone().map(Value::from));
+    optional(
+        "git_identity",
+        report
+            .git_identity
+            .as_ref()
+            .map(|identity| serde_json::to_value(identity).expect("identities serialize")),
+    );
+    Value::Object(line)
+}
+
+/// Repository facts beside `cwd`, observed now: none when it is not in a
+/// repository or a probe fails or takes longer than `timeout`.
+pub fn git_identity(cwd: &Path, timeout: Duration) -> Option<GitIdentity> {
+    let git = |args: &[&str]| -> Option<String> {
+        let mut child = std::process::Command::new("git")
+            .arg("--no-optional-locks")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match child.try_wait().ok()? {
+                Some(status) if status.success() => break,
+                Some(_) => return None,
+                None if std::time::Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                None => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        let mut out = String::new();
+        std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
+        Some(out.trim().to_owned())
+    };
+    let common_dir = git(&["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let mut root_commits: Vec<String> = git(&["rev-list", "--max-parents=0", "HEAD"])?
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    root_commits.sort();
+    Some(GitIdentity {
+        common_dir,
+        root_commits,
+        head: git(&["rev-parse", "HEAD"]),
+        branch: git(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    })
+}
+
+/// Write one line to the integration socket. When nothing listens, or the
+/// write takes longer than `timeout`, the line is dropped: a shell never
+/// waits on Sinex.
+pub fn send(socket: &Path, line: &Value, timeout: Duration) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut stream = UnixStream::connect(socket)?;
+    stream.set_write_timeout(Some(timeout))?;
+    let mut bytes = serde_json::to_vec(line)?;
+    bytes.push(b'\n');
+    stream.write_all(&bytes)
 }
 
 fn plain(ansi: &str) -> String {

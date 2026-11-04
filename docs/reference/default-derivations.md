@@ -6,7 +6,7 @@ from activation on a capture host. Model providers remain disabled.
 
 | Named portfolio | Stored kinds | Implementation |
 |---|---|---|
-| Command and mail fusion | `command.fused`, `mail.fused` | A command Atuin and the shell's history both recorded, or a message two mail sources of one account hold, joins by the declared identity and timing rule. A record no other source saw stays a source record; consumers read fused records plus unmatched source records. |
+| Command and mail fusion | `command.fused`, `mail.fused`, `fusion.considered_pair` | Families declared in `fusion/families.json`. A command the shell integration reported joins the Atuin row it names by identifier; otherwise commands join by the declared time rule. A message two mail sources of one account hold joins by Message-ID. A record no other source saw stays a source record; consumers read fused records plus unmatched source records. Ambiguous and decided pairs are `fusion.considered_pair` rows. |
 | Shell and work sessions | `shell.session`, `activity.window`, `activity.session`, `work.act`, `work.episode` | Shell runtime, operator presence and delegated work remain distinct. |
 | State and attention intervals | `state.interval`, `activity.span` | Exact captured scopes, native unit invocations, suspend transitions and boot fences; unknown ends retain no duration. |
 | Hourly and daily figures | `metric.figure`, `health.figure` | Daily products consume hourly products. |

@@ -191,12 +191,14 @@ fn late_rhythm_input_dirties_its_future_baseline_days() {
 }
 #[devkit::test]
 fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
-    let command = record(
+    // Atuin's rows are the command family's database member.
+    let mut command = record(
         "command.executed",
         json!({"native_id":"native-command-7","command":"example","started_at":at(0),"duration_ns":10*SECOND,
         "exit_code":0,"hostname":"box:u","cwd":"/example","session":"s"}),
         0,
     );
+    command.source = "terminal.atuin-history".into();
     let session = record(
         "shell.session",
         json!({"host":"box","started_at":at(0),"ended_at":at(10),"day":"2023-11-14","commands":1,"failed":0,"cwds":["/example"]}),
@@ -226,7 +228,7 @@ fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
         command.clone(),
         crate::fusion::tests::zsh("example", 1_700_000_000.0),
     ];
-    let mut joined = crate::fusion::tests::fuse_events(&crate::fusion::rules::COMMANDS, &shells);
+    let mut joined = crate::fusion::tests::fuse_events(crate::fusion::commands(), &shells);
     assert_eq!(joined.len(), 1);
     let fused_id = joined[0].id;
     joined.push(mark.clone());

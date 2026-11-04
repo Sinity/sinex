@@ -20,7 +20,7 @@ fn command(secs: i64, duration_s: Option<i64>, exit: i64) -> Event {
             shell: None,
             extra: Default::default(),
         },
-        "terminal.atuin",
+        "terminal.atuin-history",
         sinex_model::Class::Open,
     )
 }
@@ -119,7 +119,7 @@ fn a_command_only_zsh_saw_is_one_member() {
 #[devkit::test]
 fn a_command_both_shells_saw_is_one_member() {
     let shells = [atuin("make", T as f64, 2), zsh("make", T as f64 + 0.4)];
-    let mut inputs = fuse_events(&COMMANDS, &shells);
+    let mut inputs = fuse_events(crate::fusion::commands(), &shells);
     assert_eq!(inputs.len(), 1);
     let fused_id = inputs[0].id;
     inputs.extend(shells);
