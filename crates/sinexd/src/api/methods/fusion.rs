@@ -77,6 +77,72 @@ fn family_of(a: &Side, b: &Side) -> Result<&'static Family, String> {
     Ok(family)
 }
 
+/// The placement a duplicate decision needs. Library items remain separate
+/// identities regardless of their dates; fusion decisions must fit the
+/// family's actual reading so its derivation can apply them.
+struct PairContext {
+    family: Option<&'static Family>,
+    key: Option<Value>,
+    at: Option<Timestamp>,
+}
+
+fn pair_context(a: &Side, b: &Side, decision: Option<Decision>) -> Result<PairContext, String> {
+    if a.event_type == "library.item" && b.event_type == "library.item" {
+        return Ok(PairContext {
+            family: None,
+            key: None,
+            at: a.at.zip(b.at).map(|(a, b)| a.min(b)),
+        });
+    }
+    let family = family_of(&a, &b)?;
+    let scope = |s: &Side| -> Option<Vec<Value>> {
+        family
+            .scope
+            .iter()
+            .map(|f| family.field_of(&s.event_type, &s.payload, f))
+            .collect()
+    };
+    if decision == Some(Decision::Same) && (scope(&a).is_none() || scope(&a) != scope(&b)) {
+        return Err(format!(
+            "the records differ in {} or lack it; records of different scopes are never one occurrence",
+            family.scope.join(", ")
+        ));
+    }
+    let (Some(at_a), Some(at_b)) = (a.at, b.at) else {
+        return Err(
+            "a record with an unknown time is never matched, so there is nothing to decide".into(),
+        );
+    };
+    let key = if family.keyed_by.is_empty() {
+        // Both records must fall in one fusion key's reading, or the
+        // decision could never be applied.
+        if (at_a.unix_ns() - at_b.unix_ns()).abs() > family.reach() {
+            return Err(format!(
+                "the records are {} s apart; the {} family reads pairs at most {} s apart",
+                (at_a.unix_ns() - at_b.unix_ns()).abs() / 1_000_000_000,
+                family.name,
+                family.reach() / 1_000_000_000
+            ));
+        }
+        None
+    } else {
+        let key = family.identity_key(&a.event_type, &a.payload);
+        if key.is_none() || key != family.identity_key(&b.event_type, &b.payload) {
+            return Err(format!(
+                "the {} family decides only on copies of one identity ({})",
+                family.name,
+                family.keyed_by.join(", ")
+            ));
+        }
+        key
+    };
+    Ok(PairContext {
+        family: Some(family),
+        key,
+        at: Some(at_a.min(at_b)),
+    })
+}
+
 /// The caller's current decisions on a pair, by the authored-record rules
 /// over every decision recorded on it.
 async fn current_of(
@@ -138,49 +204,7 @@ impl Api {
         if a.citation == b.citation {
             return Err("a decision names two different records".into());
         }
-        let family = family_of(&a, &b)?;
-        let scope = |s: &Side| -> Option<Vec<Value>> {
-            family
-                .scope
-                .iter()
-                .map(|f| family.field_of(&s.event_type, &s.payload, f))
-                .collect()
-        };
-        if decision == Some(Decision::Same) && (scope(&a).is_none() || scope(&a) != scope(&b)) {
-            return Err(format!(
-                "the records differ in {} or lack it; records of different scopes are never one occurrence",
-                family.scope.join(", ")
-            ));
-        }
-        let (Some(at_a), Some(at_b)) = (a.at, b.at) else {
-            return Err(
-                "a record with an unknown time is never matched, so there is nothing to decide"
-                    .into(),
-            );
-        };
-        let key = if family.keyed_by.is_empty() {
-            // Both records must fall in one fusion key's reading, or the
-            // decision could never be applied.
-            if (at_a.unix_ns() - at_b.unix_ns()).abs() > family.reach() {
-                return Err(format!(
-                    "the records are {} s apart; the {} family reads pairs at most {} s apart",
-                    (at_a.unix_ns() - at_b.unix_ns()).abs() / 1_000_000_000,
-                    family.name,
-                    family.reach() / 1_000_000_000
-                ));
-            }
-            None
-        } else {
-            let key = family.identity_key(&a.event_type, &a.payload);
-            if key.is_none() || key != family.identity_key(&b.event_type, &b.payload) {
-                return Err(format!(
-                    "the {} family decides only on copies of one identity ({})",
-                    family.name,
-                    family.keyed_by.join(", ")
-                ));
-            }
-            key
-        };
+        let context = pair_context(&a, &b, decision)?;
         let mut pair = vec![a.citation, b.citation];
         pair.sort();
         let heads = current_of(&mut conn, &pair, caller.actor).await?;
@@ -231,9 +255,9 @@ impl Api {
             withdraws,
             pair,
             decision,
-            pair_at: Some(at_a.min(at_b)),
-            family: Some(family.name.to_owned()),
-            family_key: key,
+            pair_at: context.at,
+            family: context.family.map(|family| family.name.to_owned()),
+            family_key: context.key,
         };
         let writer = self.writer.as_ref().ok_or("decisions require sinexd run")?;
         let acquired = sinex_sources::sources::duplicate_decision::request_material(

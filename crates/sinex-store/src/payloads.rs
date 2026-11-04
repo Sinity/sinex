@@ -123,7 +123,7 @@ pub async fn changed_since(
     since: i64,
 ) -> Result<Vec<Value>> {
     let ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
-        r#"SELECT event_id AS "event_id!" FROM core.commit_log
+        r#"SELECT id AS "event_id!" FROM core.events
            WHERE commit_seq > $2 AND event_type = $1
            UNION
            SELECT event_id FROM audit.archive_changes WHERE commit_seq > $2"#,

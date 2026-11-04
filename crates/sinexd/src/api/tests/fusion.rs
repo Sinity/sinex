@@ -199,3 +199,68 @@ async fn decisions_outside_a_family_or_across_scopes_are_refused(db: devkit::pg:
         "{answer}"
     );
 }
+
+/// Library equality is a statement between separate items, independent of
+/// fusion's time windows; changing or withdrawing it keeps both identities.
+#[devkit::test]
+async fn library_items_share_duplicate_decisions_without_becoming_one_item(
+    db: devkit::pg::TestDatabase,
+) {
+    use sinex_model::event_types::library::{Item, item_id};
+    let w = world(db).await;
+    let item = |key: &str, seconds: i64, anchor| {
+        captured(
+            &Item {
+                item: item_id(key),
+                revision: format!("revision-{key}"),
+                replaces: None,
+                content: format!("blake3:{}", "ab".repeat(32)),
+                media_type: "text/plain".into(),
+                copies: vec![format!("fixture:/{key}")],
+                label: Some(key.into()),
+                by: "fixture".into(),
+                at: Timestamp::from_unix_secs(seconds).unwrap(),
+            },
+            "derive.library-items",
+            anchor,
+        )
+    };
+    let a = item("first", 1, 10);
+    let b = item("second", 86_400 * 100, 11);
+    let references = [format!("sinex:ev/{}", a.id), format!("sinex:ev/{}", b.id)];
+    admit_events(&w, vec![a, b]).await;
+    let mut first_root = Value::Null;
+    for method in ["same", "distinct", "withdraw-decision"] {
+        let (_, answer) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method":method,"a":references[0],"b":references[1]}),
+        )
+        .await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        let decision = &answer["result"];
+        assert_eq!(decision["family"], Value::Null);
+        assert_eq!(decision["family_key"], Value::Null);
+        if method == "same" {
+            first_root = decision["root"].clone();
+        }
+        if method == "distinct" {
+            assert_eq!(decision["root"], first_root);
+        }
+        if method == "withdraw-decision" {
+            assert_eq!(decision["withdraws"], json!([first_root]));
+        }
+    }
+    let items: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='library.item'")
+            .fetch_one(&w.reads)
+            .await
+            .unwrap();
+    let decisions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE event_type='curation.duplicate'",
+    )
+    .fetch_one(&w.reads)
+    .await
+    .unwrap();
+    assert_eq!((items, decisions), (2, 3));
+}
