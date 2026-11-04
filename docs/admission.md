@@ -16,7 +16,7 @@ One transaction admits a batch:
 2. registers material references and extents;
 3. checks kinds, schemas, origin, time and parents (each parent live, not tombstoned);
 4. classifies every row against the live tables by its record coordinates and source record key ([events.md](events.md#identity)), resolving duplicates within the batch the same way;
-5. inserts events, commit-log rows, `event_children` rows and live-table rows; writes archive changes with their chains and material status;
+5. inserts events, each carrying its commit position, `event_children` rows and live-table rows; writes archive changes with their chains and material status;
 6. writes dirty keys, record failures, cursors, carry and reader memory, frame acknowledgements and the operation row;
 7. checks cancellation once more, then commits.
 
@@ -42,7 +42,7 @@ A producer is told success only after commit. Detector hits are not written here
 ## Commit log and positions
 
 - **Commit positions** come from one counter row updated as the first statement of every admitting or lifecycle transaction. Values may skip after a rollback; readers rely only on no smaller value becoming visible after a larger one.
-- **`core.commit_log`** is an ordinary table (never a hypertable), written in the same transaction: one row for each event admitted, each archive change, and each position taken by a transaction that admits nothing. The canonical reader merges events, archive history and tombstone notices by the global position with deterministic order inside each position. It emits a terminal marker only after that position's data. The event-only derivation projection fetches events by `id`.
+- **An event's position is on its own row**, found through the commit-order index on events. **`core.commit_log`** is an ordinary table (never a hypertable), written in the same transaction, with one row for each position that holds no event: lifecycle changes, tombstones and transactions that admit nothing. The canonical reader merges events, archive history and tombstone notices by the global position with deterministic order inside each position. It emits a terminal marker only after that position's data. The event-only derivation projection fetches events by `id`.
 - **Pruning.** Rows below the smallest position of every commit-order reader are pruned. That is the one routine delete in Sinex; as-of reads and time lookups use events and the archive changes, so pruning loses nothing.
 - **Partial positions.** Transfer paging uses a private within-position cursor. A scalar consumer checkpoint advances only over complete positions, after the confirmed publisher's cumulative completion barrier acknowledges. A tombstone allocates its own global position under the counter lock and keeps the exact original admission position in its skeleton; it never reuses the current head.
 - **Every position is a PostgreSQL row committed with the work it covers**: derivation positions with their outputs, the publisher's and each read model's with their work, source cursors and carry with their events. No position lives in NATS.
@@ -59,6 +59,7 @@ PostgreSQL with TimescaleDB is the one transactional store.
 - `core.events` is a hypertable on `id` with daily chunks. Closed chunks are compressed, segmented by source and kind, ordered by `ts_orig, id`, with chunk skipping on `ts_orig` and bloom sparse indexes on `id` and `material_id`.
 - Day queries over months of compressed chunks, and archive, restore, replay and tombstone on them, stay within the [targets](#performance).
 - No foreign key points into a hypertable; admission checks references.
+- **What each event writes** beyond its row: the primary key on `id`, `(event_type, ts_orig)` for kind and time questions, the commit-order index `(commit_seq, id)` that every commit-order reader follows, and a block-range index on `(material_id, anchor)`, since materials are UUIDv7 and anchors ascend within a material, so physical order follows record location. Per-source and all-kind time questions read `(event_type, ts_orig)` ranges, chunk skipping on `ts_orig`, and the per-source and per-run counters; events carry no per-source, plain time or per-run index. Only derived events enter the parents index.
 - No DML touches a compressed chunk except tombstoning, which clears payloads. Archive and restore are logical: they change liveness and the archive changes, not the event rows.
 - Activity aggregates bucket and select on `ts_orig`, and group only by bounded dimensions.
 - Clusters are initialized with data checksums.
@@ -116,7 +117,7 @@ The pipeline's throughput and live-latency targets are in [architecture.md](arch
 | segment log throughput | materials per second at a 1 s commit interval |
 | day queries over three months on compressed chunks | latency of the day query, with archive, restore, replay and tombstone on the same chunks |
 
-Figures are reported with bytes/s, bytes kept per event, WAL per event, syncs per group and stage utilisation. No test asserts elapsed time; measurement is the bench of [testing.md](testing.md). Batch and turn sizes are targets, never input ceilings.
+Figures are reported with bytes/s, bytes kept per event (every table's heap, TOAST and indexes, by table), WAL per event, syncs per group and stage utilisation. No test asserts elapsed time; measurement is the bench of [testing.md](testing.md). Batch and turn sizes are targets, never input ceilings.
 
 ## Laws
 

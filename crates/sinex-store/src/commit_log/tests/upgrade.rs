@@ -56,6 +56,9 @@ async fn other_rows(
             "to_jsonb(t)-'family'-'write_kind_prefixes'-'source_name'-'source_version'-'source_fingerprint'-'producer_host'"
         } else if table == "search_text" {
             "to_jsonb(t)-'trigram_indexed'"
+        } else if table == "commit_log" {
+            // An event's position is on its own row; the log keeps the rest.
+            "to_jsonb(t)-'event_id'-'event_type'"
         } else {
             "to_jsonb(t)"
         };

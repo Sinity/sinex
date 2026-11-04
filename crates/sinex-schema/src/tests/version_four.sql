@@ -59,6 +59,13 @@ DROP VIEW core.visible_embedding_vectors;
 DROP TABLE core.embedding_vectors,core.embedding_spaces,core.query_cursor_key;
 ALTER TABLE core.ingress_frames DROP COLUMN family, DROP COLUMN write_kind_prefixes;
 -- Reconstruct the deployed predecessor before exercising the forward chain.
+DROP INDEX core.events_record_location;
+CREATE INDEX ON core.events (ts_orig);
+CREATE INDEX ON core.events (source, ts_orig);
+CREATE INDEX ON core.events (material_id, anchor);
+CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq);
+ALTER TABLE core.commit_log ADD COLUMN event_id uuid, ADD COLUMN event_type text,
+  ADD CONSTRAINT commit_log_check CHECK ((event_id IS NULL) = (event_type IS NULL));
 CREATE SCHEMA telemetry;
 CREATE TABLE telemetry.events (LIKE core.events INCLUDING ALL);
 DROP FUNCTION core.event_children_of(uuid), core.event_parents_of(uuid);

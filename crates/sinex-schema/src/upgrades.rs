@@ -78,6 +78,7 @@ pub(crate) const NAMED: &[&str] = &[
     "source_declarations",
     "model_effect_accounting",
     "lifecycle",
+    "event_indexes",
 ];
 
 #[cfg(test)]
@@ -152,6 +153,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(crate::source_declarations::statements());
     steps.push(crate::model_calls::statements());
     steps.push(crate::lifecycle::statements());
+    steps.push(crate::event_indexes::statements());
     steps
 }
 

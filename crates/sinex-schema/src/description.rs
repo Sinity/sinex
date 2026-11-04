@@ -35,6 +35,7 @@ impl Description {
     /// The description just before the lifecycle upgrade.
     pub(crate) fn before_lifecycle() -> Self {
         let mut description = Self::current();
+        crate::event_indexes::previous(&mut description.tables, &mut description.after_tables);
         description
             .tables
             .retain(|statement| crate::lifecycle::before(statement));

@@ -177,7 +177,7 @@ async fn read_filtered(
 }
 
 async fn wait_published(conn: &mut PgConnection) {
-    let head: i64 = sqlx::query_scalar("SELECT max(commit_seq) FROM core.commit_log")
+    let head: i64 = sqlx::query_scalar("SELECT value FROM core.counters WHERE name = 'commit_seq'")
         .fetch_one(&mut *conn)
         .await
         .unwrap();
@@ -282,8 +282,8 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
             })
             .collect();
         let committed: Vec<(i64, uuid::Uuid)> = sqlx::query_as(
-            "SELECT l.commit_seq, l.event_id FROM core.commit_log l
-             WHERE l.event_type = ANY($1) ORDER BY l.commit_seq",
+            "SELECT e.commit_seq, e.id FROM core.events e
+             WHERE e.event_type = ANY($1) ORDER BY e.commit_seq",
         )
         .bind(types.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>())
         .fetch_all(&mut conn)
@@ -327,11 +327,10 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
             .unwrap();
         assert_eq!(*commit_seq, stored);
     }
-    let events: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
     assert_eq!(
         i64::try_from(ids.len()).unwrap(),
         events,
