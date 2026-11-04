@@ -279,7 +279,7 @@ async fn interrupted_index_builds_are_rebuilt_and_finished_ones_kept(db: devkit:
     assert_ne!(index_oid(&mut conn, "core.events_feed").await, invalid);
 
     // A build that finished just before its task ended is kept.
-    conn.execute(&begin(Task::FeedIndex).join("; "))
+    conn.execute(begin(Task::FeedIndex).join("; ").as_str())
         .await
         .unwrap();
     let built = index_oid(&mut conn, "core.events_feed").await;
