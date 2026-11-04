@@ -338,7 +338,6 @@ impl Progress {
 /// How a stage ended, for its caller.
 pub(crate) struct Outcome {
     pub operation: OperationId,
-    pub result: OperationResult,
     /// The operation, its inventory, its accounting and the totals per
     /// source.
     pub report: Value,
@@ -524,7 +523,6 @@ impl Staging<'_> {
             .collect();
         Ok(Outcome {
             operation,
-            result,
             report: json!({
                 "operation": operation,
                 "result": result,

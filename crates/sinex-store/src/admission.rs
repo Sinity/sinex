@@ -36,7 +36,7 @@ pub(crate) use archive::{archive_at, position, remove_live, restore_at};
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
 pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty};
 pub use register::native_key;
-pub(crate) use register::{native_keys, observed, recorded};
+pub(crate) use register::observed;
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]

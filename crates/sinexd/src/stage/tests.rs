@@ -121,7 +121,7 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
     let parts = multipart_takeout(&export);
     let store = dir.path().join("store");
     let outcome = stage(&db, &store, vec![detected(&export)]).await;
-    assert_eq!(outcome.result, OperationResult::Ok);
+    assert_eq!(outcome.report["result"], json!(OperationResult::Ok));
     let files = files(&outcome);
     assert_eq!(files.len(), 3);
 
@@ -577,7 +577,10 @@ async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
     let (interrupted, ()) = tokio::join!(staging, interrupt);
     let interrupted = interrupted.unwrap();
     drop(first);
-    assert_eq!(interrupted.result, OperationResult::StoppedEarly);
+    assert_eq!(
+        interrupted.report["result"],
+        json!(OperationResult::StoppedEarly)
+    );
     let saved = sinex_store::stages::show(&mut watcher, operation)
         .await
         .unwrap()
@@ -610,7 +613,7 @@ async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
     .await
     .unwrap();
     assert!(resumed.failures.is_empty(), "{:?}", resumed.failures);
-    assert_eq!(resumed.result, OperationResult::Ok);
+    assert_eq!(resumed.report["result"], json!(OperationResult::Ok));
     // Every record is accounted for once, before and after the interruption.
     let whole = accounting(&files(&resumed)[0], SOURCE);
     whole.balanced().unwrap();

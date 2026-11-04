@@ -420,15 +420,9 @@
       "history": "recompute",
       "inputs": [
         "signal.rule",
-        "signal.checkpoint",
-        "signal.evaluation",
-        "signal.intent",
-        "signal.emergency",
         "signal.delivery",
-        "signal.handoff",
-        "signal.received",
-        "signal.receipt",
-        "signal.desktop_receipt",
+        "signal.outcome",
+        "signal.report",
         "analysis.request",
         "source.coverage",
         "activity.project_span",
@@ -754,15 +748,9 @@
         "scrollback.window",
         "shell.session",
         "shutdown.started",
-        "signal.checkpoint",
         "signal.delivery",
-        "signal.desktop_receipt",
-        "signal.emergency",
-        "signal.evaluation",
-        "signal.handoff",
-        "signal.intent",
-        "signal.receipt",
-        "signal.received",
+        "signal.outcome",
+        "signal.report",
         "signal.rule",
         "sleep.ended",
         "sleep.started",
@@ -843,7 +831,7 @@
       },
       "kind": {
         "name": "signal.rule",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -860,6 +848,14 @@
               },
               "rule": {
                 "$ref": "#/$defs/Rule"
+              },
+              "shipped": {
+                "$ref": "#/$defs/Shipped",
+                "default": {
+                  "inhibition_scope": "host",
+                  "urgency": "normal"
+                },
+                "description": "Urgency and inhibition, from the product's shipped table only."
               },
               "version": {
                 "$ref": "#/$defs/RuleVersion"
@@ -895,6 +891,19 @@
                 },
                 "required": [
                   "agent"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A program that submitted a notice through its producer credential.",
+                "properties": {
+                  "producer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "producer"
                 ],
                 "type": "object"
               }
@@ -1039,6 +1048,14 @@
               }
             ]
           },
+          "InhibitionScope": {
+            "description": "Where an inhibiting rule's open occurrence folds the inhibited rules:\nanywhere on the host, or only deliveries with the same `scope` (a source).",
+            "enum": [
+              "host",
+              "source"
+            ],
+            "type": "string"
+          },
           "QuietHours": {
             "properties": {
               "from": {
@@ -1076,6 +1093,10 @@
               "window"
             ],
             "type": "object"
+          },
+          "Recipient": {
+            "pattern": "^(session:.+|@.+|role:.+)$",
+            "type": "string"
           },
           "Rule": {
             "additionalProperties": false,
@@ -1150,6 +1171,13 @@
                   "string",
                   "null"
                 ]
+              },
+              "to": {
+                "description": "Recipients besides the operator's inbox. `scope` only routes to briefs.",
+                "items": {
+                  "$ref": "#/$defs/Recipient"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -1179,9 +1207,45 @@
             ],
             "type": "object"
           },
+          "Shipped": {
+            "description": "What only a shipped rule may declare, because it encodes product knowledge.",
+            "properties": {
+              "inhibition_scope": {
+                "$ref": "#/$defs/InhibitionScope",
+                "default": "host"
+              },
+              "inhibits": {
+                "description": "Names of the same product's rules folded into this rule's notification\nwhile it has an open current-state occurrence.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "urgency": {
+                "$ref": "#/$defs/Urgency",
+                "default": "normal"
+              }
+            },
+            "type": "object"
+          },
           "Timestamp": {
             "format": "date-time",
             "type": "string"
+          },
+          "Urgency": {
+            "oneOf": [
+              {
+                "enum": [
+                  "normal"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "critical",
+                "description": "Only where captured data is being lost now; never deferred.",
+                "type": "string"
+              }
+            ]
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1235,1717 +1299,118 @@
       "keep_known": [],
       "key_rule": {
         "fields": [
-          "host"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "signal.checkpoint",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "host": {
-            "type": "string"
-          },
-          "read_as": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "revision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "settings_identity": {
-            "type": "string"
-          },
-          "written_at": {
-            "$ref": "#/$defs/Timestamp"
-          }
-        },
-        "required": [
-          "host",
-          "revision",
-          "settings_identity",
-          "read_as",
-          "written_at"
-        ],
-        "title": "CheckpointRecorded",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "written_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "rule",
-          "row_identity"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "signal.evaluation",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "DaySettingWire": {
-            "description": "Pure transport data. The caller resolves the named zone before constructing\na runtime setting; deserialization performs no zone database lookup.",
-            "properties": {
-              "start": {
-                "type": "string"
-              },
-              "zone": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "zone",
-              "start"
-            ],
-            "type": "object"
-          },
-          "Occurrence": {
-            "properties": {
-              "episode": {
-                "type": "string"
-              },
-              "id": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "episode"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "complete": {
-            "type": "boolean"
-          },
-          "day_setting": {
-            "$ref": "#/$defs/DaySettingWire"
-          },
-          "observed_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "occurrence": {
-            "$ref": "#/$defs/Occurrence"
-          },
-          "query": {
-            "type": "string"
-          },
-          "read_as": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "reason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "result": true,
-          "row_identity": {
-            "type": "string"
-          },
-          "rule": {
-            "type": "string"
-          },
-          "settings_identity": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "rule",
-          "row_identity",
-          "occurrence",
-          "query",
-          "read_as",
-          "settings_identity",
-          "day_setting",
-          "result",
-          "complete",
-          "observed_at"
-        ],
-        "title": "EvaluationRecorded",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "observed_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "delivery_id"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "signal.intent",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "ActiveRule": {
-            "properties": {
-              "author": {
-                "$ref": "#/$defs/Author"
-              },
-              "live": {
-                "description": "The adapter marks queries over live state, independently of `for`.",
-                "type": "boolean"
-              },
-              "rule": {
-                "$ref": "#/$defs/Rule"
-              },
-              "version": {
-                "$ref": "#/$defs/RuleVersion"
-              },
-              "via": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "version",
-              "rule",
-              "author",
-              "via",
-              "live"
-            ],
-            "type": "object"
-          },
-          "Author": {
-            "oneOf": [
-              {
-                "enum": [
-                  "operator",
-                  "shipped"
-                ],
-                "type": "string"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "agent": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "agent"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "Change": {
-            "properties": {
-              "after": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "before": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "joined": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "left": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "what": {
-                "$ref": "#/$defs/ChangeKind"
-              }
-            },
-            "required": [
-              "what",
-              "joined",
-              "left",
-              "before",
-              "after"
-            ],
-            "type": "object"
-          },
-          "ChangeKind": {
-            "enum": [
-              "membership",
-              "ranking",
-              "top_k"
-            ],
-            "type": "string"
-          },
-          "Channel": {
-            "enum": [
-              "notice",
-              "interrupt",
-              "brief",
-              "value",
-              "action"
-            ],
-            "type": "string"
-          },
-          "Compare": {
-            "enum": [
-              "<",
-              ">"
-            ],
-            "type": "string"
-          },
-          "Deliver": {
-            "enum": [
-              "notice",
-              "value",
-              "action"
-            ],
-            "type": "string"
-          },
-          "Delivery": {
-            "properties": {
-              "at": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "basis": {
-                "items": {
-                  "$ref": "#/$defs/Row"
-                },
-                "type": "array"
-              },
-              "change": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Change"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "channel": {
-                "$ref": "#/$defs/Channel"
-              },
-              "downgrade": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Downgrade"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "id": {
-                "type": "string"
-              },
-              "matched": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "scope": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "trigger": {
-                "$ref": "#/$defs/Trigger"
-              },
-              "value": {
-                "format": "double",
-                "type": [
-                  "number",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "trigger",
-              "matched",
-              "at",
-              "basis",
-              "channel"
-            ],
-            "type": "object"
-          },
-          "Downgrade": {
-            "enum": [
-              "rate_limit",
-              "interrupt_budget_spent"
-            ],
-            "type": "string"
-          },
-          "Duration": {
-            "oneOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
-              },
-              {
-                "description": "Elapsed duration, for example 20m or1.5s, in whole milliseconds",
-                "type": "string"
-              }
-            ]
-          },
-          "EventId": {
-            "description": "One reading of a record, or one derived result.",
-            "format": "uuid",
-            "type": "string"
-          },
-          "FiredIntent": {
-            "description": "A firing is an intent until the host's quiet hours and attention budget have\nbeen applied. Authorship comes from the authenticated product write path.",
-            "properties": {
-              "author": {
-                "$ref": "#/$defs/Author"
-              },
-              "current": {
-                "type": "boolean"
-              },
-              "delivery": {
-                "$ref": "#/$defs/Delivery"
-              },
-              "quiet_hours": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QuietHours"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "rate_limit": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RateLimit"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "delivery",
-              "author",
-              "current"
-            ],
-            "type": "object"
-          },
-          "Fires": {
-            "oneOf": [
-              {
-                "enum": [
-                  "on_new"
-                ],
-                "type": "string"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "on_change": {
-                    "properties": {
-                      "k": {
-                        "format": "uint",
-                        "minimum": 0,
-                        "type": [
-                          "integer",
-                          "null"
-                        ]
-                      },
-                      "what": {
-                        "$ref": "#/$defs/ChangeKind",
-                        "default": "membership"
-                      }
-                    },
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "on_change"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "on_threshold": {
-                    "properties": {
-                      "compare": {
-                        "$ref": "#/$defs/Compare"
-                      },
-                      "value": {
-                        "format": "double",
-                        "type": "number"
-                      }
-                    },
-                    "required": [
-                      "value",
-                      "compare"
-                    ],
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "on_threshold"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "description": "Minute of the local civil day. Calendar resolution belongs to DaySetting.",
-                "properties": {
-                  "at": {
-                    "properties": {
-                      "minute": {
-                        "format": "uint16",
-                        "maximum": 65535,
-                        "minimum": 0,
-                        "type": "integer"
-                      }
-                    },
-                    "required": [
-                      "minute"
-                    ],
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "at"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "Notice": {
-            "description": "The evaluator has already applied quiet hours and the shared host budget.",
-            "properties": {
-              "body": {
-                "type": "string"
-              },
-              "budget_passive_count": {
-                "description": "The evaluator supplies a cumulative count of budget-downgraded notices.\nSuch notices update one host summary rather than showing individually.",
-                "format": "uint64",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "command_hint": {
-                "description": "Shown when the server cannot offer actions.",
-                "type": "string"
-              },
-              "current": {
-                "type": "boolean"
-              },
-              "data_loss": {
-                "description": "Critical urgency is reserved for capture losing data now.",
-                "type": "boolean"
-              },
-              "delivery_id": {
-                "type": "string"
-              },
-              "icon": {
-                "type": "string"
-              },
-              "interrupt": {
-                "type": "boolean"
-              },
-              "occurrence": {
-                "type": "string"
-              },
-              "product": {
-                "type": "string"
-              },
-              "reference": {
-                "type": "string"
-              },
-              "rule": {
-                "type": "string"
-              },
-              "summary": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "delivery_id",
-              "product",
-              "icon",
-              "rule",
-              "occurrence",
-              "summary",
-              "body",
-              "reference",
-              "command_hint",
-              "interrupt",
-              "current",
-              "data_loss"
-            ],
-            "type": "object"
-          },
-          "Occurrence": {
-            "properties": {
-              "episode": {
-                "type": "string"
-              },
-              "id": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "episode"
-            ],
-            "type": "object"
-          },
-          "Origin": {
-            "enum": [
-              "source",
-              "signal_delivery",
-              "injected_context"
-            ],
-            "type": "string"
-          },
-          "QuietHours": {
-            "properties": {
-              "from": {
-                "format": "uint16",
-                "maximum": 65535,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "to": {
-                "format": "uint16",
-                "maximum": 65535,
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "from",
-              "to"
-            ],
-            "type": "object"
-          },
-          "RateLimit": {
-            "properties": {
-              "count": {
-                "format": "uint",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "window": {
-                "$ref": "#/$defs/Duration"
-              }
-            },
-            "required": [
-              "count",
-              "window"
-            ],
-            "type": "object"
-          },
-          "Row": {
-            "properties": {
-              "end": {
-                "format": "int64",
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "evidence": {
-                "description": "Evidence is preserved at match time. Scores never define occurrence or\nchange identity; the adapter supplies the complete result order."
-              },
-              "observed": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "occurrence": {
-                "$ref": "#/$defs/Occurrence"
-              },
-              "origin": {
-                "$ref": "#/$defs/Origin",
-                "default": "source"
-              },
-              "reference": {
-                "type": "string"
-              },
-              "start": {
-                "format": "int64",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "occurrence",
-              "reference",
-              "observed",
-              "start",
-              "evidence"
-            ],
-            "type": "object"
-          },
-          "Rule": {
-            "additionalProperties": false,
-            "description": "Authored fields only. Identity and authorship are supplied by the product's\nwrite path; `deny_unknown_fields` prevents a client forging daemon metadata.",
-            "properties": {
-              "command": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "deliver": {
-                "$ref": "#/$defs/Deliver",
-                "default": "notice"
-              },
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "fires": {
-                "$ref": "#/$defs/Fires",
-                "default": "on_new"
-              },
-              "for": {
-                "$ref": "#/$defs/Duration",
-                "default": 0
-              },
-              "interrupt": {
-                "default": false,
-                "type": "boolean"
-              },
-              "min_change": {
-                "default": 1,
-                "format": "uint",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "name": {
-                "type": "string"
-              },
-              "query": {
-                "type": "string"
-              },
-              "quiet_hours": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QuietHours"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "rate_limit": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RateLimit"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "scope": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "target": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "name",
-              "query"
-            ],
-            "type": "object"
-          },
-          "RuleVersion": {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "product": {
-                "type": "string"
-              },
-              "revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "product",
-              "id",
-              "revision"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "Trigger": {
-            "properties": {
-              "occurrence": {
-                "$ref": "#/$defs/Occurrence"
-              },
-              "rule": {
-                "$ref": "#/$defs/RuleVersion"
-              }
-            },
-            "required": [
-              "rule",
-              "occurrence"
-            ],
-            "type": "object"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "active_rule": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ActiveRule"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "delivery_id": {
-            "type": "string"
-          },
-          "inputs": {
-            "items": {
-              "$ref": "#/$defs/EventId"
-            },
-            "type": "array"
-          },
-          "intent": {
-            "$ref": "#/$defs/FiredIntent"
-          },
-          "notice": {
-            "$ref": "#/$defs/Notice"
-          },
-          "producer": {
-            "description": "The authenticated capture identity; logical product ownership is in the intent.",
-            "type": "string"
-          },
-          "received_at": {
-            "$ref": "#/$defs/Timestamp"
-          }
-        },
-        "required": [
-          "inputs",
-          "delivery_id",
-          "producer",
-          "intent",
-          "notice",
-          "received_at"
-        ],
-        "title": "IntentRecorded",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "received_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "delivery_id"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "signal.emergency",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Attempt": {
-            "properties": {
-              "active": {
-                "type": "boolean"
-              },
-              "command": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/DeliveryOutcome"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "dbus": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/DeliveryOutcome"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "handoff": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "held": {
-                "additionalProperties": false,
-                "properties": {
-                  "both": {
-                    "$ref": "#/$defs/HeldRoute"
-                  },
-                  "command": {
-                    "$ref": "#/$defs/HeldRoute"
-                  },
-                  "dbus": {
-                    "$ref": "#/$defs/HeldRoute"
-                  }
-                },
-                "type": "object"
-              },
-              "notice": {
-                "$ref": "#/$defs/Notice"
-              },
-              "notification_id": {
-                "format": "uint32",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "notification_slot": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "retried": {
-                "type": "boolean"
-              },
-              "server_owner": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "shown": {
-                "default": false,
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "notice",
-              "retried",
-              "active"
-            ],
-            "type": "object"
-          },
-          "Author": {
-            "oneOf": [
-              {
-                "enum": [
-                  "operator",
-                  "shipped"
-                ],
-                "type": "string"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "agent": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "agent"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "Change": {
-            "properties": {
-              "after": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "before": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "joined": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "left": {
-                "items": {
-                  "$ref": "#/$defs/Occurrence"
-                },
-                "type": "array"
-              },
-              "what": {
-                "$ref": "#/$defs/ChangeKind"
-              }
-            },
-            "required": [
-              "what",
-              "joined",
-              "left",
-              "before",
-              "after"
-            ],
-            "type": "object"
-          },
-          "ChangeKind": {
-            "enum": [
-              "membership",
-              "ranking",
-              "top_k"
-            ],
-            "type": "string"
-          },
-          "Channel": {
-            "enum": [
-              "notice",
-              "interrupt",
-              "brief",
-              "value",
-              "action"
-            ],
-            "type": "string"
-          },
-          "Delivery": {
-            "properties": {
-              "at": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "basis": {
-                "items": {
-                  "$ref": "#/$defs/Row"
-                },
-                "type": "array"
-              },
-              "change": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Change"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "channel": {
-                "$ref": "#/$defs/Channel"
-              },
-              "downgrade": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Downgrade"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "id": {
-                "type": "string"
-              },
-              "matched": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "scope": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "trigger": {
-                "$ref": "#/$defs/Trigger"
-              },
-              "value": {
-                "format": "double",
-                "type": [
-                  "number",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "trigger",
-              "matched",
-              "at",
-              "basis",
-              "channel"
-            ],
-            "type": "object"
-          },
-          "DeliveryOutcome": {
-            "description": "A durable attempt begins unknown before effects run. Persist this record in\nthe same owner as deliveries; only a returned receipt changes its outcome.",
-            "oneOf": [
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "unknown",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "delivered",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "not_sent",
-                    "type": "string"
-                  },
-                  "reason": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome",
-                  "reason"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "cancelled",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "DesktopEvent": {
-            "oneOf": [
-              {
-                "description": "The product opens this reference through its ordinary read operation.",
-                "properties": {
-                  "event": {
-                    "const": "open_reference",
-                    "type": "string"
-                  },
-                  "reference": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event",
-                  "reference"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "seen",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "acknowledged",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "dismissed",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "expired",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "closed",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "Downgrade": {
-            "enum": [
-              "rate_limit",
-              "interrupt_budget_spent"
-            ],
-            "type": "string"
-          },
-          "Duration": {
-            "oneOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
-              },
-              {
-                "description": "Elapsed duration, for example 20m or1.5s, in whole milliseconds",
-                "type": "string"
-              }
-            ]
-          },
-          "EventId": {
-            "description": "One reading of a record, or one derived result.",
-            "format": "uuid",
-            "type": "string"
-          },
-          "FiredIntent": {
-            "description": "A firing is an intent until the host's quiet hours and attention budget have\nbeen applied. Authorship comes from the authenticated product write path.",
-            "properties": {
-              "author": {
-                "$ref": "#/$defs/Author"
-              },
-              "current": {
-                "type": "boolean"
-              },
-              "delivery": {
-                "$ref": "#/$defs/Delivery"
-              },
-              "quiet_hours": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QuietHours"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "rate_limit": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RateLimit"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "delivery",
-              "author",
-              "current"
-            ],
-            "type": "object"
-          },
-          "HeldRoute": {
-            "description": "The owner policy that deferred this exact route. Deadlines are absolute\nmilliseconds; the owner resolves its current policy again after waking.",
-            "properties": {
-              "at": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "policy": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "at",
-              "policy"
-            ],
-            "type": "object"
-          },
-          "Notice": {
-            "description": "The evaluator has already applied quiet hours and the shared host budget.",
-            "properties": {
-              "body": {
-                "type": "string"
-              },
-              "budget_passive_count": {
-                "description": "The evaluator supplies a cumulative count of budget-downgraded notices.\nSuch notices update one host summary rather than showing individually.",
-                "format": "uint64",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "command_hint": {
-                "description": "Shown when the server cannot offer actions.",
-                "type": "string"
-              },
-              "current": {
-                "type": "boolean"
-              },
-              "data_loss": {
-                "description": "Critical urgency is reserved for capture losing data now.",
-                "type": "boolean"
-              },
-              "delivery_id": {
-                "type": "string"
-              },
-              "icon": {
-                "type": "string"
-              },
-              "interrupt": {
-                "type": "boolean"
-              },
-              "occurrence": {
-                "type": "string"
-              },
-              "product": {
-                "type": "string"
-              },
-              "reference": {
-                "type": "string"
-              },
-              "rule": {
-                "type": "string"
-              },
-              "summary": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "delivery_id",
-              "product",
-              "icon",
-              "rule",
-              "occurrence",
-              "summary",
-              "body",
-              "reference",
-              "command_hint",
-              "interrupt",
-              "current",
-              "data_loss"
-            ],
-            "type": "object"
-          },
-          "NotificationReceipt": {
-            "properties": {
-              "delivery_id": {
-                "type": "string"
-              },
-              "event": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/DesktopEvent"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "notification_id": {
-                "format": "uint32",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "outcome": {
-                "$ref": "#/$defs/DeliveryOutcome"
-              },
-              "route": {
-                "$ref": "#/$defs/Route"
-              },
-              "via": {
-                "description": "Desktop actions are operator acts, never acts by a rule's author.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "delivery_id",
-              "route",
-              "outcome"
-            ],
-            "type": "object"
-          },
-          "Occurrence": {
-            "properties": {
-              "episode": {
-                "type": "string"
-              },
-              "id": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "episode"
-            ],
-            "type": "object"
-          },
-          "Origin": {
-            "enum": [
-              "source",
-              "signal_delivery",
-              "injected_context"
-            ],
-            "type": "string"
-          },
-          "QuietHours": {
-            "properties": {
-              "from": {
-                "format": "uint16",
-                "maximum": 65535,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "to": {
-                "format": "uint16",
-                "maximum": 65535,
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "from",
-              "to"
-            ],
-            "type": "object"
-          },
-          "RateLimit": {
-            "properties": {
-              "count": {
-                "format": "uint",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "window": {
-                "$ref": "#/$defs/Duration"
-              }
-            },
-            "required": [
-              "count",
-              "window"
-            ],
-            "type": "object"
-          },
-          "Route": {
-            "enum": [
-              "dbus",
-              "command",
-              "both"
-            ],
-            "type": "string"
-          },
-          "Row": {
-            "properties": {
-              "end": {
-                "format": "int64",
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "evidence": {
-                "description": "Evidence is preserved at match time. Scores never define occurrence or\nchange identity; the adapter supplies the complete result order."
-              },
-              "observed": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "occurrence": {
-                "$ref": "#/$defs/Occurrence"
-              },
-              "origin": {
-                "$ref": "#/$defs/Origin",
-                "default": "source"
-              },
-              "reference": {
-                "type": "string"
-              },
-              "start": {
-                "format": "int64",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "occurrence",
-              "reference",
-              "observed",
-              "start",
-              "evidence"
-            ],
-            "type": "object"
-          },
-          "RuleVersion": {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "product": {
-                "type": "string"
-              },
-              "revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "product",
-              "id",
-              "revision"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "Trigger": {
-            "properties": {
-              "occurrence": {
-                "$ref": "#/$defs/Occurrence"
-              },
-              "rule": {
-                "$ref": "#/$defs/RuleVersion"
-              }
-            },
-            "required": [
-              "rule",
-              "occurrence"
-            ],
-            "type": "object"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "attempt": {
-            "$ref": "#/$defs/Attempt"
-          },
-          "completed_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "context_token": {
-            "type": "string"
-          },
-          "delivery_id": {
-            "type": "string"
-          },
-          "host": {
-            "type": "string"
-          },
-          "inputs": {
-            "items": {
-              "$ref": "#/$defs/EventId"
-            },
-            "type": "array"
-          },
-          "intent": {
-            "$ref": "#/$defs/FiredIntent"
-          },
-          "invoked_at": {
-            "$ref": "#/$defs/Timestamp",
-            "description": "Authenticated producer observation of the actual delivery invocation,\nseparate from evaluation and receipt clocks. A failed attempt attests\nno completed platform effect."
-          },
-          "notice": {
-            "$ref": "#/$defs/Notice"
-          },
-          "receipts": {
-            "items": {
-              "$ref": "#/$defs/NotificationReceipt"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "inputs",
-          "delivery_id",
-          "host",
-          "context_token",
-          "intent",
-          "notice",
-          "receipts",
-          "attempt",
-          "invoked_at",
-          "completed_at"
-        ],
-        "title": "EmergencyCompleted",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "suppress_repeat",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "completed_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
           "delivery_id"
         ],
         "rule": "fields"
       },
       "kind": {
         "name": "signal.delivery",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
+          "Attention": {
+            "description": "The deliverer's snapshot of the operator's attention at one instant, kept\ncurrent from facts it already has. Every field has a value meaning\n\"unknown\", and unknown inputs only ever leave routing as quiet hours and the\nbudget decide it.",
+            "properties": {
+              "at": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "away_command": {
+                "description": "The deployment configures a command that sends notices away.",
+                "type": "boolean"
+              },
+              "breakpoint": {
+                "description": "A breakpoint happens at `at`: an app or work-episode switch, the end of an\ninput bout, an unlock.",
+                "type": "boolean"
+              },
+              "budget_per_hour": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "budget_used": {
+                "description": "Interrupting handoffs charged to the host budget in the last hour.",
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "deep_work": {
+                "type": "boolean"
+              },
+              "deep_work_deferral": {
+                "$ref": "#/$defs/DeepWorkDeferral"
+              },
+              "focus": {
+                "description": "References shown in the focused window: an agent session joined to the\nwindow, a repository, a web route. Empty when unknown.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "presence": {
+                "$ref": "#/$defs/Presence"
+              },
+              "quiet_until": {
+                "description": "The end of an explicit `quiet until T` act.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "at",
+              "presence",
+              "focus",
+              "deep_work",
+              "breakpoint",
+              "budget_used",
+              "budget_per_hour",
+              "away_command",
+              "deep_work_deferral"
+            ],
+            "type": "object"
+          },
+          "Author": {
+            "oneOf": [
+              {
+                "enum": [
+                  "operator",
+                  "shipped"
+                ],
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A program that submitted a notice through its producer credential.",
+                "properties": {
+                  "producer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "producer"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "Change": {
             "properties": {
               "after": {
@@ -2994,20 +1459,174 @@
             "type": "string"
           },
           "Channel": {
+            "description": "The channel a rule asks for. Routing decides what happens to a notice.",
             "enum": [
               "notice",
               "interrupt",
-              "brief",
               "value",
               "action"
             ],
             "type": "string"
           },
+          "Decision": {
+            "oneOf": [
+              {
+                "description": "Shown as a desktop notification; critical notices are also sent away\nwhile the operator is away.",
+                "properties": {
+                  "decision": {
+                    "const": "show",
+                    "type": "string"
+                  },
+                  "send_away": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "send_away"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Sent to the deployment's away command.",
+                "properties": {
+                  "decision": {
+                    "const": "send_away",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Waits until `until`, or until its releasing input changes when `None`.",
+                "properties": {
+                  "decision": {
+                    "const": "hold",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/HoldReason"
+                  },
+                  "until": {
+                    "format": "int64",
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "decision",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "decision": {
+                    "const": "passive",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/PassiveReason"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A value or action delivery, run through its configured target.",
+                "properties": {
+                  "decision": {
+                    "const": "run",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "DeepWorkDeferral": {
+            "description": "Which non-critical interrupting notices wait for a breakpoint in deep work.",
+            "oneOf": [
+              {
+                "enum": [
+                  "never",
+                  "all"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "agents_and_producers",
+                "description": "Notices from agents' rules and producers wait; the operator's own and\nshipped rules show at once.",
+                "type": "string"
+              }
+            ]
+          },
           "Delivery": {
+            "description": "The record of one handoff. It never changes; later news is an outcome.",
             "properties": {
               "at": {
                 "format": "int64",
                 "type": "integer"
+              },
+              "attention": {
+                "$ref": "#/$defs/Attention",
+                "description": "The attention the decision was taken under."
+              },
+              "decision": {
+                "$ref": "#/$defs/Decision"
+              },
+              "fired": {
+                "$ref": "#/$defs/Fired"
+              },
+              "held": {
+                "items": {
+                  "$ref": "#/$defs/HoldRecord"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "fired",
+              "at",
+              "decision",
+              "held",
+              "attention"
+            ],
+            "type": "object"
+          },
+          "Duration": {
+            "oneOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Elapsed duration, for example 20m or1.5s, in whole milliseconds",
+                "type": "string"
+              }
+            ]
+          },
+          "Fired": {
+            "description": "One firing of a rule, before routing. Its basis (rows and their\nobservation) is fixed when it matched, never when it is handed off.",
+            "properties": {
+              "at": {
+                "description": "When the evaluator fired it.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "author": {
+                "$ref": "#/$defs/Author"
               },
               "basis": {
                 "items": {
@@ -3028,28 +1647,55 @@
               "channel": {
                 "$ref": "#/$defs/Channel"
               },
-              "downgrade": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/Downgrade"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+              "current": {
+                "description": "A current-state notice: it rechecks its condition until handoff and is\nclosed by a `Cleared` report when the condition ends.",
+                "type": "boolean"
               },
               "id": {
+                "description": "Deterministic: product, rule ID and revision, occurrence and period.",
                 "type": "string"
               },
               "matched": {
                 "format": "int64",
                 "type": "integer"
               },
+              "quiet_hours": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QuietHours"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rate_limit": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RateLimit"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rule_name": {
+                "type": "string"
+              },
               "scope": {
                 "type": [
                   "string",
                   "null"
                 ]
+              },
+              "shipped": {
+                "$ref": "#/$defs/Shipped"
+              },
+              "to": {
+                "items": {
+                  "$ref": "#/$defs/Recipient"
+                },
+                "type": "array"
               },
               "trigger": {
                 "$ref": "#/$defs/Trigger"
@@ -3065,32 +1711,79 @@
             "required": [
               "id",
               "trigger",
+              "rule_name",
               "matched",
               "at",
               "basis",
-              "channel"
+              "channel",
+              "to",
+              "author",
+              "current",
+              "shipped"
             ],
             "type": "object"
           },
-          "Downgrade": {
+          "HoldReason": {
+            "oneOf": [
+              {
+                "enum": [
+                  "quiet",
+                  "away",
+                  "deep_work",
+                  "snoozed"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "incomplete",
+                "description": "The producer has not confirmed that its data is up to date.",
+                "type": "string"
+              }
+            ]
+          },
+          "HoldRecord": {
+            "properties": {
+              "at": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "reason": {
+                "$ref": "#/$defs/HoldReason"
+              },
+              "until": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "at",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "InhibitionScope": {
+            "description": "Where an inhibiting rule's open occurrence folds the inhibited rules:\nanywhere on the host, or only deliveries with the same `scope` (a source).",
             "enum": [
-              "rate_limit",
-              "interrupt_budget_spent"
+              "host",
+              "source"
             ],
             "type": "string"
           },
           "Occurrence": {
             "properties": {
-              "episode": {
+              "id": {
                 "type": "string"
               },
-              "id": {
+              "period": {
                 "type": "string"
               }
             },
             "required": [
               "id",
-              "episode"
+              "period"
             ],
             "type": "object"
           },
@@ -3100,6 +1793,162 @@
               "signal_delivery",
               "injected_context"
             ],
+            "type": "string"
+          },
+          "PassiveReason": {
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "rule_is_passive",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "delivery": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "caused_by",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "delivery"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "budget_spent",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "on_screen",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "rate_limit",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Shown as a line of one summary notification (the away summary, or the\nconsequences of a cleared root cause) instead of on its own.",
+                "properties": {
+                  "delivery": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "summarised",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "delivery"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Acknowledged while it was held.",
+                "properties": {
+                  "kind": {
+                    "const": "acknowledged",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Presence": {
+            "oneOf": [
+              {
+                "enum": [
+                  "present",
+                  "away"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "description": "Never counts as away: a standalone product, or a gap in capture.",
+                "type": "string"
+              }
+            ]
+          },
+          "QuietHours": {
+            "properties": {
+              "from": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "to": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "type": "object"
+          },
+          "RateLimit": {
+            "properties": {
+              "count": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "window": {
+                "$ref": "#/$defs/Duration"
+              }
+            },
+            "required": [
+              "count",
+              "window"
+            ],
+            "type": "object"
+          },
+          "Recipient": {
+            "pattern": "^(session:.+|@.+|role:.+)$",
             "type": "string"
           },
           "Row": {
@@ -3163,6 +2012,27 @@
             ],
             "type": "object"
           },
+          "Shipped": {
+            "description": "What only a shipped rule may declare, because it encodes product knowledge.",
+            "properties": {
+              "inhibition_scope": {
+                "$ref": "#/$defs/InhibitionScope",
+                "default": "host"
+              },
+              "inhibits": {
+                "description": "Names of the same product's rules folded into this rule's notification\nwhile it has an open current-state occurrence.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "urgency": {
+                "$ref": "#/$defs/Urgency",
+                "default": "normal"
+              }
+            },
+            "type": "object"
+          },
           "Timestamp": {
             "format": "date-time",
             "type": "string"
@@ -3181,10 +2051,26 @@
               "occurrence"
             ],
             "type": "object"
+          },
+          "Urgency": {
+            "oneOf": [
+              {
+                "enum": [
+                  "normal"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "critical",
+                "description": "Only where captured data is being lost now; never deferred.",
+                "type": "string"
+              }
+            ]
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
+        "description": "One handoff by the host deliverer: the firing, its route decision, the\nholds it waited through and the attention the decision was taken under.\nIt never changes; later news is an outcome.",
         "properties": {
           "delivery": {
             "$ref": "#/$defs/Delivery"
@@ -3222,53 +2108,479 @@
       "field_hints": [],
       "keep_known": [],
       "key_rule": {
-        "fields": [
-          "delivery_id"
-        ],
-        "rule": "fields"
+        "rule": "location"
       },
       "kind": {
-        "name": "signal.handoff",
+        "name": "signal.outcome",
         "version": 2
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
-          "Channel": {
-            "enum": [
-              "notice",
-              "interrupt",
-              "brief",
-              "value",
-              "action"
-            ],
-            "type": "string"
+          "CloseReason": {
+            "oneOf": [
+              {
+                "enum": [
+                  "expired",
+                  "dismissed"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "cleared",
+                "description": "The condition ended or the deliverer closed it.",
+                "type": "string"
+              },
+              {
+                "const": "replaced",
+                "description": "A later notification about the same occurrence took its place.",
+                "type": "string"
+              }
+            ]
+          },
+          "Decision": {
+            "oneOf": [
+              {
+                "description": "Shown as a desktop notification; critical notices are also sent away\nwhile the operator is away.",
+                "properties": {
+                  "decision": {
+                    "const": "show",
+                    "type": "string"
+                  },
+                  "send_away": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "send_away"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Sent to the deployment's away command.",
+                "properties": {
+                  "decision": {
+                    "const": "send_away",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Waits until `until`, or until its releasing input changes when `None`.",
+                "properties": {
+                  "decision": {
+                    "const": "hold",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/HoldReason"
+                  },
+                  "until": {
+                    "format": "int64",
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "decision",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "decision": {
+                    "const": "passive",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/PassiveReason"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A value or action delivery, run through its configured target.",
+                "properties": {
+                  "decision": {
+                    "const": "run",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "DeliveryOutcome": {
+            "description": "A durable value or action effect starts with an unknown receipt. Persist it\nwith the delivery; only a returned receipt changes its outcome.",
+            "oneOf": [
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "delivered",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "not_sent",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "cancelled",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "HoldReason": {
+            "oneOf": [
+              {
+                "enum": [
+                  "quiet",
+                  "away",
+                  "deep_work",
+                  "snoozed"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "incomplete",
+                "description": "The producer has not confirmed that its data is up to date.",
+                "type": "string"
+              }
+            ]
+          },
+          "Outcome": {
+            "oneOf": [
+              {
+                "description": "One outlet's attempt: unknown, delivered or not sent.",
+                "properties": {
+                  "outcome": {
+                    "const": "attempt",
+                    "type": "string"
+                  },
+                  "result": {
+                    "$ref": "#/$defs/DeliveryOutcome"
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "result"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "shown",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "updated",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "closed",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "$ref": "#/$defs/CloseReason"
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "opened",
+                    "type": "string"
+                  },
+                  "via": {
+                    "$ref": "#/$defs/Via"
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "via"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "acknowledged",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "const": "snoozed",
+                    "type": "string"
+                  },
+                  "until": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "until"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A snoozed or folded notice routed again.",
+                "properties": {
+                  "decision": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "outcome": {
+                    "const": "released",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "decision"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The current-state condition ended.",
+                "properties": {
+                  "outcome": {
+                    "const": "cleared",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Displayed successfully to an explicit consumer. Previews, on-screen\nsuppression and agent reads never count.",
+                "properties": {
+                  "outcome": {
+                    "const": "seen",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "PassiveReason": {
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "rule_is_passive",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "delivery": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "caused_by",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "delivery"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "budget_spent",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "on_screen",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "rate_limit",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Shown as a line of one summary notification (the away summary, or the\nconsequences of a cleared root cause) instead of on its own.",
+                "properties": {
+                  "delivery": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "summarised",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "delivery"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Acknowledged while it was held.",
+                "properties": {
+                  "kind": {
+                    "const": "acknowledged",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "Timestamp": {
             "format": "date-time",
+            "type": "string"
+          },
+          "Via": {
+            "enum": [
+              "desktop",
+              "web",
+              "cli"
+            ],
             "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
+        "description": "What happened to a delivery after its handoff: an outlet's attempt, shown,\nopened, acknowledged, snoozed, released, cleared, closed or seen.",
         "properties": {
-          "channel": {
-            "$ref": "#/$defs/Channel"
-          },
           "delivery_id": {
             "type": "string"
           },
-          "handed_at": {
+          "outcome": {
+            "$ref": "#/$defs/Outcome"
+          },
+          "recorded_at": {
             "$ref": "#/$defs/Timestamp"
           }
         },
         "required": [
           "delivery_id",
-          "channel",
-          "handed_at"
+          "outcome",
+          "recorded_at"
         ],
-        "title": "HandoffRecorded",
+        "title": "OutcomeRecorded",
         "type": "object"
       },
       "removed_rule": {
@@ -3278,7 +2590,7 @@
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
-          "handed_at"
+          "recorded_at"
         ],
         "quality": "captured",
         "rule": "first_present"
@@ -3292,34 +2604,594 @@
         "rule": "location"
       },
       "kind": {
-        "name": "signal.received",
+        "name": "signal.report",
         "version": 2
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
+          "Author": {
+            "oneOf": [
+              {
+                "enum": [
+                  "operator",
+                  "shipped"
+                ],
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A program that submitted a notice through its producer credential.",
+                "properties": {
+                  "producer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "producer"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Change": {
+            "properties": {
+              "after": {
+                "items": {
+                  "$ref": "#/$defs/Occurrence"
+                },
+                "type": "array"
+              },
+              "before": {
+                "items": {
+                  "$ref": "#/$defs/Occurrence"
+                },
+                "type": "array"
+              },
+              "joined": {
+                "items": {
+                  "$ref": "#/$defs/Occurrence"
+                },
+                "type": "array"
+              },
+              "left": {
+                "items": {
+                  "$ref": "#/$defs/Occurrence"
+                },
+                "type": "array"
+              },
+              "what": {
+                "$ref": "#/$defs/ChangeKind"
+              }
+            },
+            "required": [
+              "what",
+              "joined",
+              "left",
+              "before",
+              "after"
+            ],
+            "type": "object"
+          },
+          "ChangeKind": {
+            "enum": [
+              "membership",
+              "ranking",
+              "top_k"
+            ],
+            "type": "string"
+          },
+          "Channel": {
+            "description": "The channel a rule asks for. Routing decides what happens to a notice.",
+            "enum": [
+              "notice",
+              "interrupt",
+              "value",
+              "action"
+            ],
+            "type": "string"
+          },
+          "Duration": {
+            "oneOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Elapsed duration, for example 20m or1.5s, in whole milliseconds",
+                "type": "string"
+              }
+            ]
+          },
+          "Fired": {
+            "description": "One firing of a rule, before routing. Its basis (rows and their\nobservation) is fixed when it matched, never when it is handed off.",
+            "properties": {
+              "at": {
+                "description": "When the evaluator fired it.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "author": {
+                "$ref": "#/$defs/Author"
+              },
+              "basis": {
+                "items": {
+                  "$ref": "#/$defs/Row"
+                },
+                "type": "array"
+              },
+              "change": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Change"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "channel": {
+                "$ref": "#/$defs/Channel"
+              },
+              "current": {
+                "description": "A current-state notice: it rechecks its condition until handoff and is\nclosed by a `Cleared` report when the condition ends.",
+                "type": "boolean"
+              },
+              "id": {
+                "description": "Deterministic: product, rule ID and revision, occurrence and period.",
+                "type": "string"
+              },
+              "matched": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "quiet_hours": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QuietHours"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rate_limit": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RateLimit"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rule_name": {
+                "type": "string"
+              },
+              "scope": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "shipped": {
+                "$ref": "#/$defs/Shipped"
+              },
+              "to": {
+                "items": {
+                  "$ref": "#/$defs/Recipient"
+                },
+                "type": "array"
+              },
+              "trigger": {
+                "$ref": "#/$defs/Trigger"
+              },
+              "value": {
+                "format": "double",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "trigger",
+              "rule_name",
+              "matched",
+              "at",
+              "basis",
+              "channel",
+              "to",
+              "author",
+              "current",
+              "shipped"
+            ],
+            "type": "object"
+          },
+          "InhibitionScope": {
+            "description": "Where an inhibiting rule's open occurrence folds the inhibited rules:\nanywhere on the host, or only deliveries with the same `scope` (a source).",
+            "enum": [
+              "host",
+              "source"
+            ],
+            "type": "string"
+          },
+          "Occurrence": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "period": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "period"
+            ],
+            "type": "object"
+          },
+          "Origin": {
+            "enum": [
+              "source",
+              "signal_delivery",
+              "injected_context"
+            ],
+            "type": "string"
+          },
+          "QuietHours": {
+            "properties": {
+              "from": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "to": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "type": "object"
+          },
+          "RateLimit": {
+            "properties": {
+              "count": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "window": {
+                "$ref": "#/$defs/Duration"
+              }
+            },
+            "required": [
+              "count",
+              "window"
+            ],
+            "type": "object"
+          },
+          "Recipient": {
+            "pattern": "^(session:.+|@.+|role:.+)$",
+            "type": "string"
+          },
+          "Report": {
+            "description": "What an evaluator tells the deliverer. A standalone product hands these to\nits own host policy; in primary mode Polylogue sends them to Sinex as facts.",
+            "oneOf": [
+              {
+                "$ref": "#/$defs/Fired",
+                "properties": {
+                  "report": {
+                    "const": "fired",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "report"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A current-state condition ended, or its rule changed or was withdrawn.",
+                "properties": {
+                  "at": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "delivery": {
+                    "type": "string"
+                  },
+                  "report": {
+                    "const": "cleared",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "report",
+                  "delivery",
+                  "at"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A delivery the product's writer refused because its cited basis\nchanged. Every record of it is dropped, so the trigger can fire afresh.",
+                "properties": {
+                  "at": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "delivery": {
+                    "type": "string"
+                  },
+                  "report": {
+                    "const": "retracted",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "report",
+                  "delivery",
+                  "at"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The active revision of a rule, and whether it runs.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "report": {
+                    "const": "rule",
+                    "type": "string"
+                  },
+                  "version": {
+                    "$ref": "#/$defs/RuleVersion"
+                  }
+                },
+                "required": [
+                  "report",
+                  "version",
+                  "enabled"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "product": {
+                    "type": "string"
+                  },
+                  "report": {
+                    "const": "withdrawn",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "report",
+                  "product",
+                  "id"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The product's evaluation is up to date as of `at`, except the named\nrules, whose data is behind.",
+                "properties": {
+                  "at": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "incomplete": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "product": {
+                    "type": "string"
+                  },
+                  "report": {
+                    "const": "progress",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "report",
+                  "product",
+                  "at",
+                  "incomplete"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A rebuilt threshold rule found its condition already true, so a\ncrossing during the lost checkpoint cannot be told apart from the baseline.",
+                "properties": {
+                  "at": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "report": {
+                    "const": "rearmed_late",
+                    "type": "string"
+                  },
+                  "rule": {
+                    "$ref": "#/$defs/RuleVersion"
+                  }
+                },
+                "required": [
+                  "report",
+                  "rule",
+                  "at"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Row": {
+            "properties": {
+              "end": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "description": "Evidence is preserved at match time. Scores never define occurrence or\nchange identity; the adapter supplies the complete result order."
+              },
+              "observed": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "occurrence": {
+                "$ref": "#/$defs/Occurrence"
+              },
+              "origin": {
+                "$ref": "#/$defs/Origin",
+                "default": "source"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "start": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "occurrence",
+              "reference",
+              "observed",
+              "start",
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "RuleVersion": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "product": {
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "product",
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "Shipped": {
+            "description": "What only a shipped rule may declare, because it encodes product knowledge.",
+            "properties": {
+              "inhibition_scope": {
+                "$ref": "#/$defs/InhibitionScope",
+                "default": "host"
+              },
+              "inhibits": {
+                "description": "Names of the same product's rules folded into this rule's notification\nwhile it has an open current-state occurrence.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "urgency": {
+                "$ref": "#/$defs/Urgency",
+                "default": "normal"
+              }
+            },
+            "type": "object"
+          },
           "Timestamp": {
             "format": "date-time",
             "type": "string"
+          },
+          "Trigger": {
+            "properties": {
+              "occurrence": {
+                "$ref": "#/$defs/Occurrence"
+              },
+              "rule": {
+                "$ref": "#/$defs/RuleVersion"
+              }
+            },
+            "required": [
+              "rule",
+              "occurrence"
+            ],
+            "type": "object"
+          },
+          "Urgency": {
+            "oneOf": [
+              {
+                "enum": [
+                  "normal"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "critical",
+                "description": "Only where captured data is being lost now; never deferred.",
+                "type": "string"
+              }
+            ]
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "description": "Receipt of an authenticated occurrence, independent of its copied query evidence.",
+        "description": "An evaluator report another product forwarded to this host's deliverer,\nwith the authenticated producer and family that sent it.",
         "properties": {
-          "delivery_id": {
+          "family": {
+            "description": "The producer's authenticated family: the only product it may report for.",
+            "type": "string"
+          },
+          "producer": {
             "type": "string"
           },
           "received_at": {
             "$ref": "#/$defs/Timestamp"
+          },
+          "report": {
+            "$ref": "#/$defs/Report"
           }
         },
         "required": [
-          "delivery_id",
+          "producer",
+          "family",
+          "report",
           "received_at"
         ],
-        "title": "ReceivedRecorded",
+        "title": "ReportReceived",
         "type": "object"
       },
       "removed_rule": {
@@ -3330,401 +3202,6 @@
       "time_rule": {
         "fields": [
           "received_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "delivery_id",
-          "route"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "signal.receipt",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "DeliveryOutcome": {
-            "description": "A durable attempt begins unknown before effects run. Persist this record in\nthe same owner as deliveries; only a returned receipt changes its outcome.",
-            "oneOf": [
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "unknown",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "delivered",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "not_sent",
-                    "type": "string"
-                  },
-                  "reason": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome",
-                  "reason"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "cancelled",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "DeliveryReceipt": {
-            "properties": {
-              "at": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "delivery_id": {
-                "type": "string"
-              },
-              "outcome": {
-                "$ref": "#/$defs/DeliveryOutcome"
-              },
-              "route": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "delivery_id",
-              "at",
-              "route",
-              "outcome"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "delivery_id": {
-            "type": "string"
-          },
-          "receipt": {
-            "$ref": "#/$defs/DeliveryReceipt"
-          },
-          "recorded_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "route": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "delivery_id",
-          "route",
-          "receipt",
-          "recorded_at"
-        ],
-        "title": "ReceiptRecorded",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "recorded_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "delivery_id",
-          "route"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "signal.desktop_receipt",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "DeliveryOutcome": {
-            "description": "A durable attempt begins unknown before effects run. Persist this record in\nthe same owner as deliveries; only a returned receipt changes its outcome.",
-            "oneOf": [
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "unknown",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "delivered",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "not_sent",
-                    "type": "string"
-                  },
-                  "reason": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome",
-                  "reason"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "outcome": {
-                    "const": "cancelled",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "outcome"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "DesktopEvent": {
-            "oneOf": [
-              {
-                "description": "The product opens this reference through its ordinary read operation.",
-                "properties": {
-                  "event": {
-                    "const": "open_reference",
-                    "type": "string"
-                  },
-                  "reference": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event",
-                  "reference"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "seen",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "acknowledged",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "dismissed",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "expired",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "event": {
-                    "const": "closed",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "event"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "NotificationReceipt": {
-            "properties": {
-              "delivery_id": {
-                "type": "string"
-              },
-              "event": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/DesktopEvent"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "notification_id": {
-                "format": "uint32",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "outcome": {
-                "$ref": "#/$defs/DeliveryOutcome"
-              },
-              "route": {
-                "$ref": "#/$defs/Route"
-              },
-              "via": {
-                "description": "Desktop actions are operator acts, never acts by a rule's author.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "delivery_id",
-              "route",
-              "outcome"
-            ],
-            "type": "object"
-          },
-          "Route": {
-            "enum": [
-              "dbus",
-              "command",
-              "both"
-            ],
-            "type": "string"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "delivery_id": {
-            "type": "string"
-          },
-          "receipt": {
-            "$ref": "#/$defs/NotificationReceipt"
-          },
-          "recorded_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "route": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "delivery_id",
-          "route",
-          "receipt",
-          "recorded_at"
-        ],
-        "title": "DesktopReceiptRecorded",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "recorded_at"
         ],
         "quality": "captured",
         "rule": "first_present"
@@ -29639,15 +29116,8 @@
       ],
       "eventTypes": [
         "signal.rule",
-        "signal.checkpoint",
-        "signal.evaluation",
-        "signal.intent",
-        "signal.emergency",
-        "signal.delivery",
-        "signal.handoff",
-        "signal.received",
-        "signal.receipt",
-        "signal.desktop_receipt"
+        "signal.outcome",
+        "signal.report"
       ],
       "expect": {
         "everySeconds": null,
@@ -29659,7 +29129,7 @@
         "signals"
       ],
       "name": "sinex.signals",
-      "purpose": "canonical signal rules and host delivery receipts",
+      "purpose": "authored signal rules, delivery outcomes and forwarded evaluator reports",
       "shapes": []
     },
     {
