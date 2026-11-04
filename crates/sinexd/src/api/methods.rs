@@ -611,14 +611,8 @@ impl Api {
             | Request::PrivacyVerify) => self.privacy(r, caller).await,
             r @ (Request::LibraryAdd { .. }
             | Request::LibraryItem { .. }
-            | Request::LibraryTag { .. }
-            | Request::LibraryUntag { .. }
-            | Request::LibrarySet { .. }
-            | Request::LibraryCollect { .. }
-            | Request::LibraryUncollect { .. }
+            | Request::LibraryCurate { .. }
             | Request::LibraryCollection { .. }
-            | Request::LibraryRate { .. }
-            | Request::LibraryCompare { .. }
             | Request::LibraryRank { .. }
             | Request::LibraryOpen { .. }
             | Request::LibraryViewed { .. }

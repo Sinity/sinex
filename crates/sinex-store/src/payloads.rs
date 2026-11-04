@@ -111,3 +111,36 @@ pub async fn history(
     .fetch_all(&mut *conn)
     .await?)
 }
+
+/// The payloads of readings of `event_type` admitted, archived or restored
+/// after commit position `since`, live or not: what a transaction changed,
+/// for read models the writer keeps current inside that transaction. Both
+/// position lookups are ranges over this transaction's own positions; the
+/// events are then read by ID.
+pub async fn changed_since(
+    conn: &mut PgConnection,
+    event_type: &str,
+    since: i64,
+) -> Result<Vec<Value>> {
+    let ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
+        r#"SELECT event_id AS "event_id!" FROM core.commit_log
+           WHERE commit_seq > $2 AND event_type = $1
+           UNION
+           SELECT event_id FROM audit.archive_changes WHERE commit_seq > $2"#,
+        event_type,
+        since
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar!(
+        r#"SELECT payload AS "payload!" FROM core.events
+           WHERE id = ANY($1) AND event_type = $2"#,
+        &ids,
+        event_type
+    )
+    .fetch_all(&mut *conn)
+    .await?)
+}

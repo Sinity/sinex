@@ -1,4 +1,4 @@
-//! Library items and renditions computed from visible scans and previews.
+//! Library items and their original renditions computed from visible scans.
 use crate::derived_event::derived;
 use crate::{Computed, Env, Input, InputQuery, KeyState, KeyView, Keyed, PerEvent};
 use serde_json::Value;
@@ -10,8 +10,8 @@ pub struct LibraryItems;
 
 impl Keyed for LibraryItems {
     const NAME: &'static str = "library.items";
-    const VERSION: u32 = 1;
-    const INPUTS: &'static [&'static str] = &["library.copy", "library.preview"];
+    const VERSION: u32 = 2;
+    const INPUTS: &'static [&'static str] = &["library.copy"];
     const OUTPUTS: &'static [&'static str] = &["library.item", "library.rendition"];
 
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
@@ -87,29 +87,8 @@ impl Keyed for LibraryItems {
                 made_with: Default::default(),
                 by: Self::NAME.into(),
                 at: copy.scanned_at,
-                withdrawn_at: None,
             };
             outputs.push(derived(&original, Self::NAME, evidence.iter().copied()));
-        }
-        for preview in inputs
-            .iter()
-            .filter(|event| event.event_type == "library.preview")
-        {
-            let Some((copy, evidence)) = preview.payload["revision"]
-                .as_str()
-                .and_then(|revision| revisions.get(revision))
-            else {
-                continue;
-            };
-            let mut payload = preview.payload.clone();
-            payload["part_index"] = Value::from(copy.part_index);
-            if let Ok(rendition) = serde_json::from_value::<Rendition>(payload) {
-                outputs.push(derived(
-                    &rendition,
-                    Self::NAME,
-                    evidence.iter().copied().chain(std::iter::once(preview)),
-                ));
-            }
         }
         let mut paths = BTreeMap::new();
         for (_, copy) in &copies {
@@ -135,7 +114,6 @@ impl Keyed for LibraryItems {
             label: first.path.rsplit('/').next().map(str::to_owned),
             by: Self::NAME.into(),
             at: latest.scanned_at,
-            withdrawn_at: None,
         };
         outputs.push(derived(
             &item,

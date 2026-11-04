@@ -22,6 +22,7 @@ sinex-schema.workspace = true
 sinex-store.workspace = true
 sinex-sources = { workspace = true, features = ["full"] }
 sinex-library.workspace = true
+ranking.workspace = true
 sinex-derivations.workspace = true
 authored.workspace = true
 sinex-analysis.workspace = true
@@ -55,6 +56,8 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util.workspace = true
 blake3.workspace = true
 rusqlite.workspace = true
+authored = { workspace = true, features = ["generator"] }
+proptest.workspace = true
 
 [lints]
 workspace = true

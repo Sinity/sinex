@@ -15,6 +15,7 @@ use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event
 use sqlx::{Connection, Executor, PgConnection};
 
 mod event_indexes;
+mod library_curation;
 mod lifecycle;
 pub mod online;
 mod owner_protocol;

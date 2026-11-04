@@ -92,7 +92,7 @@ fn tool_effects_match_backend_command_access() {
         ("sinex_sql", true),
         ("sinex_archive", false),
         ("sinex_forecast-issue", false),
-        ("sinex_library-tag", false),
+        ("sinex_library-curate", false),
     ] {
         let tool = tools.iter().find(|tool| tool.name == name).unwrap();
         assert_eq!(

@@ -78,6 +78,7 @@ pub(crate) const NAMED: &[&str] = &[
     "remove_privacy_outputs_and_model_accounting",
     "source_expectations",
     "stage_without_parser",
+    "library_curation",
 ];
 
 #[cfg(test)]
@@ -157,6 +158,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(remove_privacy_outputs_and_model_accounting());
     steps.push(crate::source_expectations::statements());
     steps.push(crate::stage_without_parser::statements());
+    steps.push(crate::library_curation::statements());
     steps
 }
 

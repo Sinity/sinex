@@ -35,7 +35,7 @@ impl Description {
     /// The description just before materials could be stored without a
     /// parser.
     pub(crate) fn before_stage_without_parser() -> Self {
-        let mut description = Self::current();
+        let mut description = Self::before_library_curation();
         for statement in &mut description.tables {
             crate::stage_without_parser::previous(statement);
         }
@@ -48,6 +48,15 @@ impl Description {
         for statement in &mut description.tables {
             crate::source_expectations::previous(statement);
         }
+        description
+    }
+
+    /// The description just before the library curation upgrade.
+    pub(crate) fn before_library_curation() -> Self {
+        let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| crate::library_curation::before(statement));
         description
     }
 

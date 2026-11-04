@@ -62,6 +62,7 @@ enum WriterJob {
     Admit(Batch),
     Signals(Batch, Box<sinex_store::signals::Commit>),
     Checked(Batch, AdmissionCheck),
+    Curation(Batch, AdmissionCheck),
     Source(Batch, AdmissionCheck, Option<StageCheckpoint>),
     Replay(Box<ReplaySequence>),
     Lifecycle {
@@ -98,6 +99,7 @@ enum Saved<'a> {
     Nothing,
     Signals(&'a sinex_store::signals::Commit),
     Stage(&'a StageCheckpoint),
+    Curation,
 }
 
 /// What a stage operation writes besides its batches: its record in the
@@ -144,6 +146,7 @@ struct Job {
 pub(crate) struct WriterHandle {
     derivations: Arc<tokio::sync::Mutex<()>>,
     signals: Arc<tokio::sync::Mutex<()>>,
+    curation: Arc<tokio::sync::Mutex<()>>,
     live: mpsc::Sender<Job>,
     derived: mpsc::Sender<Job>,
     bulk: mpsc::Sender<Job>,
@@ -156,6 +159,12 @@ pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<(), String> + Send + Syn
 impl WriterHandle {
     pub(crate) async fn lock_signals(&self) -> tokio::sync::OwnedMutexGuard<()> {
         self.signals.clone().lock_owned().await
+    }
+
+    /// Held while a library curation request is planned and admitted, so
+    /// requests from this daemon never plan against each other's snapshot.
+    pub(crate) async fn lock_curation(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.curation.clone().lock_owned().await
     }
 
     /// Shared by keyed computations in commands and the background runner.
@@ -175,6 +184,23 @@ impl WriterHandle {
         {
             Done::Admitted(outcome) => Ok(outcome),
             _ => unreachable!("checked admission returns its outcome"),
+        }
+    }
+    /// Admit planned library curation records only if they still place as
+    /// planned (their bases current, their slots theirs), checked inside the
+    /// admitting transaction.
+    pub(crate) async fn submit_curation(
+        &self,
+        priority: Priority,
+        batch: Batch,
+        check: AdmissionCheck,
+    ) -> Result<Outcome, WriteError> {
+        match self
+            .send(priority, WriterJob::Curation(batch, check))
+            .await?
+        {
+            Done::Admitted(outcome) => Ok(outcome),
+            _ => unreachable!("guarded admission returns its outcome"),
         }
     }
     /// A source advances past refused content, retaining its bytes and failures.
@@ -346,6 +372,7 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
         WriterHandle {
             derivations: Arc::new(tokio::sync::Mutex::new(())),
             signals: Arc::new(tokio::sync::Mutex::new(())),
+            curation: Arc::new(tokio::sync::Mutex::new(())),
             live,
             derived,
             bulk,
@@ -418,6 +445,7 @@ pub(crate) async fn run_notifying(
             WriterJob::Admit(batch)
             | WriterJob::Signals(batch, _)
             | WriterJob::Checked(batch, _)
+            | WriterJob::Curation(batch, _)
             | WriterJob::Source(batch, _, _) => Some(batch.event_count()),
             _ => None,
         };
@@ -441,6 +469,17 @@ pub(crate) async fn run_notifying(
                 &|| Ok(()),
                 false,
                 Saved::Signals(&checkpoint),
+            )
+            .await
+            .map(Done::Admitted),
+            WriterJob::Curation(batch, check) => admit_with_checkpoint(
+                &mut connection,
+                &batch,
+                keys.as_ref(),
+                store,
+                &*check,
+                false,
+                Saved::Curation,
             )
             .await
             .map(Done::Admitted),
@@ -579,12 +618,13 @@ async fn admit_with_checkpoint(
 ) -> Result<Outcome, WriteError> {
     let checkpoint = match saved {
         Saved::Signals(checkpoint) => Some(checkpoint),
-        Saved::Nothing | Saved::Stage(_) => None,
+        Saved::Nothing | Saved::Stage(_) | Saved::Curation => None,
     };
     let stage = match saved {
         Saved::Stage(stage) => Some(stage),
-        Saved::Nothing | Saved::Signals(_) => None,
+        Saved::Nothing | Saved::Signals(_) | Saved::Curation => None,
     };
+    let curation = matches!(saved, Saved::Curation);
     let unavailable = |e: &dyn std::fmt::Display| WriteError::Unavailable(e.to_string());
     let checks_started = std::time::Instant::now();
     check().map_err(WriteError::Refused)?;
@@ -603,6 +643,23 @@ async fn admit_with_checkpoint(
     let begin_started = std::time::Instant::now();
     let mut tx = connection.begin().await.map_err(store_error)?;
     let begin_time = begin_started.elapsed();
+    let since = sinex_store::query::current_seq(&mut tx)
+        .await
+        .map_err(store_error)?;
+    if curation {
+        let records: Vec<sinex_model::event_types::library::Curation> = batch
+            .events()
+            .filter(|event| event.event_type == sinex_library::curation::CURATION)
+            .map(|event| serde_json::from_value(event.payload.clone()))
+            .collect::<Result<_, _>>()
+            .map_err(|error| WriteError::Refused(format!("a curation record: {error}")))?;
+        if let Err(reason) = sinex_library::plan::verify(&mut tx, &records).await {
+            tx.rollback().await.map_err(store_error)?;
+            return Err(WriteError::Refused(format!(
+                "the library changed while this request was planned ({reason}); send the request again"
+            )));
+        }
+    }
     if let Some(expected) = checkpoint.and_then(|checkpoint| checkpoint.observed_seq) {
         let current = sinex_store::query::current_seq(&mut tx)
             .await
@@ -759,6 +816,10 @@ async fn admit_with_checkpoint(
                 tx.rollback().await.map_err(store_error)?;
                 return Err(store_error(error));
             }
+            if let Err(error) = refresh_read_models(&mut tx, since).await {
+                tx.rollback().await.map_err(store_error)?;
+                return Err(error);
+            }
             let started = std::time::Instant::now();
             tx.commit().await.map_err(store_error)?;
             outcome.timings.insert("commit", started.elapsed());
@@ -789,6 +850,17 @@ async fn admit_with_checkpoint(
             Err(error)
         }
     }
+}
+
+/// Bring the read models kept inside the writing transaction up to date
+/// with what it changed after commit position `since`: the library's
+/// shown values, for the items whose curation records were admitted,
+/// archived or restored.
+async fn refresh_read_models(tx: &mut PgConnection, since: i64) -> Result<(), WriteError> {
+    sinex_library::projection::refresh_since(tx, since)
+        .await
+        .map(drop)
+        .map_err(|error| WriteError::Unavailable(format!("library shown values: {error}")))
 }
 
 fn content_error(error: &sinex_store::Error) -> bool {
@@ -891,6 +963,9 @@ async fn replay_sequence(
         scope_tx.commit().await.map_err(store_error)?;
     }
     let mut tx = connection.begin().await.map_err(store_error)?;
+    let since = sinex_store::query::current_seq(&mut tx)
+        .await
+        .map_err(store_error)?;
     if let Some(ingress) = &sequence.ingress {
         if let Some(recorded) = crate::ingress::replay::recorded(&mut tx, ingress)
             .await
@@ -957,6 +1032,7 @@ async fn replay_sequence(
         replay::sequence_done(&mut tx, sequence.operation, sequence.root)
             .await
             .map_err(store_error)?;
+        refresh_read_models(&mut tx, since).await?;
         tx.commit().await.map_err(store_error)?;
     }
     Ok((outcomes, diff))
@@ -1065,6 +1141,9 @@ async fn lifecycle_step(
     store: Option<&Blobs>,
 ) -> Result<Step, WriteError> {
     let mut tx = connection.begin().await.map_err(store_error)?;
+    let since = sinex_store::query::current_seq(&mut tx)
+        .await
+        .map_err(store_error)?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
         Ok(step) => step,
         Err(error) => {
@@ -1075,6 +1154,10 @@ async fn lifecycle_step(
     match &step {
         Step::Refused(_) => tx.rollback().await.map_err(store_error)?,
         Step::Moved { remove, .. } => {
+            if let Err(error) = refresh_read_models(&mut tx, since).await {
+                tx.rollback().await.map_err(store_error)?;
+                return Err(error);
+            }
             tx.commit().await.map_err(store_error)?;
             // Bytes left marked (no store here, or a failed punch) are
             // removed at the writer's next start.

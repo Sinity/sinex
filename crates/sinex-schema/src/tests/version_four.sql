@@ -1,3 +1,5 @@
+-- Undo the library curation upgrade.
+DROP TABLE core.library_shown;
 -- Undo the lifecycle upgrade.
 DROP TABLE raw.material_changes;
 ALTER TABLE raw.materials DROP COLUMN status, DROP COLUMN status_operation;

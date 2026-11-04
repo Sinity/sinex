@@ -8,6 +8,7 @@ fn sample(kind: ArgKind) -> Value {
         ArgKind::Integer => json!(5),
         ArgKind::Bool => json!(true),
         ArgKind::List => json!(["x"]),
+        ArgKind::Objects => json!([{"act": "note", "target": {"item": "x"}, "text": "x"}]),
     }
 }
 
@@ -122,5 +123,47 @@ fn query_authoring_options_are_not_consumed_by_the_text_argument() {
         let arguments = crate::cli::arguments(spec, &matches);
         assert_eq!(arguments[field], expected);
         Request::from_args(name, arguments).unwrap();
+    }
+}
+
+#[devkit::test]
+fn curation_writes_arrive_as_typed_acts_and_a_malformed_write_is_refused() {
+    let request = Request::from_args(
+        "library-curate",
+        serde_json::from_value(json!({"writes": [
+            {"act": "tag", "target": {"item": "i"}, "tag": "-"},
+            {"act": "set", "target": {"item": "i"}, "property": "medium", "value": null},
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let Request::LibraryCurate { writes, request } = request else {
+        panic!("{request:?}")
+    };
+    assert_eq!(request, None);
+    assert!(
+        matches!(&writes[0], sinex_model::event_types::library::Act::Tag { tag, .. } if tag == "-")
+    );
+    assert!(matches!(
+        &writes[1],
+        sinex_model::event_types::library::Act::Set {
+            value: Value::Null,
+            ..
+        }
+    ));
+    for bad in [
+        json!({"writes": [{"act": "tag", "target": {"item": "i"}}]}),
+        json!({"writes": [{"act": "paint", "target": {"item": "i"}}]}),
+        json!({"writes": ["not an object"]}),
+        json!({"writes": [{"act": "set", "target": {"item": "i"}, "property": "p"}]}),
+    ] {
+        assert!(
+            Request::from_args(
+                "library-curate",
+                serde_json::from_value(bad.clone()).unwrap()
+            )
+            .is_err(),
+            "{bad}"
+        );
     }
 }

@@ -30,6 +30,9 @@ fn schema(c: &Command) -> Map<String, Value> {
             ArgKind::List => {
                 json!({ "type": "array", "items": { "type": "string" }, "description": a.help })
             }
+            ArgKind::Objects => {
+                json!({ "type": "array", "items": { "type": "object" }, "description": a.help })
+            }
             ArgKind::Text | ArgKind::Rest | ArgKind::Reference => {
                 json!({ "type": "string", "description": a.help })
             }

@@ -25,6 +25,9 @@ pub enum ArgKind {
     Rest,
     /// A repeatable option; its values as a list.
     List,
+    /// A list of JSON objects: on the command line a repeatable option whose
+    /// values are JSON objects, over MCP an array of objects.
+    Objects,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -878,57 +881,25 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
-        name: "library-tag",
-        summary: "Tag an item (namespace:tag). `-tag` removes an imported tag; the operator's value wins over imports and proposals.",
+        name: "library-curate",
+        summary: "Curate the library in one atomic request: every write is committed or none is. \
+Acts: tag, untag, reject, set, note, rate, collect, uncollect, move, judge, define_scale, define_property, define_tag, relate, dismiss, withdraw, undo. \
+Each write is an object with `act` and its fields, e.g. {\"act\":\"tag\",\"target\":{\"item\":\"library:…\"},\"tag\":\"place:harbour\"}. \
+Answers the records written with their revisions, or a refusal naming the current revision.",
         args: &[
-            pos("item", ArgKind::Text, "the item ID"),
-            pos("tag", ArgKind::Text, "the tag, e.g. place:croatia"),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "library-untag",
-        summary: "Withdraw your own assignments of a tag to an item.",
-        args: &[
-            pos("item", ArgKind::Text, "the item ID"),
-            pos("tag", ArgKind::Text, "the tag"),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "library-set",
-        summary: "Set a single-choice property of an item, or set it to empty; replaces your earlier value.",
-        args: &[
-            pos("item", ArgKind::Text, "the item ID"),
-            pos("field", ArgKind::Text, "the property, e.g. medium"),
-            opt("value", ArgKind::Text, "the value; omit with --empty"),
+            Arg {
+                required: true,
+                ..opt(
+                    "writes",
+                    ArgKind::Objects,
+                    "the writes, in order; a later write sees the earlier ones",
+                )
+            },
             opt(
-                "empty",
-                ArgKind::Bool,
-                "set to empty, which stops imported and proposed values showing",
+                "request",
+                ArgKind::Text,
+                "your ID for this request, reused on retry so it is written once",
             ),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "library-collect",
-        summary: "Add an item to the end of a collection, creating the collection if needed.",
-        args: &[
-            pos("collection", ArgKind::Text, "the collection's name"),
-            pos("item", ArgKind::Text, "the item ID"),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "library-uncollect",
-        summary: "Remove an item's entries from a collection (withdrawn, still inspectable).",
-        args: &[
-            pos("collection", ArgKind::Text, "the collection's name"),
-            pos("item", ArgKind::Text, "the item ID"),
         ],
         access: Access::Agent,
         mcp: true,
@@ -944,36 +915,31 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
-        name: "library-rate",
-        summary: "Rate an item on a scale (default: stars out of 5).",
-        args: &[
-            pos("item", ArgKind::Text, "the item ID"),
-            pos("value", ArgKind::Text, "the rating, a number"),
-            opt("scale", ArgKind::Text, "the scale's name (default stars)"),
-            opt("of", ArgKind::Text, "the top of the scale (default 5)"),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "library-compare",
-        summary: "Record that one item is better than another on a scale; rankings are fitted from every comparison.",
-        args: &[
-            pos("winner", ArgKind::Text, "the better item"),
-            pos("loser", ArgKind::Text, "the worse item"),
-            opt("scale", ArgKind::Text, "the scale's name (default overall)"),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
         name: "library-rank",
-        summary: "Items ranked by pairwise comparisons on a scale, with the pair worth comparing next.",
-        args: &[opt(
-            "scale",
-            ArgKind::Text,
-            "the scale's name (default overall)",
-        )],
+        summary: "Items ranked on a scale from comparisons (Plackett–Luce), with intervals, rank ranges, support, groups, fit status, and the next set worth judging.",
+        args: &[
+            pos("scale", ArgKind::Text, "the scale's name"),
+            opt(
+                "judges",
+                ArgKind::Text,
+                "whose comparisons count: `all`, or authors separated by commas (default: the operator)",
+            ),
+            opt(
+                "collection",
+                ArgKind::Text,
+                "rank this collection's items, compared or not",
+            ),
+            opt(
+                "k",
+                ArgKind::Integer,
+                "how many items the next set holds (default 2)",
+            ),
+            opt(
+                "rule",
+                ArgKind::Text,
+                "how the next set is chosen: information (default), random or uncompared-first",
+            ),
+        ],
         access: Access::Read,
         mcp: true,
     },

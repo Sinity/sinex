@@ -91,6 +91,25 @@ impl Intake<'_> {
         .await
     }
 
+    /// Submit planned library curation records, verified in admission.
+    pub(crate) async fn submit_curation(
+        &self,
+        acquired: drivers::Acquired,
+    ) -> Result<Submission, String> {
+        self.submit_using(
+            acquired,
+            Value::Null,
+            &mut Totals::default(),
+            |batch, check| async move {
+                self.writer
+                    .submit_curation(self.priority, batch, check)
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+        )
+        .await
+    }
+
     async fn submit_using<F, A>(
         &self,
         acquired: drivers::Acquired,
@@ -218,7 +237,48 @@ pub(crate) async fn request(
     host: &str,
     acquired: drivers::Acquired,
 ) -> Result<Submission, String> {
-    request_inner(conn, writer, blobs, source, binding, host, acquired, None).await
+    request_inner(
+        conn,
+        writer,
+        blobs,
+        source,
+        binding,
+        host,
+        acquired,
+        Admission::Plain,
+    )
+    .await
+}
+
+/// [`request`] for planned library curation records: admitted only if they
+/// still place as planned.
+pub(crate) async fn request_curation(
+    conn: &mut PgConnection,
+    writer: &WriterHandle,
+    blobs: &Blobs,
+    source: Arc<dyn Source>,
+    binding: &str,
+    host: &str,
+    acquired: drivers::Acquired,
+) -> Result<Submission, String> {
+    request_inner(
+        conn,
+        writer,
+        blobs,
+        source,
+        binding,
+        host,
+        acquired,
+        Admission::Curation,
+    )
+    .await
+}
+
+/// What a request's admission must also hold.
+enum Admission {
+    Plain,
+    Signals(sinex_store::signals::Commit),
+    Curation,
 }
 
 pub(crate) async fn request_checkpoint(
@@ -239,7 +299,7 @@ pub(crate) async fn request_checkpoint(
         binding,
         host,
         acquired,
-        Some(checkpoint),
+        Admission::Signals(checkpoint),
     )
     .await
 }
@@ -252,7 +312,7 @@ async fn request_inner(
     binding: &str,
     host: &str,
     acquired: drivers::Acquired,
-    checkpoint: Option<sinex_store::signals::Commit>,
+    admission: Admission,
 ) -> Result<Submission, String> {
     let spec = source.spec();
     let version = spec.parser_version.to_string();
@@ -284,11 +344,12 @@ async fn request_inner(
         )
         .await
         .map_err(|e| e.to_string())?;
-        let class = request_class(conn, source.as_ref()).await?.max(
-            checkpoint
-                .as_ref()
-                .map_or(Class::Open, |commit| commit.class),
-        );
+        let class = request_class(conn, source.as_ref())
+            .await?
+            .max(match &admission {
+                Admission::Signals(commit) => commit.class,
+                _ => Class::Open,
+            });
         let material = crate::material_access::MaterialAccess::new(
             blobs.clone(),
             class,
@@ -306,9 +367,10 @@ async fn request_inner(
             atomic: true,
             registered: None,
         };
-        match checkpoint {
-            Some(checkpoint) => intake.submit_checkpoint(acquired, checkpoint).await,
-            None => {
+        match admission {
+            Admission::Signals(checkpoint) => intake.submit_checkpoint(acquired, checkpoint).await,
+            Admission::Curation => intake.submit_curation(acquired).await,
+            Admission::Plain => {
                 intake
                     .submit(acquired, Value::Null, &mut Totals::default())
                     .await
