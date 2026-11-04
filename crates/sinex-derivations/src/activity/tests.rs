@@ -1,7 +1,6 @@
 use super::*;
 use sinex_model::event_types::activity::{ActivitySession, ActivitySpan, ActivityWindow, Agency};
-use sinex_model::event_types::desktop::PresenceSpan;
-use sinex_model::event_types::fused::FocusFused;
+use sinex_model::event_types::desktop::{PresenceSpan, WindowSpan};
 use sinex_model::event_types::input::KeyPressed;
 use sinex_model::{Class, EventPayload, MaterialId, Origin, ReadingOrder, RecordLocation};
 
@@ -41,6 +40,23 @@ fn key(ns: i128, host: &str, physical: bool) -> Event {
 }
 fn physical(seconds: i64) -> Event {
     key(i128::from(seconds) * SECOND, "box", true)
+}
+/// A night as a sleep tracker recorded it.
+fn sleep(from: i64, to: i64) -> Event {
+    captured(
+        &sinex_model::event_types::health::HealthRecord::new(
+            "sleep-as-android".into(),
+            "sleep".into(),
+            format!("night-{from}"),
+            Some(at(from)),
+            Some(at(to)),
+            None,
+            Default::default(),
+            vec![],
+        )
+        .unwrap(),
+        2,
+    )
 }
 fn hour(start: i64) -> Value {
     json!({"hour": at(start)})
@@ -82,17 +98,20 @@ fn window_gaps_close_at_three_hundred_seconds_without_adding_quiet_time() {
 fn agent_focus_and_commits_while_the_operator_is_away_do_not_extend_windows() {
     let mut events = vec![physical(0), physical(20)];
     let focus = captured(
-        &FocusFused {
-            record: "agent-window".into(),
+        &WindowSpan {
+            scope: None,
+            host: None,
+            bucket: "aw-watcher-window_agent".into(),
+            span_id: 1,
             started_at: at(100),
-            ended_at: Some(at(3600)),
-            app: Some("kitty".into()),
-            title: Some("agent build".into()),
-            observed_by: vec!["desktop.hyprland".into()],
+            ended_at: at(3600),
+            app: "kitty".into(),
+            title: "agent build".into(),
+            merged: 1,
         },
         3,
     );
-    // Fused context lacking a captured host stays explicitly unassigned.
+    // Focus lacking a captured host stays explicitly unassigned.
     events.push(focus);
     events.push(captured(
         &sinex_model::event_types::code::GitCommit {
@@ -324,16 +343,7 @@ fn lock_suspend_and_sleep_close_sessions_even_when_the_break_is_short() {
         assert_eq!(out.len(), 2, "{reason}");
         assert_eq!(out[0].close_reason.as_deref(), Some(reason));
     }
-    let sleep = captured(
-        &sinex_model::event_types::fused::RestFused {
-            record: "sleep".into(),
-            started_at: at(100),
-            ended_at: Some(at(200)),
-            kind: Some("sleep".into()),
-            observed_by: vec![],
-        },
-        2,
-    );
+    let sleep = sleep(100, 200);
     let evidence = vec![
         physical(0),
         physical(20),
@@ -350,16 +360,7 @@ fn lock_suspend_and_sleep_close_sessions_even_when_the_break_is_short() {
 
 #[devkit::test]
 fn exact_absence_conflicting_with_physical_support_is_mixed_and_not_counted() {
-    let sleep = captured(
-        &sinex_model::event_types::fused::RestFused {
-            record: "sleep".into(),
-            started_at: at(10),
-            ended_at: Some(at(30)),
-            kind: Some("sleep".into()),
-            observed_by: vec![],
-        },
-        2,
-    );
+    let sleep = sleep(10, 30);
     let events = vec![physical(0), physical(20), physical(40), sleep];
     let out = spans(&events, 0);
     assert!(out.iter().any(|span| span.agency == Agency::Mixed));
@@ -483,16 +484,7 @@ fn profile_versions_fit_the_registry_and_change_with_the_break_threshold() {
 
 #[devkit::test]
 fn absence_boundaries_are_parents_of_the_windows_and_spans_they_cut() {
-    let sleep = captured(
-        &sinex_model::event_types::fused::RestFused {
-            record: "sleep".into(),
-            started_at: at(10),
-            ended_at: Some(at(30)),
-            kind: Some("sleep".into()),
-            observed_by: vec![],
-        },
-        2,
-    );
+    let sleep = sleep(10, 30);
     let sleep_id = sleep.id;
     let events = vec![physical(0), physical(20), physical(40), sleep];
     for derivation in [
@@ -573,24 +565,19 @@ fn human_prompt_activity_cites_the_snapshot_that_establishes_its_agency() {
 fn point_inputs_never_become_open_intervals_in_later_hour_queries() {
     let query = ActivitySpans.inputs(&hour(3600), &env()).unwrap();
     assert!(!query.admits(&physical(0)));
-    let sleep = captured(
-        &sinex_model::event_types::fused::RestFused {
-            record: "sleep".into(),
-            started_at: at(0),
-            ended_at: Some(at(4000)),
-            kind: Some("sleep".into()),
-            observed_by: vec![],
-        },
-        2,
-    );
+    let sleep = sleep(0, 4000);
     assert!(query.admits(&sleep));
     for kind in [
         "key.pressed",
         "pointer.button",
         "pointer.moved",
         "pointer.scrolled",
-        "visit.fused",
-        "clipboard.fused",
+        "browser.visit",
+        "browser.history_entry",
+        "link.followed",
+        "clipboard.copied",
+        "player.changed",
+        "command.imported",
         "journal.entry",
         "polylogue.message",
         "polylogue.tool_call",

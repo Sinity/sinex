@@ -1,6 +1,6 @@
 use super::*;
-use sinex_model::event_types::CommandFused;
-use sinex_model::event_types::fused::FocusFused;
+use crate::fusion::tests::{atuin, fuse_events, zsh};
+use sinex_model::event_types::CommandExecuted;
 use sinex_model::event_types::machine::JournalEntry;
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation};
 
@@ -10,41 +10,32 @@ fn at(secs: i64) -> Timestamp {
     Timestamp::from_unix_secs(T + secs).unwrap()
 }
 
-fn parent() -> Event {
-    crate::fusion::tests::zsh("p", T as f64)
-}
-
+/// A command Atuin recorded and no other shell saw.
 fn command(secs: i64, cwd: &str, exit: Option<i64>) -> Event {
-    derived(
-        &CommandFused {
-            record: format!("r{secs}"),
+    crate::fusion::tests::captured(
+        &CommandExecuted {
+            native_id: format!("r{secs}"),
             command: "c".into(),
-            host: "box".into(),
+            cwd: cwd.into(),
+            session: "s".into(),
+            hostname: "box:u".into(),
             started_at: at(secs),
-            cwd: Some(cwd.into()),
-            session: None,
             duration_ns: None,
             exit_code: exit,
-            observed_by: vec![],
+            deleted_at: None,
+            author: None,
+            intent: None,
+            shell: None,
+            extra: Default::default(),
         },
-        "command.fusion",
-        [&parent()],
+        "terminal.atuin",
+        Class::Open,
     )
 }
 
+/// A focus interval the compositor recorded.
 fn focus(app: &str, from: i64, to: Option<i64>) -> Event {
-    derived(
-        &FocusFused {
-            record: format!("f{from}"),
-            started_at: at(from),
-            ended_at: to.map(at),
-            app: Some(app.into()),
-            title: None,
-            observed_by: vec![],
-        },
-        "focus.fusion",
-        [&parent()],
-    )
+    crate::observed::tests::hyprland(app, "", (T + from) as f64, to.map(|to| (T + to) as f64))
 }
 
 fn journal(secs: i64, priority: u8) -> Event {
@@ -122,7 +113,7 @@ fn the_hourly_inputs_are_every_type_a_metric_counts() {
     let mut declared: Vec<&str> = HourlyMetrics::INPUTS.to_vec();
     let mut counted: Vec<String> = METRICS
         .iter()
-        .flat_map(|m| (m.inputs)())
+        .flat_map(|m| m.records.kinds())
         .map(|k| k.event_type)
         .collect();
     declared.sort_unstable();
@@ -211,24 +202,91 @@ fn an_open_focus_counts_up_to_now() {
 
 #[devkit::test]
 fn a_play_of_unknown_length_counts_no_seconds() {
-    let play = derived(
-        &sinex_model::event_types::fused::PlayFused {
-            record: "p".into(),
-            title: "Song".into(),
-            artist: None,
-            album: None,
-            player: None,
-            started_at: at(0),
-            ended_at: None,
-            observed_by: vec![],
-        },
-        "play.fusion",
-        [&parent()],
-    );
+    let mut play = crate::observed::tests::mpris("Song", "Artist", T as f64, None, 0.0);
+    play.payload["length_us"] = Value::Null;
     let seconds = hourly("music.listen_seconds", std::slice::from_ref(&play), 900);
     assert!(seconds.is_empty(), "{seconds:?}");
     let plays = hourly("music.plays", &[play], 900);
     assert_eq!(total_at(&plays, 0).value, Some(1.0));
+}
+
+#[devkit::test]
+fn a_command_two_shells_saw_counts_once_and_one_shell_alone_counts_once() {
+    let base = T as f64;
+    let shells = [
+        atuin("both", base + 10.0, 0),
+        zsh("both", base + 10.4),
+        zsh("zsh only", base + 100.0),
+    ];
+    let mut inputs = fuse_events(&COMMANDS, &shells);
+    assert_eq!(inputs.len(), 1, "the pair fuses, the lone record does not");
+    inputs.extend(shells);
+    let commands = hourly("shell.commands", &inputs, 100_000);
+    let total = total_at(&commands, 0);
+    assert_eq!(total.value, Some(2.0));
+    assert_eq!(total.rows, 2);
+}
+
+#[devkit::test]
+fn a_command_fused_across_a_day_start_counts_on_the_fused_record_day_only() {
+    // The day starts at 04:00 local, 6 h before T. Atuin's record starts
+    // half a second after it and zsh's half a second before it.
+    let start = (T - 6 * 3600) as f64;
+    let shells = [atuin("edge", start + 0.5, 0), zsh("edge", start - 0.5)];
+    let mut inputs = fuse_events(&COMMANDS, &shells);
+    assert_eq!(inputs.len(), 1);
+    inputs.extend(shells);
+    let fused = &inputs[0];
+    let view = KeyView {
+        event_type: &fused.event_type,
+        ts_orig: fused.ts_orig.at,
+        payload: &fused.payload,
+    };
+    let keys = HourlyMetrics.keys_for(&view, &env(100_000));
+    assert!(keys.contains(&json!({"metric": "shell.commands", "day": "2024-06-14"})));
+    assert!(keys.contains(&key("shell.commands")));
+    let today = hourly("shell.commands", &inputs, 100_000);
+    let counted: f64 = today
+        .iter()
+        .filter(|f| f.dimension.is_empty())
+        .filter_map(|f| f.value)
+        .sum();
+    assert_eq!(counted, 1.0);
+    let env = env(100_000);
+    let yesterday = json!({"metric": "shell.commands", "day": "2024-06-14"});
+    let q = HourlyMetrics.inputs(&yesterday, &env).unwrap();
+    let window: Vec<Event> = inputs.iter().filter(|e| q.admits(e)).cloned().collect();
+    assert!(
+        HourlyMetrics
+            .compute(&yesterday, &window, &env)
+            .outputs
+            .is_empty(),
+        "zsh's record is a member of today's fused command"
+    );
+}
+
+#[devkit::test]
+fn counts_of_a_family_without_fusion_are_per_source() {
+    let inputs = [
+        focus("kitty", 10, Some(100)),
+        crate::observed::tests::activitywatch("kitty", "", (T + 10) as f64, (T + 100) as f64),
+    ];
+    let switches = hourly("focus.switches", &inputs, 100_000);
+    assert_eq!(total_at(&switches, 0).value, Some(2.0));
+    let per_source: Vec<_> = switches
+        .iter()
+        .filter(|f| f.dimension == "source")
+        .map(|f| (f.dimension_value.as_str(), f.value))
+        .collect();
+    assert_eq!(
+        per_source,
+        [
+            ("desktop.activitywatch", Some(1.0)),
+            ("state.intervals", Some(1.0))
+        ]
+    );
+    let seconds = hourly("focus.seconds", &inputs, 100_000);
+    assert_eq!(total_at(&seconds, 0).value, Some(90.0), "time is the union");
 }
 
 #[devkit::test]
@@ -278,7 +336,12 @@ fn seconds_ask_for_the_interval_running_at_the_day_start() {
     let q = HourlyMetrics
         .inputs(&key("focus.seconds"), &env(0))
         .unwrap();
-    assert_eq!(q.before.len(), 1);
+    let before: Vec<_> = q
+        .before
+        .iter()
+        .map(|n| n.kinds[0].event_type.as_str())
+        .collect();
+    assert_eq!(before, ["state.interval", "window.span"]);
     let q = HourlyMetrics
         .inputs(&key("shell.commands"), &env(0))
         .unwrap();
@@ -368,7 +431,7 @@ fn a_day_adds_up_its_hours() {
 #[devkit::test]
 fn activity_seconds_use_supported_presence_and_keep_afk_claims_as_inputs_only() {
     use sinex_model::event_types::desktop::{PresenceInterval, PresenceSpan};
-    let parent = parent();
+    let parent = zsh("p", T as f64);
     let present = derived(
         &PresenceInterval {
             scope: "box".into(),

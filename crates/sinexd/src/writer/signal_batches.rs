@@ -45,11 +45,6 @@ pub(super) async fn admit(
             acquisitions.insert(event.id, (live, location.material));
         }
     }
-    let current = match sinex_store::ReadMark::now(tx).await {
-        Ok(read) => Some(read),
-        Err(sinex_store::Error::Invalid(reason)) if reason == "privacy_projection_stale" => None,
-        Err(error) => return Err(error),
-    };
     for mut event in derived {
         let Origin::Derived { parents } = &mut event.origin else {
             unreachable!()
@@ -75,10 +70,7 @@ pub(super) async fn admit(
             }
             None => None,
         };
-        let Some(read) = read.filter(|read| {
-            read.policy_epoch.is_some()
-                && current.is_some_and(|current| current.policy_epoch == read.policy_epoch)
-        }) else {
+        let Some(read) = read else {
             outcome.superseded_input += 1;
             continue;
         };

@@ -19,7 +19,7 @@ pub(super) async fn bounds(
                  (SELECT e.payload->field FROM unnest($6::text[]) WITH ORDINALITY AS f(field,n)
                    WHERE e.payload->field IS NOT NULL AND e.payload->field <> 'null'::jsonb
                    ORDER BY n LIMIT 1),to_jsonb(e.id::text))) AS subject
-             FROM core.derivation_events e
+             FROM core.events e
              WHERE e.event_type=ANY($1) AND e.ts_orig IS NOT NULL
                AND EXISTS (SELECT 1 FROM unnest($1::text[],$2::jsonb[]) AS k(event_type,contains)
                            WHERE k.event_type=e.event_type AND e.payload @> k.contains)

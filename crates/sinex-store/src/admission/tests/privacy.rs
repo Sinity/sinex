@@ -1,4 +1,7 @@
-//! Configured rules transform current output; private source originals remain exact.
+//! Privacy rules against a real database: rules apply once, at admission, to
+//! source and derived events alike; a derived event is never below its parents'
+//! class; values of a class a caller is not granted never leave through the
+//! read views; a source never emits below its floor.
 use super::*;
 use crate::privacy::{self, Action, NewRule};
 use crate::read_models::tests::catch_up_search_text;
@@ -55,7 +58,6 @@ async fn admit_one(conn: &mut crate::AdmissionContext, b: &Batch) -> Outcome {
     let mut tx = conn.begin().await.unwrap();
     let out = tx.admit(b, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
-    privacy::projection::ensure_current(conn).await.unwrap();
     out
 }
 
@@ -75,7 +77,7 @@ fn rule(name: &str, source: &str, class: Class, action: Action, pattern: Option<
 
 async fn payload_count(conn: &mut PgConnection, needle: &str) -> i64 {
     sqlx::query_scalar!(
-        r#"SELECT count(*) AS "n!" FROM core.visible_events WHERE payload::text LIKE '%' || $1 || '%'"#,
+        r#"SELECT count(*) AS "n!" FROM core.events WHERE payload::text LIKE '%' || $1 || '%'"#,
         needle
     )
     .fetch_one(&mut *conn)
@@ -124,11 +126,7 @@ async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::Test
     .fetch_one(&mut conn)
     .await
     .unwrap();
-    assert_eq!(
-        stored,
-        format!("export PW={SECRET}"),
-        "private original is retained"
-    );
+    assert_eq!(stored, "export PW=[masked]");
     let derived = Event::build(
         &CommandExecuted {
             native_id: "d1".into(),
@@ -159,14 +157,13 @@ async fn one_privacy_point_covers_source_and_derived_events(db: devkit::pg::Test
     assert_eq!(
         payload_count(&mut conn, SECRET).await,
         0,
-        "no current output holds the secret"
+        "no stored payload holds the secret"
     );
-    let classes: Vec<String> = sqlx::query_scalar!(
-        r#"SELECT class AS "class!" FROM core.visible_events ORDER BY commit_seq"#
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
+    let classes: Vec<String> =
+        sqlx::query_scalar!("SELECT class FROM core.events ORDER BY commit_seq")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     assert_eq!(
         classes,
         ["guarded", "guarded"],
@@ -255,7 +252,7 @@ async fn guarded_values_leave_only_with_the_grant(db: devkit::pg::TestDatabase) 
 }
 
 #[devkit::test]
-async fn class_verification_checks_current_projected_floors(db: devkit::pg::TestDatabase) {
+async fn class_verification_finds_events_below_a_raised_floor(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -267,8 +264,11 @@ async fn class_verification_checks_current_projected_floors(db: devkit::pg::Test
         .await
         .unwrap();
     let after = privacy::verify_classes(&mut conn).await.unwrap();
-    assert_eq!(after.below_floor, 0);
-    assert_eq!(after.by_source, Vec::<(String, u64)>::new());
+    assert_eq!(after.below_floor, 1);
+    assert_eq!(
+        after.by_source,
+        vec![("terminal.zsh-history".to_string(), 1)]
+    );
     // New readings never emit below the floor.
     let e = imported("terminal.zsh-history", "pwd", record());
     admit_one(&mut conn, &batch(RunId::new(), vec![e])).await;
@@ -277,7 +277,7 @@ async fn class_verification_checks_current_projected_floors(db: devkit::pg::Test
             .await
             .unwrap()
             .below_floor,
-        0
+        1
     );
 }
 

@@ -14,7 +14,6 @@ use sqlx::PgPool;
 mod analysis;
 mod forecast;
 mod kinds;
-mod model_calls;
 mod operations;
 mod privacy;
 mod queries;
@@ -199,23 +198,6 @@ impl Api {
         let actor = caller.actor;
         let method = request.method();
         match request {
-            Request::ModelCall { operation: _ } => self.model_call_disabled(),
-            Request::ModelPolicy { definition } => self.model_policy(caller, &definition).await,
-            Request::ModelRecord { policy, definition } => {
-                self.model_record(caller, &policy, &definition).await
-            }
-            Request::ModelReceipt { policy, definition } => {
-                self.model_receipt(
-                    caller,
-                    &policy,
-                    &definition,
-                    sinex_model::model_calls::Capabilities {
-                        actual_receipts: self.source_config.model_accounting.actual_receipts,
-                    },
-                )
-                .await
-            }
-
             Request::Signal {
                 action,
                 name,
@@ -626,7 +608,6 @@ impl Api {
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
         if text
-            .trim()
             .split_whitespace()
             .next()
             .is_some_and(|word| word.eq_ignore_ascii_case("recall"))

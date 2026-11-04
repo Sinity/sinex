@@ -1920,9 +1920,6 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
             .refusal_kind(),
         Some(FrameRefusal::Malformed)
     );
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
     let api = crate::api::Api {
         derivations: Default::default(),
         source_config: Default::default(),

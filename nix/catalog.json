@@ -17,112 +17,12 @@
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
-        "state.interval",
-        "window.span"
-      ],
-      "kind": "keyed",
-      "name": "focus.fusion",
-      "outputs": [
-        "focus.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
-        "browser.visit",
-        "browser.history_entry",
-        "link.followed"
-      ],
-      "kind": "keyed",
-      "name": "visit.fusion",
-      "outputs": [
-        "visit.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
-        "music.played",
-        "player.changed"
-      ],
-      "kind": "keyed",
-      "name": "play.fusion",
-      "outputs": [
-        "play.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
-        "clipboard.copied"
-      ],
-      "kind": "keyed",
-      "name": "clipboard.fusion",
-      "outputs": [
-        "clipboard.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
-        "notification.shown"
-      ],
-      "kind": "keyed",
-      "name": "notification.fusion",
-      "outputs": [
-        "notification.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
         "mail.message"
       ],
       "kind": "keyed",
       "name": "mail.fusion",
       "outputs": [
         "mail.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
-        "health.record"
-      ],
-      "kind": "keyed",
-      "name": "rest.fusion",
-      "outputs": [
-        "rest.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
-        "post.published"
-      ],
-      "kind": "keyed",
-      "name": "post.fusion",
-      "outputs": [
-        "post.fused"
-      ]
-    },
-    {
-      "enabledByDefault": true,
-      "history": "recompute",
-      "inputs": [
-        "conversation.message"
-      ],
-      "kind": "keyed",
-      "name": "conversation.fusion",
-      "outputs": [
-        "conversation.fused"
       ]
     },
     {
@@ -143,7 +43,9 @@
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
-        "command.fused"
+        "command.fused",
+        "command.executed",
+        "command.imported"
       ],
       "kind": "keyed",
       "name": "shell.sessions",
@@ -214,12 +116,17 @@
         "pointer.moved",
         "pointer.scrolled",
         "presence.span",
-        "focus.fused",
+        "window.span",
         "command.fused",
-        "visit.fused",
-        "clipboard.fused",
-        "play.fused",
-        "rest.fused",
+        "command.executed",
+        "command.imported",
+        "browser.visit",
+        "browser.history_entry",
+        "link.followed",
+        "clipboard.copied",
+        "music.played",
+        "player.changed",
+        "health.record",
         "state.interval",
         "journal.entry",
         "work.act",
@@ -254,12 +161,17 @@
         "pointer.moved",
         "pointer.scrolled",
         "presence.span",
-        "focus.fused",
+        "window.span",
         "command.fused",
-        "visit.fused",
-        "clipboard.fused",
-        "play.fused",
-        "rest.fused",
+        "command.executed",
+        "command.imported",
+        "browser.visit",
+        "browser.history_entry",
+        "link.followed",
+        "clipboard.copied",
+        "music.played",
+        "player.changed",
+        "health.record",
         "state.interval",
         "journal.entry",
         "work.act",
@@ -279,7 +191,7 @@
         "activity.window",
         "activity.span",
         "state.interval",
-        "rest.fused",
+        "health.record",
         "journal.entry"
       ],
       "kind": "keyed",
@@ -294,7 +206,8 @@
       "inputs": [
         "chat.message",
         "conversation.message",
-        "mail.fused"
+        "mail.fused",
+        "mail.message"
       ],
       "kind": "keyed",
       "name": "conversation.days",
@@ -326,15 +239,22 @@
       "history": "recompute",
       "inputs": [
         "command.fused",
+        "command.executed",
+        "command.imported",
         "shell.session",
         "presence.interval",
-        "focus.fused",
-        "play.fused",
+        "state.interval",
+        "window.span",
+        "music.played",
+        "player.changed",
         "git.commit",
         "chat.message",
         "mail.fused",
+        "mail.message",
         "journal.entry",
-        "visit.fused",
+        "browser.visit",
+        "browser.history_entry",
+        "link.followed",
         "key.pressed",
         "pointer.button"
       ],
@@ -374,7 +294,7 @@
       "inputs": [
         "work.act",
         "state.interval",
-        "rest.fused"
+        "health.record"
       ],
       "kind": "keyed",
       "name": "work.episodes",
@@ -401,7 +321,7 @@
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
-        "rest.fused",
+        "health.record",
         "activity.span"
       ],
       "kind": "keyed",
@@ -452,7 +372,10 @@
       "inputs": [
         "operator.mark",
         "command.fused",
-        "focus.fused",
+        "command.executed",
+        "command.imported",
+        "state.interval",
+        "window.span",
         "shell.session",
         "activity.session"
       ],
@@ -588,15 +511,7 @@
         "github.issue",
         "agentctl.event",
         "command.fused",
-        "focus.fused",
-        "visit.fused",
-        "play.fused",
-        "clipboard.fused",
-        "notification.fused",
         "mail.fused",
-        "rest.fused",
-        "post.fused",
-        "conversation.fused",
         "shell.session",
         "state.interval",
         "metric.figure",
@@ -653,10 +568,6 @@
         "account.setting",
         "operator_log.entry",
         "steering.row",
-        "model.policy",
-        "model.request",
-        "model.response",
-        "model.receipt",
         "library.copy",
         "document.text",
         "library.item",
@@ -736,14 +647,12 @@
         "capture.gap",
         "chat.message",
         "clipboard.copied",
-        "clipboard.fused",
         "command.executed",
         "command.fused",
         "command.imported",
         "config_drift.checked",
         "context.pack",
         "conversation.day",
-        "conversation.fused",
         "conversation.message",
         "desktop.other",
         "device.changed",
@@ -758,7 +667,6 @@
         "experiment.run",
         "experiment.started",
         "file.changed",
-        "focus.fused",
         "forecast.issued",
         "forecast.resolved",
         "frame.captured",
@@ -805,29 +713,22 @@
         "mail.provider_missing",
         "media.segment",
         "metric.figure",
-        "model.policy",
-        "model.receipt",
-        "model.request",
-        "model.response",
         "monitor.focused",
         "music.played",
         "note.document",
         "note.observed",
         "notification.action",
         "notification.closed",
-        "notification.fused",
         "notification.received",
         "notification.shown",
         "ocr.text",
         "operator.mark",
         "operator_log.entry",
         "page.fetched",
-        "play.fused",
         "player.changed",
         "pointer.button",
         "pointer.moved",
         "pointer.scrolled",
-        "post.fused",
         "post.published",
         "presence.interval",
         "presence.span",
@@ -838,7 +739,6 @@
         "recipe.answer",
         "reference.about",
         "resource.sampled",
-        "rest.fused",
         "rhythm.deviation",
         "router_log.line",
         "sandbox_audit.finding",
@@ -876,7 +776,6 @@
         "usage_census.taken",
         "video.searched",
         "video.watched",
-        "visit.fused",
         "vote.cast",
         "wifi_client.sampled",
         "window.closed",
@@ -14159,405 +14058,6 @@
         "rule": "fields"
       },
       "kind": {
-        "name": "focus.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A stretch during which a window had keyboard focus, from the compositor's\nfocus changes and ActivityWatch's window spans. Focus is exclusive, so\nwhatever the sources call the window, two of them seeing focus begin at\nthe same moment saw the same focus.",
-        "properties": {
-          "app": {
-            "description": "The application: the compositor's window class or ActivityWatch's app.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "ended_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "`None` while the focus holds."
-          },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "record": {
-            "type": "string"
-          },
-          "started_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "record",
-          "started_at",
-          "observed_by"
-        ],
-        "title": "FocusFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "started_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "visit.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One page visit, from a browser's own history, a Takeout history export\nand the browser-navigation capture.",
-        "properties": {
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "record": {
-            "type": "string"
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "url": {
-            "type": "string"
-          },
-          "visited_at": {
-            "$ref": "#/$defs/Timestamp"
-          }
-        },
-        "required": [
-          "record",
-          "url",
-          "visited_at",
-          "observed_by"
-        ],
-        "title": "VisitFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "visited_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "play.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One play of a track, from a streaming history export and the media\nplayer's live state (live MPRIS capture and the capture lake).",
-        "properties": {
-          "album": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "artist": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "ended_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "When playback stopped, or the track's end when only its length is known."
-          },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "player": {
-            "description": "The player that reported it, when a live source saw it.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "record": {
-            "type": "string"
-          },
-          "started_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "record",
-          "title",
-          "started_at",
-          "observed_by"
-        ],
-        "title": "PlayFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "started_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "clipboard.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One clipboard or primary-selection change, from live capture and the\ncapture lake.",
-        "properties": {
-          "copied_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "mime_type": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "record": {
-            "type": "string"
-          },
-          "selection": {
-            "description": "`clipboard` or `primary`.",
-            "type": "string"
-          },
-          "text": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "record",
-          "selection",
-          "copied_at",
-          "observed_by"
-        ],
-        "title": "ClipboardFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "copied_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "notification.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One desktop notification, from live capture and the capture lake.",
-        "properties": {
-          "app": {
-            "type": "string"
-          },
-          "body": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "record": {
-            "type": "string"
-          },
-          "shown_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "summary": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "record",
-          "app",
-          "summary",
-          "shown_at",
-          "observed_by"
-        ],
-        "title": "NotificationFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "shown_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
         "name": "mail.fused",
         "version": 3
       },
@@ -14571,7 +14071,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One mail message, from every mail source that holds it (IMAP, Maildir,\nmbox, Outlook): its `Message-ID` and `Date` are the same wherever it is\nstored.",
+        "description": "One mail message stored by two or more mail sources of one account\n(Gmail, IMAP, Maildir, mbox, Outlook): its account and `Message-ID`\nidentify it, whatever dates its stores give it.",
         "properties": {
           "account": {
             "type": [
@@ -14631,272 +14131,6 @@
           "observed_by"
         ],
         "title": "MailFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "sent_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "rest.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A stretch of sleep or a nap, from the health providers that recorded it\n(Sleep as Android, Samsung Health). Rest is exclusive, so two providers'\nrecords that begin close together, or one beginning inside another's\nspan, are the same rest.",
-        "properties": {
-          "ended_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "kind": {
-            "description": "`sleep` or `nap`.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "record": {
-            "type": "string"
-          },
-          "started_at": {
-            "$ref": "#/$defs/Timestamp"
-          }
-        },
-        "required": [
-          "record",
-          "started_at",
-          "observed_by"
-        ],
-        "title": "RestFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "started_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "post.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One post or comment, from the operator's GDPR export and from a public\narchive's copy of it: both carry the service's own ID.",
-        "properties": {
-          "body": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "community": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "created_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "kind": {
-            "description": "`post` or `comment`.",
-            "type": "string"
-          },
-          "native_id": {
-            "type": "string"
-          },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "record": {
-            "type": "string"
-          },
-          "service": {
-            "type": "string"
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "record",
-          "service",
-          "kind",
-          "native_id",
-          "created_at",
-          "observed_by"
-        ],
-        "title": "PostFused",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "created_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "record"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "conversation.fused",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One message of a conversation, from a messaging service's GDPR export\nand from a tool that saved the same messages with the service's IDs: the\nsame text sent at the same millisecond.",
-        "properties": {
-          "message_id": {
-            "description": "The service's message ID, from a source that has it.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "record": {
-            "type": "string"
-          },
-          "sender": {
-            "type": "string"
-          },
-          "sent_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "service": {
-            "type": "string"
-          },
-          "text": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "thread": {
-            "description": "The thread as the preferred source names it.",
-            "type": "string"
-          },
-          "thread_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "record",
-          "service",
-          "thread",
-          "sender",
-          "sent_at",
-          "observed_by"
-        ],
-        "title": "ConversationFused",
         "type": "object"
       },
       "removed_rule": {
@@ -24807,1136 +24041,6 @@
       "keep_known": [],
       "key_rule": {
         "fields": [
-          "policy_name"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "model.policy",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Budget": {
-            "additionalProperties": false,
-            "properties": {
-              "currency": {
-                "type": "string"
-              },
-              "limit_units": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "period_end": {
-                "$ref": "#/$defs/Timestamp"
-              },
-              "period_start": {
-                "$ref": "#/$defs/Timestamp"
-              },
-              "scope": {
-                "type": "string"
-              },
-              "unit": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "scope",
-              "currency",
-              "unit",
-              "period_start",
-              "period_end",
-              "limit_units"
-            ],
-            "type": "object"
-          },
-          "Instructions": {
-            "additionalProperties": false,
-            "properties": {
-              "prompt": {
-                "type": "string"
-              },
-              "prompt_hash": {
-                "type": "string"
-              },
-              "rubric": {
-                "type": "string"
-              },
-              "rubric_hash": {
-                "type": "string"
-              },
-              "settings": true,
-              "settings_hash": {
-                "type": "string"
-              },
-              "settings_version": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "version",
-              "prompt",
-              "prompt_hash",
-              "rubric",
-              "rubric_hash",
-              "settings_version",
-              "settings",
-              "settings_hash"
-            ],
-            "type": "object"
-          },
-          "Policy": {
-            "additionalProperties": false,
-            "properties": {
-              "budget": {
-                "$ref": "#/$defs/Budget"
-              },
-              "name": {
-                "type": "string"
-              },
-              "routes": {
-                "items": {
-                  "$ref": "#/$defs/Route"
-                },
-                "type": "array"
-              },
-              "version": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "version",
-              "budget",
-              "routes"
-            ],
-            "type": "object"
-          },
-          "Prices": {
-            "additionalProperties": false,
-            "properties": {
-              "call": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "input_byte": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "output_unit": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "call",
-              "input_byte",
-              "output_unit"
-            ],
-            "type": "object"
-          },
-          "Route": {
-            "additionalProperties": false,
-            "properties": {
-              "instructions": {
-                "$ref": "#/$defs/Instructions"
-              },
-              "maximum_output_units": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "model": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "operation": {
-                "type": "string"
-              },
-              "prices": {
-                "$ref": "#/$defs/Prices"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "provider_account": {
-                "type": "string"
-              },
-              "revision": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "operation",
-              "provider",
-              "provider_account",
-              "model",
-              "revision",
-              "instructions",
-              "maximum_output_units",
-              "prices"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "configured_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "configured_by": {
-            "type": "string"
-          },
-          "policy": {
-            "$ref": "#/$defs/Policy"
-          },
-          "policy_name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "policy_name",
-          "policy",
-          "configured_at",
-          "configured_by"
-        ],
-        "title": "ModelPolicy",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "configured_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "request_id",
-          "request",
-          "policy",
-          "recorded_response"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "model.request",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "EventId": {
-            "description": "One reading of a record, or one derived result.",
-            "format": "uuid",
-            "type": "string"
-          },
-          "InputIdentity": {
-            "additionalProperties": false,
-            "properties": {
-              "input_hash": {
-                "type": "string"
-              },
-              "kind": {
-                "$ref": "#/$defs/InputKind"
-              },
-              "reading_hash": {
-                "type": "string"
-              },
-              "record": {
-                "$ref": "#/$defs/RecordIdentity"
-              },
-              "selected_bytes": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "selection": {
-                "$ref": "#/$defs/InputSelection"
-              },
-              "source": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "source",
-              "kind",
-              "record",
-              "reading_hash",
-              "selection",
-              "input_hash",
-              "selected_bytes"
-            ],
-            "type": "object"
-          },
-          "InputKind": {
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "version": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "name",
-              "version"
-            ],
-            "type": "object"
-          },
-          "InputSelection": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "selection": {
-                    "const": "payload",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "selection"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "pointer": {
-                    "type": "string"
-                  },
-                  "selection": {
-                    "const": "text",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "selection",
-                  "pointer"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "blob": {
-                    "type": "string"
-                  },
-                  "field": {
-                    "type": "string"
-                  },
-                  "length": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "offset": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "selection": {
-                    "const": "bytes",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "selection",
-                  "field",
-                  "blob",
-                  "offset",
-                  "length"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "InputTarget": {
-            "additionalProperties": false,
-            "properties": {
-              "event": {
-                "$ref": "#/$defs/EventId"
-              },
-              "identity": {
-                "$ref": "#/$defs/InputIdentity"
-              }
-            },
-            "required": [
-              "event",
-              "identity"
-            ],
-            "type": "object"
-          },
-          "Instructions": {
-            "additionalProperties": false,
-            "properties": {
-              "prompt": {
-                "type": "string"
-              },
-              "prompt_hash": {
-                "type": "string"
-              },
-              "rubric": {
-                "type": "string"
-              },
-              "rubric_hash": {
-                "type": "string"
-              },
-              "settings": true,
-              "settings_hash": {
-                "type": "string"
-              },
-              "settings_version": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "version",
-              "prompt",
-              "prompt_hash",
-              "rubric",
-              "rubric_hash",
-              "settings_version",
-              "settings",
-              "settings_hash"
-            ],
-            "type": "object"
-          },
-          "MaterialId": {
-            "description": "Immutable stored bytes that events cite.",
-            "format": "uuid",
-            "type": "string"
-          },
-          "RecordIdentity": {
-            "description": "A reading ID identifies its current exact parent; this stable record\nidentity and selected content identify the effect across an ordinary replay.",
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "key": {
-                    "type": "string"
-                  },
-                  "record": {
-                    "const": "key",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "record",
-                  "key"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "material": {
-                    "$ref": "#/$defs/MaterialId"
-                  },
-                  "offset": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "output": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "record": {
-                    "const": "material",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "record",
-                  "material",
-                  "offset",
-                  "output"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "Request": {
-            "additionalProperties": false,
-            "properties": {
-              "inputs": {
-                "items": {
-                  "$ref": "#/$defs/InputTarget"
-                },
-                "type": "array"
-              },
-              "instructions": {
-                "$ref": "#/$defs/Instructions"
-              },
-              "maximum_output_units": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "model": {
-                "type": "string"
-              },
-              "operation": {
-                "type": "string"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "provider_account": {
-                "type": "string"
-              },
-              "revision": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "provider",
-              "provider_account",
-              "model",
-              "revision",
-              "instructions",
-              "maximum_output_units",
-              "inputs"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "policy": {
-            "$ref": "#/$defs/EventId"
-          },
-          "recorded_response": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/EventId"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Explicit reuse of an existing effect; this is outside spend identity."
-          },
-          "request": {
-            "$ref": "#/$defs/Request"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "requested_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "requested_by": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id",
-          "policy",
-          "request",
-          "requested_at",
-          "requested_by"
-        ],
-        "title": "ModelRequest",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "requested_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "request_id",
-          "output_hash",
-          "actual",
-          "provider_receipt"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "model.response",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Charge": {
-            "additionalProperties": false,
-            "properties": {
-              "currency": {
-                "type": "string"
-              },
-              "unit": {
-                "type": "string"
-              },
-              "units": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "currency",
-              "unit",
-              "units"
-            ],
-            "type": "object"
-          },
-          "EventId": {
-            "description": "One reading of a record, or one derived result.",
-            "format": "uuid",
-            "type": "string"
-          },
-          "InputIdentity": {
-            "additionalProperties": false,
-            "properties": {
-              "input_hash": {
-                "type": "string"
-              },
-              "kind": {
-                "$ref": "#/$defs/InputKind"
-              },
-              "reading_hash": {
-                "type": "string"
-              },
-              "record": {
-                "$ref": "#/$defs/RecordIdentity"
-              },
-              "selected_bytes": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "selection": {
-                "$ref": "#/$defs/InputSelection"
-              },
-              "source": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "source",
-              "kind",
-              "record",
-              "reading_hash",
-              "selection",
-              "input_hash",
-              "selected_bytes"
-            ],
-            "type": "object"
-          },
-          "InputKind": {
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "version": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "name",
-              "version"
-            ],
-            "type": "object"
-          },
-          "InputSelection": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "selection": {
-                    "const": "payload",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "selection"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "pointer": {
-                    "type": "string"
-                  },
-                  "selection": {
-                    "const": "text",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "selection",
-                  "pointer"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "blob": {
-                    "type": "string"
-                  },
-                  "field": {
-                    "type": "string"
-                  },
-                  "length": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "offset": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "selection": {
-                    "const": "bytes",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "selection",
-                  "field",
-                  "blob",
-                  "offset",
-                  "length"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "InputTarget": {
-            "additionalProperties": false,
-            "properties": {
-              "event": {
-                "$ref": "#/$defs/EventId"
-              },
-              "identity": {
-                "$ref": "#/$defs/InputIdentity"
-              }
-            },
-            "required": [
-              "event",
-              "identity"
-            ],
-            "type": "object"
-          },
-          "Instructions": {
-            "additionalProperties": false,
-            "properties": {
-              "prompt": {
-                "type": "string"
-              },
-              "prompt_hash": {
-                "type": "string"
-              },
-              "rubric": {
-                "type": "string"
-              },
-              "rubric_hash": {
-                "type": "string"
-              },
-              "settings": true,
-              "settings_hash": {
-                "type": "string"
-              },
-              "settings_version": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "version",
-              "prompt",
-              "prompt_hash",
-              "rubric",
-              "rubric_hash",
-              "settings_version",
-              "settings",
-              "settings_hash"
-            ],
-            "type": "object"
-          },
-          "MaterialId": {
-            "description": "Immutable stored bytes that events cite.",
-            "format": "uuid",
-            "type": "string"
-          },
-          "RecordIdentity": {
-            "description": "A reading ID identifies its current exact parent; this stable record\nidentity and selected content identify the effect across an ordinary replay.",
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "key": {
-                    "type": "string"
-                  },
-                  "record": {
-                    "const": "key",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "record",
-                  "key"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "material": {
-                    "$ref": "#/$defs/MaterialId"
-                  },
-                  "offset": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "output": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "record": {
-                    "const": "material",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "record",
-                  "material",
-                  "offset",
-                  "output"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "Request": {
-            "additionalProperties": false,
-            "properties": {
-              "inputs": {
-                "items": {
-                  "$ref": "#/$defs/InputTarget"
-                },
-                "type": "array"
-              },
-              "instructions": {
-                "$ref": "#/$defs/Instructions"
-              },
-              "maximum_output_units": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "model": {
-                "type": "string"
-              },
-              "operation": {
-                "type": "string"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "provider_account": {
-                "type": "string"
-              },
-              "revision": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "operation",
-              "provider",
-              "provider_account",
-              "model",
-              "revision",
-              "instructions",
-              "maximum_output_units",
-              "inputs"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "actual": {
-            "$ref": "#/$defs/Charge"
-          },
-          "output": true,
-          "output_hash": {
-            "type": "string"
-          },
-          "provider_receipt": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "received_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "request": {
-            "$ref": "#/$defs/Request"
-          },
-          "request_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id",
-          "request",
-          "output",
-          "output_hash",
-          "actual",
-          "received_at"
-        ],
-        "title": "RecordedResponse",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "suppress_repeat",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "received_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "policy",
-          "receipt"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "model.receipt",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "BudgetBasis": {
-            "additionalProperties": false,
-            "properties": {
-              "currency": {
-                "type": "string"
-              },
-              "period_end": {
-                "$ref": "#/$defs/Timestamp"
-              },
-              "period_start": {
-                "$ref": "#/$defs/Timestamp"
-              },
-              "scope": {
-                "type": "string"
-              },
-              "unit": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "scope",
-              "currency",
-              "unit",
-              "period_start",
-              "period_end"
-            ],
-            "type": "object"
-          },
-          "Charge": {
-            "additionalProperties": false,
-            "properties": {
-              "currency": {
-                "type": "string"
-              },
-              "unit": {
-                "type": "string"
-              },
-              "units": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "currency",
-              "unit",
-              "units"
-            ],
-            "type": "object"
-          },
-          "EventId": {
-            "description": "One reading of a record, or one derived result.",
-            "format": "uuid",
-            "type": "string"
-          },
-          "ReceiptOnly": {
-            "additionalProperties": false,
-            "description": "Every accounting field is supplied evidence. There is no default amount,\ncurrency, provider account, accounting period, policy version or request.",
-            "properties": {
-              "actual": {
-                "$ref": "#/$defs/Charge"
-              },
-              "basis": {
-                "$ref": "#/$defs/BudgetBasis"
-              },
-              "operation": {
-                "type": "string"
-              },
-              "policy_name": {
-                "type": "string"
-              },
-              "policy_version": {
-                "type": "string"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "provider_account": {
-                "type": "string"
-              },
-              "provider_receipt": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "provider",
-              "provider_account",
-              "provider_receipt",
-              "policy_name",
-              "policy_version",
-              "operation",
-              "basis",
-              "actual"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "An actual receipt makes no assertion that a request or input was verified.",
-        "properties": {
-          "policy": {
-            "$ref": "#/$defs/EventId"
-          },
-          "receipt": {
-            "$ref": "#/$defs/ReceiptOnly"
-          },
-          "recorded_at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "recorded_by": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "policy",
-          "receipt",
-          "recorded_at",
-          "recorded_by"
-        ],
-        "title": "ModelReceipt",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "suppress_repeat",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "recorded_at"
-        ],
-        "quality": "captured",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
           "host",
           "root",
           "path",
@@ -30879,42 +28983,6 @@
       ],
       "name": "analysis.request",
       "purpose": "canonical analysis questions"
-    },
-    {
-      "class": "open",
-      "discovery": [
-        {
-          "capture": false,
-          "description": {
-            "capabilities": [],
-            "credentials": [],
-            "locations": [],
-            "owner": "system",
-            "request_only": true,
-            "requests": [
-              "model-policy",
-              "model-record",
-              "model-receipt"
-            ],
-            "streams": []
-          },
-          "format": "model-records"
-        }
-      ],
-      "drivers": [
-        "api-request"
-      ],
-      "eventTypes": [
-        "model.policy",
-        "model.request",
-        "model.response",
-        "model.receipt"
-      ],
-      "formats": [
-        "model-records"
-      ],
-      "name": "model.records",
-      "purpose": "configured model policy and recorded effects"
     },
     {
       "class": "open",

@@ -104,7 +104,7 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
     privacy::add_rule(
         &mut conn,
         &NewRule {
-            name: "synthetic neighbour scope projection".into(),
+            name: "synthetic neighbour scope mask".into(),
             source: "fixture.nearby.masked".into(),
             event_type: Some("command.executed".into()),
             field: Some("/session".into()),
@@ -117,9 +117,6 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
     )
     .await
     .unwrap();
-    privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
     let masked = command(30, "A", 4, false, true);
     let masked_id = masked.id;
     let mut candidates: Vec<_> = [
@@ -146,15 +143,15 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
     let old = candidates[0].id;
     candidates.push(masked);
     admit_one(&mut conn, &batch(candidates)).await;
-    let projected: String =
-        sqlx::query_scalar("SELECT payload->>'session' FROM core.derivation_events WHERE id=$1")
+    let stored: String =
+        sqlx::query_scalar("SELECT payload->>'session' FROM core.events WHERE id=$1")
             .bind(masked_id.0)
             .fetch_one(&mut conn)
             .await
             .unwrap();
     assert_ne!(
-        projected, "A",
-        "the raw matching record is outside current projected scope"
+        stored, "A",
+        "admission masked the matching record out of the scope"
     );
 
     let first = mark(
@@ -178,7 +175,7 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
     assert!(first_markers.values().all(|position| *position == first));
 
     // Change membership outside the marker invocation, through normal
-    // admission/projection and archival. No dirty table reset hides old marks.
+    // admission and archival. No dirty table reset hides old marks.
     admit_one(&mut conn, &batch(vec![command(50, "A", 6, false, false)])).await;
     crate::lifecycle::move_events(
         &mut conn,
@@ -205,7 +202,7 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
         .collect();
     assert_eq!(
         remarked, second_expected,
-        "the same window descriptions read new projected membership at the new frontier"
+        "the same window descriptions read new membership at the new frontier"
     );
     assert_eq!(
         current["k1"], first,
@@ -272,7 +269,7 @@ async fn shared_neighbour_window_marks_every_producer_version_target(db: devkit:
         "identical reads preserve both producer/version mappings and direct input keys"
     );
     assert_eq!(
-        outcome.dirty_keys, 12,
-        "before and after projection each retain two direct offers plus both producers' two neighbouring offers"
+        outcome.dirty_keys, 6,
+        "two direct offers plus both producers' two neighbouring offers"
     );
 }

@@ -249,7 +249,7 @@ The spool is a JSON-line journal written by the segment spool driver, with each 
 - Keys: `offer_id`, `transfer_id`, and the connection record UUID. Hash equality shares bytes, never identity.
 - Event time is `offer_received_at` with captured quality; transfer timing stays in `requested_at` and `ended_at`.
 
-Decoded text, `clipboard.copied`, `clipboard.selected`, fused copies and pastes are [derivations](derivations.md).
+Decoded text, `clipboard.copied`, `clipboard.selected` and pastes are [derivations](derivations.md).
 
 ### Failures and restart
 

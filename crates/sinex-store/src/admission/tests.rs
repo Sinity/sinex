@@ -484,10 +484,9 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     let mut tx = conn.begin().await.unwrap();
     let out = tx.admit(&batch(events), &ByDay).await.unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(
-        out.dirty_keys, 4,
-        "both original and projected input keys are marked for each event"
-    );
+    // One stored payload per event, so one key per event (docs/privacy.md:
+    // "Stored payloads stay raw"; there is no second, projected payload).
+    assert_eq!(out.dirty_keys, 2, "each event marks its one input key");
     let n: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM derivation.dirty WHERE derivation = 'daily'"#
     )
@@ -840,7 +839,7 @@ async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_in
 ) {
     let mut catalog = PgConnection::connect(&db.url(None)).await.unwrap();
     let kind = sinex_model::event_types::declarations()
-        .into_iter()
+        .iter()
         .find(|kind| kind.kind.name == "command.executed")
         .unwrap();
     let declarations =
@@ -973,10 +972,6 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let policy_epoch = crate::privacy::projection::epoch(&mut conn)
-        .await
-        .unwrap()
-        .active;
     let offered = |position: i64, content: u8| {
         let mut event = keyed("canonical", 1, content, position);
         event.origin = Origin::Derived {
@@ -993,7 +988,6 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
                 required: true,
                 stamp: "already-validated-by-admission".into(),
                 position,
-                policy_epoch,
                 scope: "scope".into(),
                 catalog: "catalog".into(),
                 instance: "instance".into(),

@@ -1,6 +1,5 @@
 //! The API against a real database and the real writer.
 mod exact_payloads;
-mod model_calls;
 mod sql_boundary;
 mod versions;
 use super::*;
@@ -31,7 +30,6 @@ struct World {
     read_models: watch::Sender<()>,
     writer: writer::WriterHandle,
     reads: sqlx::PgPool,
-    blobs: sinex_store::Blobs,
 }
 
 impl Drop for World {
@@ -173,7 +171,7 @@ async fn world_with_config(
         read_failures: Default::default(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
-        blobs: blobs.clone(),
+        blobs,
         zone: jiff::tz::TimeZone::get("UTC").unwrap(),
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         derivations: Default::default(),
@@ -197,7 +195,6 @@ async fn world_with_config(
         read_models: read_models_tx,
         writer: handle,
         reads,
-        blobs,
     }
 }
 

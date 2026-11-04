@@ -1,8 +1,13 @@
 # Window-title classification
 
-The opt-in `tag.applier` derivation classifies `focus.fused` records by the
+The opt-in `tag.applier` derivation classifies window focus records by the
 rules in `services.sinex.tags`, also read from `tags` in the sources JSON
-configuration. It applies the same rules to other registered event types.
+configuration. ActivityWatch's `window.span` records carry `app` and `title`;
+the compositor's focus intervals are `state.interval` records with
+`state_kind = "desktop.focus"` and the window in `attributes.class` and
+`attributes.title`. A rule names one event type, so classifying both sources
+takes a rule for each. It applies the same rules to other registered event
+types.
 
 | Field | Meaning |
 | --- | --- |
@@ -22,7 +27,7 @@ For example, these rules label a recorded editor window:
 services.sinex.derivations."tag.applier".enable = true;
 services.sinex.tags = [{
   tag = "editor";
-  event_type = "focus.fused";
+  event_type = "window.span";
   when = [
     { field = "/app"; is = "kitty"; }
     { field = "/title"; contains = "nvim"; }
@@ -48,9 +53,10 @@ per-event runner, including when no rule matches any more.
 Hiding or replacing an input removes its per-event outputs; unhiding it
 computes them again. Assignments use the ordinary query language.
 
-The input fields are the recorded `focus.fused` `record`, `started_at`,
-`ended_at`, `app`, `title` and `observed_by`; rules inspect the payload fields
-they name. Output fields are `tag`, `record` (the typed source, kind and input
+The input fields of a `window.span` are `bucket`, `span_id`, `started_at`,
+`ended_at`, `app`, `title`, `host` and `scope`; rules inspect the payload
+fields they name, and a rule over compositor focus names
+`/attributes/class` and `/attributes/title`. Output fields are `tag`, `record` (the typed source, kind and input
 record identity), `event_type`, `rules` and `at`. The event envelope supplies
 the exact parent reading, producer version, class and time quality.
 

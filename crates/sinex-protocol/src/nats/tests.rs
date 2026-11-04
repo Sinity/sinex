@@ -102,7 +102,7 @@ fn confirmed_readings_require_their_record_hash_and_order() {
         reading_order: 17,
         record_hash: "00".repeat(32),
         payload: serde_json::json!({}),
-        projection: crate::ProjectionIdentity::for_payload(0, &serde_json::json!({})),
+        projection: crate::ProjectionIdentity::for_payload(&serde_json::json!({})),
     };
     let value = serde_json::to_value(&event).unwrap();
     assert_eq!(

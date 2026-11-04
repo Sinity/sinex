@@ -52,12 +52,8 @@ impl Description {
 
     pub(crate) fn before_output_ordinals() -> Self {
         let mut description = Self::before_lifecycle();
-        description
-            .tables
-            .retain(|statement| crate::model_calls::before(statement));
         description.tables.retain(|statement| {
             crate::source_declarations::before(statement)
-                && crate::privacy_epoch::before(statement)
                 && crate::owner_protocol::before(statement)
                 && !statement.contains("core.signal_checkpoints")
                 && !statement.contains("core.embedding_spaces")
@@ -68,11 +64,10 @@ impl Description {
         });
         description.after_tables.retain(|statement| {
             crate::source_declarations::before(statement)
-                && crate::privacy_epoch::before(statement)
                 && crate::owner_protocol::before(statement)
                 && crate::query_cursors::before(statement)
         });
-        description.visibility = crate::visibility_before_privacy_epoch();
+        description.visibility = crate::visibility_before_producer_families();
         for statement in &mut description.tables {
             crate::source_declarations::previous(statement);
             if statement.starts_with("CREATE TABLE core.ingress_frames (") {
@@ -169,12 +164,12 @@ impl Description {
         for statement in &mut description.tables {
             crate::source_declarations::previous(statement);
         }
-        description.after_tables.retain(|statement| {
-            crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement)
-        });
-        description.tables.retain(|statement| {
-            crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement)
-        });
+        description
+            .after_tables
+            .retain(|statement| crate::query_cursors::before(statement));
+        description
+            .tables
+            .retain(|statement| crate::owner_protocol::before(statement));
         description.tables.retain(|statement| {
             !statement.starts_with("CREATE TABLE core.signal_checkpoints (")
                 && !statement.starts_with("CREATE TABLE core.embedding_spaces (")
@@ -191,10 +186,7 @@ impl Description {
                 && !statement.starts_with("CREATE INDEX tombstones_feed ")
                 && !statement.starts_with("CREATE INDEX tombstones_original_position ")
         });
-        description.visibility = crate::visibility_before_privacy_epoch();
-        description.visibility.retain(|statement| {
-            !statement.starts_with("CREATE VIEW core.visible_embedding_vectors ")
-        });
+        description.visibility = crate::visibility_before_producer_families();
         for statement in &mut description.tables {
             if statement.starts_with("CREATE TABLE core.ingress_frames (") {
                 *statement = statement
@@ -242,12 +234,12 @@ impl Description {
         for statement in &mut description.tables {
             crate::source_declarations::previous(statement);
         }
-        description.after_tables.retain(|statement| {
-            crate::query_cursors::before(statement) && crate::privacy_epoch::before(statement)
-        });
-        description.tables.retain(|statement| {
-            crate::privacy_epoch::before(statement) && crate::owner_protocol::before(statement)
-        });
+        description
+            .after_tables
+            .retain(|statement| crate::query_cursors::before(statement));
+        description
+            .tables
+            .retain(|statement| crate::owner_protocol::before(statement));
         description.tables.retain(|statement| {
             !statement.starts_with("CREATE TABLE core.signal_checkpoints (")
                 && !statement.starts_with("CREATE TABLE core.embedding_spaces (")
@@ -264,10 +256,7 @@ impl Description {
                 && !statement.starts_with("CREATE INDEX tombstones_feed ")
                 && !statement.starts_with("CREATE INDEX tombstones_original_position ")
         });
-        description.visibility = crate::visibility_before_privacy_epoch();
-        description.visibility.retain(|statement| {
-            !statement.starts_with("CREATE VIEW core.visible_embedding_vectors ")
-        });
+        description.visibility = crate::visibility_before_producer_families();
         for statement in &mut description.tables {
             if statement.starts_with("CREATE TABLE core.ingress_frames (") {
                 *statement = statement
@@ -329,14 +318,13 @@ impl Description {
         }
         // The named data step fills the new counter from preserved rows.
         for statement in &mut before.tables {
-            if statement.starts_with("INSERT INTO core.counters") {
-                if let Some(initializer) = after
+            if statement.starts_with("INSERT INTO core.counters")
+                && let Some(initializer) = after
                     .tables
                     .iter()
                     .find(|current| current.starts_with("INSERT INTO core.counters"))
-                {
-                    statement.clone_from(initializer);
-                }
+            {
+                statement.clone_from(initializer);
             }
         }
         changes.extend(after.changes_from(&before, &[]));

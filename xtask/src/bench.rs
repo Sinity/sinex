@@ -524,9 +524,6 @@ fn sinexd_recorded(
     out: Option<&Path>,
 ) -> Result<Value, String> {
     let mut command = Command::new("systemd-run");
-    if let Some(out) = out {
-        command.env("SINEX_PRIVATE_MODE", out.join("private-mode"));
-    }
     command
         .env("SINEX_BENCH_TIMINGS", "1")
         .args(["--user", "--scope", "--quiet", "-p"])

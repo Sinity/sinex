@@ -10,7 +10,6 @@ pub(crate) const CURRENT_VERSION_TWO: &[&str] = &[
     "input.coverage",
     "tag.applied",
     "conversation.day",
-    "rest.fused",
     "work.act",
     "work.episode",
     "work.suspension",
@@ -30,7 +29,7 @@ pub(crate) const CURRENT_VERSION_TWO: &[&str] = &[
 
 #[test]
 fn current_kind_map_separates_known_version_two_from_unknown_version_one() {
-    assert_eq!(CURRENT_VERSION_TWO.len(), 22);
+    assert_eq!(CURRENT_VERSION_TWO.len(), 21);
     let names: std::collections::BTreeSet<_> = CURRENT_VERSION_TWO.iter().collect();
     assert_eq!(names.len(), CURRENT_VERSION_TWO.len());
     for name in CURRENT_VERSION_TWO {

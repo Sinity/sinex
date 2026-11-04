@@ -227,25 +227,54 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("commands", "exit_code") => payload_number("exit_code"),
         ("commands", "duration") => format!("({} / 1e9)", payload_number("duration_ns")),
         ("commands", "start") => payload_time("started_at"),
+        // A command without a recorded duration (a history file, or a shell
+        // that did not report one) is placed at its start instant; an unknown
+        // end must not read as a command still running.
         ("commands", "end") => format!(
-            "({} + make_interval(secs => {} / 1e9))",
-            payload_time("started_at"),
-            payload_number("duration_ns")
+            "coalesce({start} + make_interval(secs => {} / 1e9), {start})",
+            payload_number("duration_ns"),
+            start = payload_time("started_at"),
         ),
         ("commands", "session") => payload_text("session"),
-        ("commands" | "focus" | "visits" | "plays", "observed_by") => {
-            "(SELECT string_agg(x, ',') FROM jsonb_array_elements_text(\
-              CASE WHEN jsonb_typeof({t}.payload -> 'observed_by') = 'array' THEN {t}.payload -> 'observed_by' END) x)"
+        // A command record no fused command joins was observed by its source.
+        ("commands", "observed_by") => {
+            "coalesce((SELECT string_agg(x, ',') FROM jsonb_array_elements_text(\
+              CASE WHEN jsonb_typeof({t}.payload -> 'observed_by') = 'array' THEN {t}.payload -> 'observed_by' END) x), {t}.source)"
                 .to_string()
         }
-        ("focus", "app" | "title") | ("visits", "url" | "title") => payload_text(name),
-        ("plays", "title" | "artist" | "album" | "player") => payload_text(name),
-        ("focus" | "plays", "start") => payload_time("started_at"),
-        ("focus" | "plays", "end") => payload_time("ended_at"),
+        ("focus", "app") => format!("coalesce({}, {})", payload_text("attributes,class"), payload_text("app")),
+        ("focus", "title") => format!("coalesce({}, {})", payload_text("attributes,title"), payload_text("title")),
+        ("visits", "url") => format!("coalesce({}, {})", payload_text("url"), payload_text("to_url")),
+        ("visits", "title") => format!("coalesce({}, {})", payload_text("title"), payload_text("to_title")),
+        ("plays", "title") => format!(
+            "coalesce({}, {}, {})",
+            payload_text("track_name"),
+            payload_text("episode_name"),
+            payload_text("title")
+        ),
+        ("plays", "artist") => format!(
+            "coalesce({}, {}, {})",
+            payload_text("artist_name"),
+            payload_text("show_name"),
+            payload_text("artists,0")
+        ),
+        ("plays", "album") => format!("coalesce({}, {})", payload_text("album_name"), payload_text("album")),
+        ("plays", "player") => payload_text("player"),
+        ("plays", "start") => "{t}.ts_orig".to_string(),
+        // A player's report ends its track's length later; a stream of
+        // unknown length reports a length no track reaches.
+        ("plays", "end") => format!(
+            "coalesce({}, CASE WHEN {length} BETWEEN 0 AND 9223372036854775 \
+              THEN {{t}}.ts_orig + make_interval(secs => {length} / 1e6) END)",
+            payload_time("ended_at"),
+            length = payload_number("length_us"),
+        ),
+        ("focus", "start") => payload_time("started_at"),
+        ("focus", "end") => payload_time("ended_at"),
         ("focus" | "plays", "duration") => format!(
             "extract(epoch from ({} - {}))",
-            payload_time("ended_at"),
-            payload_time("started_at")
+            alias_field(alias, "end")?,
+            alias_field(alias, "start")?
         ),
         ("items", "item" | "label" | "revision" | "content" | "media_type") => payload_text(name),
         ("media", "path" | "media_type" | "content") => payload_text(name),

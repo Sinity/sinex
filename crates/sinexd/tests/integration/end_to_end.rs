@@ -1454,7 +1454,6 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
         t.query("events where event_type = sinex.telemetry AND payload.component = publisher");
     assert_eq!(ordinary["total"], 1, "{ordinary}");
     let mut command = t.sinexd(&["admin", "status"]);
-    command.env("SINEX_PRIVATE_MODE", dir.0.join("private-mode"));
     let status: serde_json::Value = serde_json::from_str(&finish(&mut command)).unwrap();
     let latest = status["telemetry"].as_array().unwrap();
     assert_eq!(latest.len(), 3, "{status}");
@@ -1639,7 +1638,7 @@ fn activitywatch_db(path: &Path, events: &[(i64, i64, &str, &str)]) {
 
 /// A revision supersedes: when ActivityWatch's last window event grows, the
 /// re-read leaves one live span with the new end, the earlier reading
-/// archived, and the fused focus derived from it recomputed to the new end.
+/// archived, and the focus time derived from it recomputed to the new end.
 #[devkit::test]
 async fn a_growing_activitywatch_event_replaces_its_reading_downstream() {
     let dir = Dir::new();
@@ -1688,11 +1687,16 @@ async fn a_growing_activitywatch_event_replaces_its_reading_downstream() {
         .await,
         1
     );
-    let fused_ends: Vec<String> = sqlx::query_scalar(&ends("focus.fused"))
-        .fetch_all(&mut c)
-        .await
-        .unwrap();
-    assert_eq!(fused_ends, [new_end], "the derived focus follows");
+    let browser_seconds: Vec<f64> = sqlx::query_scalar(
+        "SELECT (e.payload->>'value')::float8 FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
+         WHERE l.event_type = 'metric.figure' AND e.payload->>'metric' = 'focus.seconds'
+           AND e.payload->>'grain' = 'day' AND e.payload->>'dimension' = 'app'
+           AND e.payload->>'dimension_value' = 'browser'",
+    )
+    .fetch_all(&mut c)
+    .await
+    .unwrap();
+    assert_eq!(browser_seconds, [840.0], "the derived focus time follows");
     consistent(&mut c).await;
 }
 

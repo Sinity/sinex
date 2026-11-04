@@ -1,9 +1,10 @@
-//! Fused records: one thing several sources observed, as one event. Each is
-//! derived by a fusion rule with every source record that saw it as a
-//! parent, takes its time from the most preferred source that saw it and each
-//! other field from the most preferred source that has it, and lists the
-//! sources in `observed_by`. A record no other source saw is fused alone, so
-//! a fused kind holds every observation once, whichever sources were running.
+//! Fused records: one occurrence that two or more sources recorded, as one
+//! event, for the defined fusion families. Each is derived by a fusion rule
+//! with every source record that saw it as a parent, takes its time from the
+//! most preferred source that saw it and each other field from the most
+//! preferred source that has it, and lists the sources in `observed_by`. A
+//! record no other source saw stays a source record only; a consumer reads
+//! the fused records plus the unmatched source records.
 //!
 //! Each is identified by its preferred member's record (`record`), never by
 //! its content and time: the same command run twice in one second is two
@@ -37,106 +38,9 @@ pub struct CommandFused {
     pub observed_by: Vec<String>,
 }
 
-/// A stretch during which a window had keyboard focus, from the compositor's
-/// focus changes and ActivityWatch's window spans. Focus is exclusive, so
-/// whatever the sources call the window, two of them seeing focus begin at
-/// the same moment saw the same focus.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "focus.fused",
-    key = ["record"],
-    replace = newer,
-    time = started_at,
-    quality = intrinsic
-)]
-pub struct FocusFused {
-    pub record: String,
-    pub started_at: Timestamp,
-    /// `None` while the focus holds.
-    pub ended_at: Option<Timestamp>,
-    /// The application: the compositor's window class or ActivityWatch's app.
-    pub app: Option<String>,
-    pub title: Option<String>,
-    pub observed_by: Vec<String>,
-}
-
-/// One page visit, from a browser's own history, a Takeout history export
-/// and the browser-navigation capture.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "visit.fused",
-    key = ["record"],
-    replace = newer,
-    time = visited_at,
-    quality = intrinsic
-)]
-pub struct VisitFused {
-    pub record: String,
-    pub url: String,
-    pub title: Option<String>,
-    pub visited_at: Timestamp,
-    pub observed_by: Vec<String>,
-}
-
-/// One play of a track, from a streaming history export and the media
-/// player's live state (live MPRIS capture and the capture lake).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "play.fused",
-    key = ["record"],
-    replace = newer,
-    time = started_at,
-    quality = intrinsic
-)]
-pub struct PlayFused {
-    pub record: String,
-    pub title: String,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    /// The player that reported it, when a live source saw it.
-    pub player: Option<String>,
-    pub started_at: Timestamp,
-    /// When playback stopped, or the track's end when only its length is known.
-    pub ended_at: Option<Timestamp>,
-    pub observed_by: Vec<String>,
-}
-
-/// One clipboard or primary-selection change, from live capture and the
-/// capture lake.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "clipboard.fused",
-    key = ["record"],
-    replace = newer,
-    time = copied_at,
-    quality = intrinsic
-)]
-pub struct ClipboardFused {
-    pub record: String,
-    /// `clipboard` or `primary`.
-    pub selection: String,
-    pub text: Option<String>,
-    pub mime_type: Option<String>,
-    pub copied_at: Timestamp,
-    pub observed_by: Vec<String>,
-}
-
-/// One desktop notification, from live capture and the capture lake.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "notification.fused",
-    key = ["record"],
-    replace = newer,
-    time = shown_at,
-    quality = intrinsic
-)]
-pub struct NotificationFused {
-    pub record: String,
-    pub app: String,
-    pub summary: String,
-    pub body: Option<String>,
-    pub shown_at: Timestamp,
-    pub observed_by: Vec<String>,
-}
-
-/// One mail message, from every mail source that holds it (IMAP, Maildir,
-/// mbox, Outlook): its `Message-ID` and `Date` are the same wherever it is
-/// stored.
+/// One mail message stored by two or more mail sources of one account
+/// (Gmail, IMAP, Maildir, mbox, Outlook): its account and `Message-ID`
+/// identify it, whatever dates its stores give it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 3, type = "mail.fused",
     key = ["record"],
@@ -154,75 +58,5 @@ pub struct MailFused {
     pub labels: Vec<String>,
     /// The `Date` header.
     pub sent_at: Timestamp,
-    pub observed_by: Vec<String>,
-}
-
-/// One post or comment, from the operator's GDPR export and from a public
-/// archive's copy of it: both carry the service's own ID.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "post.fused",
-    key = ["record"],
-    replace = newer,
-    time = created_at,
-    quality = intrinsic
-)]
-pub struct PostFused {
-    pub record: String,
-    pub service: String,
-    /// `post` or `comment`.
-    pub kind: String,
-    pub native_id: String,
-    pub created_at: Timestamp,
-    pub title: Option<String>,
-    pub body: Option<String>,
-    pub url: Option<String>,
-    pub community: Option<String>,
-    pub observed_by: Vec<String>,
-}
-
-/// One message of a conversation, from a messaging service's GDPR export
-/// and from a tool that saved the same messages with the service's IDs: the
-/// same text sent at the same millisecond.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "conversation.fused",
-    key = ["record"],
-    replace = newer,
-    time = sent_at,
-    quality = intrinsic
-)]
-pub struct ConversationFused {
-    pub record: String,
-    pub service: String,
-    /// The thread as the preferred source names it.
-    pub thread: String,
-    pub thread_name: Option<String>,
-    pub sender: String,
-    pub sent_at: Timestamp,
-    pub text: Option<String>,
-    /// The service's message ID, from a source that has it.
-    pub message_id: Option<String>,
-    pub observed_by: Vec<String>,
-}
-
-/// A stretch of sleep or a nap, from the health providers that recorded it
-/// (Sleep as Android, Samsung Health). Rest is exclusive, so two providers'
-/// records that begin close together, or one beginning inside another's
-/// span, are the same rest.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
-    type = "rest.fused",
-    key = ["record"],
-    replace = newer,
-    time = started_at,
-    quality = intrinsic
-)]
-pub struct RestFused {
-    pub record: String,
-    pub started_at: Timestamp,
-    pub ended_at: Option<Timestamp>,
-    /// `sleep` or `nap`.
-    pub kind: Option<String>,
     pub observed_by: Vec<String>,
 }

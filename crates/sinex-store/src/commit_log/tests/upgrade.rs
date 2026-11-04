@@ -63,7 +63,7 @@ async fn other_rows(
             "to_jsonb(t)"
         };
         let predicate = if table == "counters" {
-            " WHERE name NOT IN ('blob_changes','excised','tombstoned','privacy_outputs','query_metadata')"
+            " WHERE name NOT IN ('blob_changes','excised','tombstoned','query_metadata')"
         } else {
             ""
         };

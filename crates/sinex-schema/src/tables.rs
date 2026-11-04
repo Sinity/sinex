@@ -575,9 +575,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         crate::source_declarations::fresh(statement);
     }
     tables.push(crate::source_declarations::TABLE.into());
-    tables.extend(crate::model_calls::tables());
     tables.extend(crate::vectors::tables());
-    tables.extend(crate::privacy_epoch::tables());
     tables.extend(crate::owner_protocol::statements());
     tables
 }
@@ -588,7 +586,6 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
     out.extend(crate::query_cursors::triggers());
-    out.extend(crate::privacy_epoch::hooks());
     out.extend(crate::source_declarations::hooks());
     for table in ["core.events"] {
         for template in [

@@ -32,16 +32,25 @@ pub async fn material_family(
 }
 pub struct MaterialOutput {
     pub kind: String,
-    pub class: Option<String>,
-    pub epoch: Option<i64>,
-    pub changed: Option<bool>,
-    pub state: Option<String>,
+    pub class: String,
 }
 pub async fn event_output(conn: &mut PgConnection, id: Uuid) -> Result<Option<MaterialOutput>> {
-    Ok(sqlx::query_as!(MaterialOutput,r#"SELECT e.event_type AS "kind!",o.class AS "class?",o.epoch AS "epoch?",o.changed AS "changed?",o.state AS "state?" FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.id=$1"#,id).fetch_optional(conn).await?)
+    Ok(sqlx::query_as!(
+        MaterialOutput,
+        "SELECT e.event_type AS kind,e.class FROM core.events e WHERE e.id=$1",
+        id
+    )
+    .fetch_optional(conn)
+    .await?)
 }
 pub async fn material_classes(conn: &mut PgConnection, id: Uuid) -> Result<Vec<MaterialOutput>> {
-    Ok(sqlx::query_as!(MaterialOutput,r#"SELECT DISTINCT e.event_type AS "kind!",o.class AS "class?",o.epoch AS "epoch?",o.changed AS "changed?",o.state AS "state?" FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.material_id=$1"#,id).fetch_all(conn).await?)
+    Ok(sqlx::query_as!(
+        MaterialOutput,
+        "SELECT DISTINCT e.event_type AS kind,e.class FROM core.events e WHERE e.material_id=$1",
+        id
+    )
+    .fetch_all(conn)
+    .await?)
 }
 pub async fn material_input(conn: &mut PgConnection, id: Uuid) -> Result<Option<InputRef>> {
     Ok(sqlx::query!("SELECT i.kind,i.locator,i.host FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1",id).fetch_optional(conn).await?.map(|row|InputRef{kind:row.kind,locator:row.locator,host:row.host}))

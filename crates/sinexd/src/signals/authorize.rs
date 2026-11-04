@@ -11,15 +11,11 @@ mod snapshot;
 enum Refusal {
     AuthoritySettingsChanged,
     AuthorityBasisMissing,
-    AuthorityEpochUnknown,
-    AuthorityEpochDisagrees,
     AuthorityPendingMissing,
     AuthorityRevisionRegressed,
     AuthorityInputsChanged,
     AuthorityIntentChanged,
     AuthorityInputUnavailable,
-    AuthorityPolicyEpochChanged,
-    PolicyNotReady,
     HostConfigurationMissing,
     DesktopConfigurationMissing,
     CheckpointMissing,
@@ -42,8 +38,6 @@ enum Refusal {
     EmergencyMalformed,
     EmergencyCapabilityMissing,
     InputMissing,
-    InputEpochChanged,
-    InputIncomplete,
     InputClassMalformed,
     InputClassRefused,
     InputPositionMissing,
@@ -66,7 +60,6 @@ enum Operation {
     CalendarInitialization,
     SnapshotBegin,
     SnapshotIsolation,
-    PolicyLock,
     CheckpointLoad,
     Context,
     Calendar,
@@ -199,14 +192,10 @@ fn same_input_basis(
 ) -> bool {
     // Global archive and tombstone watermarks are progress, not input identity.
     // Fresh parent reads still verify the actual liveness and policy below.
-    original.read.policy_epoch.is_some()
-        && current.read.policy_epoch == original.read.policy_epoch
-        && current.parents == original.parents
-        && current.settings_identity == original.settings_identity
+    current.parents == original.parents && current.settings_identity == original.settings_identity
 }
 
 struct AuthorityBasis {
-    epoch: i64,
     revision: u64,
     settings: String,
     inputs: BTreeMap<String, sinex_store::signals::MatchBasis>,
@@ -224,7 +213,9 @@ impl AuthorityBasis {
             diagnostic.record(None, Refusal::AuthoritySettingsChanged);
             return Err(PolicyFailure::Unavailable);
         }
-        let mut epoch = None;
+        if notices.is_empty() {
+            return Err(PolicyFailure::Unavailable);
+        }
         let mut inputs = BTreeMap::new();
         let mut pending = BTreeMap::new();
         for notice in notices {
@@ -232,19 +223,10 @@ impl AuthorityBasis {
                 diagnostic.record(Some(&notice.delivery_id), Refusal::AuthorityBasisMissing);
                 PolicyFailure::Unavailable
             })?;
-            let known = basis.read.policy_epoch.ok_or_else(|| {
-                diagnostic.record(Some(&notice.delivery_id), Refusal::AuthorityEpochUnknown);
-                PolicyFailure::Unavailable
-            })?;
             if basis.settings_identity != identity {
                 diagnostic.record(Some(&notice.delivery_id), Refusal::AuthoritySettingsChanged);
                 return Err(PolicyFailure::Unavailable);
             }
-            if epoch.is_some_and(|epoch| epoch != known) {
-                diagnostic.record(Some(&notice.delivery_id), Refusal::AuthorityEpochDisagrees);
-                return Err(PolicyFailure::Unavailable);
-            }
-            epoch = Some(known);
             let outbox = state.outbox.get(&notice.delivery_id).ok_or_else(|| {
                 diagnostic.record(Some(&notice.delivery_id), Refusal::AuthorityPendingMissing);
                 PolicyFailure::Unavailable
@@ -265,7 +247,6 @@ impl AuthorityBasis {
             pending.insert(notice.delivery_id.clone(), outbox.clone());
         }
         Ok(Self {
-            epoch: epoch.ok_or(PolicyFailure::Unavailable)?,
             revision,
             settings: identity.into(),
             inputs,
@@ -498,14 +479,8 @@ impl Authorizer {
                 .cloned()
                 .collect(),
         };
-        let (mut tx, epoch, conditions) = snapshot::open(
-            &self.api.reads,
-            attempt,
-            basis.epoch,
-            &mut diagnostic,
-            Some(&peers),
-        )
-        .await?;
+        let (mut tx, conditions) =
+            snapshot::open(&self.api.reads, attempt, &mut diagnostic, Some(&peers)).await?;
         let decisions = attempt
             .run(async {
                 let Some(saved) = sinex_store::signals::load(&mut tx, &self.api.host)
@@ -577,12 +552,11 @@ impl Authorizer {
                             .await
                             .map_err(|error| diagnostic.store_error(Operation::InputRead, error))?
                             .ok_or(PolicyFailure::Unavailable)?;
-                        let class = output.class.and_then(|class| {
-                            serde_json::from_value::<Class>(serde_json::Value::String(class)).ok()
-                        });
-                        if output.epoch != Some(basis.epoch)
-                            || output.state.as_deref() != Some("complete")
-                            || !class.is_some_and(|class| class != Class::Sealed)
+                        let class = serde_json::from_value::<Class>(serde_json::Value::String(
+                            output.class,
+                        ))
+                        .ok();
+                        if !class.is_some_and(|class| class != Class::Sealed)
                             || sinex_store::signals::input_position(&mut tx, *parent)
                                 .await
                                 .map_err(|error| {
@@ -779,15 +753,11 @@ impl Authorizer {
                                 diagnostic.record(Some(&notice.delivery_id), Refusal::InputMissing);
                                 return Err(PolicyFailure::Unavailable);
                             };
-                            let class = output.class.and_then(|class| {
-                                serde_json::from_value::<Class>(serde_json::Value::String(class))
-                                    .ok()
-                            });
-                            let refusal = if output.epoch != Some(epoch.active) {
-                                Some(Refusal::InputEpochChanged)
-                            } else if output.state.as_deref() != Some("complete") {
-                                Some(Refusal::InputIncomplete)
-                            } else if class.is_none() {
+                            let class = serde_json::from_value::<Class>(serde_json::Value::String(
+                                output.class,
+                            ))
+                            .ok();
+                            let refusal = if class.is_none() {
                                 Some(Refusal::InputClassMalformed)
                             } else if !class.is_some_and(|class| {
                                 class != Class::Sealed && grant.allows(&output.kind, class)
@@ -881,7 +851,7 @@ impl Authorizer {
                         diagnostic.record(Some(&notice.delivery_id), Refusal::QuietHold);
                         SendDecision::HoldUntil {
                             at: until,
-                            policy: format!("{}:{revision}:{}:{seq}", self.identity, epoch.active),
+                            policy: format!("{}:{revision}:{seq}", self.identity),
                         }
                     } else {
                         diagnostic.record(Some(&notice.delivery_id), Refusal::Permit);

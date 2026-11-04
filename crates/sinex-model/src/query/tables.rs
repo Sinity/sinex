@@ -329,9 +329,29 @@ pub struct Alias {
     pub fields: &'static [Field],
     /// Whether rows have a span (`start`, `end`), for `during` and `containing`.
     pub spans: bool,
-    /// A fixed payload condition beyond the kind, `(field, value)`: `now` is
-    /// `intervals` whose `open` is `true`.
+    /// A fixed condition beyond the kind, `(field, value)`, over a field's SQL
+    /// in the store, listed in `fields` or not: `now` is `intervals` whose
+    /// `open` is `true`.
     pub only: Option<(&'static str, &'static str)>,
+    /// A fusion family's fused kind: the alias leaves out every row a live
+    /// record of that kind names as a parent, so each occurrence is one row.
+    pub fused: Option<&'static str>,
+    /// Which rows of a listed kind the alias keeps; kinds not named here
+    /// keep every row.
+    pub kind_rows: &'static [KindRows],
+}
+
+/// Conditions over top-level payload fields that every kept row of `kind`
+/// meets.
+#[derive(Debug, PartialEq, Eq)]
+pub struct KindRows {
+    pub kind: &'static str,
+    /// Fields that must hold exactly this text.
+    pub equal: &'static [(&'static str, &'static str)],
+    /// Fields that must be present and not null.
+    pub present: &'static [&'static str],
+    /// Fields whose text, when present, must be none of these values.
+    pub not_in: &'static [(&'static str, &'static [&'static str])],
 }
 
 pub const ALIASES: &[Alias] = &[
@@ -345,10 +365,12 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "commands",
-        kinds: &["command.fused"],
+        kinds: &["command.fused", "command.executed", "command.imported"],
         phrase: "commands, each once however many shells saw it",
         fields: &[
             f("command", FieldType::Text, "command"),
@@ -362,6 +384,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: Some("command.fused"),
+        kind_rows: &[],
     },
     Alias {
         name: "shell-sessions",
@@ -383,6 +407,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "intervals",
@@ -398,6 +424,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "now",
@@ -413,6 +441,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: Some(("open", "true")),
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "figures",
@@ -433,38 +463,47 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "focus",
-        kinds: &["focus.fused"],
-        phrase: "window focus, each once however many sources saw it",
+        kinds: &["state.interval", "window.span"],
+        phrase: "window focus as each source recorded it",
         fields: &[
             f("app", FieldType::Text, "application"),
             f("title", FieldType::Text, "window title"),
             f("start", FieldType::Time, "start"),
             f("end", FieldType::Time, "end"),
             f("duration", FieldType::Number, "duration in seconds"),
-            f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[KindRows {
+            kind: "state.interval",
+            equal: &[("state_kind", "desktop.focus")],
+            present: &[],
+            not_in: &[],
+        }],
     },
     Alias {
         name: "visits",
-        kinds: &["visit.fused"],
-        phrase: "page visits, each once however many sources saw it",
+        kinds: &["browser.visit", "browser.history_entry", "link.followed"],
+        phrase: "page visits as each source recorded them",
         fields: &[
             f("url", FieldType::Text, "address"),
             f("title", FieldType::Text, "page title"),
-            f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "plays",
-        kinds: &["play.fused"],
-        phrase: "tracks played, each once however many sources saw it",
+        kinds: &["music.played", "player.changed"],
+        phrase: "tracks played as each source recorded them",
         fields: &[
             f("title", FieldType::Text, "track title"),
             f("artist", FieldType::Text, "artist"),
@@ -473,10 +512,17 @@ pub const ALIASES: &[Alias] = &[
             f("start", FieldType::Time, "start"),
             f("end", FieldType::Time, "end"),
             f("duration", FieldType::Number, "duration in seconds"),
-            f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: true,
         only: None,
+        fused: None,
+        // A player's report of a track starting or playing.
+        kind_rows: &[KindRows {
+            kind: "player.changed",
+            equal: &[],
+            present: &["title"],
+            not_in: &[("status", &["Paused", "Stopped"])],
+        }],
     },
     Alias {
         name: "items",
@@ -495,6 +541,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "media",
@@ -512,6 +560,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "assignments",
@@ -529,6 +579,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
 ];
 

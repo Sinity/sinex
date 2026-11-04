@@ -60,11 +60,6 @@ pub(crate) struct ReplaySequence {
 
 enum WriterJob {
     Admit(Batch),
-    ModelCall {
-        actor: String,
-        action: sinex_model::model_calls::Action,
-        capabilities: sinex_model::model_calls::Capabilities,
-    },
     Signals(Batch, Box<sinex_store::signals::Commit>),
     Checked(Batch, AdmissionCheck),
     Source(Batch, AdmissionCheck),
@@ -88,7 +83,6 @@ enum WriterJob {
 
 enum Done {
     Admitted(Outcome),
-    ModelCall(Box<sinex_model::model_calls::Outcome>),
     Replayed(Vec<Outcome>, Diff),
     Lifecycle(Step),
 }
@@ -121,28 +115,6 @@ impl WriterHandle {
     /// Shared by keyed computations in commands and the background runner.
     pub(crate) async fn lock_derivations(&self) -> tokio::sync::OwnedMutexGuard<()> {
         self.derivations.clone().lock_owned().await
-    }
-
-    pub(crate) async fn model_call(
-        &self,
-        actor: String,
-        action: sinex_model::model_calls::Action,
-        capabilities: sinex_model::model_calls::Capabilities,
-    ) -> Result<sinex_model::model_calls::Outcome, WriteError> {
-        match self
-            .send(
-                Priority::Live,
-                WriterJob::ModelCall {
-                    actor,
-                    action,
-                    capabilities,
-                },
-            )
-            .await?
-        {
-            Done::ModelCall(outcome) => Ok(*outcome),
-            _ => unreachable!("model accounting returns its own operational outcome"),
-        }
     }
 
     pub(crate) async fn submit_checked(
@@ -296,26 +268,6 @@ impl WriterHandle {
     }
 }
 
-async fn model_call(
-    connection: &mut AdmissionContext,
-    actor: &str,
-    action: &sinex_model::model_calls::Action,
-    capabilities: sinex_model::model_calls::Capabilities,
-) -> Result<sinex_model::model_calls::Outcome, WriteError> {
-    let mut tx = connection.begin().await.map_err(store_error)?;
-    match tx.model_call(actor, action, capabilities).await {
-        Ok(outcome) => {
-            tx.commit().await.map_err(store_error)?;
-            Ok(outcome)
-        }
-        Err(error) => {
-            let error = store_error(error);
-            tx.rollback().await.map_err(store_error)?;
-            Err(error)
-        }
-    }
-}
-
 /// The writer's receiving side, separate from the task so tests can queue work
 /// before the writer starts.
 pub(crate) struct Queues {
@@ -413,13 +365,6 @@ pub(crate) async fn run_notifying(
         };
         let service_started = std::time::Instant::now();
         let mut result = match job.work {
-            WriterJob::ModelCall {
-                actor,
-                action,
-                capabilities,
-            } => model_call(&mut connection, &actor, &action, capabilities)
-                .await
-                .map(|outcome| Done::ModelCall(Box::new(outcome))),
             WriterJob::Admit(batch) => admit_checked(
                 &mut connection,
                 &batch,
@@ -572,10 +517,7 @@ async fn admit_with_checkpoint(
     }
     let checks_time = checks_started.elapsed();
     let begin_started = std::time::Instant::now();
-    let mut tx = connection
-        .begin()
-        .await
-        .map_err(|error| store_error(error.into()))?;
+    let mut tx = connection.begin().await.map_err(store_error)?;
     let begin_time = begin_started.elapsed();
     if let Some(expected) = checkpoint.and_then(|checkpoint| checkpoint.observed_seq) {
         let current = sinex_store::query::current_seq(&mut tx)
@@ -705,9 +647,7 @@ async fn admit_with_checkpoint(
             }
 
             if let Err(error) = check() {
-                tx.rollback()
-                    .await
-                    .map_err(|error| store_error(error.into()))?;
+                tx.rollback().await.map_err(store_error)?;
                 return Err(WriteError::Refused(error));
             }
             if let Some(checkpoint) = checkpoint {
@@ -730,18 +670,14 @@ async fn admit_with_checkpoint(
                 }
             }
             let started = std::time::Instant::now();
-            tx.commit()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            tx.commit().await.map_err(store_error)?;
             outcome.timings.insert("commit", started.elapsed());
             outcome.timings.insert("checks", checks_time);
             outcome.timings.insert("begin", begin_time);
             Ok(outcome)
         }
         Err(error) => {
-            tx.rollback()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            tx.rollback().await.map_err(store_error)?;
             let recordable = record_refusals && content_error(&error);
             let error = store_error(error);
             if recordable
@@ -836,18 +772,12 @@ async fn replay_sequence(
     if !sequence.compare
         && let Some(ingress) = &sequence.ingress
     {
-        let mut scope_tx = connection
-            .begin()
-            .await
-            .map_err(|error| store_error(error.into()))?;
+        let mut scope_tx = connection.begin().await.map_err(store_error)?;
         if let Some(recorded) = crate::ingress::replay::recorded(&mut scope_tx, ingress)
             .await
             .map_err(crate::ingress::Check::write_error)?
         {
-            scope_tx
-                .rollback()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            scope_tx.rollback().await.map_err(store_error)?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check_scope(&mut scope_tx, ingress)
@@ -863,23 +793,15 @@ async fn replay_sequence(
         )
         .await
         .map_err(store_error)?;
-        scope_tx
-            .commit()
-            .await
-            .map_err(|error| store_error(error.into()))?;
+        scope_tx.commit().await.map_err(store_error)?;
     }
-    let mut tx = connection
-        .begin()
-        .await
-        .map_err(|error| store_error(error.into()))?;
+    let mut tx = connection.begin().await.map_err(store_error)?;
     if let Some(ingress) = &sequence.ingress {
         if let Some(recorded) = crate::ingress::replay::recorded(&mut tx, ingress)
             .await
             .map_err(crate::ingress::Check::write_error)?
         {
-            tx.rollback()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            tx.rollback().await.map_err(store_error)?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check(&mut tx, ingress)
@@ -935,16 +857,12 @@ async fn replay_sequence(
         .map_err(crate::ingress::Check::write_error)?;
     }
     if sequence.compare {
-        tx.rollback()
-            .await
-            .map_err(|error| store_error(error.into()))?;
+        tx.rollback().await.map_err(store_error)?;
     } else {
         replay::sequence_done(&mut tx, sequence.operation, sequence.root)
             .await
             .map_err(store_error)?;
-        tx.commit()
-            .await
-            .map_err(|error| store_error(error.into()))?;
+        tx.commit().await.map_err(store_error)?;
     }
     Ok((outcomes, diff))
 }
@@ -980,28 +898,18 @@ async fn lifecycle_step(
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
 ) -> Result<Step, WriteError> {
-    let mut tx = connection
-        .begin()
-        .await
-        .map_err(|error| store_error(error.into()))?;
+    let mut tx = connection.begin().await.map_err(store_error)?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
         Ok(step) => step,
         Err(error) => {
-            tx.rollback()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            tx.rollback().await.map_err(store_error)?;
             return Err(store_error(error));
         }
     };
     match &step {
-        Step::Refused(_) => tx
-            .rollback()
-            .await
-            .map_err(|error| store_error(error.into()))?,
+        Step::Refused(_) => tx.rollback().await.map_err(store_error)?,
         Step::Moved { remove, .. } => {
-            tx.commit()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            tx.commit().await.map_err(store_error)?;
             // Bytes left marked (no store here, or a failed punch) are
             // removed at the writer's next start.
             if !remove.is_empty()

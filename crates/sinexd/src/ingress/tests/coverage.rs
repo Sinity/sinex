@@ -252,13 +252,12 @@ async fn proof_with_completion(
 }
 
 #[devkit::test]
-async fn raw_coverage_checks_outer_epoch_and_reports_same_scope_policy_invalidation(
+async fn raw_coverage_checks_the_outer_proof_and_reports_same_scope_invalidation(
     db: devkit::pg::TestDatabase,
 ) {
     let (h, _, ids, snapshot) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
     let InputReplayReply::Page {
         position,
-        policy_epoch,
         scope,
         continuation:
             ReplayContinuation::Complete {
@@ -270,26 +269,23 @@ async fn raw_coverage_checks_outer_epoch_and_reports_same_scope_policy_invalidat
     else {
         panic!("complete native baseline")
     };
-    assert_eq!(basis.policy_epoch, policy_epoch);
     let CoverageStatus::Complete { proof: write } = proof(&h, basis.clone(), position).await else {
         panic!("positive owner write proof")
     };
-    assert_eq!(write.policy_epoch, policy_epoch);
     for mutate in [
-        |proof: &mut CoverageProof| proof.policy_epoch += 1,
         |proof: &mut CoverageProof| proof.position += 1,
         |proof: &mut CoverageProof| proof.scope.push_str("-forged"),
     ] {
         let mut forged = basis.clone();
         mutate(&mut forged);
         assert!(
-            matches!(proof(&h,forged,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==policy_epoch&&actual_scope==scope)
+            matches!(proof(&h,forged,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{scope:Some(actual_scope)},..} if actual_scope==scope)
         );
     }
     let mut forged = write.clone();
-    forged.policy_epoch += 1;
+    forged.scope.push_str("-forged");
     let mut frame = Ingress::Events {
-        frame: "forged-outer-policy".into(),
+        frame: "forged-outer-scope".into(),
         source: None,
         coverage: Some(forged),
         events: vec![ProducerEvent {
@@ -308,40 +304,12 @@ async fn raw_coverage_checks_outer_epoch_and_reports_same_scope_policy_invalidat
         frame, coverage, ..
     } = &mut frame
     {
-        *frame = "valid-outer-policy".into();
+        *frame = "valid-outer-scope".into();
         *coverage = Some(write);
     }
     assert!(
         h.send("polylogue", &frame).await.refusal.is_none(),
-        "the same canonical output with the actual signed epoch remains admissible"
-    );
-    let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    sinex_store::privacy::add_rule(
-        &mut conn,
-        &sinex_store::privacy::NewRule {
-            name: "synthetic-coverage-policy-change".into(),
-            source: "polylogue".into(),
-            event_type: Some("polylogue.message".into()),
-            field: Some("/text".into()),
-            matcher: "all".into(),
-            matcher_arg: None,
-            class: sinex_model::Class::Guarded,
-            action: sinex_store::privacy::Action::Mask,
-            author: "synthetic-test".into(),
-        },
-    )
-    .await
-    .unwrap();
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
-    let changed = sinex_store::privacy::projection::epoch(&mut conn)
-        .await
-        .unwrap()
-        .active;
-    assert!(changed > policy_epoch);
-    assert!(
-        matches!(proof(&h,basis,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==changed&&actual_scope==scope)
+        "the same canonical output with the actual signed proof remains admissible"
     );
 }
 
@@ -350,7 +318,6 @@ async fn coverage_database_uncertainty_does_not_claim_a_basis_reset(db: devkit::
     let (h, _, _, _) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
     let InputReplayReply::Page {
         position,
-        policy_epoch,
         continuation:
             ReplayContinuation::Complete {
                 raw_inputs: CoverageStatus::Complete { proof: basis },
@@ -362,7 +329,7 @@ async fn coverage_database_uncertainty_does_not_claim_a_basis_reset(db: devkit::
         panic!("complete native baseline")
     };
     assert!(
-        matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch)
+        matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.position==position)
     );
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     // A missing owner history counter is operational uncertainty. RowNotFound
@@ -386,8 +353,8 @@ async fn coverage_database_uncertainty_does_not_claim_a_basis_reset(db: devkit::
         }
     ));
     assert!(
-        matches!(proof(&h,basis,position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch),
-        "uncertainty does not invent a new epoch or invalidate the retained basis"
+        matches!(proof(&h,basis,position).await,CoverageStatus::Complete{proof} if proof.position==position),
+        "uncertainty does not invalidate the retained basis"
     );
 }
 
@@ -398,7 +365,6 @@ async fn coverage_private_key_failures_are_unverified_but_invalid_tokens_revoke_
     let (h, _, _, _) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
     let InputReplayReply::Page {
         position,
-        policy_epoch,
         scope,
         continuation:
             ReplayContinuation::Complete {
@@ -457,12 +423,12 @@ async fn coverage_private_key_failures_are_unverified_but_invalid_tokens_revoke_
         );
     }
     assert!(
-        matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.policy_epoch==policy_epoch)
+        matches!(proof(&h,basis.clone(),position).await,CoverageStatus::Complete{proof} if proof.position==position)
     );
     let mut invalid = basis;
     invalid.stamp.push_str("-forged");
     assert!(
-        matches!(proof(&h,invalid,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(actual),scope:Some(actual_scope)},..} if actual==policy_epoch&&actual_scope==scope)
+        matches!(proof(&h,invalid,position).await,CoverageStatus::Incomplete{basis:ReplayBasisStatus::Invalidated{scope:Some(actual_scope)},..} if actual_scope==scope)
     );
 }
 
@@ -592,14 +558,11 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
     assert_eq!(consumer.info().await.unwrap().ack_floor.stream_sequence, 0);
 }
 #[devkit::test]
-async fn paged_owner_replay_survives_later_admission_and_lifecycle_but_stamps_current_policy(
-    db: devkit::pg::TestDatabase,
-) {
+async fn paged_owner_replay_survives_later_admission_and_lifecycle(db: devkit::pg::TestDatabase) {
     let (h, material, ids, snapshot) = setup(db).await;
     let first = page(&h, "polylogue", "cache", None).await;
     let InputReplayReply::Page {
         position,
-        policy_epoch: initial_epoch,
         scope: initial_scope,
         inputs,
         continuation: ReplayContinuation::Next { cursor },
@@ -614,7 +577,7 @@ async fn paged_owner_replay_survives_later_admission_and_lifecycle_but_stamps_cu
             .all(|input| !input.archived && input.lifecycle_position.is_none())
     );
     assert!(
-        matches!(page(&h,"polylogue","other-cache",Some(cursor.clone())).await,InputReplayReply::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(epoch),scope:Some(scope)},..} if epoch==initial_epoch&&scope==initial_scope)
+        matches!(page(&h,"polylogue","other-cache",Some(cursor.clone())).await,InputReplayReply::Incomplete{basis:ReplayBasisStatus::Invalidated{scope:Some(scope)},..} if scope==initial_scope)
     );
     assert!(
         matches!(page(&h,"narrow","cache",None).await,InputReplayReply::Page{scope,continuation:ReplayContinuation::Complete{raw_inputs:CoverageStatus::Incomplete{..},..},..} if scope!=initial_scope)
@@ -682,40 +645,10 @@ async fn paged_owner_replay_survives_later_admission_and_lifecycle_but_stamps_cu
     };
     let receipt = h.send("polylogue", &frozen).await;
     assert_eq!(receipt.refusal, None);
-    let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    sinex_store::privacy::add_rule(
-        &mut conn,
-        &sinex_store::privacy::NewRule {
-            name: "synthetic-required-text".into(),
-            source: "polylogue".into(),
-            event_type: Some("polylogue.message".into()),
-            field: Some("/text".into()),
-            matcher: "all".into(),
-            matcher_arg: None,
-            author: "synthetic-test".into(),
-            class: sinex_model::Class::Guarded,
-            action: sinex_store::privacy::Action::Mask,
-        },
-    )
-    .await
-    .unwrap();
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
     assert_eq!(
         h.send("polylogue", &frozen).await,
         receipt,
-        "exact retry precedes proof freshness"
-    );
-    let mut fresh_name = frozen;
-    let Ingress::Events { frame, .. } = &mut fresh_name else {
-        unreachable!()
-    };
-    *frame = "stale-proof".into();
-    assert!(h.send("polylogue", &fresh_name).await.refusal.is_some());
-    assert!(
-        matches!(page(&h,"polylogue","cache",None).await,InputReplayReply::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(epoch),scope:Some(scope)},..} if epoch>initial_epoch&&scope==initial_scope),
-        "a transformed required fact never becomes complete from its E/hash alone"
+        "an exact retry returns its original receipt"
     );
 }
 #[devkit::test]
@@ -761,58 +694,7 @@ async fn a_tombstone_between_pages_and_a_missing_basis_refuse_replay_authority(
 }
 
 #[devkit::test]
-async fn same_valued_mask_invalidates_required_input_authority(db: devkit::pg::TestDatabase) {
-    let (h, _, ids, _) = setup_inputs(db, 1, "[masked]", sinex_model::Class::Guarded).await;
-    let InputReplayReply::Page {
-        policy_epoch: before,
-        continuation: ReplayContinuation::Complete { .. },
-        ..
-    } = page(&h, "polylogue", "cache", None).await
-    else {
-        panic!("original literal is complete")
-    };
-    let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    sinex_store::privacy::add_rule(
-        &mut conn,
-        &sinex_store::privacy::NewRule {
-            name: "same-visible-value".into(),
-            source: "polylogue".into(),
-            event_type: Some("polylogue.message".into()),
-            field: Some("/text".into()),
-            matcher: "all".into(),
-            matcher_arg: None,
-            class: sinex_model::Class::Guarded,
-            action: sinex_store::privacy::Action::Mask,
-            author: "synthetic-test".into(),
-        },
-    )
-    .await
-    .unwrap();
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
-    assert!(
-        matches!(page(&h,"polylogue","cache",None).await,InputReplayReply::Incomplete{basis:ReplayBasisStatus::Invalidated{policy_epoch:Some(epoch),..},..} if epoch>before)
-    );
-    let fetched: sinex_protocol::FetchEventReply = sinex_transport::replies::request_json(
-        &h.client,
-        h.subjects.fetch_event("polylogue"),
-        "polylogue",
-        &sinex_protocol::FetchEvent { event: ids[0] },
-        Duration::from_secs(20),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        fetched.refusal_kind,
-        Some(sinex_protocol::FetchRefusalKind::Unavailable)
-    );
-    assert!(fetched.event.is_none());
-}
-#[devkit::test]
-async fn database_uncertainty_fences_without_claiming_an_epoch_or_scope_reset(
-    db: devkit::pg::TestDatabase,
-) {
+async fn database_uncertainty_fences_without_claiming_a_scope_reset(db: devkit::pg::TestDatabase) {
     let (h, _, _, _) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
     assert!(matches!(
         page(&h, "polylogue", "cache", None).await,

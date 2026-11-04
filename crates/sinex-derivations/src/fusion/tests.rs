@@ -1,20 +1,12 @@
-use super::rules::{
-    CLIPBOARD, COMMANDS, CONVERSATIONS, FOCUS, MAIL, NOTIFICATIONS, PLAYS, POSTS, REST, RULES,
-    VISITS,
-};
+use super::rules::{COMMANDS, MAIL, RULES};
 use super::*;
-use sinex_model::event_types::browser::LinkFollowed;
-use sinex_model::event_types::browser::{BrowserHistoryEntry, BrowserVisit};
 use sinex_model::event_types::communication::MailMessage;
-use sinex_model::event_types::desktop::WindowSpan;
-use sinex_model::event_types::media::MusicPlayed;
-use sinex_model::event_types::session::{ClipboardCopied, NotificationShown, PlayerChanged};
-use sinex_model::event_types::{CommandExecuted, CommandImported, StateInterval};
+use sinex_model::event_types::{CommandExecuted, CommandImported};
 use sinex_model::{Class, EventPayload, MaterialId, Origin, ReadingOrder, RecordLocation};
 
-const H: f64 = 1_700_002_800.0; // an hour boundary (1700002800 / 3600 = 472223)
+pub(crate) const H: f64 = 1_700_002_800.0; // an hour boundary (1700002800 / 3600 = 472223)
 
-fn at(secs: f64) -> Timestamp {
+pub(crate) fn at(secs: f64) -> Timestamp {
     Timestamp::from_unix_ns((secs * 1e9) as i128).unwrap()
 }
 
@@ -73,205 +65,9 @@ pub(crate) fn zsh(command: &str, secs: f64) -> Event {
     )
 }
 
-/// A compositor focus interval, as the interval derivation writes it.
-fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> Event {
-    let payload = StateInterval {
-        fenced_at: None,
-        interval_id: format!("desktop.focus:{class}:{from}"),
-        state_kind: "desktop.focus".into(),
-        subject_id: Some(class.into()),
-        label: Some(format!("{class}: {title}")),
-        started_at: at(from),
-        ended_at: to.map(at),
-        start_event_type: "window.focused".into(),
-        end_event_type: to.map(|_| "window.focused".into()),
-        attributes: [("class", class), ("title", title)]
-            .into_iter()
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
-            .collect(),
-    };
-    crate::derived_event::derived(&payload, "state.intervals", &[zsh("parent", from)])
-}
-
-fn activitywatch(app: &str, title: &str, from: f64, to: f64) -> Event {
-    captured(
-        &WindowSpan {
-            scope: None,
-            host: None,
-            bucket: "aw-watcher-window_box".into(),
-            span_id: from as i64,
-            started_at: at(from),
-            ended_at: at(to),
-            app: app.into(),
-            title: title.into(),
-            merged: 1,
-        },
-        "desktop.activitywatch",
-        Class::Open,
-    )
-}
-
-fn chromium(url: &str, secs: f64) -> Event {
-    captured(
-        &BrowserVisit {
-            database_generation: "fixture-host:1:10".into(),
-            profile: "google-chrome/Default".into(),
-            visit_id: secs as i64,
-            url: Some(url.into()),
-            title: Some("From Chromium".into()),
-            visited_at: at(secs),
-            from_visit: None,
-            transition: 1,
-            duration_us: None,
-            extra: Default::default(),
-        },
-        "browser.chromium-visits",
-        Class::Open,
-    )
-}
-
-fn takeout(url: &str, secs: f64) -> Event {
-    captured(
-        &BrowserHistoryEntry {
-            url: url.into(),
-            title: Some("From Takeout".into()),
-            visited_at: at(secs),
-            page_transition: Some("LINK".into()),
-            client_id: None,
-            favicon_url: None,
-            extra: Default::default(),
-        },
-        "browser.takeout-chrome-history",
-        Class::Open,
-    )
-}
-
-/// The same event as the Sinnix capture lake holds it: the lake emits the
-/// live capture's event types under its own lane's source.
-fn in_lake(mut event: Event, source: &str) -> Event {
-    event.source = source.into();
-    event.payload["captured_by"] = json!("sinnix");
-    event
-}
-
-/// A link the browser extension reported, as the capture lake holds it.
-fn link(url: &str, title: &str, secs: f64) -> Event {
-    captured(
-        &LinkFollowed {
-            followed_at: at(secs),
-            from_url: None,
-            from_title: None,
-            to_url: Some(url.into()),
-            to_title: Some(title.into()),
-            link_text: None,
-            trigger: Some("click".into()),
-            note: None,
-            extra: Default::default(),
-        },
-        "browser.navigation",
-        Class::Open,
-    )
-}
-
-fn spotify(track: &str, artist: &str, from: f64, to: f64) -> Event {
-    captured(
-        &MusicPlayed {
-            started_at: at(from),
-            ended_at: at(to),
-            played_ms: ((to - from) * 1e3) as i64,
-            track_uri: None,
-            track_name: Some(track.into()),
-            artist_name: Some(artist.into()),
-            album_name: Some("Album".into()),
-            episode_uri: None,
-            episode_name: None,
-            show_name: None,
-            audiobook_title: None,
-            audiobook_chapter_title: None,
-            platform: None,
-            conn_country: None,
-            reason_start: None,
-            reason_end: None,
-            shuffle: None,
-            skipped: None,
-            offline: None,
-            incognito_mode: None,
-            extra: Default::default(),
-        },
-        "media.spotify-history",
-        Class::Open,
-    )
-}
-
-fn mpris(title: &str, artist: &str, secs: f64, status: Option<&str>, length_s: f64) -> Event {
-    captured(
-        &PlayerChanged {
-            captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
-            received_at: at(secs),
-            player: "org.mpris.MediaPlayer2.spotify".into(),
-            status: status.map(str::to_owned),
-            title: Some(title.into()),
-            artists: vec![artist.into()],
-            album: None,
-            url: None,
-            length_us: Some((length_s * 1e6) as i64),
-            position_us: None,
-            snapshot: false,
-            heartbeat: false,
-            properties: Default::default(),
-        },
-        "media.mpris",
-        Class::Open,
-    )
-}
-
-fn clipboard(selection: &str, text: &str, secs: f64, secret: bool) -> Event {
-    captured(
-        &ClipboardCopied {
-            captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
-            received_at: at(secs),
-            selection: selection.into(),
-            mime_types: Some(vec!["text/plain".into()]),
-            mime_type: Some("text/plain".into()),
-            text: Some(text.into()),
-            bytes: Some(text.len() as u64),
-            content_hash: None,
-            sha256: None,
-            window: None,
-            imported_from: None,
-            secret,
-            extra: Default::default(),
-        },
-        "desktop.clipboard",
-        Class::Open,
-    )
-}
-
-fn notification(summary: &str, secs: f64) -> Event {
-    captured(
-        &NotificationShown {
-            captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
-            received_at: at(secs),
-            app: "mail".into(),
-            summary: summary.into(),
-            body: "body".into(),
-            icon: None,
-            notification_id: None,
-            replaces_id: None,
-            actions: vec![],
-            hints: Default::default(),
-            expire_timeout_ms: -1,
-            sender: ":1.2".into(),
-            extra: Default::default(),
-        },
-        "desktop.notifications",
-        Class::Open,
-    )
-}
-
 /// Run a rule as the runner would: every key the inputs touch, each reading
 /// what its query admits. Outputs sorted by start, then record.
-fn fuse_events(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Event> {
+pub(crate) fn fuse_events(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Event> {
     let fusion = Fusion(rule);
     let env = Env::at(
         Timestamp::from_unix_secs(2_000_000_000).unwrap(),
@@ -310,6 +106,25 @@ fn fuse(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Value> {
         .into_iter()
         .map(|e| e.payload)
         .collect()
+}
+
+/// What a consumer reads: each occurrence once, from the fused records and
+/// the inputs together. Sorted by start, then record.
+fn occurrences(rule: &'static FusionRule, inputs: &[Event]) -> Vec<Value> {
+    let mut all = fuse_events(rule, inputs);
+    all.extend(inputs.iter().cloned());
+    let mut out: Vec<Value> = rule
+        .occurrences(&all)
+        .into_iter()
+        .map(|o| o.payload.into_owned())
+        .collect();
+    out.sort_by_key(|p| {
+        (
+            p[rule.start_field].as_str().unwrap_or("").to_owned(),
+            p["record"].as_str().unwrap_or("").to_owned(),
+        )
+    });
+    out
 }
 
 fn observed_by(v: &Value) -> Vec<&str> {
@@ -375,8 +190,18 @@ fn closest_pairs_win_and_extras_stay_alone() {
             zsh("make", H + 101.5),
         ],
     );
-    assert_eq!(out.len(), 2);
-    assert_eq!(out.iter().filter(|f| observed_by(f).len() == 2).count(), 1);
+    assert_eq!(out.len(), 1);
+    assert_eq!(observed_by(&out[0]).len(), 2);
+    let read = occurrences(
+        &COMMANDS,
+        &[
+            atuin("make", H + 100.0, 0),
+            zsh("make", H + 100.4),
+            zsh("make", H + 101.5),
+        ],
+    );
+    assert_eq!(read.len(), 2);
+    assert_eq!(read.iter().filter(|f| observed_by(f).len() == 2).count(), 1);
 }
 
 #[devkit::test]
@@ -388,27 +213,25 @@ fn fallback_needs_a_unique_partner() {
     );
     assert_eq!(one.len(), 1);
     // Two zsh partners for one Atuin record: ambiguous, nothing fuses.
-    let out = fuse(
-        &COMMANDS,
-        &[
-            atuin("git push", H + 300.0, 0),
-            zsh("git push", H + 320.0),
-            zsh("git push", H + 340.0),
-        ],
-    );
-    assert_eq!(out.len(), 3);
-    assert!(out.iter().all(|f| observed_by(f).len() == 1));
+    let inputs = [
+        atuin("git push", H + 300.0, 0),
+        zsh("git push", H + 320.0),
+        zsh("git push", H + 340.0),
+    ];
+    assert!(fuse(&COMMANDS, &inputs).is_empty());
+    let read = occurrences(&COMMANDS, &inputs);
+    assert_eq!(read.len(), 3);
+    assert!(read.iter().all(|f| observed_by(f).len() == 1));
 }
 
 #[devkit::test]
 fn different_commands_or_far_apart_never_fuse() {
-    let differ = fuse(
-        &COMMANDS,
-        &[atuin("ls", H + 10.0, 0), zsh("ls -l", H + 10.0)],
-    );
-    assert_eq!(differ.len(), 2);
-    let far = fuse(&COMMANDS, &[atuin("ls", H + 10.0, 0), zsh("ls", H + 100.0)]);
-    assert_eq!(far.len(), 2);
+    let differ = [atuin("ls", H + 10.0, 0), zsh("ls -l", H + 10.0)];
+    assert!(fuse(&COMMANDS, &differ).is_empty());
+    assert_eq!(occurrences(&COMMANDS, &differ).len(), 2);
+    let far = [atuin("ls", H + 10.0, 0), zsh("ls", H + 100.0)];
+    assert!(fuse(&COMMANDS, &far).is_empty());
+    assert_eq!(occurrences(&COMMANDS, &far).len(), 2);
 }
 
 #[devkit::test]
@@ -432,9 +255,11 @@ fn privacy_class_is_the_strictest_parent() {
 fn removed_records_do_not_fuse() {
     let mut a = atuin("rm -rf x", H + 10.0, 0);
     a.record_state = RecordState::Removed;
-    let out = fuse(&COMMANDS, &[a, zsh("rm -rf x", H + 10.1)]);
-    assert_eq!(out.len(), 1);
-    assert_eq!(observed_by(&out[0]), ["terminal.zsh"]);
+    let inputs = [a, zsh("rm -rf x", H + 10.1)];
+    assert!(fuse(&COMMANDS, &inputs).is_empty());
+    let read = occurrences(&COMMANDS, &inputs);
+    assert_eq!(read.len(), 1);
+    assert_eq!(observed_by(&read[0]), ["terminal.zsh"]);
 }
 
 #[devkit::test]
@@ -444,9 +269,11 @@ fn the_same_command_twice_in_one_second_is_two_runs() {
     if let Origin::Record { location, .. } = &mut b.origin {
         location.anchor = 40;
     }
-    let out = fuse_events(&COMMANDS, &[a, b]);
-    assert_eq!(out.len(), 2);
-    assert_ne!(out[0].equivalence_key, out[1].equivalence_key);
+    let inputs = [a, b];
+    assert!(fuse(&COMMANDS, &inputs).is_empty());
+    let read = occurrences(&COMMANDS, &inputs);
+    assert_eq!(read.len(), 2);
+    assert_ne!(read[0]["record"], read[1]["record"]);
 }
 
 #[devkit::test]
@@ -461,243 +288,100 @@ fn result_does_not_depend_on_input_order() {
     let mut reversed = inputs.clone();
     reversed.reverse();
     assert_eq!(fuse(&COMMANDS, &inputs), fuse(&COMMANDS, &reversed));
+    assert_eq!(
+        occurrences(&COMMANDS, &inputs),
+        occurrences(&COMMANDS, &reversed)
+    );
 }
 
-// Window focus.
-
 #[devkit::test]
-fn the_compositor_and_activitywatch_give_one_focus() {
-    // The compositor saw one focus of ten minutes; ActivityWatch split it at
-    // a title change. One focus, timed by the compositor, all three parents.
-    let out = fuse_events(
-        &FOCUS,
+fn no_fused_record_has_fewer_than_two_members() {
+    let commands = fuse_events(
+        &COMMANDS,
         &[
-            hyprland("kitty", "vim", H + 0.0, Some(H + 600.0)),
-            activitywatch("Kitty", "vim", H + 0.4, H + 300.0),
-            activitywatch("Kitty", "cargo", H + 300.0, H + 600.0),
+            atuin("ls", H + 10.0, 0),
+            zsh("ls", H + 10.2),
+            atuin("only atuin", H + 20.0, 0),
+            zsh("only zsh", H + 30.0),
         ],
     );
+    let mut alone = mail("communication.imap", "<alone@x>", H + 5.0);
+    alone.payload["account"] = Value::Null;
+    let mail = fuse_events(
+        &MAIL,
+        &[
+            mail("communication.imap", "<1@x>", H + 5.0),
+            mail("communication.mbox", "<1@x>", H + 5.0),
+            mail("communication.imap", "<2@x>", H + 6.0),
+            alone,
+        ],
+    );
+    assert_eq!(commands.len(), 1);
+    assert_eq!(mail.len(), 1);
+    for fused in commands.iter().chain(&mail) {
+        let Origin::Derived { parents } = &fused.origin else {
+            panic!("a fused record is derived");
+        };
+        assert!(parents.len() >= 2, "{fused:?}");
+    }
+}
+
+#[devkit::test]
+fn a_consumer_reads_each_command_once_whichever_shells_saw_it() {
+    let read = occurrences(
+        &COMMANDS,
+        &[
+            atuin("both", H + 10.0, 0),
+            zsh("both", H + 10.3),
+            atuin("atuin only", H + 20.0, 1),
+            zsh("zsh only", H + 30.0),
+        ],
+    );
+    let commands: Vec<_> = read
+        .iter()
+        .map(|c| c["command"].as_str().unwrap())
+        .collect();
+    assert_eq!(commands, ["both", "atuin only", "zsh only"]);
+    assert_eq!(observed_by(&read[0]), ["terminal.atuin", "terminal.zsh"]);
+    assert_eq!(observed_by(&read[1]), ["terminal.atuin"]);
+    assert_eq!(read[1]["exit_code"], 1);
+    assert_eq!(observed_by(&read[2]), ["terminal.zsh"]);
+    assert_eq!(read[2]["host"], "box");
+}
+
+#[devkit::test]
+fn absorb_joins_a_repeat_inside_a_group_led_by_a_preferred_input() {
+    let rule: &'static FusionRule = Box::leak(Box::new(FusionRule {
+        matching: Matching::Time {
+            window_ns: 2_000_000_000,
+            fallback_ns: 60_000_000_000,
+            absorb_ns: Some(60_000_000_000),
+        },
+        ..COMMANDS
+    }));
+    let inputs = [
+        atuin("vim", H + 10.0, 0),
+        zsh("vim", H + 10.5),
+        zsh("vim", H + 11.5),
+    ];
+    let out = fuse_events(rule, &inputs);
     assert_eq!(out.len(), 1, "{out:?}");
-    let f = &out[0].payload;
-    assert_eq!(f["started_at"], json!(at(H)));
-    assert_eq!(f["ended_at"], json!(at(H + 600.0)));
-    assert_eq!(f["app"], "kitty");
-    assert_eq!(observed_by(f), ["state.intervals", "desktop.activitywatch"]);
     assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 3));
-}
-
-#[devkit::test]
-fn focus_one_source_saw_stands_alone() {
-    let out = fuse(
-        &FOCUS,
-        &[
-            activitywatch("firefox", "a", H + 10.0, H + 70.0),
-            activitywatch("kitty", "b", H + 70.0, H + 90.0),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-    assert_eq!(out[1]["started_at"], json!(at(H + 70.0)));
-    assert_eq!(observed_by(&out[1]), ["desktop.activitywatch"]);
-}
-
-#[devkit::test]
-fn an_open_focus_absorbs_what_follows_and_stays_open() {
-    let out = fuse(
-        &FOCUS,
-        &[
-            hyprland("kitty", "vim", H + 0.0, None),
-            activitywatch("kitty", "vim", H + 0.2, H + 100.0),
-            activitywatch("kitty", "top", H + 100.0, H + 200.0),
-        ],
-    );
-    assert_eq!(out.len(), 1, "{out:?}");
-    assert_eq!(out[0]["ended_at"], Value::Null);
-}
-
-#[devkit::test]
-fn a_focus_across_an_hour_edge_is_emitted_once() {
-    // The title change ActivityWatch saw falls in the next hour's key.
-    let out = fuse(
-        &FOCUS,
-        &[
-            hyprland("kitty", "vim", H - 100.0, Some(H + 1000.0)),
-            activitywatch("kitty", "vim", H - 99.9, H + 500.0),
-            activitywatch("kitty", "make", H + 500.0, H + 1000.0),
-        ],
-    );
-    assert_eq!(out.len(), 1, "{out:?}");
-    assert_eq!(observed_by(&out[0]).len(), 2);
-}
-
-#[devkit::test]
-fn a_span_that_began_before_the_focus_is_not_absorbed() {
-    let out = fuse(
-        &FOCUS,
-        &[
-            activitywatch("firefox", "a", H - 1000.0, H + 60.0),
-            hyprland("kitty", "vim", H + 0.0, Some(H + 60.0)),
-        ],
-    );
-    assert_eq!(out.len(), 2);
-}
-
-// Page visits.
-
-#[devkit::test]
-fn a_visit_in_history_takeout_and_the_lake_is_one_visit() {
-    let url = "https://example.org/a";
-    let out = fuse(
-        &VISITS,
-        &[
-            takeout(url, H + 20.0),
-            chromium(url, H + 20.0),
-            link(url, "From the lake", H + 21.0),
-        ],
-    );
-    assert_eq!(out.len(), 1, "{out:?}");
-    assert_eq!(
-        out[0]["title"], "From Chromium",
-        "the browser's own history first"
-    );
-    assert_eq!(out[0]["visited_at"], json!(at(H + 20.0)));
-    assert_eq!(
-        observed_by(&out[0]),
-        [
-            "browser.chromium-visits",
-            "browser.takeout-chrome-history",
-            "browser.navigation"
-        ]
-    );
-}
-
-#[devkit::test]
-fn visits_to_other_pages_or_later_stay_apart() {
-    let out = fuse(
-        &VISITS,
-        &[
-            chromium("https://example.org/a", H + 20.0),
-            takeout("https://example.org/b", H + 20.0),
-            chromium("https://example.org/a", H + 620.0),
-        ],
-    );
-    assert_eq!(out.len(), 3);
-}
-
-// Plays.
-
-#[devkit::test]
-fn a_play_in_the_export_and_the_player_is_one_play() {
-    let out = fuse_events(
-        &PLAYS,
-        &[
-            spotify("Song", "Artist", H + 2.0, H + 200.0),
-            mpris("song", "artist ", H + 0.5, Some("Playing"), 198.0),
-            mpris("Song", "Artist", H + 1.5, None, 198.0),
-            in_lake(
-                mpris("Song", "Artist", H + 0.7, Some("Playing"), 198.0),
-                "desktop.media",
-            ),
-        ],
-    );
-    assert_eq!(out.len(), 1, "{out:?}");
-    let p = &out[0].payload;
-    assert_eq!(p["started_at"], json!(at(H + 2.0)), "the export times it");
-    assert_eq!(p["ended_at"], json!(at(H + 200.0)));
-    assert_eq!(p["title"], "Song");
-    assert_eq!(p["player"], "org.mpris.MediaPlayer2.spotify");
-    assert_eq!(
-        observed_by(p),
-        ["media.spotify-history", "media.mpris", "desktop.media"]
-    );
-    assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 4));
-}
-
-#[devkit::test]
-fn a_player_alone_gives_one_play_per_track_start() {
-    let out = fuse(
-        &PLAYS,
-        &[
-            mpris("Song", "Artist", H + 0.0, Some("Playing"), 180.0),
-            mpris("Song", "Artist", H + 1.0, None, 180.0),
-            mpris("Song", "Artist", H + 60.0, Some("Paused"), 180.0),
-            mpris("Song", "Artist", H + 200.0, Some("Playing"), 180.0),
-        ],
-    );
-    assert_eq!(out.len(), 2, "a refresh joins, a pause is no play: {out:?}");
-    assert_eq!(out[1]["started_at"], json!(at(H + 200.0)));
-}
-
-#[devkit::test]
-fn a_stream_of_unknown_length_has_no_end() {
-    // Chromium reports a live stream's length as the largest integer.
-    let out = fuse(
-        &PLAYS,
-        &[
-            mpris("Live", "Channel", H, Some("Playing"), i64::MAX as f64 / 1e6),
-            in_lake(
-                mpris(
-                    "Live",
-                    "Channel",
-                    H + 0.2,
-                    Some("Playing"),
-                    9_223_372_036_854.775,
-                ),
-                "desktop.media",
-            ),
-        ],
-    );
-    assert_eq!(out.len(), 1, "{out:?}");
-    assert!(
-        out[0]
-            .get("ended_at")
-            .is_none_or(|end| end.as_str() < Some("2100")),
-        "{:?}",
-        out[0]
-    );
-}
-
-// Clipboard and notifications: live capture against the capture lake.
-
-#[devkit::test]
-fn a_copy_seen_live_and_in_the_lake_is_one_copy() {
-    let out = fuse(
-        &CLIPBOARD,
-        &[
-            clipboard("clipboard", "hello", H + 5.0, false),
-            in_lake(
-                clipboard("clipboard", "hello", H + 5.3, false),
-                "desktop.clipboard",
-            ),
-            in_lake(
-                clipboard("primary", "hello", H + 5.3, false),
-                "desktop.clipboard",
-            ),
-            clipboard("clipboard", "secret", H + 9.0, true),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:?}");
-    assert_eq!(observed_by(&out[0]), ["desktop.clipboard"]);
-    assert_eq!(out[1]["selection"], "primary");
-}
-
-#[devkit::test]
-fn a_notification_seen_live_and_in_the_lake_is_one_notification() {
-    let out = fuse(
-        &NOTIFICATIONS,
-        &[
-            notification("New mail", H + 5.0),
-            in_lake(notification("New mail", H + 5.1), "desktop.notifications"),
-            notification("Other", H + 5.0),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:?}");
-    let joined = out.iter().find(|n| n["summary"] == "New mail").unwrap();
-    assert_eq!(observed_by(joined), ["desktop.notifications"]);
+    // Without absorb, the repeat is a command of its own.
+    assert_eq!(occurrences(&COMMANDS, &inputs).len(), 2);
+    // A record before the group's window is not absorbed.
+    let earlier = [
+        zsh("vim", H + 5.0),
+        atuin("vim", H + 10.0, 0),
+        zsh("vim", H + 10.5),
+    ];
+    assert_eq!(fuse_events(rule, &earlier).len(), 1);
+    assert_eq!(occurrences(rule, &earlier).len(), 2);
 }
 
 // Mail: one message stored by several mail sources.
 
-fn mail(source: &str, id: &str, secs: f64) -> Event {
+pub(crate) fn mail(source: &str, id: &str, secs: f64) -> Event {
     captured(
         &MailMessage {
             account: Some("owner@example.test".into()),
@@ -725,16 +409,16 @@ fn mail(source: &str, id: &str, secs: f64) -> Event {
 
 #[devkit::test]
 fn a_message_in_imap_and_an_mbox_is_one_message() {
-    let out = fuse(
-        &MAIL,
-        &[
-            mail("communication.mbox", "<1@x>", H + 5.0),
-            mail("communication.imap", "<1@x>", H + 5.0),
-            mail("communication.imap", "<2@x>", H + 5.0),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:?}");
-    let joined = out.iter().find(|m| m["message_id"] == "<1@x>").unwrap();
+    let inputs = [
+        mail("communication.mbox", "<1@x>", H + 5.0),
+        mail("communication.imap", "<1@x>", H + 5.0),
+        mail("communication.imap", "<2@x>", H + 5.0),
+    ];
+    let out = fuse(&MAIL, &inputs);
+    assert_eq!(out.len(), 1, "{out:?}");
+    let read = occurrences(&MAIL, &inputs);
+    assert_eq!(read.len(), 2, "{read:?}");
+    let joined = read.iter().find(|m| m["message_id"] == "<1@x>").unwrap();
     assert_eq!(
         observed_by(joined),
         ["communication.imap", "communication.mbox"]
@@ -743,249 +427,54 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
 }
 
 #[devkit::test]
-fn mail_from_a_source_no_input_names_is_not_fused() {
-    let out = fuse(&MAIL, &[mail("communication.elsewhere", "<1@x>", H + 5.0)]);
-    assert!(out.is_empty());
-}
-
-// Rest.
-
-fn health(provider: &str, category: &str, from: f64, to: f64) -> Event {
-    captured(
-        &sinex_model::event_types::health::HealthRecord::new(
-            provider.into(),
-            category.into(),
-            format!("{provider}:{from}"),
-            Some(at(from)),
-            Some(at(to)),
-            None,
-            Default::default(),
-            vec![],
-        )
-        .unwrap(),
-        if provider == "sleep-as-android" {
-            "health.sleep-as-android"
-        } else {
-            "health.samsung"
-        },
-        Class::Guarded,
-    )
-}
-
-#[devkit::test]
-fn one_night_two_providers_is_one_rest_and_a_nap_its_own() {
-    let night = H;
-    let out = fuse(
-        &REST,
-        &[
-            health("sleep-as-android", "sleep", night, night + 8.0 * 3600.0),
-            health(
-                "samsung-health",
-                "Sleep",
-                night + 600.0,
-                night + 7.9 * 3600.0,
-            ),
-            health(
-                "samsung-health",
-                "Shealth Vitality Nap Data",
-                night + 15.0 * 3600.0,
-                night + 15.5 * 3600.0,
-            ),
-            // Not rest at all.
-            health("samsung-health", "Heart Rate", night + 60.0, night + 60.0),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:#?}");
-    assert_eq!(
-        observed_by(&out[0]),
-        ["health.sleep-as-android", "health.samsung"]
-    );
-    assert_eq!(out[0]["kind"], "sleep");
-    assert_eq!(
-        out[0]["started_at"],
-        serde_json::to_value(at(night)).unwrap(),
-        "times come from the preferred provider"
-    );
-    assert_eq!(out[1]["kind"], "nap");
-    assert_eq!(observed_by(&out[1]), ["health.samsung"]);
-}
-
-// Posts: the GDPR export and the public archive name the same Reddit IDs.
-
-fn post(source: &str, id: &str, secs: f64, body: Option<&str>) -> Event {
-    captured(
-        &sinex_model::event_types::social::PostPublished {
-            service: "reddit".into(),
-            kind: "comment".into(),
-            native_id: id.into(),
-            created_at: Some(at(secs)),
-            title: None,
-            body: body.map(str::to_owned),
-            url: None,
-            parent: None,
-            community: Some("synthetic".into()),
-            tags: vec![],
-            score: None,
-            extra: Default::default(),
-        },
-        source,
-        Class::Open,
-    )
-}
-
-#[devkit::test]
-fn a_comment_in_the_export_and_the_archive_is_one_comment() {
-    let out = fuse(
-        &POSTS,
-        &[
-            post("social.reddit", "c1", H + 5.0, Some("as exported")),
-            post("social.reddit-archive", "c1", H + 5.0, Some("as archived")),
-            post(
-                "social.reddit-archive",
-                "c2",
-                H + 5.0,
-                Some("deleted later"),
-            ),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:?}");
-    let joined = out.iter().find(|p| p["native_id"] == "c1").unwrap();
-    assert_eq!(
-        observed_by(joined),
-        ["social.reddit", "social.reddit-archive"]
-    );
-    assert_eq!(joined["body"], "as exported", "the export is preferred");
-    let alone = out.iter().find(|p| p["native_id"] == "c2").unwrap();
-    assert_eq!(observed_by(alone), ["social.reddit-archive"]);
-}
-
-// Conversations: a GDPR export and a database saved by a tool.
-
-fn said(source: &str, sender: &str, text: &str, ms: i128) -> Event {
-    captured(
-        &sinex_model::event_types::communication::ConversationMessage {
-            service: "facebook-messenger".into(),
-            thread: format!("{source} thread"),
-            thread_name: None,
-            participants: vec![],
-            sender: sender.into(),
-            sent_at: Timestamp::from_unix_ns(at(H).unix_ns() + ms * 1_000_000).unwrap(),
-            text: Some(text.into()),
-            kind: None,
-            media: vec![],
-            reactions: vec![],
-            message_id: (source == "communication.messenger-sqlite").then(|| format!("mid.{ms}")),
-            unsent_at: None,
-        },
-        source,
-        Class::Open,
-    )
-}
-
-#[devkit::test]
-fn the_same_text_at_the_same_millisecond_is_one_message() {
-    let out = fuse(
-        &CONVERSATIONS,
-        &[
-            said("communication.messenger", "Ann Example", "see you", 1_000),
-            said("communication.messenger-sqlite", "100", "see you", 1_000),
-            // The same words a second later are another message.
-            said("communication.messenger-sqlite", "100", "see you", 2_000),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:?}");
-    let joined = out.iter().find(|m| observed_by(m).len() == 2).unwrap();
-    assert_eq!(
-        joined["sender"], "Ann Example",
-        "the export's names are preferred"
-    );
-    assert_eq!(
-        joined["message_id"], "mid.1000",
-        "the ID comes from the database"
-    );
-}
-
-#[devkit::test]
-fn repeated_copies_from_one_capture_stay_separate() {
-    let out = fuse(
-        &CLIPBOARD,
-        &[
-            clipboard("clipboard", "hello", H + 5.0, false),
-            clipboard("clipboard", "hello", H + 5.4, false),
-            in_lake(
-                clipboard("clipboard", "hello", H + 5.1, false),
-                "desktop.clipboard",
-            ),
-            in_lake(
-                clipboard("clipboard", "hello", H + 5.5, false),
-                "desktop.clipboard",
-            ),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:?}");
-    for copy in out {
-        assert_eq!(observed_by(&copy), ["desktop.clipboard"]);
-    }
-    assert_eq!(
-        fuse(
-            &CLIPBOARD,
-            &[
-                clipboard("clipboard", "hello", H + 5.0, false),
-                clipboard("clipboard", "hello", H + 5.1, false),
-            ]
-        )
-        .len(),
-        2
-    );
-}
-
-#[devkit::test]
-fn repeated_notifications_from_one_capture_stay_separate() {
-    let out = fuse(
-        &NOTIFICATIONS,
-        &[
-            notification("New mail", H + 5.0),
-            notification("New mail", H + 5.4),
-            in_lake(notification("New mail", H + 5.1), "desktop.notifications"),
-            in_lake(notification("New mail", H + 5.5), "desktop.notifications"),
-        ],
-    );
-    assert_eq!(out.len(), 2, "{out:?}");
-    for notification in out {
-        assert_eq!(observed_by(&notification), ["desktop.notifications"]);
-    }
-    assert_eq!(
-        fuse(
-            &NOTIFICATIONS,
-            &[
-                notification("New mail", H + 5.0),
-                notification("New mail", H + 5.1),
-            ]
-        )
-        .len(),
-        2
-    );
-}
-
-#[devkit::test]
-fn capture_program_distinguishes_records_after_ingress_assigns_the_producer_name() {
-    let mut live = clipboard("clipboard", "hello", H + 5.0, false);
-    live.source = "session-example-host".into();
-    let out = fuse(
-        &CLIPBOARD,
-        &[
-            live,
-            in_lake(
-                clipboard("clipboard", "hello", H + 5.1, false),
-                "desktop.clipboard",
-            ),
-        ],
-    );
+fn copies_of_a_message_fuse_whatever_dates_their_stores_give() {
+    let inputs = [
+        mail("communication.mbox", "<1@x>", H + 5.0),
+        // The provider's own receive time, three days after the header date.
+        mail("communication.gmail", "<1@x>", H + 5.0 + 3.0 * 86_400.0),
+    ];
+    let out = fuse_events(&MAIL, &inputs);
     assert_eq!(out.len(), 1, "{out:?}");
+    assert!(matches!(&out[0].origin, Origin::Derived { parents } if parents.len() == 2));
+    // The most preferred input supplies the time.
     assert_eq!(
-        observed_by(&out[0]),
-        ["session-example-host", "desktop.clipboard"]
+        out[0].payload["sent_at"],
+        json!(at(H + 5.0 + 3.0 * 86_400.0))
     );
+    assert_eq!(occurrences(&MAIL, &inputs).len(), 1);
+}
+
+#[devkit::test]
+fn mail_from_a_source_no_input_names_is_not_read() {
+    let inputs = [
+        mail("communication.elsewhere", "<1@x>", H + 5.0),
+        mail("communication.imap", "<1@x>", H + 5.0),
+    ];
+    assert!(fuse(&MAIL, &inputs).is_empty());
+    let read = occurrences(&MAIL, &inputs);
+    assert_eq!(read.len(), 1);
+    assert_eq!(observed_by(&read[0]), ["communication.imap"]);
+}
+
+#[devkit::test]
+fn mail_without_an_account_never_fuses() {
+    let mut first = mail("communication.mbox", "<1@x>", H + 5.0);
+    let mut second = mail("communication.imap", "<1@x>", H + 5.0);
+    first.payload["account"] = Value::Null;
+    second.payload["account"] = Value::Null;
+    let inputs = [first, second];
+    assert!(fuse(&MAIL, &inputs).is_empty());
+    assert_eq!(occurrences(&MAIL, &inputs).len(), 2);
+}
+
+#[devkit::test]
+fn mail_of_two_accounts_never_fuses() {
+    let first = mail("communication.mbox", "<1@x>", H + 5.0);
+    let mut second = mail("communication.imap", "<1@x>", H + 5.0);
+    second.payload["account"] = json!("other@example.test");
+    let inputs = [first, second];
+    assert!(fuse(&MAIL, &inputs).is_empty());
+    assert_eq!(occurrences(&MAIL, &inputs).len(), 2);
 }
 
 #[devkit::test]
@@ -995,9 +484,11 @@ fn equal_mail_without_message_ids_remains_separate() {
     let mut second = mail("communication.imap", "unused", H + 5.0);
     second.payload["message_id"] = serde_json::Value::Null;
     assert_eq!(first.payload, second.payload);
-    let out = fuse(&MAIL, &[first, second]);
-    assert_eq!(out.len(), 2, "{out:?}");
-    assert!(out.iter().all(|event| event["message_id"].is_null()));
+    let inputs = [first, second];
+    assert!(fuse(&MAIL, &inputs).is_empty());
+    let read = occurrences(&MAIL, &inputs);
+    assert_eq!(read.len(), 2, "{read:?}");
+    assert!(read.iter().all(|event| event["message_id"].is_null()));
 }
 
 mod gmail;

@@ -114,7 +114,6 @@ pub struct OwnerCoverage {
     pub required: bool,
     pub stamp: String,
     pub position: i64,
-    pub policy_epoch: i64,
     pub scope: String,
     pub catalog: String,
     pub instance: String,
