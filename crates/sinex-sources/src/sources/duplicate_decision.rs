@@ -8,12 +8,14 @@ use sinex_model::{
 };
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "duplicate.request",
-    driver: Driver::ApiRequest,
+    origin: Origin::Request,
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "decisions on whether two records are one occurrence",
     class: Class::Guarded,
     parser: "duplicate-request",
@@ -141,14 +143,13 @@ pub fn request_material(
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "duplicate",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: true,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&REQUEST],

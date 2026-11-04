@@ -1035,20 +1035,6 @@ fn considered_pair(family: &Family, c: &Considered, g: &Grouping<'_, '_>) -> Con
     }
 }
 
-/// The key of a record whose identity is `fields`: their values, each a
-/// non-empty string; none when one is missing.
-fn identity_key(fields: &[&str], payload: &Value) -> Option<Value> {
-    let mut key = Map::new();
-    for field in fields {
-        let value = payload.get(*field)?.as_str()?;
-        if value.trim().is_empty() {
-            return None;
-        }
-        key.insert((*field).to_owned(), json!(value));
-    }
-    Some(Value::Object(key))
-}
-
 fn hour_of(key: &Value) -> Option<i128> {
     key.get("hour")?.as_i64().map(i128::from)
 }
