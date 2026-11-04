@@ -31,7 +31,7 @@ use sinex_model::event_types::system::{
 };
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -40,7 +40,9 @@ use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.journald",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_hours(1),
+    expires_after: None,
     purpose: "machine timeline, service health, unit and boot intervals, and recall",
     // Journal messages carry command lines, paths and sometimes secrets.
     class: Class::Guarded,
@@ -94,7 +96,7 @@ fn text(value: &Value) -> Option<String> {
 }
 
 /// Units Sinex runs, as the NixOS module names them: the daemon, its
-/// `sinex-*` services (captures, NATS, database setup, dumps, backfills) and
+/// `sinex-*` services (captures, NATS, database setup, dumps) and
 /// the session service.
 fn sinex_unit(unit: &str) -> bool {
     unit == "sinexd.service" || (unit.starts_with("sinex-") && unit.ends_with(".service"))
@@ -525,13 +527,14 @@ fn spool_entries(
     Ok(count)
 }
 
-/// `--read journald=SPOOL`: the journal, captured into SPOOL. Options:
+/// `stage --parser journald SPOOL`: the journal, captured into SPOOL. Options:
 /// `directory` (archived journal files to read instead of the live journal),
 /// `since` (where a first capture starts, a `journalctl --since` expression;
 /// the whole journal otherwise) and `follow`.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "journald",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -548,8 +551,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 }],
                 capabilities: &[],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

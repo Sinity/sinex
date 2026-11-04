@@ -231,7 +231,7 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
     .await
     .unwrap();
     let (_keep, stop) = tokio::sync::watch::channel(false);
-    crate::backfill::drive(
+    crate::stage::drive(
         &mut ctx.read_conn,
         &ctx.writer,
         RunId::new(),
@@ -243,6 +243,7 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
         Class::Open,
         &mut crate::binding_reader::polled::PolledReader::new(Box::new(reader)),
         stop,
+        None,
     )
     .await
     .unwrap();
@@ -307,7 +308,7 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
     .await
     .unwrap();
     let (_keep, stop) = tokio::sync::watch::channel(false);
-    crate::backfill::drive(
+    crate::stage::drive(
         &mut ctx.read_conn,
         &ctx.writer,
         RunId::new(),
@@ -319,6 +320,7 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
         Class::Open,
         &mut reader,
         stop,
+        None,
     )
     .await
     .unwrap();

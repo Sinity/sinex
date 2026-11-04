@@ -166,9 +166,12 @@ async fn world_with_config(
         .connect(&url)
         .await
         .unwrap();
+    let (stop, stopped) = watch::channel(false);
     let api = Api {
         source_config: Arc::new(source_config),
         read_failures: Default::default(),
+        running_stages: Default::default(),
+        stop: stopped.clone(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs,
@@ -182,7 +185,6 @@ async fn world_with_config(
     };
     let (commits, rx) = watch::channel(0u64);
     let (read_models_tx, read_models) = watch::channel(());
-    let (stop, stopped) = watch::channel(false);
     let read_model_task =
         start_read_models(&url, rx.clone(), read_models_tx.clone(), stopped).await;
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));
@@ -860,6 +862,7 @@ async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatab
 }
 
 mod discovery;
+mod staging;
 
 mod recall;
 

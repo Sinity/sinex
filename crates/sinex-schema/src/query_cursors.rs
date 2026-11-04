@@ -20,8 +20,14 @@ pub(crate) fn triggers() -> Vec<String> {
     END $$"
             .into(),
     ];
-    statements.extend(RELATIONS.iter().map(|table|format!("CREATE TRIGGER query_metadata BEFORE INSERT OR UPDATE OR DELETE ON {table} FOR EACH STATEMENT EXECUTE FUNCTION core.advance_query_metadata()")));
+    statements.extend(RELATIONS.iter().map(|table| trigger(table)));
     statements
+}
+/// The trigger that marks `table`'s rows changed for query cursors.
+pub(crate) fn trigger(table: &str) -> String {
+    format!(
+        "CREATE TRIGGER query_metadata BEFORE INSERT OR UPDATE OR DELETE ON {table} FOR EACH STATEMENT EXECUTE FUNCTION core.advance_query_metadata()"
+    )
 }
 pub(crate) fn before(statement: &str) -> bool {
     !statement.starts_with("CREATE FUNCTION core.advance_query_metadata(")

@@ -55,15 +55,18 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
         ": 1600000000:0;first synthetic command\n: 1600000001:0;second synthetic command\n",
     )
     .unwrap();
-    let backfill = run(&database, &store, &["backfill", "--host", "shutdown"])
-        .arg("--read")
-        .arg(format!("zsh={}", history.display()))
-        .output()
-        .unwrap();
+    let staged = run(
+        &database,
+        &store,
+        &["admin", "stage", "--host", "shutdown", "--parser", "zsh"],
+    )
+    .arg(&history)
+    .output()
+    .unwrap();
     assert!(
-        backfill.status.success(),
+        staged.status.success(),
         "{}",
-        String::from_utf8_lossy(&backfill.stderr)
+        String::from_utf8_lossy(&staged.stderr)
     );
     let mut conn = PgConnection::connect(&database).await.unwrap();
     let original = source_rows(&mut conn).await;

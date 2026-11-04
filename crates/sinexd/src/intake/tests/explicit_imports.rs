@@ -1,5 +1,36 @@
-//! Explicit imports through backfill, intake, admission and stored-byte replay.
+//! Explicit imports through staging, intake, admission and stored-byte replay.
 use serde_json::Value;
+
+fn item(path: &std::path::Path, parser: &str) -> sinex_sources::stage::Item {
+    sinex_sources::stage::Item {
+        path: path.to_path_buf(),
+        parser: Some(parser.into()),
+    }
+}
+
+/// Stage `items` as `sinexd admin stage` would, and require it to end ok.
+async fn stage(
+    db: &devkit::pg::TestDatabase,
+    store: &std::path::Path,
+    items: Vec<sinex_sources::stage::Item>,
+) {
+    let outcome = crate::stage::local(
+        &db.url(None),
+        store,
+        crate::stage::Request {
+            items,
+            account: None,
+            export_date: None,
+            host: "example-host".into(),
+            zone: Some("Europe/Warsaw".into()),
+        },
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    )
+    .await
+    .unwrap();
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+}
 
 async fn live(conn: &mut sqlx::PgConnection) -> Vec<(String, String, Value)> {
     sqlx::query_as("SELECT e.event_type, e.class::text, e.payload FROM (SELECT event_id FROM core.live_locations UNION ALL SELECT event_id FROM core.live_equivalence) l JOIN core.events e ON e.id=l.event_id WHERE e.event_type IN ('transaction.posted','journal.directive','command.imported') ORDER BY e.event_type,e.payload::text")
@@ -22,23 +53,15 @@ async fn explicit_imports_replay_without_source_files_and_keep_guarded_records(
     .unwrap();
     std::fs::write(&history, "pwd\npwd\n#123\npartial").unwrap();
     let store = dir.path().join("store");
-    let options = || crate::backfill::Options {
-        database: db.url(None),
-        store: store.clone(),
-        reads: vec![
-            format!("hledger={}", journal.display()),
-            format!("text-history={}", history.display()),
-        ],
-        zone: Some("Europe/Warsaw".into()),
-        time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
-            .expect("fixture day setting"),
-        options: vec![],
-        host: "example-host".into(),
-        json: true,
-        identity_file: None,
+    let stage = || {
+        stage(
+            &db,
+            &store,
+            vec![item(&journal, "hledger"), item(&history, "text-history")],
+        )
     };
-    crate::backfill::run(options()).await.unwrap();
-    crate::backfill::run(options()).await.unwrap();
+    stage().await;
+    stage().await;
     std::fs::remove_file(&journal).unwrap();
     std::fs::remove_file(&history).unwrap();
     let mut ctx = crate::reader_context::ReaderContext::open(
@@ -117,19 +140,8 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
     )
     .unwrap();
     let store = dir.path().join("store");
-    let options = || crate::backfill::Options {
-        database: db.url(None),
-        store: store.clone(),
-        reads: vec![format!("hledger={}", parent.display())],
-        zone: Some("Europe/Warsaw".into()),
-        time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
-            .expect("fixture day setting"),
-        options: vec![],
-        host: "example-host".into(),
-        json: true,
-        identity_file: None,
-    };
-    crate::backfill::run(options()).await.unwrap();
+    let stage = || stage(&db, &store, vec![item(&parent, "hledger")]);
+    stage().await;
     let mut ctx = crate::reader_context::ReaderContext::open(
         &db.url(None),
         &store,
@@ -163,13 +175,13 @@ async fn included_journal_changes_are_read_when_the_parent_is_unchanged_and_repl
         "03/01 Child changed\n  [Assets:Example]  = 9 TEST\n",
     )
     .unwrap();
-    crate::backfill::run(options()).await.unwrap();
+    stage().await;
     std::fs::write(
         &parent,
         "Y2036\ninclude child.journal\ninclude child.journal\n",
     )
     .unwrap();
-    crate::backfill::run(options()).await.unwrap();
+    stage().await;
     std::fs::remove_file(&child).unwrap();
     std::fs::remove_file(&parent).unwrap();
     let mut ctx = crate::reader_context::ReaderContext::open(

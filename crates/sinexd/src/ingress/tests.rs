@@ -1920,10 +1920,13 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
             .refusal_kind(),
         Some(FrameRefusal::Malformed)
     );
+    let (_running, stop) = tokio::sync::watch::channel(false);
     let api = crate::api::Api {
         derivations: Default::default(),
         source_config: Default::default(),
         read_failures: Default::default(),
+        running_stages: Default::default(),
+        stop,
         library_roots: Vec::new(),
         reads: h.reads.clone(),
         writer: Some(h.writer.clone()),

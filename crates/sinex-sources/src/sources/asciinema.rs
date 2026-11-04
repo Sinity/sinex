@@ -35,13 +35,15 @@ use sinex_model::Timestamp;
 use sinex_model::event_types::machine::{TerminalOutput, TerminalSession};
 use sinex_model::event_types::session::TerminalReport;
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const CAST: SourceSpec = SourceSpec {
     name: "terminal.asciinema",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "what terminals showed and what was typed, replayable",
     class: sinex_model::Class::Open,
     parser: "asciinema-cast",
@@ -52,7 +54,9 @@ pub const CAST: SourceSpec = SourceSpec {
 
 pub const EVENTS: SourceSpec = SourceSpec {
     name: "terminal.capture-events",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "shell commands around a terminal recording",
     class: sinex_model::Class::Open,
     parser: "terminal-capture-events",
@@ -371,11 +375,12 @@ pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
     }
 }
 
-/// `--read asciinema=PATH`: each recording directory under PATH, its cast
+/// `stage --parser asciinema PATH`: each recording directory under PATH, its cast
 /// and the capture's events beside it.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "asciinema",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -385,8 +390,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&CAST, &EVENTS],

@@ -17,7 +17,7 @@ use sinex_model::event_types::desktop::{
 };
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
@@ -26,7 +26,9 @@ use std::time::Duration;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.hyprland",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "focus intervals, attention and recall",
     // Window titles are free text that can contain anything.
     class: Class::Guarded,
@@ -284,10 +286,11 @@ fn capture(
     live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::from_secs(1))
 }
 
-/// `--read hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.
+/// `stage --parser hyprland SPOOL`: Hyprland's event socket, captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "hyprland",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],
@@ -298,8 +301,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: &[],
                 capabilities: &[],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

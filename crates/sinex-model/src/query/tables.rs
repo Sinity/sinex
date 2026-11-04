@@ -139,10 +139,34 @@ const SOURCES: &[Field] = &[
     ),
     f("binding", FieldType::Text, "binding"),
     f("source", FieldType::Text, "source"),
-    f("driver", FieldType::Text, "driver"),
+    f(
+        "shapes",
+        FieldType::Text,
+        "input shapes of its declarations; empty when written only on request",
+    ),
     f("version", FieldType::Integer, "version"),
     f("event_types", FieldType::Text, "event types"),
     f("purpose", FieldType::Text, "purpose"),
+    f(
+        "expectation",
+        FieldType::Enum(crate::source::Expectation::NAMES),
+        "when it should have something",
+    ),
+    f(
+        "silent_after",
+        FieldType::Integer,
+        "seconds without a record after which a continuous source is suspicious",
+    ),
+    f(
+        "every",
+        FieldType::Integer,
+        "seconds without a read after which a scheduled source is suspicious",
+    ),
+    f(
+        "expires_after",
+        FieldType::Integer,
+        "seconds the provider keeps its own records",
+    ),
     f("events", FieldType::Integer, "live events"),
     f("first", FieldType::Time, "oldest event time of any reading"),
     f(
@@ -302,7 +326,8 @@ impl Table {
             ],
             Table::Sources => &[
                 "binding",
-                "driver",
+                "shapes",
+                "expectation",
                 "event_types",
                 "events",
                 "last_event",

@@ -396,7 +396,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     }
     assert!(matches!(
         handle
-            .submit_source(Priority::Live, separate_file, Arc::new(|| Ok(())))
+            .submit_source(Priority::Live, separate_file, Arc::new(|| Ok(())), None)
             .await,
         Err(WriteError::Refused(_))
     ));
@@ -408,7 +408,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     assert_eq!(positions, 0);
     assert!(blobs.contains(&owned_blob).unwrap());
     let outcome = handle
-        .submit_source(Priority::Live, bad, Arc::new(|| Ok(())))
+        .submit_source(Priority::Live, bad, Arc::new(|| Ok(())), None)
         .await
         .unwrap();
     assert_eq!(outcome.admitted, 0);
@@ -426,6 +426,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
             Priority::Live,
             source("private\0value", 8, 15),
             Arc::new(|| Ok(())),
+            None,
         )
         .await
         .unwrap();
@@ -444,7 +445,8 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
             .submit_source(
                 Priority::Live,
                 source("after refusal", 16, bytes.len()),
-                Arc::new(|| Ok(()))
+                Arc::new(|| Ok(())),
+                None
             )
             .await
             .unwrap()

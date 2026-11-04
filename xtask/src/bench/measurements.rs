@@ -220,7 +220,6 @@ pub(super) fn environment(out: &Path) -> Value {
 
 pub(super) struct SyntheticInput {
     pub format: &'static str,
-    pub source: &'static str,
     pub path: PathBuf,
 }
 
@@ -243,7 +242,6 @@ pub(super) fn synthetic_inputs(
     history.flush().map_err(|e| e.to_string())?;
     let mut inputs = vec![SyntheticInput {
         format: "zsh",
-        source: "terminal.zsh-history",
         path,
     }];
     if mixed {
@@ -276,7 +274,6 @@ pub(super) fn journal_input(
     file.flush().map_err(|e| e.to_string())?;
     Ok(SyntheticInput {
         format: "journald",
-        source: "machine.journald",
         path,
     })
 }
@@ -289,26 +286,28 @@ pub(super) fn source_totals(result: &Value) -> Value {
         return Value::Null;
     }
     let mut totals = serde_json::Map::new();
-    for key in [
-        "admitted",
-        "batches",
-        "events_offered",
-        "wall_s",
-        "admission_s",
-    ] {
+    for key in ["wall_s", "admission_s"] {
         let values: Option<Vec<f64>> = sources.values().map(|s| s[key].as_f64()).collect();
         if let Some(values) = values {
             totals.insert(key.into(), json!(values.iter().sum::<f64>()));
         }
     }
-    // Counts retain integer JSON representations for correctness checks.
-    for key in ["admitted", "batches", "events_offered"] {
-        let count: Option<u64> = sources
+    // Readings stored are the new and the revised ones. The counts keep
+    // integer JSON representations for correctness checks.
+    let count = |s: &Value, key: &str| s["accounting"][key].as_u64();
+    let sum = |each: &dyn Fn(&Value) -> Option<u64>| {
+        sources
             .values()
-            .try_fold(0u64, |n, s| n.checked_add(s[key].as_u64()?));
-        if let Some(count) = count {
-            totals.insert(key.into(), json!(count));
-        }
+            .try_fold(0u64, |n, s| n.checked_add(each(s)?))
+    };
+    if let Some(n) = sum(&|s| Some(count(s, "new")? + count(s, "revised")?)) {
+        totals.insert("admitted".into(), json!(n));
+    }
+    if let Some(n) = sum(&|s| count(s, "readings")) {
+        totals.insert("events_offered".into(), json!(n));
+    }
+    if let Some(n) = sum(&|s| s["batches"].as_u64()) {
+        totals.insert("batches".into(), json!(n));
     }
     if let (Some(n), Some(s)) = (
         totals.get("admitted").and_then(Value::as_f64),
@@ -600,19 +599,17 @@ pub(super) fn with_consumers(
                 .map(|name| (name.to_owned(), json!(false)))
         })
         .collect();
-    let sources: serde_json::Map<String, Value> = inputs
-        .iter()
-        .map(|input| {
-            (
-                input.source.into(),
-                json!({"enable": true, "paths": [input.path], "format": input.format}),
-            )
-        })
-        .collect();
+    let mut discovered: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
+    for input in inputs.iter() {
+        discovered
+            .entry(input.format)
+            .or_default()
+            .push(input.path.as_ref());
+    }
     save(
         out,
         "sources.json",
-        &json!({"sources": sources, "derivations": derivations}),
+        &json!({"discovery": {"inputs": discovered}, "derivations": derivations}),
     )?;
     let runtime = out.join("runtime");
     fs::create_dir_all(&runtime).map_err(|e| e.to_string())?;
@@ -783,7 +780,7 @@ pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
     let mut batches = Vec::new();
     let mut publishers = Vec::new();
     let mut search = Vec::new();
-    for name in ["daemon.log", "backfill.stderr", "source.stderr"] {
+    for name in ["daemon.log", "stage.stderr", "source.stderr"] {
         let path = out.join(name);
         match fs::read_to_string(&path) {
             Ok(text) => {

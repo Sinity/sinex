@@ -107,7 +107,7 @@ Outlook conversion retains the native PST as an original material with the acqui
 
 **Gmail configuration.**
 
-Discovery reads the account file declared as `input:gmail`; `--read gmail=PATH` uses the same file. It names the expected account and credential files:
+Discovery reads the account file declared as `input:gmail`; `stage --parser gmail PATH` uses the same file. It names the expected account and credential files:
 
 ```json
 {
@@ -142,7 +142,7 @@ Family F06.
 - Identity is a supplied transaction ID where present, otherwise the source identity plus the complete block identity and a duplicate number; never the first amount or the description alone.
 - A directive the reader does not support is reported as unsupported with its bytes.
 
-The journal reader discovers `LEDGER_FILE`, `~/.hledger.journal` and configured finance roots, and accepts `--read hledger=PATH`. Include paths may be relative, absolute or home-relative, with `journal:` prefixes and globs. Each included file is an ordinary binding; missing files, cycles and unsupported targets are reported. Included files inherit the authored year at their include. Native timeclock and timedot imports stay written `journal.imported` records, not generated accounting transactions.
+The journal reader discovers `LEDGER_FILE`, `~/.hledger.journal` and configured finance roots, and accepts `stage --parser hledger PATH`. Include paths may be relative, absolute or home-relative, with `journal:` prefixes and globs. Each included file is an ordinary binding; missing files, cycles and unsupported targets are reported. Included files inherit the authored year at their include. Native timeclock and timedot imports stay written `journal.imported` records, not generated accounting transactions.
 
 Partial dates remain partial; a known year resolves a civil date without inventing an original instant. Quantities, commodity quoting, virtual accounts, posting status, prices, balance assertions, lot annotations and valuation expressions retain their written forms. Capture does not balance a transaction or execute its automatic rules. Without a supplied transaction ID, record identity includes the journal/member context, complete block digest and duplicate occurrence, including across scan parts. A changed inherited year causes an unchanged child to be read in that new context; a fully dated transaction does not change identity for an unused default year.
 

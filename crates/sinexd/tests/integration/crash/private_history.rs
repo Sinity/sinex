@@ -21,13 +21,13 @@ async fn an_external_history_survives_a_stopped_admission_and_remains_queryable(
     let target = Target::new(&inputs);
     kill_at(
         &target,
-        &mut target.backfill(&inputs),
+        &mut target.stage(&inputs),
         None,
         &lock("core.events"),
     )
     .await;
     consistent(&target).await;
-    finish(&mut target.backfill(&inputs));
+    finish(&mut target.stage(&inputs));
     consistent(&target).await;
 
     let mut connection = target.connect().await;
@@ -82,7 +82,7 @@ async fn an_external_history_survives_a_stopped_admission_and_remains_queryable(
         "the public query did not return the expected record"
     );
 
-    finish(&mut target.backfill(&inputs));
+    finish(&mut target.stage(&inputs));
     consistent(&target).await;
     assert_eq!(
         scalar(&mut connection, "SELECT count(*) FROM core.events").await,

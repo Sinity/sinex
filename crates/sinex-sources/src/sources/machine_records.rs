@@ -22,7 +22,7 @@ use sinex_model::event_types::records::{
 use sinex_model::{Class, Payloads};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
@@ -30,11 +30,14 @@ const fn line_spec(
     name: &'static str,
     parser: &'static str,
     purpose: &'static str,
+    expect: Expectation,
     event_types: &'static [&'static str],
 ) -> SourceSpec {
     SourceSpec {
         name,
-        driver: Driver::AppendFile,
+        origin: Origin::Input(Shape::AppendFile),
+        expect,
+        expires_after: None,
         purpose,
         class: Class::Open,
         parser,
@@ -48,47 +51,56 @@ pub const GENERATIONS: SourceSpec = line_spec(
     "machine.generations",
     "machine-generations",
     "which system configuration ran when, for attributing changes in behavior",
+    Expectation::OnDemand,
     &["generation.activated"],
 );
 pub const BACKUP_CHECKS: SourceSpec = line_spec(
     "machine.backup-checks",
     "machine-backup-checks",
     "backup health over time",
+    Expectation::continuous_days(2),
     &["backup.checked"],
 );
 pub const RESTORE_DRILLS: SourceSpec = line_spec(
     "machine.restore-drills",
     "machine-restore-drills",
     "evidence that the backups restore",
+    Expectation::continuous_days(14),
     &["backup.drilled"],
 );
 pub const TASK_STORE_DRILLS: SourceSpec = line_spec(
     "machine.task-store-drills",
     "machine-task-store-drills",
     "evidence that the task store restores from the backups",
+    Expectation::continuous_days(14),
     &["backup.task_store_drilled"],
 );
 pub const SANDBOX_AUDIT: SourceSpec = line_spec(
     "machine.sandbox-audit",
     "machine-sandbox-audit",
     "unit and capture-lane health over time",
+    Expectation::continuous_days(2),
     &["sandbox_audit.finding"],
 );
 pub const USAGE_CENSUS: SourceSpec = line_spec(
     "machine.usage-census",
     "machine-usage-census",
     "deciding what in the machine configuration is used and what to remove",
+    Expectation::continuous_days(30),
     &["usage.assessed", "usage_census.taken"],
 );
 pub const CONFIG_DRIFT: SourceSpec = line_spec(
     "machine.config-drift",
     "machine-config-drift",
     "whether the live machine matches its configuration",
+    Expectation::continuous_days(2),
     &["config_drift.checked"],
 );
 pub const EXPERIMENTS: SourceSpec = SourceSpec {
     name: "machine.experiments",
-    driver: Driver::DirSnapshot,
+    origin: Origin::Input(Shape::DirSnapshot),
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "machine experiment results with the conditions they ran under",
     class: Class::Open,
     parser: "machine-experiments",
@@ -479,7 +491,7 @@ fn plan(input: &Path, settings: &sinex_source_core::Settings) -> Vec<sinex_sourc
         .iter()
         .map(|(spec, name)| (spec, input.join(name)))
         .filter(|(spec, path)| {
-            if spec.driver == Driver::DirSnapshot {
+            if spec.origin == Origin::Input(Shape::DirSnapshot) {
                 path.is_dir()
             } else {
                 path.is_file()
@@ -507,11 +519,12 @@ pub fn experiment_driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `--read machine-records=PATH`: the machine root's record files and
+/// `stage --parser machine-records PATH`: the machine root's record files and
 /// experiment runs, one binding each.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "machine-records",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[
@@ -527,8 +540,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || FILES.iter().map(|(spec, _)| *spec).collect(),
@@ -536,7 +547,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         source: |b| source(spec_of(&b.parser)?),
         reader: Some(|b| {
             let spec = spec_of(&b.parser)?;
-            Ok(if spec.driver == Driver::DirSnapshot {
+            Ok(if spec.origin == Origin::Input(Shape::DirSnapshot) {
                 sinex_source_core::binding::walked(experiment_driver(
                     b.input.clone(),
                     b.settings.host.clone(),

@@ -2,6 +2,9 @@
 pub mod discovery;
 pub mod live;
 pub mod sources;
+#[cfg(feature = "full")]
+pub mod stage;
+pub mod unimplemented;
 
 #[cfg(test)]
 mod test_support;

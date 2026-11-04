@@ -236,19 +236,20 @@ here pack.
 The semantics are [lifecycle](lifecycle.md)'s and [staging](materials.md#staging)'s;
 the surfaces are:
 
-- `stage PATH | DIR | DB [--parser NAME] [--export-date DATE] [--account NAME] [--follow]`,
-  showing its inventory at once and ending with an account by event type (admitted,
-  suppressed with example references, failed) and `stopped_early` when it did not
-  finish; `stage list` and `stage show OP` show progress and what paces it, and give no
-  estimate while the rate varies ([inventory](materials.md#inventory-and-progress));
+- `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow]`,
+  answering with the operation and the inventory of every staged member at once, and
+  with `--follow` ending with each product's accounting and `stopped_early` when it did
+  not finish ([staging](materials.md#inventory-and-accounting)); `stage-list
+  [--active]` and `stage-show OPERATION` read stages later. With the daemon stopped,
+  `sinexd admin stage` runs the same command with its own writer;
 - `archive REF | QUERY | --material ID… | --run ID | --source S [--after T] [--before T]`
   and `restore` over the same scopes or `--operation OP` (the chains that operation
   archived), each refusing when any part cannot move; `--compare` prints the cascade and
   what would refuse and changes nothing;
 - `undo OPERATION [--compare]` archives what the operation made live and restores what it
   archived, for an archive, a restore, a replay or an undo;
-- `resume OPERATION` continues an archive, restore, tombstone, undo or replay that ended
-  `stopped_early` or whose daemon stopped mid-run;
+- `resume OPERATION` continues an archive, restore, tombstone, undo, replay or stage that
+  ended `stopped_early` or whose daemon stopped mid-run;
 - `replay QUERY [--parser NAME] [--compare]` and its undo, with `--compare` showing per-field changes; `recompute DERIVATION [--compare]` and
   `recompute DERIVATION --switch` ([versions](derivations.md#versions));
 - `tombstone` over the same scopes as `restore`, only on archived chains; `--compare`
@@ -396,8 +397,8 @@ holder through the reader role while the daemon is down.
   Gaps, inputs and payload shapes are the query tables `gaps`, `inputs` and `shapes`
   ([tables](query.md#tables)), read and paged like any query, so there are no separate
   gap, continuity, drift or readiness commands.
-- Fields: `source`, `binding`, `driver`, `version`, `event_types`, `purpose`,
-  `exclusion` and its reason, `state`, `last_run`, `expect`, `silent_after`,
+- Fields: `source`, `binding`, `shapes`, `version`, `event_types`, `purpose`,
+  `exclusion` and its reason, `state`, `last_run`, `expectation`, `silent_after`, `every`,
   `expires_after` and the remaining margin, `coverage`, `behind`, `rate`,
   `refused_rate`, `shape_changed`, `days_with_data_30d`, `gaps_30d`, `last_success`,
   `last_error`.
@@ -539,7 +540,7 @@ decides which prompts may be sent (default; open operator question).
 
 ### Stall alerts
 
-- The stall rule fires from the binding's declared `expect` and `silent_after` and its
+- The stall rule fires from the source's declared expectation (`silent_after` or `every`) and its
   durable poll outcomes. It tells apart an unchanged successful poll, an event-driven
   source with no recent events, an unavailable input, a parser rejection, an excluded
   source, source lag, a host out of contact within its deadline, and an actual missed
@@ -592,7 +593,7 @@ Journey budgets on top:
 - the machine section answers within Polylogue's 100 ms deadline;
 - confirmed delivery to `follow` and outside handlers arrives under 5 s after a row is
   queryable;
-- a stall alert arrives within the binding's `silent_after` plus one evaluator tick and
+- a stall alert arrives within the source's `silent_after` or `every` plus one evaluator tick and
   measured delivery delay.
 
 A miss is recorded with its measurement, never met by relaxing the number. Measurement

@@ -5,7 +5,7 @@ use sinex_model::Class;
 use sinex_model::event_types::imported_text::{BoundingBox, OcrText};
 use sinex_source_core::binding::{Binding, InputFormat};
 use sinex_source_core::drivers::export_archive::Framing;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 
 #[derive(Clone, Copy)]
@@ -23,7 +23,9 @@ type Frame = fn(&[u8]) -> (Vec<(usize, usize)>, usize);
 pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> SourceSpec {
     SourceSpec {
         name: "media.ocr-imports",
-        driver: Driver::ExportArchive,
+        origin: Origin::Input(Shape::ExportArchive),
+        expect: Expectation::Export,
+        expires_after: None,
         purpose: "imported OCR text and geometry",
         class: Class::Guarded,
         parser,
@@ -266,6 +268,7 @@ macro_rules! input_format {
     ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
         pub const $name: InputFormat = InputFormat {
             name: $spec.parser,
+            accepts: &[],
             discovery: super::transcript::discovery::spec(false),
             discover: super::transcript::discovery::discover,
             specs: || vec![&$spec],

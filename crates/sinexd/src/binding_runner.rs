@@ -60,6 +60,9 @@ pub(crate) struct Config {
     pub project_attribution: sinex_derivations::attribution::AttributionProfile,
     pub rhythm: sinex_derivations::portfolio::rhythm::RhythmProfile,
     pub signals: Option<crate::signals::Config>,
+    /// Directories the operator lets agents stage from, besides the declared
+    /// source locations.
+    pub staging_roots: Vec<std::path::PathBuf>,
 }
 impl Config {
     pub(crate) fn load(path: &std::path::Path) -> Result<Self, String> {
@@ -84,6 +87,14 @@ impl Config {
         context.exclude.clone_from(&self.exclude);
         context
     }
+    /// Where an agent may stage from on `host`: the declared source
+    /// locations and the operator's staging roots.
+    pub(crate) fn agent_stage_roots(&self, host: &str) -> Vec<std::path::PathBuf> {
+        let mut roots = discovery::declared_locations(&self.context(host));
+        roots.extend(self.staging_roots.iter().cloned());
+        roots
+    }
+
     pub(crate) fn derivation_configuration(&self) -> sinex_derivations::Configuration {
         sinex_derivations::Configuration {
             tags: if self.runs(sinex_derivations::tags::TagApplier::NAME) {
@@ -97,7 +108,7 @@ impl Config {
         }
     }
 }
-use sinex_sources::discovery::{self, Availability};
+use sinex_sources::discovery::{self, Availability, Cause};
 
 pub(crate) fn plan(
     config: &Config,
@@ -212,7 +223,13 @@ impl Bindings {
                     .map(|path| path.display().to_string())
                     .unwrap_or_default()
             );
-            let unavailable = input.availability == Availability::Unavailable;
+            // An input that exists but cannot be read is missing coverage; one
+            // that is absent or inapplicable on this host is not.
+            let unavailable = matches!(
+                input.availability,
+                Availability::Unavailable(cause)
+                    if !matches!(cause, Cause::NotPresent | Cause::NotApplicable)
+            );
             if unavailable || coverage.has_reading(&key, host) {
                 use sinex_model::event_types::coverage::{
                     CoverageCompleteness, CoverageState, SourceCoverage,
@@ -245,10 +262,7 @@ impl Bindings {
                     failures: 0,
                 });
             }
-            if matches!(
-                input.availability,
-                Availability::Unavailable | Availability::WaitingForInput
-            ) {
+            if matches!(input.availability, Availability::Unavailable(_)) {
                 self.say(
                     &key,
                     format!(

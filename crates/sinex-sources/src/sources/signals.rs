@@ -2,14 +2,16 @@
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::signal::{IntentRecorded, ReceiptRecorded, SignalRecord};
 use sinex_model::{Class, Timestamp};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "sinex.signals",
     parser: "signals",
     parser_version: 1,
-    driver: Driver::ApiRequest,
+    origin: Origin::Request,
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "canonical signal rules and host delivery receipts",
     class: Class::Open,
     event_types: &[
@@ -420,14 +422,13 @@ pub fn material(
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "signals",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &["signal"],
-            request_only: true,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

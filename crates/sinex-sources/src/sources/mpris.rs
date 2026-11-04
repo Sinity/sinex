@@ -11,14 +11,16 @@ use serde_json::{Map, Value, json};
 use sinex_model::Class;
 use sinex_model::event_types::session::PlayerChanged;
 use sinex_source_core::drivers::live_stream::{self, LiveStream};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "media.mpris",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_days(7),
+    expires_after: None,
     purpose: "listening and watching history, attention",
     // Titles and URLs of what is playing.
     class: Class::Guarded,
@@ -200,10 +202,11 @@ pub fn capture(
     dbus::capture(MATCHES, &snapshot_until(stop), spool, stop)
 }
 
-/// `--read players=SPOOL`: media players (MPRIS), captured into SPOOL.
+/// `stage --parser players SPOOL`: media players (MPRIS), captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "players",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],
@@ -214,8 +217,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: &[],
                 capabilities: &[],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

@@ -27,7 +27,6 @@ async fn discovery_omits_unimplemented_commands_and_unimplemented_calls_refuse_e
         .collect();
     assert!(names.contains(&"recall"));
     for value in [
-        json!({"method":"stage", "path":"/synthetic/input"}),
         json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
         json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
     ] {

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use sinex_model::event_types::session::MediaSegment;
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::media::{self, Media};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -17,7 +17,9 @@ use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "session.media",
-    driver: Driver::Media,
+    origin: Origin::Input(Shape::Media),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "recall: what was on screen and said; screen text and transcripts",
     // Whatever was on screen or within the microphone's reach.
     class: Class::Guarded,
@@ -264,12 +266,13 @@ fn media(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String
     }
 }
 
-/// `--read media=SPOOL`: screen stills (option `kind: screen`, every
+/// `stage --parser media SPOOL`: screen stills (option `kind: screen`, every
 /// `every` seconds, 60 by default) or audio segments (`kind: audio`,
 /// `segment` seconds each, 300 by default), captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "media",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],
@@ -293,8 +296,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                     capabilities: &["pipewire", "pw-record"],
                 },
             ],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

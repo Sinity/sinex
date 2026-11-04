@@ -246,10 +246,38 @@ fn day_files_skip_index_and_sidecars() {
     ] {
         std::fs::write(dir.join(f), b"").unwrap();
     }
-    let files = day_files(&root, lake_source("desktop.notifications").unwrap()).unwrap();
+    let files = day_files(
+        &root,
+        "synthetic-host",
+        lake_source("desktop.notifications").unwrap(),
+    )
+    .unwrap();
     assert_eq!(files.len(), 1);
     assert!(files[0].ends_with("notifications-20261001.jsonl"));
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// law: sx.cap.no-host-coupling
+#[devkit::test]
+fn no_host_coupling_in_lake_machine_lanes() {
+    let root = tempfile::tempdir().unwrap();
+    for host in ["synthetic-host", "other-host"] {
+        let dir = root.path().join("device").join(host).join("netflow");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("netflow-20261001.jsonl"), b"").unwrap();
+    }
+    let files = day_files(
+        root.path(),
+        "synthetic-host",
+        lake_source("network.netflow").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        files,
+        [root
+            .path()
+            .join("device/synthetic-host/netflow/netflow-20261001.jsonl")]
+    );
 }
 
 #[devkit::test]
@@ -314,4 +342,20 @@ fn a_missing_lake_root_is_not_an_empty_lake() {
         .unwrap()
         .is_empty()
     );
+}
+
+/// law: sx.cap.no-host-coupling
+#[devkit::test]
+fn no_host_coupling_in_any_lake_lane_directory() {
+    for lake in LAKE_SOURCES {
+        for dir in lake.dirs {
+            assert!(!dir.starts_with('/'), "{dir}");
+            if let Some(machine) = dir.strip_prefix("device/") {
+                assert!(
+                    machine.starts_with("{host}/"),
+                    "{dir} names a machine instead of the binding's host"
+                );
+            }
+        }
+    }
 }

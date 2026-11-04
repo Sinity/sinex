@@ -1,6 +1,6 @@
 //! One path from an acquisition to the writer, for bindings and API requests.
-use crate::backfill::Totals;
-use crate::writer::{AdmissionCheck, Priority, WriterHandle};
+use crate::stage::Totals;
+use crate::writer::{AdmissionCheck, Priority, StageCheckpoint, WriterHandle};
 use serde_json::Value;
 use sinex_model::{Class, EventPayload, MaterialId, RecordOutcome, RunId};
 use sinex_source_core::{Limits, Source, drivers};
@@ -36,13 +36,15 @@ impl Intake<'_> {
         carry: Value,
         totals: &mut Totals,
     ) -> Result<Submission, String> {
-        self.submit_using(acquired, carry, totals, |batch, check| async move {
+        self.submit_using(acquired, carry, totals, |batch, check, stage| async move {
             let result = if self.atomic {
                 self.writer
                     .submit_checked(self.priority, batch, check)
                     .await
             } else {
-                self.writer.submit_source(self.priority, batch, check).await
+                self.writer
+                    .submit_source(self.priority, batch, check, stage)
+                    .await
             };
             result.map_err(|e| e.to_string())
         })
@@ -59,7 +61,7 @@ impl Intake<'_> {
             acquired,
             Value::Null,
             &mut Totals::default(),
-            |batch, check| {
+            |batch, check, _| {
                 let checkpoint = checkpoint.take();
                 async move {
                     check()?;
@@ -97,7 +99,7 @@ impl Intake<'_> {
         mut admit: F,
     ) -> Result<Submission, String>
     where
-        F: FnMut(sinex_model::Batch, AdmissionCheck) -> A,
+        F: FnMut(sinex_model::Batch, AdmissionCheck, Option<StageCheckpoint>) -> A,
         A: std::future::Future<Output = Result<Outcome, String>>,
     {
         let check = self.material.admission_check(self.check.clone());
@@ -122,6 +124,9 @@ impl Intake<'_> {
             check()
         });
         let mut outcome = Outcome::default();
+        // The material's framed records, and how many of them are committed.
+        let mut material_framed = None;
+        let mut committed_records = 0u64;
         let result = async {
             while let Some(parsed) = batches.next().await {
                 let parsed = parsed?;
@@ -129,8 +134,30 @@ impl Intake<'_> {
                 if let Some(length) = parsed.material_length {
                     totals.poll(length);
                 }
+                let mut removed_now = 0;
+                if let Some((framed, removed)) = parsed.framed {
+                    totals.framed(framed, removed);
+                    material_framed = Some(framed);
+                    removed_now = removed;
+                }
                 totals.parse(parsed.elapsed);
                 let batch = parsed.batch;
+                totals.records(&batch);
+                let records = batch.records.len() as u64;
+                // A staged binding's accounting once this batch commits, short
+                // of admission's decisions, which the writer adds in the
+                // batch's transaction.
+                let stage = totals.committed.as_ref().map(|committed| {
+                    let mut accounting = committed.accounting.clone();
+                    accounting.framed += records;
+                    accounting.removed += removed_now;
+                    accounting.records(&batch.records);
+                    accounting.readings += batch.event_count() as u64;
+                    StageCheckpoint {
+                        operation: committed.operation,
+                        accounting,
+                    }
+                });
 
                 check()?;
                 let events = batch.event_count();
@@ -146,7 +173,7 @@ impl Intake<'_> {
                         .get_or_insert_with(Instant::now);
                     admission_check()
                 });
-                let admitted = admit(batch, writer_check).await?;
+                let admitted = admit(batch, writer_check, stage.clone()).await?;
                 let elapsed = started.elapsed();
                 let queue = service_started
                     .lock()
@@ -155,12 +182,23 @@ impl Intake<'_> {
                 totals.writer(queue, elapsed.saturating_sub(queue));
                 totals.batch(events, elapsed);
                 totals.add_outcome(&admitted);
+                if let (Some(committed), Some(stage)) = (totals.committed.as_mut(), stage) {
+                    committed.accounting = stage.accounting;
+                    crate::stage::decided(&mut committed.accounting, &admitted);
+                }
+                committed_records += records;
                 outcome += &admitted;
                 // Streaming submissions do not keep every committed event ID.
                 if self.atomic {
                     outcome.admitted_ids = admitted.admitted_ids;
                 }
                 permit.committed();
+            }
+            // All of the material is committed: the driver's count replaces
+            // the committed records it framed.
+            if let (Some(committed), Some(framed)) = (totals.committed.as_mut(), material_framed) {
+                committed.accounting.framed =
+                    committed.accounting.framed - committed_records + framed;
             }
             Ok(Submission { outcome, material })
         }
@@ -329,6 +367,10 @@ impl Preparation {
     ) -> Result<(), String> {
         let started = Instant::now();
         (self.check)()?;
+        let mut framed = acquired
+            .material
+            .as_ref()
+            .map(|m| (m.records.len() as u64, m.removed.len() as u64));
         let prepared = drivers::prepare(
             self.source.as_ref(),
             &self.binding,
@@ -380,6 +422,7 @@ impl Preparation {
                 batch,
                 elapsed,
                 material_length: material_length.take(),
+                framed: framed.take(),
                 permit,
             }) {
                 return Ok(());

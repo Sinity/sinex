@@ -2,13 +2,15 @@
 use sinex_model::{Class, event_types::CommandImported};
 use sinex_source_core::binding::{self, InputFormat};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.text-history",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "explicit untimed command history",
     class: Class::Guarded,
     parser: "text-history",
@@ -76,6 +78,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 
 pub const FORMAT: InputFormat = InputFormat {
     name: "text-history",
+    accepts: &[],
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
         locations: &[sinex_source_core::discovery::Location {
@@ -85,8 +88,6 @@ pub const FORMAT: InputFormat = InputFormat {
         capabilities: &[],
         credentials: &[],
         streams: &[],
-        requests: &[],
-        request_only: false,
     },
     discover: crate::discovery::discover_format,
     specs: || vec![&SPEC],

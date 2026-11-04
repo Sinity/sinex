@@ -31,31 +31,24 @@ fn known_source(name: &str) -> bool {
     #[cfg(feature = "full")]
     false
 }
-fn known_format(name: &str, source: Option<&str>) -> bool {
-    if sources::format(name).is_some_and(|format| source.is_none_or(|source| format.reads(source)))
-    {
+fn known_format(name: &str) -> bool {
+    if sources::format(name).is_some() {
         return true;
     }
     #[cfg(not(feature = "full"))]
     return catalog_sources().iter().any(|entry| {
-        source.is_none_or(|source| entry["name"] == source)
-            && entry["formats"]
-                .as_array()
-                .is_some_and(|formats| formats.iter().any(|format| format == name))
+        entry["formats"]
+            .as_array()
+            .is_some_and(|formats| formats.iter().any(|format| format == name))
     });
     #[cfg(feature = "full")]
     false
 }
 
 pub fn validate(context: &DiscoveryContext) -> Result<(), String> {
-    for (source, settings) in &context.sources {
+    for source in context.sources.keys() {
         if !known_source(source) {
             return Err(format!("{source}: no such source"));
-        }
-        if let Some(name) = &settings.format
-            && !known_format(name, Some(source))
-        {
-            return Err(format!("{source}: format {name} does not read it"));
         }
     }
     for (name, exclusion) in &context.exclude {
@@ -72,7 +65,7 @@ pub fn validate(context: &DiscoveryContext) -> Result<(), String> {
         }
     }
     for name in context.inputs.keys() {
-        if !known_format(name, None)
+        if !known_format(name)
             && !sources::formats().iter().any(|format| {
                 format.discovery.locations.iter().any(|location| {
                     matches!(location.root, "capture" | "input") && location.path == name
@@ -121,8 +114,20 @@ pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String
     Ok(inputs)
 }
 
+/// Every location a declared source reads on this host, resolved: the
+/// places an agent may stage from.
+pub fn declared_locations(context: &DiscoveryContext) -> Vec<PathBuf> {
+    let mut out = BTreeSet::new();
+    for format in sources::formats() {
+        for location in format.discovery.locations {
+            out.extend(paths(location, context).unwrap_or_default());
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// Available files are opened for reading; no input is created or changed.
-fn availability(path: &Path) -> (Availability, Option<String>) {
+pub(crate) fn availability(path: &Path) -> (Availability, Option<String>) {
     let result = std::fs::metadata(path).and_then(|metadata| {
         if metadata.is_dir() {
             std::fs::read_dir(path).map(|_| ())
@@ -131,19 +136,22 @@ fn availability(path: &Path) -> (Availability, Option<String>) {
         }
     });
     match result {
-        Ok(()) => (Availability::Reading, None),
+        Ok(()) => (Availability::Capturing, None),
         Err(error) => (
-            if error.kind() == std::io::ErrorKind::NotFound {
-                Availability::WaitingForInput
-            } else {
-                Availability::Unavailable
-            },
+            Availability::Unavailable(match error.kind() {
+                std::io::ErrorKind::NotFound => Cause::NotPresent,
+                std::io::ErrorKind::PermissionDenied => Cause::PermissionDenied,
+                _ => Cause::Failed,
+            }),
             Some(format!("{}: {error}", path.display())),
         ),
     }
 }
 
-fn paths(location: &Location, context: &DiscoveryContext) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn paths(
+    location: &Location,
+    context: &DiscoveryContext,
+) -> Result<Vec<PathBuf>, String> {
     let joined =
         |root: &Option<PathBuf>| root.iter().map(|root| root.join(location.path)).collect();
     Ok(match location.root {
@@ -230,8 +238,8 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
         let settings = Settings {
             host: context.host.clone(),
             class: configured.class,
-            zone: configured.zone.clone(),
-            options: configured.options.clone(),
+            zone: configured.zone,
+            options: configured.options,
         };
         let make = |input, availability, reason, bindings| DiscoveredInput {
             format: format.name.into(),
@@ -252,31 +260,26 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
             ));
             continue;
         }
-        if format.discovery.request_only || format.discovery.requests.contains(&spec.name) {
-            out.push(make(None, Availability::RequestOnly, None, vec![]));
+        if format.on_demand(spec) {
+            out.push(make(None, Availability::OnDemand, None, vec![]));
             continue;
         }
-        let explicit = configured
-            .format
-            .as_deref()
-            .is_none_or(|name| name == format.name);
-        let mut inputs: Vec<PathBuf> = if explicit {
-            configured.paths.iter().map(PathBuf::from).collect()
-        } else {
-            vec![]
-        };
-        inputs.extend(
-            context
-                .inputs
-                .get(format.name)
-                .into_iter()
-                .flatten()
-                .cloned(),
-        );
+        let mut inputs: Vec<PathBuf> = context
+            .inputs
+            .get(format.name)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
         for location in format.discovery.locations {
             match paths(location, context) {
                 Ok(paths) => inputs.extend(paths),
-                Err(error) => out.push(make(None, Availability::Unavailable, Some(error), vec![])),
+                Err(error) => out.push(make(
+                    None,
+                    Availability::Unavailable(Cause::Failed),
+                    Some(error),
+                    vec![],
+                )),
             }
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -284,20 +287,19 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
         for input in inputs {
             let (mut state, mut reason) = availability(&input);
             let mut bindings = Vec::new();
-            if state == Availability::Reading {
-                match format.plan.map(|plan| plan(&input, &settings)) {
-                    Some(Ok(planned)) => {
+            if state == Availability::Capturing
+                && let Some(plan) = format.plan
+            {
+                match plan(&input, &settings) {
+                    Ok(planned) => {
                         bindings = planned
                             .into_iter()
                             .filter(|b| b.source == spec.name)
                             .collect()
                     }
-                    Some(Err(error)) => {
-                        state = Availability::Unavailable;
+                    Err(error) => {
+                        state = Availability::Unavailable(Cause::Failed);
                         reason = Some(error);
-                    }
-                    None => {
-                        state = Availability::RequestOnly;
                     }
                 }
             }
@@ -313,7 +315,7 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
         if out.iter().all(|input| input.source != spec.name) {
             out.push(make(
                 None,
-                Availability::WaitingForInput,
+                Availability::Unavailable(Cause::NotPresent),
                 Some("no declared input is present".into()),
                 vec![],
             ));
@@ -409,7 +411,7 @@ pub fn spools(
     let inputs = capture_inputs(context, owner, false);
     let mut bindings = Vec::new();
     for input in inputs {
-        if input.availability == Availability::Unavailable {
+        if matches!(input.availability, Availability::Unavailable(_)) {
             return Err(input.reason.unwrap_or_else(|| "spool unavailable".into()));
         }
         let format = sources::format(&input.format).expect("capture format");
@@ -494,7 +496,7 @@ fn capture_inputs(
                 source: spec.name.into(),
                 input: Some(input.clone()),
                 settings,
-                availability: Availability::WaitingForInput,
+                availability: Availability::Unavailable(Cause::NotApplicable),
                 capture: true,
                 reason: None,
                 bindings: vec![],
@@ -511,7 +513,7 @@ fn capture_inputs(
                         found.availability = Availability::Capturing;
                     }
                     Err(error) => {
-                        found.availability = Availability::Unavailable;
+                        found.availability = Availability::Unavailable(Cause::Failed);
                         found.reason = Some(error);
                     }
                 }

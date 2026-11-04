@@ -15,15 +15,22 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **source**: a named kind of record Sinex reads, `<area>.<name>` (`terminal.atuin-history`), with one declaration holding its parser, its kinds and its settings ([sources](sources.md#one-declaration-per-source)).
 - **source family**: a group of sources about one domain (shell, browsers, mail …) whose fidelity requirements are stated together ([source families](source-families.md)).
 - **input**: something Sinex observes repeatedly: a file, a directory, a database, a socket, an account collection.
-- **input shape**: how an input is read (append-only file, database rows, export archive, directory, live stream, account API, producer).
+- **input shape**: how an input is read (append-only file, database rows, export archive, directory, live stream, account API, media); it picks the driver.
+- **origin**: where a source's records come from: an input of one shape, or requests through the API (records written by the operator or an agent). A producer is a transport, not an origin.
 - **change model**: how a source learns that its input changed and what a change means.
 - **binding**: one configured instance of a source: the source, its input and its settings.
 - **stage**: to hand bytes to Sinex as material; the one way anything enters, whether once (`stage PATH`) or continuously (a binding) ([staging](materials.md#staging)).
+- **inventory**: what a stage holds, known before any record is parsed: every member of every staged file once, read, failed or stored and not interpreted ([inventory and accounting](materials.md#inventory-and-accounting)).
+- **accounting**: what became of every record a material framed and of every reading those records made; it balances by construction, and a mismatch is a defect ([inventory and accounting](materials.md#inventory-and-accounting)).
+- **stored, not interpreted**: bytes kept as material that no parser reads yet, with the candidate parsers when several would ([staging before a parser exists](materials.md#staging-before-a-parser-exists)).
 - **observation**: the recorded facts of one look at an input (size, time, whether it changed).
 - **revision**: an input's content as of an observation that found a change.
 - **spool**: a live capture's local directory of segment files, written before anything is sent; binary spools are pcapng ([streams](streams.md#spools)).
 - **gap**: an interval in which a capture may have missed data, recorded as a `capture.gap` event with its reason ([gaps](sources.md#gaps)).
 - **exclusion**: the one per-source setting: a source or input left out, with a recorded reason.
+- **expectation**: a source's declared answer to "when should this source have something": continuous (silent after a deadline is suspicious), cadence (read at least every period), export (arrives in exports the operator takes) or on demand (exists only when someone makes it).
+- **availability**: what discovery knows about an input before any record is read: capturing, unavailable (not present, permission denied, awaiting credentials, not applicable, failed), excluded, on demand, or reported by a session producer.
+- **unimplemented census**: the catalog sources with no parser yet whose provider's data exists on this host, listed by the discovery dry run.
 - **source health**: whether a source is observing as its declaration expects; shown in status.
 - **expectation** (`expect`): when a source should have something: continuous with a `silent_after`, a cadence, an export, or on demand ([sources](sources.md#one-declaration-per-source)).
 - **input state**: the one computed state of an input: capturing, backlogged, quiet, stalled, held, unavailable (with cause), excluded (with reason), finished ([input states](sources.md#input-states)).

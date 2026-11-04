@@ -22,11 +22,13 @@ pub(crate) fn from(table: Table) -> &'static str {
         Table::Runs => "core.runs {t} LEFT JOIN core.manifests {t}_m ON {t}_m.id = {t}.manifest_id",
         // Registered sources, and every other source that has had events.
         Table::Sources => {
-            "(SELECT r.name, r.driver, r.version, r.event_types, r.purpose FROM registry.sources r \
+            "(SELECT r.name, r.shapes, r.version, r.event_types, r.purpose, r.expectation, \
+                r.silent_after, r.every, r.expires_after FROM registry.sources r \
               UNION ALL \
-              SELECT c.source, NULL, NULL, NULL, NULL FROM core.source_counts c \
+              SELECT c.source, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM core.source_counts c \
               WHERE NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = c.source)) \
-             {t}(name, driver, version, event_types, purpose)"
+             {t}(name, shapes, version, event_types, purpose, expectation, silent_after, every, \
+               expires_after)"
         }
         Table::Operations => "core.operations {t}",
         Table::Failures => {
@@ -150,7 +152,11 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
                     super::source_views::field(name)?
                 }
                 "binding" | "source" => "{t}.name".to_string(),
-                "driver" => "{t}.driver".to_string(),
+                "shapes" => "array_to_string({t}.shapes, ',')".to_string(),
+                "expectation" => "{t}.expectation".to_string(),
+                "silent_after" => "extract(epoch FROM {t}.silent_after)::bigint".to_string(),
+                "every" => "extract(epoch FROM {t}.every)::bigint".to_string(),
+                "expires_after" => "extract(epoch FROM {t}.expires_after)::bigint".to_string(),
                 "version" => "{t}.version::bigint".to_string(),
                 "event_types" => "array_to_string({t}.event_types, ',')".to_string(),
                 "purpose" => "{t}.purpose".to_string(),

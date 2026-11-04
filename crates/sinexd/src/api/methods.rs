@@ -40,6 +40,12 @@ pub(crate) struct Api {
     pub source_config: std::sync::Arc<crate::binding_runner::Config>,
     /// The bindings whose latest read attempt failed, kept by the binding runner.
     pub read_failures: crate::binding_runner::ReadFailures,
+    /// The stages this daemon is reading now, so one is never read twice
+    /// at once.
+    pub running_stages: crate::stage::Running,
+    /// The daemon's shutdown. A stage reading in the background stops at it,
+    /// ends `stopped_early`, and `resume` reads it again later.
+    pub stop: tokio::sync::watch::Receiver<bool>,
     pub library_roots: Vec<std::path::PathBuf>,
 }
 
@@ -220,6 +226,10 @@ impl Api {
             Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
                 Err(e) => refused(e.to_string()),
+            },
+            Request::SourcesDiscover => match self.sources_discover().await {
+                Ok(v) => Reply::Ok { result: v },
+                Err(e) => refused(e),
             },
             Request::Query {
                 query,
@@ -555,9 +565,36 @@ impl Api {
             | Request::AnalysisWhy { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
-            Request::Stage { .. } => not_built(
-                "stage needs the staging path of the source framework, which this daemon does not run yet",
-            ),
+            Request::Stage {
+                path,
+                parser,
+                account,
+                export_date,
+                follow,
+            } => {
+                self.stage(
+                    caller,
+                    &path,
+                    &parser,
+                    account,
+                    export_date,
+                    follow.unwrap_or(false),
+                )
+                .await
+            }
+            Request::StageList { active } => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match sinex_store::stages::list(&mut conn, active.unwrap_or(false)).await {
+                    Ok(stages) => Reply::Ok {
+                        result: json!({ "stages": stages }),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::StageShow { operation } => self.stage_show(caller, &operation).await,
             Request::Same { .. } | Request::Distinct { .. } => not_built(
                 "duplicate decisions need the fusion derivation's decision records, not built yet",
             ),
@@ -670,6 +707,19 @@ impl Api {
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
         }
+    }
+
+    /// The discovery dry run: what this host's sources would capture, read
+    /// only from the inputs' metadata.
+    async fn sources_discover(&self) -> Result<Value, String> {
+        let context = self.source_config.context(&self.host);
+        let (inputs, unimplemented) = tokio::task::spawn_blocking(move || {
+            sinex_sources::discovery::status(&context)
+                .map(|inputs| (inputs, sinex_sources::unimplemented::census(&context)))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        Ok(json!({"inputs": inputs, "unimplemented": unimplemented}))
     }
 
     async fn status(&self, caller: &Caller) -> Result<Value, String> {

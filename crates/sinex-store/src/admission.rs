@@ -36,7 +36,7 @@ pub(crate) use archive::{archive_at, position, remove_live, restore_at};
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
 pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty};
 pub use register::native_key;
-pub(crate) use register::{native_keys, recorded};
+pub(crate) use register::{native_keys, observed, recorded};
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]
@@ -100,6 +100,9 @@ pub struct Outcome {
     pub dirty_keys: usize,
     /// Live readings a replay archived before admitting its new readings.
     pub replay_archived: usize,
+    /// Readings admission made for records their source dropped, one per
+    /// live reading of each: offered beside the batch's own events.
+    pub removed_at_source: usize,
     /// The commit sequence range given to admitted events.
     pub commit_seq: Option<(i64, i64)>,
     pub admitted_ids: Vec<EventId>,
@@ -120,6 +123,7 @@ impl std::ops::AddAssign<&Outcome> for Outcome {
         self.failures += other.failures;
         self.dirty_keys += other.dirty_keys;
         self.replay_archived += other.replay_archived;
+        self.removed_at_source += other.removed_at_source;
         for (&stage, &elapsed) in &other.timings {
             *self.timings.entry(stage).or_default() += elapsed;
         }
@@ -282,7 +286,7 @@ pub(crate) async fn admit(
     orders::assign(conn, batch, &mut events).await?;
     outcome.timings.insert("privacy", started.elapsed());
     let started = std::time::Instant::now();
-    removed_at_source(conn, batch, &mut events).await?;
+    outcome.removed_at_source = removed_at_source(conn, batch, &mut events).await?;
     let missing: Vec<_> = events
         .iter()
         .map(Event::kind_ref)
@@ -479,11 +483,13 @@ async fn keep_removed_class(conn: &mut PgConnection, events: &mut [Event]) -> Re
 
 /// Records the source dropped: a newer reading of each live one, removed.
 /// Built from the stored reading, whose privacy rules already applied.
+/// Returns how many readings it added.
 async fn removed_at_source(
     conn: &mut PgConnection,
     batch: &Batch,
     events: &mut Vec<Event>,
-) -> Result<()> {
+) -> Result<usize> {
+    let before = events.len();
     for request in &batch.archive {
         if let ArchiveRequest::RemovedAtSource { locations } = request {
             for live in crate::derivations::live_at(conn, locations).await? {
@@ -507,7 +513,7 @@ async fn removed_at_source(
             }
         }
     }
-    Ok(())
+    Ok(events.len() - before)
 }
 
 #[cfg(test)]

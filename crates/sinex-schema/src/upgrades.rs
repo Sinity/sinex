@@ -76,6 +76,8 @@ pub(crate) const NAMED: &[&str] = &[
     "lifecycle",
     "event_indexes",
     "remove_privacy_outputs_and_model_accounting",
+    "source_expectations",
+    "stage_without_parser",
 ];
 
 #[cfg(test)]
@@ -153,6 +155,8 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(crate::lifecycle::statements());
     steps.push(crate::event_indexes::statements());
     steps.push(remove_privacy_outputs_and_model_accounting());
+    steps.push(crate::source_expectations::statements());
+    steps.push(crate::stage_without_parser::statements());
     steps
 }
 

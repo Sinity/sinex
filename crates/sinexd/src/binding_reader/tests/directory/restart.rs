@@ -110,7 +110,7 @@ async fn prefix(
     sink: &dyn drivers::MaterialSink,
     sealing: Option<&crate::material_access::sealing::SealingSink>,
 ) -> MaterialRef {
-    crate::backfill::record(&mut ctx.read_conn, &b.binding)
+    crate::stage::record(&mut ctx.read_conn, &b.binding)
         .await
         .unwrap();
     let (cursor, carry) = positions::load(&mut ctx.read_conn, &b.binding.name)

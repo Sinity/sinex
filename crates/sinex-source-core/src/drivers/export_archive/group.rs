@@ -77,6 +77,70 @@ impl crate::shared_pass::SharedPass for ExportArchive {
             cursor,
         }
     }
+
+    fn member_selection(&self) -> Option<fn(&str) -> bool> {
+        Some(self.select)
+    }
+}
+
+/// One member of an archive, as the archive's own listing names it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListedMember {
+    pub name: String,
+    /// The member's decoded size, when the listing states it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+/// The container the file at `path` is and its members, from the archive's
+/// own listing: a ZIP's central directory, read without decompressing any
+/// member, or a tar's headers. A gzip-compressed file or a plain file is one
+/// member named after the file. Directories are not members.
+pub fn members(path: &std::path::Path) -> Result<(Container, Vec<ListedMember>), DriverError> {
+    let file = std::fs::File::open(path).map_err(|e| io(format!("{}: {e}", path.display())))?;
+    let opened = Opened::new(Input::Seekable(Box::new(file)), Arc::new(AtomicU64::new(0)))?;
+    let container = opened.container;
+    let mut out = Vec::new();
+    match container {
+        Container::Zip => {
+            let reader = opened
+                .seekable
+                .ok_or_else(|| io("a ZIP opened without random access"))?;
+            let mut archive = zip::ZipArchive::new(reader).map_err(io)?;
+            for index in 0..archive.len() {
+                let entry = archive.by_index_raw(index).map_err(io)?;
+                if entry.is_dir() {
+                    continue;
+                }
+                out.push(ListedMember {
+                    name: entry.name().to_owned(),
+                    size: Some(entry.size()),
+                });
+            }
+        }
+        Container::Tar | Container::TarGzip => {
+            let mut archive = tar::Archive::new(opened.reader);
+            for entry in archive.entries().map_err(io)? {
+                let entry = entry.map_err(io)?;
+                if !entry.header().entry_type().is_file() {
+                    continue;
+                }
+                out.push(ListedMember {
+                    name: entry.path().map_err(io)?.to_string_lossy().into_owned(),
+                    size: Some(entry.size()),
+                });
+            }
+        }
+        Container::Gzip => out.push(ListedMember {
+            name: file_name(path),
+            size: None,
+        }),
+        Container::Stateless => out.push(ListedMember {
+            name: file_name(path),
+            size: std::fs::metadata(path).ok().map(|m| m.len()),
+        }),
+    }
+    Ok((container, out))
 }
 
 impl Cursor {

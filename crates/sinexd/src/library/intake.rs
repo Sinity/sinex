@@ -72,8 +72,8 @@ impl Library<'_> {
             vec![reader],
         ))
         .await?;
-        let files = counts.events_offered;
-        let seen = counts.admitted;
+        let files = counts.accounting.readings;
+        let seen = counts.accounting.new + counts.accounting.revised;
         let after = reads::copies(conn, self.host, &root_text)
             .await
             .map_err(e)?;

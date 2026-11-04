@@ -51,8 +51,54 @@ fn the_cli_is_generated_from_the_table() {
 }
 
 #[devkit::test]
+fn stage_takes_several_paths_and_its_options() {
+    let matches = cli()
+        .try_get_matches_from([
+            "sinexctl",
+            "stage",
+            "/synthetic/takeout-001.zip",
+            "/synthetic/takeout-002.zip",
+            "--parser",
+            "takeout",
+            "--account",
+            "owner@example.test",
+            "--export-date",
+            "2030-01-01",
+            "--follow",
+        ])
+        .unwrap();
+    let (name, args) = matches.subcommand().unwrap();
+    let request = Request::from_args(
+        name,
+        arguments(sinex_protocol::command(name).unwrap(), args),
+    )
+    .unwrap();
+    assert_eq!(
+        request,
+        Request::Stage {
+            path: vec![
+                "/synthetic/takeout-001.zip".into(),
+                "/synthetic/takeout-002.zip".into()
+            ],
+            parser: vec!["takeout".into()],
+            account: Some("owner@example.test".into()),
+            export_date: Some("2030-01-01".into()),
+            follow: Some(true),
+        }
+    );
+    assert_eq!(request.access(), sinex_protocol::Access::Agent);
+    let error = cli()
+        .try_get_matches_from(["sinexctl", "stage"])
+        .unwrap_err();
+    assert_eq!(
+        error.kind(),
+        clap::error::ErrorKind::MissingRequiredArgument
+    );
+}
+
+#[devkit::test]
 fn cli_discovery_omits_unimplemented_operations_and_keeps_recall() {
-    for name in ["stage", "same", "distinct"] {
+    for name in ["same", "distinct"] {
         assert!(cli().find_subcommand(name).is_none(), "{name}");
         let error = cli().try_get_matches_from(["sinexctl", name]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);

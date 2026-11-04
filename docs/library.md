@@ -322,7 +322,7 @@ Agents have every library power the operator has: add, import, open, preview, cu
 ## Sources, derivations and the lifecycle
 
 - Library scans, imported catalog records, archive members and fetched pages are **sources of evidence**. Items, current availability, shown values, extracted text, suggestions and rankings are **derived readings** or reconstructible query results over that evidence. Authored notes, overrides, ratings, entries, comparisons and duplicate decisions are **request records**.
-- A configured source binding, a backfill, an added file and a replay converge on the same library state; library operations never carry their own item algorithm. Whether recomputation is owed is visible.
+- A configured source binding, a stage, an added file and a replay converge on the same library state; library operations never carry their own item algorithm. Whether recomputation is owed is visible.
 - Library scan, import and request materials follow [the one lifecycle](lifecycle.md): live, archived, tombstoned.
 - Archiving one scan's material archives the item and availability readings derived from it and removes only that scan's support; another live scan can still support the item. Authored curation stays live and shows "target lacks live support" until support returns. Restoring or replaying the scan reads it again normally.
 - Tombstoning an item's original material removes its bytes only when no other material or rendition reads them, so equal-byte items are untouched.
@@ -423,7 +423,7 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 ## Laws
 
 - **rebuildable**: replaying the scan, import and request materials of a mixed synthetic library into an empty database, with the input roots unavailable, yields the same item IDs, revisions, shown values, collection orders and rankings.
-- **one-path**: a configured source binding, a backfill, an explicit add and a replay converge on the same library state.
+- **one-path**: a configured source binding, a stage, an explicit add and a replay converge on the same library state.
 - **equal-bytes-stay-separate**: two files with equal bytes added as two items stay two items with distinct IDs, and no curation moves between them when a reference-only original is re-found by hash.
 - **revisions-keep-transitions**: A→B→A gives two byte revisions and three recorded transitions, in capture order.
 - **move-continues-item**: unchanged bytes moved within a root, with the old path gone in the same completed scan, continue the item; several equal-byte moves with no unique match are reported and leave curation unattached.

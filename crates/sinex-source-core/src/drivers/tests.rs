@@ -1,5 +1,5 @@
 use super::*;
-use crate::{DeclaredSource, Driver, Parser, RecordError, SourceSpec};
+use crate::{DeclaredSource, Expectation, Origin, Parser, RecordError, Shape, SourceSpec};
 use sinex_model::event_types::CommandImported;
 use sinex_model::{Class, Timestamp};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -63,7 +63,9 @@ fn batches_are_drained_lazily() {
     let source = DeclaredSource {
         spec: SourceSpec {
             name: "test.counting",
-            driver: Driver::AppendFile,
+            origin: Origin::Input(Shape::AppendFile),
+            expect: Expectation::OnDemand,
+            expires_after: None,
             purpose: "test",
             class: Class::Open,
             parser: "counting",
@@ -190,7 +192,9 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
     let source = DeclaredSource {
         spec: SourceSpec {
             name: "test.counting",
-            driver: Driver::AppendFile,
+            origin: Origin::Input(Shape::AppendFile),
+            expect: Expectation::OnDemand,
+            expires_after: None,
             purpose: "test",
             class: Class::Open,
             parser: "counting",
@@ -262,7 +266,9 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
     let source = DeclaredSource {
         spec: SourceSpec {
             name: "test.counting",
-            driver: Driver::ExportArchive,
+            origin: Origin::Input(Shape::ExportArchive),
+            expect: Expectation::OnDemand,
+            expires_after: None,
             purpose: "test",
             class: Class::Open,
             parser: "counting",
@@ -336,7 +342,9 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
     let source = DeclaredSource {
         spec: SourceSpec {
             name: "test.counting",
-            driver: Driver::AppendFile,
+            origin: Origin::Input(Shape::AppendFile),
+            expect: Expectation::OnDemand,
+            expires_after: None,
             purpose: "test",
             class: Class::Open,
             parser: "counting",

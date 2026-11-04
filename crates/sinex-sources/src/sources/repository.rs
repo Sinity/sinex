@@ -27,14 +27,16 @@ use sinex_model::event_types::code::{
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::DriverError;
 use sinex_source_core::drivers::api_cursor::{Api, ApiCursor, Page};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "code.git",
-    driver: Driver::ApiCursor,
+    origin: Origin::Input(Shape::ApiCursor),
+    expect: Expectation::cadence_hours(1),
+    expires_after: None,
     purpose: "work episodes, project attribution and recall",
     class: Class::Open,
     parser: "git-commits",
@@ -464,10 +466,11 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
     }
 }
 
-/// `--read repository=PATH`: a local repository's commits and ref updates.
+/// `stage --parser repository PATH`: a local repository's commits and ref updates.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "repository",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -477,8 +480,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

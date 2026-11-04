@@ -17,7 +17,7 @@
 //! daemon fills from the authenticated caller, never from the lines.
 use serde_json::json;
 use sinex_model::Class;
-use sinex_source_core::registry::{Driver, SourceSpec};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 
 mod files;
 mod requests;
@@ -29,7 +29,9 @@ pub use scan::{Known, LibraryReader, LibraryScan, ScanParser, ScanState, scan_so
 
 pub const SCAN: SourceSpec = SourceSpec {
     name: "library.scan",
-    driver: Driver::DirSnapshot,
+    origin: Origin::Input(Shape::DirSnapshot),
+    expect: Expectation::cadence_days(1),
+    expires_after: None,
     purpose: "the media library",
     class: Class::Open,
     parser: "library-scan",
@@ -43,7 +45,9 @@ pub const SCAN: SourceSpec = SourceSpec {
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "library.request",
-    driver: Driver::ApiRequest,
+    origin: Origin::Request,
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "the media library",
     class: Class::Open,
     parser: "library-request",
@@ -59,6 +63,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "library",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -68,8 +73,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &["library.request"],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SCAN, &REQUEST],

@@ -1,5 +1,5 @@
 //! Whole-system rules checked end to end through the real `sinexd` binary on
-//! small generated inputs: backfill, replay, archive, tombstone. Run through `xtask
+//! small generated inputs: staging, replay, archive, tombstone. Run through `xtask
 //! test`, which provides the development database.
 use crate::support;
 
@@ -100,15 +100,19 @@ impl Target {
         c
     }
 
-    fn backfill(&self, zsh: Option<&Path>, atuin: Option<&Path>) -> String {
-        let mut c = self.sinexd(&["backfill", "--host", HOST]);
-        if let Some(z) = zsh {
-            c.arg("--read").arg(format!("zsh={}", z.display()));
+    /// Stage a zsh history, then an Atuin database, each with its parser
+    /// named, as `sinexd admin stage` with the daemon stopped.
+    fn stage(&self, zsh: Option<&Path>, atuin: Option<&Path>) -> String {
+        let mut out = String::new();
+        for (parser, path) in [("zsh", zsh), ("atuin", atuin)] {
+            if let Some(path) = path {
+                out += &finish(
+                    self.sinexd(&["admin", "stage", "--host", HOST, "--parser", parser])
+                        .arg(path),
+                );
+            }
         }
-        if let Some(a) = atuin {
-            c.arg("--read").arg(format!("atuin={}", a.display()));
-        }
-        finish(&mut c)
+        out
     }
 
     fn admin(&self, args: &[&str]) -> String {
@@ -258,7 +262,7 @@ fn small_zsh() -> String {
 async fn an_event_has_exactly_one_origin() {
     let dir = Dir::new();
     let t = Target::new(&dir);
-    t.backfill(Some(&dir.file("zsh", small_zsh().as_bytes())), None);
+    t.stage(Some(&dir.file("zsh", small_zsh().as_bytes())), None);
     let mut c = t.connect().await;
     for (material, parents) in [
         ("gen_random_uuid()", "ARRAY[gen_random_uuid()]"),
@@ -293,7 +297,7 @@ async fn replay_keeps_occurrences_and_one_live_reading() {
     let atuin = dir.0.join("history.db");
     atuin_db(&atuin, &(0..30).map(atuin_row).collect::<Vec<_>>());
     let zsh = dir.file("zsh", small_zsh().as_bytes());
-    t.backfill(Some(&zsh), Some(&atuin));
+    t.stage(Some(&zsh), Some(&atuin));
     let mut c = t.connect().await;
     let before = live(&mut c).await;
     assert_eq!(before.len(), 70);
@@ -356,14 +360,14 @@ async fn delivering_everything_twice_changes_nothing() {
     let zsh = dir.file("zsh", small_zsh().as_bytes());
     let atuin = dir.0.join("history.db");
     atuin_db(&atuin, &(0..30).map(atuin_row).collect::<Vec<_>>());
-    t.backfill(Some(&zsh), Some(&atuin));
+    t.stage(Some(&zsh), Some(&atuin));
     let mut c = t.connect().await;
     let before = live(&mut c).await;
     sqlx::query("DELETE FROM raw.positions")
         .execute(&mut c)
         .await
         .unwrap();
-    t.backfill(Some(&zsh), Some(&atuin));
+    t.stage(Some(&zsh), Some(&atuin));
     let after = live(&mut c).await;
     let differ: Vec<_> = before
         .iter()
@@ -393,14 +397,14 @@ async fn rereading_one_native_input_repeats_but_a_separate_copy_keeps_its_identi
     let atuin = dir.0.join("a/history.db");
     std::fs::create_dir_all(atuin.parent().unwrap()).unwrap();
     atuin_db(&atuin, &(0..30).map(atuin_row).collect::<Vec<_>>());
-    t.backfill(Some(&dir.file("a/zsh", text.as_bytes())), Some(&atuin));
+    t.stage(Some(&dir.file("a/zsh", text.as_bytes())), Some(&atuin));
     let mut c = t.connect().await;
     let before = live(&mut c).await;
     sqlx::query("DELETE FROM raw.positions")
         .execute(&mut c)
         .await
         .unwrap();
-    t.backfill(Some(&dir.0.join("a/zsh")), Some(&atuin));
+    t.stage(Some(&dir.0.join("a/zsh")), Some(&atuin));
     assert_eq!(
         live(&mut c).await,
         before,
@@ -415,7 +419,7 @@ async fn rereading_one_native_input_repeats_but_a_separate_copy_keeps_its_identi
     let atuin2 = dir.0.join("b/history.db");
     std::fs::create_dir_all(atuin2.parent().unwrap()).unwrap();
     std::fs::copy(&atuin, &atuin2).unwrap();
-    t.backfill(Some(&dir.file("b/zsh", text.as_bytes())), Some(&atuin2));
+    t.stage(Some(&dir.file("b/zsh", text.as_bytes())), Some(&atuin2));
     assert!(
         scalar(
             &mut c,
@@ -472,7 +476,7 @@ async fn stated_times_are_kept_whatever_their_value() {
     ]
     .concat();
     let started = chrono_now(&mut t.connect().await).await;
-    t.backfill(Some(&dir.file("zsh", text.as_bytes())), None);
+    t.stage(Some(&dir.file("zsh", text.as_bytes())), None);
     let mut c = t.connect().await;
     let rows = sqlx::query(
         "SELECT payload->>'command' AS c, extract(epoch from ts_orig)::bigint AS t, ts_quality AS q,
@@ -540,7 +544,7 @@ async fn a_long_history_is_a_few_materials() {
     let text: String = (0..20_000)
         .map(|i| zsh_line(1_600_000_000 + i, &format!("command number {i}")))
         .collect();
-    t.backfill(Some(&dir.file("zsh", text.as_bytes())), None);
+    t.stage(Some(&dir.file("zsh", text.as_bytes())), None);
     let mut c = t.connect().await;
     assert_eq!(
         scalar(
@@ -581,14 +585,14 @@ async fn rows_that_change_are_read_to_their_final_values() {
     )];
     rows.extend((1..=5_000).map(atuin_row));
     atuin_db(&path, &rows);
-    t.backfill(None, Some(&path));
+    t.stage(None, Some(&path));
 
     rows[0].2 = 7_000_000_000;
     rows[0].3 = 2;
     rows[5].5 = Some(1_700_000_000_000_000_000);
     rows.extend((5_001..=5_100).map(atuin_row));
     atuin_db(&path, &rows);
-    t.backfill(None, Some(&path));
+    t.stage(None, Some(&path));
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
 
     let mut c = t.connect().await;
@@ -645,7 +649,7 @@ async fn a_bad_record_is_a_failure_and_its_neighbours_are_stored() {
     let mut bytes = zsh_line(1_600_000_001, "before").into_bytes();
     bytes.extend_from_slice(b": 1600000002:0;bad \xff\xfe bytes\n");
     bytes.extend_from_slice(zsh_line(1_600_000_003, "after").as_bytes());
-    t.backfill(Some(&dir.file("zsh", &bytes)), None);
+    t.stage(Some(&dir.file("zsh", &bytes)), None);
     let mut c = t.connect().await;
     let commands: Vec<String> =
         sqlx::query_scalar("SELECT payload->>'command' FROM core.events WHERE event_type = 'command.imported' ORDER BY ts_orig")
@@ -667,7 +671,7 @@ async fn repeated_commands_are_kept() {
         text.push_str(&zsh_line(1_600_000_000 + i * 60, "git status"));
     }
     text.push_str(&zsh_line(1_600_000_000 + 498 * 60, "git status"));
-    t.backfill(Some(&dir.file("zsh", text.as_bytes())), None);
+    t.stage(Some(&dir.file("zsh", text.as_bytes())), None);
     let mut c = t.connect().await;
     assert_eq!(
         scalar(
@@ -691,7 +695,7 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     let path = dir.0.join("a/history.db");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     atuin_db(&path, &(0..10).map(atuin_row).collect::<Vec<_>>());
-    t.backfill(None, Some(&path));
+    t.stage(None, Some(&path));
     let mut c = t.connect().await;
     let id = live_a3(&mut c, &path).await;
     let initial_markers = support::marker_count(&mut c).await;
@@ -731,7 +735,7 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
         .execute(&mut c)
         .await
         .unwrap();
-    t.backfill(None, Some(&path));
+    t.stage(None, Some(&path));
     assert_eq!(
         live_a3(&mut c, &path).await,
         reread,
@@ -740,7 +744,7 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     let copy = dir.0.join("b/history.db");
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
     std::fs::copy(&path, &copy).unwrap();
-    t.backfill(None, Some(&copy));
+    t.stage(None, Some(&copy));
     assert_eq!(visible_a3(&mut c, &path).await, 1);
     assert_eq!(
         visible_a3(&mut c, &copy).await,
@@ -885,9 +889,8 @@ async fn comparisons_change_nothing_and_shared_bytes_survive_a_material_tombston
         clipboard_spool(&dir, "b", &texts),
     ] {
         finish(
-            t.sinexd(&["backfill", "--host", HOST])
-                .arg("--read")
-                .arg(format!("clipboard={}", spool.display())),
+            t.sinexd(&["admin", "stage", "--host", HOST, "--parser", "clipboard"])
+                .arg(&spool),
         );
     }
     let mut c = t.connect().await;
@@ -988,7 +991,7 @@ async fn a_tombstoned_shell_history_record_is_read_again_by_replay() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let zsh = dir.file("zsh", small_zsh().as_bytes());
-    t.backfill(Some(&zsh), None);
+    t.stage(Some(&zsh), None);
     let mut c = t.connect().await;
     let before = live(&mut c).await;
     let victim: uuid::Uuid = sqlx::query_scalar(
@@ -1066,7 +1069,7 @@ async fn a_second_writer_is_refused() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let zsh = dir.file("zsh", small_zsh().as_bytes());
-    t.backfill(Some(&zsh), None);
+    t.stage(Some(&zsh), None);
     let mut holder = t.connect().await;
     let won: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(0x7369_6e65_7857_5254_i64)
@@ -1075,13 +1078,8 @@ async fn a_second_writer_is_refused() {
         .unwrap();
     assert!(won);
     let out = t
-        .sinexd(&[
-            "backfill",
-            "--host",
-            HOST,
-            "--read",
-            &format!("zsh={}", zsh.display()),
-        ])
+        .sinexd(&["admin", "stage", "--host", HOST, "--parser", "zsh"])
+        .arg(&zsh)
         .output()
         .unwrap();
     assert!(!out.status.success(), "a second writer started");
@@ -1107,7 +1105,7 @@ async fn a_second_writer_is_refused() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     drop(probe);
-    t.backfill(Some(&zsh), None);
+    t.stage(Some(&zsh), None);
 }
 
 /// Schema round trip: a database created fresh from the declarations describes
@@ -1243,8 +1241,8 @@ async fn derived_results_do_not_depend_on_arrival_order() {
     let (zsh, atuin) = derivation_inputs(&dir);
 
     let late = Target::new(&dir);
-    late.backfill(Some(&zsh), None);
-    late.backfill(None, Some(&atuin));
+    late.stage(Some(&zsh), None);
+    late.stage(None, Some(&atuin));
     late.derive();
     let expected = derived(&mut late.connect().await).await;
     assert!(!expected.is_empty(), "the inputs produce derived events");
@@ -1256,9 +1254,9 @@ async fn derived_results_do_not_depend_on_arrival_order() {
     );
 
     let live = Target::new(&dir);
-    live.backfill(None, Some(&atuin));
+    live.stage(None, Some(&atuin));
     live.derive();
-    live.backfill(Some(&zsh), None);
+    live.stage(Some(&zsh), None);
     live.derive();
     let got = derived(&mut live.connect().await).await;
     let only_expected: Vec<_> = expected
@@ -1286,7 +1284,7 @@ async fn every_parent_resolves_and_committed_first() {
     let dir = Dir::new();
     let (zsh, atuin) = derivation_inputs(&dir);
     let t = Target::new(&dir);
-    t.backfill(Some(&zsh), Some(&atuin));
+    t.stage(Some(&zsh), Some(&atuin));
     let started = chrono_now(&mut t.connect().await).await;
     t.derive();
     let mut c = t.connect().await;
@@ -1325,12 +1323,12 @@ async fn every_parent_resolves_and_committed_first() {
     // ends, at events without parents: material events.
 }
 
-/// The binding backfill files a zsh history under.
+/// The binding a stage files a zsh history under.
 fn zsh_binding(path: &Path) -> String {
     format!("terminal.zsh-history:{}@{HOST}", path.display())
 }
 
-/// The binding backfill files an Atuin database under.
+/// The binding a stage files an Atuin database under.
 fn atuin_binding(path: &Path) -> String {
     format!("terminal.atuin-history:{}@{HOST}", path.display())
 }
@@ -1347,17 +1345,17 @@ async fn every_revision_reads_back_after_later_ones() {
     atuin_db(&atuin, &rows);
     let mut text = small_zsh();
     let zsh = dir.file("zsh", text.as_bytes());
-    t.backfill(Some(&zsh), Some(&atuin));
+    t.stage(Some(&zsh), Some(&atuin));
     // Appended.
     text.push_str(&zsh_line(1_600_001_000, "appended"));
     std::fs::write(&zsh, &text).unwrap();
     rows[3].3 = 9;
     atuin_db(&atuin, &rows);
-    t.backfill(Some(&zsh), Some(&atuin));
+    t.stage(Some(&zsh), Some(&atuin));
     // Rewritten: an exiting shell wrote the history again, older lines gone.
     let rewritten: String = text.lines().skip(10).map(|l| format!("{l}\n")).collect();
     std::fs::write(&zsh, &rewritten).unwrap();
-    t.backfill(Some(&zsh), None);
+    t.stage(Some(&zsh), None);
     // Appended again.
     std::fs::write(
         &zsh,
@@ -1367,7 +1365,7 @@ async fn every_revision_reads_back_after_later_ones() {
         ),
     )
     .unwrap();
-    t.backfill(Some(&zsh), None);
+    t.stage(Some(&zsh), None);
 
     let mut c = t.connect().await;
     let materials: Vec<(String, i64)> = sqlx::query_as(
@@ -1394,7 +1392,7 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let zsh = dir.file("zsh", small_zsh().as_bytes());
-    t.backfill(Some(&zsh), None);
+    t.stage(Some(&zsh), None);
     let mut spooled = Vec::new();
     let sampled_start = sinex_model::Timestamp::now().unix_ns() - 3_000_000_000;
     for (i, component) in ["writer", "publisher", "search index"].iter().enumerate() {
@@ -1411,9 +1409,15 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
     let spool = spool.parent().unwrap().to_path_buf();
     let read = |t: &Target| {
         finish(
-            t.sinexd(&["backfill", "--host", HOST])
-                .arg("--read")
-                .arg(format!("sinex-telemetry={}", spool.display())),
+            t.sinexd(&[
+                "admin",
+                "stage",
+                "--host",
+                HOST,
+                "--parser",
+                "sinex-telemetry",
+            ])
+            .arg(&spool),
         )
     };
     read(&t);
@@ -1504,7 +1508,7 @@ async fn replay_after_the_history_file_is_gone_gives_the_same_facts() {
     history.extend_from_slice(b": 1700000180:0;echo za\xc5\x83\xbb\xc3\xb3\xc5\x82\xc4\x87\n");
     history.extend_from_slice(b": notanumber:0;weird\n");
     let zsh = dir.file("zsh", &history);
-    t.backfill(Some(&zsh), None);
+    t.stage(Some(&zsh), None);
     let expected = vec![
         (1_700_000_000, "git status".to_owned()),
         (1_700_000_060, "git status".to_owned()),
@@ -1552,9 +1556,14 @@ async fn every_lake_line_is_read_once() {
     let mut text = lake_line(1, &copied("one")) + &lake_line(-1, r#"{"text":4}"#);
     text += &lake_line(3, &copied("three"));
     let path = dir.file(day, text.as_bytes());
-    let read = format!("sinnix-lake={}", dir.0.join("lake").display());
-    let backfill = || finish(&mut t.sinexd(&["backfill", "--host", HOST, "--read", &read]));
-    backfill();
+    let read = ("sinnix-lake", dir.0.join("lake"));
+    let stage = || {
+        finish(
+            t.sinexd(&["admin", "stage", "--host", HOST, "--parser", read.0])
+                .arg(&read.1),
+        )
+    };
+    stage();
     let mut c = t.connect().await;
     let accounted = "SELECT count(*) FROM (
         SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL AND event_type <> 'source.coverage'
@@ -1573,7 +1582,7 @@ async fn every_lake_line_is_read_once() {
     text += &lake_line(4, &copied("four"));
     text += &lake_line(5, &copied("five"));
     std::fs::write(&path, &text).unwrap();
-    backfill();
+    stage();
     let texts: Vec<String> = sqlx::query_scalar(
         "SELECT payload->'payload'->>'text' FROM core.events WHERE event_type = 'lake.observed' ORDER BY ts_orig",
     )
@@ -1645,8 +1654,13 @@ async fn a_growing_activitywatch_event_replaces_its_reading_downstream() {
     let t = Target::new(&dir);
     let path = dir.0.join("aw.db");
     let start = 1_760_000_000;
-    let read = format!("activitywatch={}", path.display());
-    let backfill = || finish(&mut t.sinexd(&["backfill", "--host", HOST, "--read", &read]));
+    let read = ("activitywatch", path.clone());
+    let stage = || {
+        finish(
+            t.sinexd(&["admin", "stage", "--host", HOST, "--parser", read.0])
+                .arg(&read.1),
+        )
+    };
     activitywatch_db(
         &path,
         &[
@@ -1654,7 +1668,7 @@ async fn a_growing_activitywatch_event_replaces_its_reading_downstream() {
             (start + 60, start + 120, "browser", "page"),
         ],
     );
-    backfill();
+    stage();
     t.derive();
     activitywatch_db(
         &path,
@@ -1663,7 +1677,7 @@ async fn a_growing_activitywatch_event_replaces_its_reading_downstream() {
             (start + 60, start + 900, "browser", "page"),
         ],
     );
-    backfill();
+    stage();
     t.derive();
     let mut c = t.connect().await;
     let ends = |event_type: &'static str| {
@@ -1768,15 +1782,21 @@ async fn source_view_refresh_refuses_a_running_writer() {
 }
 
 #[devkit::test]
-async fn a_note_keeps_its_identity_when_renamed_between_backfills() {
+async fn a_note_keeps_its_identity_when_renamed_between_stages() {
     let dir = Dir::new();
     let target = Target::new(&dir);
     let first = dir.file("vault/first.md", b"---\nid: synthetic-note\n---\nA note\n");
-    let read = format!("notes={}", dir.0.join("vault").display());
-    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
-    backfill();
+    let read = ("notes", dir.0.join("vault"));
+    let stage = || {
+        finish(
+            target
+                .sinexd(&["admin", "stage", "--host", HOST, "--parser", read.0])
+                .arg(&read.1),
+        )
+    };
+    stage();
     std::fs::rename(&first, dir.0.join("vault/renamed.md")).unwrap();
-    backfill();
+    stage();
     let mut connection = target.connect().await;
     let notes: Vec<(String, String)> = sqlx::query_as(
         "SELECT e.payload->>'path', e.record_state FROM core.live_equivalence l
@@ -1787,7 +1807,7 @@ async fn a_note_keeps_its_identity_when_renamed_between_backfills() {
     .unwrap();
     assert_eq!(notes, [("renamed.md".to_string(), "present".to_string())]);
     std::fs::remove_file(dir.0.join("vault/renamed.md")).unwrap();
-    backfill();
+    stage();
     let states: Vec<String> = sqlx::query_scalar(
         "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
          WHERE l.event_type = 'note.document'",
@@ -1815,19 +1835,24 @@ async fn maildir_flag_renames_keep_messages_present_and_later_deletions_remove_t
         let first = dir.file(&format!("{name}/new/one"), bytes.as_bytes());
         std::fs::create_dir_all(dir.0.join(name).join("cur")).unwrap();
         let renamed = dir.0.join(name).join("cur/one:2,S");
-        let read = format!("maildir={}", dir.0.join(name).display());
-        let backfill =
-            || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
-        backfill();
+        let read = ("maildir", dir.0.join(name));
+        let stage = || {
+            finish(
+                target
+                    .sinexd(&["admin", "stage", "--host", HOST, "--parser", read.0])
+                    .arg(&read.1),
+            )
+        };
+        stage();
         std::fs::rename(&first, &renamed).unwrap();
-        backfill();
+        stage();
         let state: String = sqlx::query_scalar(
             "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
              WHERE l.event_type='mail.message' AND e.payload->>'subject'=$1",
         ).bind(&subject).fetch_one(&mut connection).await.unwrap();
         assert_eq!(state, "present", "{name}");
         std::fs::remove_file(renamed).unwrap();
-        backfill();
+        stage();
         let state: String = sqlx::query_scalar(
             "SELECT e.record_state FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id
              WHERE l.event_type='mail.message' AND e.payload->>'subject'=$1",
@@ -1843,9 +1868,15 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
     let target = Target::new(&dir);
     let partial = br#"{"stat_2025-02-01":{"example.org":2},"stat_2025-02-02":{"example.org":"#;
     let path = dir.file("freedom.json", partial);
-    let read = format!("freedom={}", path.display());
-    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &read]));
-    backfill();
+    let read = ("freedom", path.clone());
+    let stage = || {
+        finish(
+            target
+                .sinexd(&["admin", "stage", "--host", HOST, "--parser", read.0])
+                .arg(&read.1),
+        )
+    };
+    stage();
     let mut connection = target.connect().await;
     assert_eq!(
         scalar(
@@ -1857,7 +1888,7 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
     );
     let complete = [partial.as_slice(), b"4}}"].concat();
     std::fs::write(&path, complete).unwrap();
-    backfill();
+    stage();
     assert_eq!(
         scalar(
             &mut connection,
@@ -1871,7 +1902,7 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
         br#"{"stat_2025-02-01":{"example.org":30},"stat_2025-02-02":{"example.org":4}}"#,
     )
     .unwrap();
-    backfill();
+    stage();
     let days: Vec<(String, String)> = sqlx::query_as(
         "SELECT e.payload->>'day', e.payload->>'seconds' FROM core.events e
          JOIN core.live_equivalence l ON l.event_id=e.id
@@ -1887,7 +1918,7 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
             ("2025-02-02".into(), "4".into())
         ]
     );
-    backfill();
+    stage();
     assert_eq!(
         scalar(
             &mut connection,
@@ -1934,9 +1965,8 @@ sed '1d' "$3" > "$2/Inbox/mbox"
     path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     finish(
         target
-            .sinexd(&["backfill", "--host", HOST])
-            .arg("--read")
-            .arg(format!("outlook={}", dir.0.join("inputs").display()))
+            .sinexd(&["admin", "stage", "--host", HOST, "--parser", "outlook"])
+            .arg(dir.0.join("inputs"))
             .env("PATH", std::env::join_paths(path).unwrap())
             .env("TMPDIR", &scratch),
     );
@@ -2015,9 +2045,15 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
     let day = "lake/activity/desktop/clipboard/clipboard-20251009.jsonl";
     let mut text = lake_line(1, &copied("one")) + &lake_line(3, &copied("three"));
     let path = dir.file(day, text.as_bytes());
-    let input = format!("sinnix-lake={}", dir.0.join("lake").display());
-    let backfill = || finish(&mut target.sinexd(&["backfill", "--host", HOST, "--read", &input]));
-    backfill();
+    let input = ("sinnix-lake", dir.0.join("lake"));
+    let stage = || {
+        finish(
+            target
+                .sinexd(&["admin", "stage", "--host", HOST, "--parser", input.0])
+                .arg(&input.1),
+        )
+    };
+    stage();
     let query =
         "events where event_type = capture.gap AND payload.reason = sequence fields payload";
     let first = target.query(query);
@@ -2032,7 +2068,7 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
     );
     text += &lake_line(6, &copied("six"));
     std::fs::write(&path, &text).unwrap();
-    backfill();
+    stage();
     let after = target.query(query);
     assert_eq!(after["total"], 2, "{after}");
     let mut ranges: Vec<_> = after["rows"]
@@ -2050,7 +2086,7 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
         .collect();
     ranges.sort();
     assert_eq!(ranges, [(2, 2), (4, 5)]);
-    backfill();
+    stage();
     assert_eq!(
         target.query(query)["total"],
         2,

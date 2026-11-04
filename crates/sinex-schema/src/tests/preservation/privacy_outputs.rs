@@ -18,6 +18,20 @@ async fn removing_privacy_outputs_keeps_events_and_rules(db: devkit::pg::TestDat
         .execute(&mut conn)
         .await
         .unwrap();
+    // The database stands where the removal step starts; later steps rerun.
+    let removal = crate::upgrades::LANDED_VERSION
+        + i32::try_from(
+            crate::upgrades::NAMED
+                .iter()
+                .position(|name| *name == "remove_privacy_outputs_and_model_accounting")
+                .unwrap(),
+        )
+        .unwrap();
+    sqlx::query("UPDATE sinex_schema.applied SET version = $1 WHERE version = (SELECT max(version) FROM sinex_schema.applied)")
+        .bind(removal)
+        .execute(&mut conn)
+        .await
+        .unwrap();
     conn.execute("INSERT INTO privacy.rules (id,name,source,matcher,class,action,author) VALUES (uuidv7(),'synthetic','test','all','guarded','classify','synthetic-test')")
         .await
         .unwrap();
@@ -29,7 +43,7 @@ async fn removing_privacy_outputs_keeps_events_and_rules(db: devkit::pg::TestDat
     assert_eq!(
         apply(&mut conn).await.unwrap(),
         Applied::Upgraded {
-            from: VERSION - 1,
+            from: removal,
             to: VERSION
         }
     );

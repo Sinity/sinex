@@ -23,7 +23,7 @@ use sinex_model::event_types::desktop::{
 };
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -32,7 +32,9 @@ use time::format_description::well_known::Rfc3339;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.activitywatch",
-    driver: Driver::SqliteRows,
+    origin: Origin::Input(Shape::SqliteRows),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "attention, presence and recall",
     class: Class::Guarded,
     parser: "activitywatch-events",
@@ -298,10 +300,11 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--read activitywatch=PATH`: `aw-server-rust`'s database.
+/// `stage --parser activitywatch PATH`: `aw-server-rust`'s database.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "activitywatch",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -311,8 +314,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

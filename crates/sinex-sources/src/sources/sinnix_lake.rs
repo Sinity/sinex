@@ -6,7 +6,7 @@
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct LakeSource {
     pub spec: SourceSpec,
-    /// Directories relative to the lake root (`/realm`).
+    /// Directories relative to the lake root; `{host}` stands for the host
+    /// the binding reads on.
     pub dirs: &'static [&'static str],
     /// Accepted `lane` values; renamed lanes list both names.
     pub lane_values: &'static [&'static str],
@@ -29,7 +30,10 @@ const fn spec(
 ) -> SourceSpec {
     SourceSpec {
         name,
-        driver: Driver::AppendFile,
+        origin: Origin::Input(Shape::AppendFile),
+        // Lanes sampled while their capture runs; event-driven lanes override it.
+        expect: Expectation::continuous_days(2),
+        expires_after: None,
         purpose,
         // The class of each lane is the operator's to choose; floors raise it
         // without a code change.
@@ -86,12 +90,16 @@ const LAKE_SOURCES: &[LakeSource] = &[
         lane_values: &["a11y"],
     },
     LakeSource {
-        spec: spec(
-            "desktop.idle-inhibitor",
-            "sinnix-lake:desktop.idle-inhibitor",
-            "presence and AFK evidence",
-            &["lake.observed", "capture.gap"],
-        ),
+        spec: SourceSpec {
+            // Written only when it changes, which can be weeks apart.
+            expect: Expectation::continuous_days(30),
+            ..spec(
+                "desktop.idle-inhibitor",
+                "sinnix-lake:desktop.idle-inhibitor",
+                "presence and AFK evidence",
+                &["lake.observed", "capture.gap"],
+            )
+        },
         dirs: &["activity/desktop/idle-inhibitor"],
         lane_values: &["idle-inhibitors"],
     },
@@ -130,12 +138,16 @@ const LAKE_SOURCES: &[LakeSource] = &[
         lane_values: &["browser-nav-edges"],
     },
     LakeSource {
-        spec: spec(
-            "reading.stack",
-            "sinnix-lake:reading.stack",
-            "reading queue",
-            &["reading_stack.changed", "capture.gap"],
-        ),
+        spec: SourceSpec {
+            // Written only when it changes, which can be weeks apart.
+            expect: Expectation::continuous_days(30),
+            ..spec(
+                "reading.stack",
+                "sinnix-lake:reading.stack",
+                "reading queue",
+                &["reading_stack.changed", "capture.gap"],
+            )
+        },
         dirs: &["activity/browser/reading"],
         lane_values: &["reading-stack"],
     },
@@ -146,7 +158,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "machine state timeline",
             &["display.sampled", "capture.gap"],
         ),
-        dirs: &["device/sinnix-prime/monitor"],
+        dirs: &["device/{host}/monitor"],
         lane_values: &["monitor"],
     },
     LakeSource {
@@ -159,7 +171,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
                 &["lake.observed", "capture.gap"],
             )
         },
-        dirs: &["device/sinnix-prime/netflow"],
+        dirs: &["device/{host}/netflow"],
         lane_values: &["netflow"],
     },
     LakeSource {
@@ -170,9 +182,9 @@ const LAKE_SOURCES: &[LakeSource] = &[
             &["battery.sampled", "bluetooth_audio.sampled", "capture.gap"],
         ),
         dirs: &[
-            "device/sinnix-prime/peripheral/bt-audio",
-            "device/sinnix-prime/peripheral/bt-battery",
-            "device/sinnix-prime/peripheral/logitech",
+            "device/{host}/peripheral/bt-audio",
+            "device/{host}/peripheral/bt-battery",
+            "device/{host}/peripheral/logitech",
         ],
         lane_values: &["bt-audio", "bt-battery", "logitech"],
     },
@@ -314,12 +326,12 @@ pub fn source(lake_source: &'static LakeSource) -> DeclaredSource<EnvelopeParser
     }
 }
 
-/// The source's day files (`L-YYYYMMDD.jsonl`) under `root`, in name order. The
-/// index, sequence, lock and high-water files are not material.
-fn day_files(root: &Path, source: &LakeSource) -> Result<Vec<PathBuf>, String> {
+/// The source's day files (`L-YYYYMMDD.jsonl`) under `root` for `host`, in
+/// name order. The index, sequence, lock and high-water files are not material.
+fn day_files(root: &Path, host: &str, source: &LakeSource) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     for dir in source.dirs {
-        let path = root.join(dir);
+        let path = root.join(dir.replace("{host}", host));
         let entries = match std::fs::read_dir(&path) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -360,11 +372,12 @@ fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static La
         .ok_or_else(|| format!("{}: not a lake source", b.parser))
 }
 
-/// `--read sinnix-lake=ROOT`: every lane's day files under the lake root
-/// (`/realm`); each lane's directories are its configuration.
+/// `stage --parser sinnix-lake ROOT`: every lane's day files under the lake root;
+/// each lane's directories are its configuration.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "sinnix-lake",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -374,8 +387,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
@@ -383,9 +394,15 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
             let mut bindings = Vec::new();
             for source in LAKE_SOURCES {
-                bindings.extend(day_files(input, source)?.into_iter().map(|file| {
-                    sinex_source_core::binding::Binding::of(&source.spec, &file, settings.clone())
-                }));
+                bindings.extend(day_files(input, &settings.host, source)?.into_iter().map(
+                    |file| {
+                        sinex_source_core::binding::Binding::of(
+                            &source.spec,
+                            &file,
+                            settings.clone(),
+                        )
+                    },
+                ));
             }
             Ok(bindings)
         }),

@@ -423,13 +423,13 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     sinex_store::privacy::add_rule(
         &mut conn,
         &sinex_store::privacy::NewRule {
-            name: "synthetic-hidden-command".into(),
+            name: "synthetic-sealed-command".into(),
             source,
             event_type: Some("command.imported".into()),
             field: Some("/command".into()),
             matcher: "all".into(),
             matcher_arg: None,
-            class: sinex_model::Class::Guarded,
+            class: sinex_model::Class::Sealed,
             action: sinex_store::privacy::Action::DropField,
             author: "synthetic-test".into(),
         },

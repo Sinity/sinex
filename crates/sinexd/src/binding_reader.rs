@@ -1,6 +1,6 @@
 //! A binding owns its parser and cursor; bindings of the same stored file share one pass over it.
-use crate::backfill::{self, Totals};
 use crate::material_access::Sink;
+use crate::stage::{self, Totals};
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, RunId};
@@ -26,6 +26,9 @@ pub(crate) struct BindingReader {
     /// An append-only file's facts when a poll last read it to its end: while
     /// they hold, nothing was appended and the poll is skipped.
     settled: Option<sinex_model::ObservationFacts>,
+    /// For a binding a stage reads: the stage and what the binding's
+    /// committed batches have accounted for so far.
+    pub committed: Option<stage::Committed>,
 }
 impl BindingReader {
     pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
@@ -53,6 +56,7 @@ impl BindingReader {
             remembered: false,
             history_floor: Class::Open,
             settled: None,
+            committed: None,
         })
     }
 }
@@ -242,7 +246,7 @@ pub(crate) async fn read(
         };
         let init = async {
             if !b.remembered {
-                backfill::record(conn, &b.binding).await?;
+                stage::record(conn, &b.binding).await?;
                 restore(conn, blobs, b, access, &stop).await?;
                 b.remembered = true;
             }
@@ -310,16 +314,17 @@ pub(crate) async fn read(
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
             // Taken before the poll, so bytes appended during it change them.
-            let facts = (b.source.spec().driver == sinex_source_core::Driver::AppendFile)
-                .then(|| drivers::file_facts(&b.binding.input).ok())
-                .flatten();
+            let facts = (b.source.spec().origin
+                == sinex_source_core::Origin::Input(sinex_source_core::Shape::AppendFile))
+            .then(|| drivers::file_facts(&b.binding.input).ok())
+            .flatten();
             if let (Some(now), Some(then)) = (&facts, &b.settled)
                 && same_file(now, then)
             {
                 results.add(&b.binding, Some(run), Ok(Totals::default()));
                 continue;
             }
-            let result = backfill::drive(
+            let result = stage::drive(
                 conn,
                 writer,
                 run,
@@ -331,6 +336,7 @@ pub(crate) async fn read(
                 b.history_floor,
                 reader,
                 stop.clone(),
+                b.committed.clone(),
             )
             .await;
             let result = match result {

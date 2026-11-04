@@ -64,8 +64,10 @@ pub(crate) fn catalog() -> Value {
 struct CatalogSource {
     name: &'static str,
     formats: Vec<&'static str>,
-    drivers: Vec<&'static str>,
+    shapes: Vec<&'static str>,
     purpose: &'static str,
+    expect: sinex_model::Expectation,
+    expires_after: Option<std::time::Duration>,
     class: sinex_model::Class,
     /// The newest parser version among its declarations.
     version: u32,
@@ -78,8 +80,14 @@ impl CatalogSource {
         json!({
             "name": self.name,
             "formats": self.formats,
-            "drivers": self.drivers,
+            "shapes": self.shapes,
             "purpose": self.purpose,
+            "expect": {
+                "kind": self.expect.name(),
+                "silentAfterSeconds": self.expect.silent_after().map(|d| d.as_secs()),
+                "everySeconds": self.expect.every().map(|d| d.as_secs()),
+            },
+            "expiresAfterSeconds": self.expires_after.map(|d| d.as_secs()),
             "class": self.class,
             "eventTypes": self.event_types,
             "discovery": self.discovery,
@@ -97,8 +105,10 @@ fn sources() -> Vec<CatalogSource> {
                     out.push(CatalogSource {
                         name: spec.name,
                         formats: Vec::new(),
-                        drivers: Vec::new(),
+                        shapes: Vec::new(),
                         purpose: spec.purpose,
+                        expect: spec.expect,
+                        expires_after: spec.expires_after,
                         class: spec.class,
                         version: spec.parser_version,
                         event_types: Vec::new(),
@@ -109,10 +119,10 @@ fn sources() -> Vec<CatalogSource> {
             };
             let entry = &mut out[at];
             assert!(
-                format.discovery.request_only
+                format.plan.is_none()
                     || !format.discovery.locations.is_empty()
                     || !format.discovery.streams.is_empty(),
-                "{}: no discovery or request-only role",
+                "{}: neither discovered nor written on request",
                 format.name
             );
             let description = json!({"format": format.name, "capture": format.capture.is_some(), "description": format.discovery});
@@ -123,13 +133,13 @@ fn sources() -> Vec<CatalogSource> {
             // A source read several ways is as private as its most private
             // declaration.
             entry.class = entry.class.max(spec.class);
-            for (list, value) in [
-                (&mut entry.formats, format.name),
-                (&mut entry.drivers, spec.driver.name()),
-            ] {
-                if !list.contains(&value) {
-                    list.push(value);
-                }
+            if !entry.formats.contains(&format.name) {
+                entry.formats.push(format.name);
+            }
+            if let Some(shape) = spec.origin.shape()
+                && !entry.shapes.contains(&shape.name())
+            {
+                entry.shapes.push(shape.name());
             }
             for event_type in spec.event_types {
                 if !entry.event_types.contains(event_type) {
@@ -147,10 +157,12 @@ pub(crate) fn registry_sources() -> Vec<sinex_store::registry::Source> {
         .into_iter()
         .map(|s| sinex_store::registry::Source {
             name: s.name.to_owned(),
-            driver: s.drivers.join(", "),
+            shapes: s.shapes.iter().map(|shape| (*shape).to_owned()).collect(),
             version: i32::try_from(s.version).unwrap_or(i32::MAX),
             event_types: s.event_types.iter().map(|t| (*t).to_owned()).collect(),
             purpose: s.purpose.to_owned(),
+            expect: s.expect,
+            expires_after: s.expires_after,
         })
         .collect()
 }

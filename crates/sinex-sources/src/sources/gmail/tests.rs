@@ -283,7 +283,7 @@ fn provider_ids_identify_messages_without_rfc_ids_and_isolate_accounts() {
 
 #[test]
 fn discovery_waits_for_input_and_credentials_then_plans_the_account() {
-    use sinex_source_core::discovery::{Availability, DiscoveryContext};
+    use sinex_source_core::discovery::{Availability, Cause, DiscoveryContext};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("account.json");
     let mut context = DiscoveryContext {
@@ -292,14 +292,17 @@ fn discovery_waits_for_input_and_credentials_then_plans_the_account() {
     };
     assert_eq!(
         discover(&FORMAT, &context)[0].availability,
-        Availability::WaitingForInput
+        Availability::Unavailable(Cause::NotPresent)
     );
     context.inputs.insert("gmail".into(), vec![path.clone()]);
     std::fs::write(&path, json!({"account":"owner@example.test", "credentials":{"client_id_file":"id","client_secret_file":"secret","refresh_token_file":"refresh"}}).to_string()).unwrap();
     for name in ["id", "secret", "refresh"] {
         let inputs = discover(&FORMAT, &context);
         assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0].availability, Availability::Unavailable);
+        assert_eq!(
+            inputs[0].availability,
+            Availability::Unavailable(Cause::AwaitingCredentials)
+        );
         assert!(
             inputs[0]
                 .reason
@@ -311,7 +314,7 @@ fn discovery_waits_for_input_and_credentials_then_plans_the_account() {
         std::fs::write(dir.path().join(name), "synthetic").unwrap();
     }
     let inputs = discover(&FORMAT, &context);
-    assert_eq!(inputs[0].availability, Availability::Reading);
+    assert_eq!(inputs[0].availability, Availability::Capturing);
     assert_eq!(inputs[0].bindings.len(), 1);
     assert_eq!(
         inputs[0].bindings[0].settings.option("account"),
@@ -320,6 +323,6 @@ fn discovery_waits_for_input_and_credentials_then_plans_the_account() {
     std::fs::remove_file(dir.path().join("refresh")).unwrap();
     assert_eq!(
         discover(&FORMAT, &context)[0].availability,
-        Availability::Unavailable
+        Availability::Unavailable(Cause::AwaitingCredentials)
     );
 }

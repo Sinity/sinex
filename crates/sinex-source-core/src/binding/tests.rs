@@ -1,10 +1,12 @@
 use super::*;
-use crate::registry::{Driver, SourceSpec};
+use crate::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_model::Class;
 
 const SPEC: SourceSpec = SourceSpec {
     name: "test.source",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "tests",
     class: Class::Open,
     parser: "test",

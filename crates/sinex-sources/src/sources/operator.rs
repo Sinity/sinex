@@ -13,13 +13,15 @@ use sinex_model::event_types::operator::{LogEntry, SteeringRow};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const RAW_LOG: SourceSpec = SourceSpec {
     name: "operator.raw-log",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(7),
+    expires_after: None,
     purpose: "the operator's quick notes, as primary data",
     class: Class::Open,
     parser: "operator-raw-log",
@@ -145,7 +147,9 @@ const STEERING: [SourceSpec; 3] = [
 const fn steering_spec(parser: &'static str) -> SourceSpec {
     SourceSpec {
         name: "operator.steering",
-        driver: Driver::SqliteRows,
+        origin: Origin::Input(Shape::SqliteRows),
+        expect: Expectation::continuous_days(30),
+        expires_after: None,
         purpose: "commitments, forecasts and reviews the operator keeps",
         class: Class::Open,
         parser,
@@ -207,11 +211,12 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
     }
 }
 
-/// `--read raw-log=PATH`: the operator's raw log, read in the binding's
+/// `stage --parser raw-log PATH`: the operator's raw log, read in the binding's
 /// zone, recorded when it is planned.
 pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "raw-log",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -221,8 +226,6 @@ pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&RAW_LOG],
@@ -251,10 +254,11 @@ fn steering_table(b: &sinex_source_core::binding::Binding) -> Result<&'static st
         .ok_or_else(|| format!("{}: not a steering table", b.parser))
 }
 
-/// `--read steering=PATH`: the steering store's three tables.
+/// `stage --parser steering PATH`: the steering store's three tables.
 pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "steering",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -264,8 +268,6 @@ pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || STEERING.iter().collect(),

@@ -32,6 +32,7 @@ pub mod sealed;
 pub mod signals;
 pub mod source_declarations;
 mod stage;
+pub mod stages;
 pub mod telemetry;
 pub mod vectors;
 pub mod writer_lock;
