@@ -7,7 +7,7 @@ fn tools_come_from_the_command_table() {
     assert!(names.contains(&"sinex_query"));
     assert!(names.contains(&"sinex_recall"));
     for name in ["sinex_same", "sinex_distinct"] {
-        assert!(!names.contains(&name), "{name} is not implemented");
+        assert!(names.contains(&name), "agents decide duplicates: {name}");
     }
     for name in ["sinex_stage", "sinex_stage-list", "sinex_stage-show"] {
         assert!(

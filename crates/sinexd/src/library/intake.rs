@@ -110,7 +110,7 @@ impl Library<'_> {
             "stored_bytes": !reference,
             "files_described": files,
             "copies_admitted": seen,
-            "scan_failures": counts.to_json()["failures"],
+            "scan_failures": counts.accounting.failures,
             "items_new": new_items,
             "items_moved": moves,
             "item_revisions": revisions,

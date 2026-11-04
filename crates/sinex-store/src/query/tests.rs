@@ -432,7 +432,7 @@ async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDataba
     world(&mut conn).await;
     // A registered source that never recorded anything is not configured
     // here, not silent, so it is never listed as having no data.
-    sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('export.never-staged','export-archive',1,ARRAY['synthetic.record'],'synthetic query test')")
+    sqlx::query("INSERT INTO registry.sources(name,shapes,version,event_types,purpose,expectation) VALUES ('export.never-staged',ARRAY['export-archive'],1,ARRAY['synthetic.record'],'synthetic query test','export')")
         .execute(&mut *conn)
         .await
         .unwrap();

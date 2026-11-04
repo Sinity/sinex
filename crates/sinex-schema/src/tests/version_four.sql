@@ -1,5 +1,8 @@
 -- Undo the library curation upgrade.
 DROP TABLE core.library_shown;
+-- Undo parser-free staging before exercising the forward upgrade.
+ALTER TABLE raw.materials DROP CONSTRAINT parser_with_version,
+  ALTER COLUMN parser SET NOT NULL, ALTER COLUMN parser_version SET NOT NULL;
 -- Undo the lifecycle upgrade.
 DROP TABLE raw.material_changes;
 ALTER TABLE raw.materials DROP COLUMN status, DROP COLUMN status_operation;

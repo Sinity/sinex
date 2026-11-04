@@ -1,7 +1,6 @@
 //! Isolated real-daemon signal deliveries and their outlets, through the
 //! public commands.
 use crate::support::daemon;
-use futures::FutureExt;
 use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection};
 use std::{

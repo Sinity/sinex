@@ -568,11 +568,6 @@ fn lock(table: &str) -> String {
     format!("LOCK TABLE {table} IN SHARE MODE")
 }
 
-/// Block every use of `table`, for a step that only reads it.
-fn read_lock(table: &str) -> String {
-    format!("LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
-}
-
 /// Kill the stage at a step, run it again to the end, and compare with a
 /// run that was never interrupted.
 async fn verified_stage_state(target: &Target, inputs: &Inputs) -> State {

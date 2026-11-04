@@ -290,10 +290,11 @@ async fn a_file_no_parser_recognises_is_kept_byte_for_byte(db: devkit::pg::TestD
     .await
     .unwrap();
     assert_eq!(rows.len(), 2);
+    let blobs = Blobs::open(&store).unwrap();
+    blobs.load(&mut conn).await.unwrap();
     for (parser, version, blob, length) in &rows {
         assert_eq!((parser, version), (&None, &None));
         assert_eq!(*length, bytes.len() as i64);
-        let blobs = Blobs::open(&store).unwrap();
         assert_eq!(blobs.read(blob).unwrap(), bytes);
     }
     // Replay has nothing to read it with until a parser is assigned.

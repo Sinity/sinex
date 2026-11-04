@@ -58,8 +58,8 @@ fn statements_use_offered_batches_even_when_a_statement_runs_more_than_once() {
 #[devkit::test]
 fn mixed_source_counts_keep_integers_and_missing_times_stay_unknown() {
     let result = json!({"sources": {
-        "a": {"admitted": 20, "batches": 2, "events_offered": 30, "admission_s": 1.0},
-        "b": {"admitted": 40, "batches": 3, "events_offered": 50, "admission_s": 2.0}
+        "a": {"accounting": {"new": 18, "revised": 2, "readings": 30}, "batches": 2, "admission_s": 1.0},
+        "b": {"accounting": {"new": 37, "revised": 3, "readings": 50}, "batches": 3, "admission_s": 2.0}
     }});
     let totals = measurements::source_totals(&result);
     assert_eq!(totals["admitted"].as_u64(), Some(60));
