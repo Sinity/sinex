@@ -92,6 +92,8 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **commit log**: committed changes in commit order; each has a **commit position**.
 - **read model**: a table maintained by admission for reading (liveness, detector hits, `duplicates`).
 - **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinexd admin upgrade` while the daemon is stopped.
+- **work after start**: the part of a schema upgrade the daemon finishes after it starts (filling tables from stored rows, building indexes), as ordered tasks that each resume from a mark.
+- **upgrade preparation**: what `sinexd admin upgrade --prepare` builds beside the serving daemon for the upgrade to swap in.
 
 ## Producers and transport
 

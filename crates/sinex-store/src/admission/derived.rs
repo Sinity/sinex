@@ -117,7 +117,7 @@ pub(super) async fn apply_derived(
                 "WITH RECURSIVE descendants AS (
                   SELECT e.id FROM core.events e WHERE e.source=$1
                     AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
-                  UNION SELECT c.child FROM core.event_children c JOIN descendants p ON c.parent=p.id)
+                  UNION SELECT c.child FROM descendants p CROSS JOIN LATERAL core.event_children_of(p.id) c)
                  SELECT d.id FROM descendants d WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)")
                 .bind(derivation).fetch_all(&mut *conn).await?
             } else {
@@ -574,9 +574,9 @@ pub(crate) async fn mark_archived_dirty(
 ) -> Result<usize> {
     let descendants = sqlx::query_scalar!(
         r#"WITH RECURSIVE descendants(id) AS (
-             SELECT child FROM core.event_children WHERE parent = ANY($1)
+             SELECT edge.child FROM unnest($1::uuid[]) root(id) CROSS JOIN LATERAL core.event_children_of(root.id) edge
              UNION
-             SELECT edge.child FROM core.event_children edge JOIN descendants d ON edge.parent = d.id)
+             SELECT edge.child FROM descendants d CROSS JOIN LATERAL core.event_children_of(d.id) edge)
            SELECT d.id AS "id!" FROM descendants d
            WHERE NOT (d.id = ANY($1))
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = d.id)"#,

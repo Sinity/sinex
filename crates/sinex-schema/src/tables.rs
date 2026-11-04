@@ -137,6 +137,34 @@ pub(crate) const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
 pub(crate) const EVENT_CHILDREN_CHILD: &str =
     "CREATE INDEX event_children_child ON core.event_children (child)";
 
+/// Every walk over the edges reads them through these two functions, so the
+/// edges have one definition. Plain SQL bodies, so the planner inlines them
+/// into each walk and uses the edge indexes.
+pub(crate) const EVENT_CHILDREN_OF: &str = "CREATE FUNCTION core.event_children_of(event uuid)
+RETURNS TABLE (child uuid) LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT c.child FROM core.event_children c WHERE c.parent = $1
+$$";
+pub(crate) const EVENT_PARENTS_OF: &str = "CREATE FUNCTION core.event_parents_of(event uuid)
+RETURNS TABLE (parent uuid) LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT c.parent FROM core.event_children c WHERE c.child = $1
+$$";
+
+/// One live reading per equivalence key.
+pub(crate) const LIVE_EQUIVALENCE: &str = "CREATE TABLE core.live_equivalence (
+  source text NOT NULL,
+  event_type text NOT NULL,
+  equivalence_key bytea NOT NULL,
+  event_id uuid NOT NULL,
+  reading_order bigint NOT NULL,
+  record_hash bytea NOT NULL,
+  PRIMARY KEY (source, event_type, equivalence_key)
+)";
+pub(crate) const LIVE_EQUIVALENCE_EVENT: &str =
+    "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)";
+
+/// Feed pages read events in commit order.
+pub(crate) const EVENTS_FEED: &str = "CREATE INDEX events_feed ON core.events (commit_seq,id)";
+
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let kind_columns = kind_columns();
     let event_columns = format!(
@@ -179,6 +207,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         format!("CREATE TABLE core.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
         EVENT_CHILDREN.into(),
         EVENT_CHILDREN_CHILD.into(),
+        EVENT_CHILDREN_OF.into(),
+        EVENT_PARENTS_OF.into(),
         // One live reading per record location, event type and output number.
         "CREATE TABLE core.live_locations (
   material_id uuid NOT NULL,
@@ -191,18 +221,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   CONSTRAINT output_index_in_range CHECK (output_index >= 0),
   PRIMARY KEY (material_id, anchor, event_type, output_index)
 )".into(),
-        // One live reading per equivalence key.
-        "CREATE TABLE core.live_equivalence (
-  source text NOT NULL,
-  event_type text NOT NULL,
-  equivalence_key bytea NOT NULL,
-  event_id uuid NOT NULL,
-  reading_order bigint NOT NULL,
-  record_hash bytea NOT NULL,
-  PRIMARY KEY (source, event_type, equivalence_key)
-)".into(),
+        LIVE_EQUIVALENCE.into(),
         // Found by event: removal of live readings, and readings at a location.
-        "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)".into(),
+        LIVE_EQUIVALENCE_EVENT.into(),
         "CREATE INDEX live_locations_event ON core.live_locations (event_id)".into(),
         TOMBSTONES.into(),
         // Replay runs one transaction per part sequence; a finished sequence is
@@ -286,7 +307,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE INDEX archive_changes_position ON audit.archive_changes (event_id, commit_seq DESC)".into(),
         ARCHIVED_OPERATION.into(),
         ARCHIVE_CHANGES_RESTORED.into(),
-        "CREATE INDEX events_feed ON core.events (commit_seq,id)".into(),
+        EVENTS_FEED.into(),
         "CREATE INDEX archive_changes_feed ON audit.archive_changes (commit_seq,change_seq,event_id)".into(),
         "CREATE INDEX tombstones_feed ON core.event_tombstones (commit_seq,event_id)".into(),
         "CREATE INDEX tombstones_original_position ON core.event_tombstones (original_commit_seq)".into(),

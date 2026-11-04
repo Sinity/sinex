@@ -61,6 +61,7 @@ ALTER TABLE core.ingress_frames DROP COLUMN family, DROP COLUMN write_kind_prefi
 -- Reconstruct the deployed predecessor before exercising the forward chain.
 CREATE SCHEMA telemetry;
 CREATE TABLE telemetry.events (LIKE core.events INCLUDING ALL);
+DROP FUNCTION core.event_children_of(uuid), core.event_parents_of(uuid);
 DROP TABLE core.event_children;
 ALTER TABLE core.event_tombstones DROP COLUMN commit_seq, DROP COLUMN original_commit_seq, DROP COLUMN class;
 DROP TABLE core.producer_orders;
