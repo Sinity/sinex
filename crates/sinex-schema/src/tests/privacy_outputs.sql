@@ -1,3 +1,6 @@
+-- This fixture stands before parser-free staging, which the forward chain reruns.
+ALTER TABLE raw.materials DROP CONSTRAINT parser_with_version,
+  ALTER COLUMN parser SET NOT NULL, ALTER COLUMN parser_version SET NOT NULL;
 -- The objects the two emptied upgrade steps created, with synthetic rows.
 CREATE TABLE privacy.policy_state (id boolean PRIMARY KEY CHECK (id), desired_epoch bigint NOT NULL, active_epoch bigint NOT NULL);
 INSERT INTO privacy.policy_state VALUES (true, 1, 1);

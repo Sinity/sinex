@@ -387,10 +387,10 @@ async fn delivering_everything_twice_changes_nothing() {
     consistent(&mut c).await;
 }
 
-/// Rereading one native input suppresses repeats. A separate input copy keeps
-/// independent reading identity while sharing identical physical blob bytes.
+/// Rereading and copying an input retain distinct materials and logical inputs.
+/// Their identical source records share the exact live readings and keys.
 #[devkit::test]
-async fn rereading_one_native_input_repeats_but_a_separate_copy_keeps_its_identity() {
+async fn rereading_and_copying_inputs_retain_materials_and_share_native_readings() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = small_zsh();
@@ -431,9 +431,8 @@ async fn rereading_one_native_input_repeats_but_a_separate_copy_keeps_its_identi
     );
     let after = live(&mut c).await;
     assert_eq!(
-        after.len(),
-        2 * before.len(),
-        "a distinct input copy has independent native keys"
+        after, before,
+        "copied source records keep the exact live reading IDs and native keys"
     );
     for (key, reading) in &before {
         assert_eq!(
@@ -748,8 +747,8 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     assert_eq!(visible_a3(&mut c, &path).await, 1);
     assert_eq!(
         visible_a3(&mut c, &copy).await,
-        1,
-        "an independent copy has its own live reading"
+        0,
+        "the new material repeats source records that already have live readings"
     );
     let retained: Vec<(uuid::Uuid, String)> = sqlx::query_as(
         "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=ANY($1) ORDER BY m.input_id"
@@ -779,7 +778,11 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     let before_replay = support::marker_count(&mut c).await;
     t.admin(&["replay", "--binding", &atuin_binding(&path)]);
     assert_eq!(visible_a3(&mut c, &path).await, 1);
-    assert_eq!(visible_a3(&mut c, &copy).await, 1);
+    assert_eq!(
+        visible_a3(&mut c, &copy).await,
+        0,
+        "replaying the original input does not assign readings to its copy"
+    );
     let journals: Vec<(uuid::Uuid, i64)> = sqlx::query_as(
         "SELECT s.operation_id,count(*) FROM core.replayed_sequences s JOIN core.operations o ON o.id=s.operation_id WHERE o.kind='replay' GROUP BY s.operation_id ORDER BY count(*),s.operation_id"
     ).fetch_all(&mut c).await.unwrap();
