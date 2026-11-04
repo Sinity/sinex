@@ -163,14 +163,28 @@ pub struct Stored {
     pub part_index: i32,
     pub blob: String,
     pub length: i64,
-    pub parser: String,
-    pub parser_version: i32,
+    /// `None` for a material stored with no parser, which replay cannot read.
+    pub parser: Option<String>,
+    pub parser_version: Option<i32>,
     pub manifest: sinex_model::Manifest,
     pub binding: Option<String>,
     pub host: Option<String>,
     /// `live`, `archived` or `tombstoned`. A tombstoned part's bytes may be
     /// gone, so its sequence restarts after it.
     pub status: String,
+}
+
+impl Stored {
+    /// The parser the material was read with and its version.
+    pub fn parsed_with(&self) -> std::result::Result<(&str, i32), String> {
+        match (&self.parser, self.parser_version) {
+            (Some(parser), Some(version)) => Ok((parser, version)),
+            _ => Err(format!(
+                "material {} is stored without a parser; no parser has been assigned to read it",
+                self.id
+            )),
+        }
+    }
 }
 
 /// Materials in scope: the named ones, a binding's live ones, or (when

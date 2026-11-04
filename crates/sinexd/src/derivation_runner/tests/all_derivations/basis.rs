@@ -6,20 +6,19 @@ use sinex_model::query::Context;
 use sinex_store::query::{self, Page};
 
 /// Reconstruct the complete declared owner selection AS OF the retained P.
-/// This fixture has no policy changes; the compiler applies the current policy
-/// and the historical admission/archive lifecycle. ExactInputs supplies actual
+/// The compiler applies the historical admission/archive lifecycle. ExactInputs supplies actual
 /// stored Events, never fabricated metadata or a raw-payload fallback.
 pub(super) async fn validate(w: &World) {
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let read = ReadMark::now(&mut conn).await.unwrap();
-    // Internal ContextPacks reads the private transformed projection, rather
-    // than a public caller's narrower grants. This synthetic owner scope sees
-    // all fixture classes for the independent compiler reconstruction.
+    // Internal ContextPacks reads stored events, rather than a public caller's
+    // narrower grants. This synthetic owner scope sees all fixture classes for
+    // the independent compiler reconstruction.
     query::set_grants(&mut conn, "guarded,sealed")
         .await
         .unwrap();
     let retained: Vec<(Value, Vec<uuid::Uuid>, String, i64)> = sqlx::query_as(
-        "SELECT e.payload,e.parents,e.class,e.commit_seq FROM core.derivation_events e
+        "SELECT e.payload,e.parents,e.class,e.commit_seq FROM core.events e
          WHERE e.source='context.packs' AND e.event_type='context.pack'
            AND EXISTS(SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)",
     )

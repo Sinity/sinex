@@ -10,13 +10,15 @@ use super::cells::{CELL, Cell};
 use sinex_model::Class;
 use sinex_model::event_types::account::{ActionRecorded, VideoSearched, VideoWatched};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const MY_ACTIVITY: SourceSpec = SourceSpec {
     name: "google.my-activity",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "searches, visits and app use recorded by the Google account",
     class: Class::Open,
     parser: "google-my-activity",
@@ -30,7 +32,9 @@ pub const MY_ACTIVITY: SourceSpec = SourceSpec {
 
 pub const YOUTUBE: SourceSpec = SourceSpec {
     name: "google.youtube-history",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "videos watched and searched for",
     class: Class::Open,
     parser: "google-youtube-history",

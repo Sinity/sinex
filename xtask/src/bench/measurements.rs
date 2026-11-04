@@ -220,7 +220,6 @@ pub(super) fn environment(out: &Path) -> Value {
 
 pub(super) struct SyntheticInput {
     pub format: &'static str,
-    pub source: &'static str,
     pub path: PathBuf,
 }
 
@@ -243,7 +242,6 @@ pub(super) fn synthetic_inputs(
     history.flush().map_err(|e| e.to_string())?;
     let mut inputs = vec![SyntheticInput {
         format: "zsh",
-        source: "terminal.zsh-history",
         path,
     }];
     if mixed {
@@ -276,7 +274,6 @@ pub(super) fn journal_input(
     file.flush().map_err(|e| e.to_string())?;
     Ok(SyntheticInput {
         format: "journald",
-        source: "machine.journald",
         path,
     })
 }
@@ -289,26 +286,28 @@ pub(super) fn source_totals(result: &Value) -> Value {
         return Value::Null;
     }
     let mut totals = serde_json::Map::new();
-    for key in [
-        "admitted",
-        "batches",
-        "events_offered",
-        "wall_s",
-        "admission_s",
-    ] {
+    for key in ["wall_s", "admission_s"] {
         let values: Option<Vec<f64>> = sources.values().map(|s| s[key].as_f64()).collect();
         if let Some(values) = values {
             totals.insert(key.into(), json!(values.iter().sum::<f64>()));
         }
     }
-    // Counts retain integer JSON representations for correctness checks.
-    for key in ["admitted", "batches", "events_offered"] {
-        let count: Option<u64> = sources
+    // Readings stored are the new and the revised ones. The counts keep
+    // integer JSON representations for correctness checks.
+    let count = |s: &Value, key: &str| s["accounting"][key].as_u64();
+    let sum = |each: &dyn Fn(&Value) -> Option<u64>| {
+        sources
             .values()
-            .try_fold(0u64, |n, s| n.checked_add(s[key].as_u64()?));
-        if let Some(count) = count {
-            totals.insert(key.into(), json!(count));
-        }
+            .try_fold(0u64, |n, s| n.checked_add(each(s)?))
+    };
+    if let Some(n) = sum(&|s| Some(count(s, "new")? + count(s, "revised")?)) {
+        totals.insert("admitted".into(), json!(n));
+    }
+    if let Some(n) = sum(&|s| count(s, "readings")) {
+        totals.insert("events_offered".into(), json!(n));
+    }
+    if let Some(n) = sum(&|s| s["batches"].as_u64()) {
+        totals.insert("batches".into(), json!(n));
     }
     if let (Some(n), Some(s)) = (
         totals.get("admitted").and_then(Value::as_f64),
@@ -326,7 +325,7 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
     let mut counts = query(
         cluster,
         "SELECT json_build_object('events', (SELECT count(*) FROM core.events),
-        'commit_events', (SELECT count(*) FROM core.commit_log WHERE event_id IS NOT NULL),
+        'event_positions', (SELECT count(DISTINCT commit_seq) FROM core.events),
         'last_commit', (SELECT value FROM core.counters WHERE name='commit_seq'),
         'source_counts', (SELECT coalesce(sum(events),0) FROM core.source_counts),
         'run_events', (SELECT coalesce(sum(events),0) FROM core.runs),
@@ -340,7 +339,7 @@ pub(super) fn correctness(cluster: &Cluster, events: u64) -> Result<Value, Strin
     )?;
     counts["complete"] = json!(
         counts["events"].as_u64() == Some(events)
-            && counts["commit_events"].as_u64() == Some(events)
+            && counts["event_positions"].as_u64() == Some(events)
             && counts["last_commit"].as_u64() == Some(events)
             && counts["source_counts"].as_u64() == Some(events)
             && counts["run_events"].as_u64() == Some(events)
@@ -600,19 +599,17 @@ pub(super) fn with_consumers(
                 .map(|name| (name.to_owned(), json!(false)))
         })
         .collect();
-    let sources: serde_json::Map<String, Value> = inputs
-        .iter()
-        .map(|input| {
-            (
-                input.source.into(),
-                json!({"enable": true, "paths": [input.path], "format": input.format}),
-            )
-        })
-        .collect();
+    let mut discovered: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
+    for input in inputs.iter() {
+        discovered
+            .entry(input.format)
+            .or_default()
+            .push(input.path.as_ref());
+    }
     save(
         out,
         "sources.json",
-        &json!({"sources": sources, "derivations": derivations}),
+        &json!({"discovery": {"inputs": discovered}, "derivations": derivations}),
     )?;
     let runtime = out.join("runtime");
     fs::create_dir_all(&runtime).map_err(|e| e.to_string())?;
@@ -661,7 +658,6 @@ pub(super) fn with_consumers(
             .arg(&runtime)
             .arg("--sources")
             .arg(out.join("sources.json"))
-            .env("SINEX_PRIVATE_MODE", runtime.join("private-mode"))
             .env("SINEX_BENCH_TIMINGS", "1")
             .stdout(daemon_log.try_clone().map_err(|e| e.to_string())?)
             .stderr(daemon_log)
@@ -784,7 +780,7 @@ pub(super) fn stage_summary(out: &Path) -> Result<Value, String> {
     let mut batches = Vec::new();
     let mut publishers = Vec::new();
     let mut search = Vec::new();
-    for name in ["daemon.log", "backfill.stderr", "source.stderr"] {
+    for name in ["daemon.log", "stage.stderr", "source.stderr"] {
         let path = out.join(name);
         match fs::read_to_string(&path) {
             Ok(text) => {
@@ -910,6 +906,49 @@ pub(super) fn relation_size(snapshot: &Value, relation: &str, field: &str) -> Op
         .iter()
         .find(|row| row["schema"] == "core" && row["name"] == relation)?[field]
         .as_u64()
+}
+
+/// Bytes kept per stored event: each table's heap, TOAST and indexes
+/// (event chunks counted under `core.events`), after minus before, divided
+/// by the events the run stored. A table rewritten smaller counts negative.
+pub(super) fn stored_bytes(before: &Value, after: &Value, events: u64) -> Value {
+    let sizes = |snapshot: &Value| -> BTreeMap<String, i64> {
+        let mut sizes = BTreeMap::new();
+        for row in snapshot["relations"].as_array().into_iter().flatten() {
+            let (Some(schema), Some(name), Some(bytes)) = (
+                row["schema"].as_str(),
+                row["name"].as_str(),
+                row["total_bytes"].as_i64(),
+            ) else {
+                continue;
+            };
+            if row["relkind"] != "r" {
+                continue;
+            }
+            let table = if schema == "_timescaledb_internal" {
+                "core.events".to_owned()
+            } else {
+                format!("{schema}.{name}")
+            };
+            *sizes.entry(table).or_default() += bytes;
+        }
+        sizes
+    };
+    let (before, after) = (sizes(before), sizes(after));
+    let per_event = |bytes: i64| bytes as f64 / events.max(1) as f64;
+    let mut tables = serde_json::Map::new();
+    let mut total = 0;
+    for (table, bytes) in &after {
+        let grown = bytes - before.get(table).copied().unwrap_or(0);
+        if grown != 0 {
+            total += grown;
+            tables.insert(
+                table.clone(),
+                json!({"bytes": grown, "per_event": per_event(grown)}),
+            );
+        }
+    }
+    json!({"bytes": total, "per_event": per_event(total), "tables": tables})
 }
 
 pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, String> {

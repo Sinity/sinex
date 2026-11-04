@@ -123,10 +123,6 @@ pub(crate) const QUERY_CURSOR_KEY: &str = "CREATE TABLE core.query_cursor_key (
 )";
 pub(crate) const QUERY_CURSOR_KEY_INIT: &str = "INSERT INTO core.query_cursor_key (id, secret) VALUES (true, decode(replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''), 'hex'))";
 
-/// Coverage probes one source and run for its last recorded time.
-pub(crate) const COVERAGE_RUNS: &str =
-    "CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq)";
-
 /// One edge per exact parent. Chain walks do not scan compressed payloads.
 pub(crate) const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
   parent uuid NOT NULL,
@@ -136,6 +132,34 @@ pub(crate) const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
 )";
 pub(crate) const EVENT_CHILDREN_CHILD: &str =
     "CREATE INDEX event_children_child ON core.event_children (child)";
+
+/// Every walk over the edges reads them through these two functions, so the
+/// edges have one definition. Plain SQL bodies, so the planner inlines them
+/// into each walk and uses the edge indexes.
+pub(crate) const EVENT_CHILDREN_OF: &str = "CREATE FUNCTION core.event_children_of(event uuid)
+RETURNS TABLE (child uuid) LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT c.child FROM core.event_children c WHERE c.parent = $1
+$$";
+pub(crate) const EVENT_PARENTS_OF: &str = "CREATE FUNCTION core.event_parents_of(event uuid)
+RETURNS TABLE (parent uuid) LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT c.parent FROM core.event_children c WHERE c.child = $1
+$$";
+
+/// One live reading per equivalence key.
+pub(crate) const LIVE_EQUIVALENCE: &str = "CREATE TABLE core.live_equivalence (
+  source text NOT NULL,
+  event_type text NOT NULL,
+  equivalence_key bytea NOT NULL,
+  event_id uuid NOT NULL,
+  reading_order bigint NOT NULL,
+  record_hash bytea NOT NULL,
+  PRIMARY KEY (source, event_type, equivalence_key)
+)";
+pub(crate) const LIVE_EQUIVALENCE_EVENT: &str =
+    "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)";
+
+/// Feed pages read events in commit order.
+pub(crate) const EVENTS_FEED: &str = "CREATE INDEX events_feed ON core.events (commit_seq,id)";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let kind_columns = kind_columns();
@@ -179,6 +203,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         format!("CREATE TABLE core.events (\n  {event_columns},\n  PRIMARY KEY (id)\n)"),
         EVENT_CHILDREN.into(),
         EVENT_CHILDREN_CHILD.into(),
+        EVENT_CHILDREN_OF.into(),
+        EVENT_PARENTS_OF.into(),
         // One live reading per record location, event type and output number.
         "CREATE TABLE core.live_locations (
   material_id uuid NOT NULL,
@@ -191,18 +217,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   CONSTRAINT output_index_in_range CHECK (output_index >= 0),
   PRIMARY KEY (material_id, anchor, event_type, output_index)
 )".into(),
-        // One live reading per equivalence key.
-        "CREATE TABLE core.live_equivalence (
-  source text NOT NULL,
-  event_type text NOT NULL,
-  equivalence_key bytea NOT NULL,
-  event_id uuid NOT NULL,
-  reading_order bigint NOT NULL,
-  record_hash bytea NOT NULL,
-  PRIMARY KEY (source, event_type, equivalence_key)
-)".into(),
+        LIVE_EQUIVALENCE.into(),
         // Found by event: removal of live readings, and readings at a location.
-        "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)".into(),
+        LIVE_EQUIVALENCE_EVENT.into(),
         "CREATE INDEX live_locations_event ON core.live_locations (event_id)".into(),
         TOMBSTONES.into(),
         // Replay runs one transaction per part sequence; a finished sequence is
@@ -213,14 +230,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   completed_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (operation_id, first_part)
 )".into(),
-        // Commit order, read by derivations inside the daemon and by the publisher.
-        "CREATE TABLE core.commit_log (
-  commit_seq bigint PRIMARY KEY,
-  event_id uuid,
-  event_type text,
-  persisted_at timestamptz DEFAULT now(),
-  CHECK ((event_id IS NULL) = (event_type IS NULL))
-)".into(),
+        // Positions without an event; events carry their own.
+        crate::event_indexes::COMMIT_LOG.into(),
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
         "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0), ('tombstoned', 0)".into(),
@@ -286,7 +297,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE INDEX archive_changes_position ON audit.archive_changes (event_id, commit_seq DESC)".into(),
         ARCHIVED_OPERATION.into(),
         ARCHIVE_CHANGES_RESTORED.into(),
-        "CREATE INDEX events_feed ON core.events (commit_seq,id)".into(),
+        EVENTS_FEED.into(),
         "CREATE INDEX archive_changes_feed ON audit.archive_changes (commit_seq,change_seq,event_id)".into(),
         "CREATE INDEX tombstones_feed ON core.event_tombstones (commit_seq,event_id)".into(),
         "CREATE INDEX tombstones_original_position ON core.event_tombstones (original_commit_seq)".into(),
@@ -351,11 +362,13 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   blob text NOT NULL REFERENCES core.blobs(hash),
   length bigint NOT NULL CHECK (length >= 0),
   manifest jsonb NOT NULL,
-  parser text NOT NULL,
-  parser_version integer NOT NULL,
+{parser_columns}
   status text NOT NULL DEFAULT 'live' {material_status},
-  status_operation uuid
-)", material_status = c.material_status),
+  status_operation uuid,
+  {parser_with_version}
+)", material_status = c.material_status,
+    parser_columns = crate::stage_without_parser::PARSER_COLUMNS,
+    parser_with_version = crate::stage_without_parser::PARSER_WITH_VERSION),
         "CREATE INDEX materials_input ON raw.materials (input_id, part_index)".into(),
         material_changes(c),
         MATERIAL_CHANGES_OPERATION.into(),
@@ -422,13 +435,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         kind_declarations(),
         REPLAY_REFUSALS.into(),
         KIND_IMMUTABILITY.into(),
-        "CREATE TABLE registry.sources (
-  name text PRIMARY KEY,
-  driver text NOT NULL,
-  version integer NOT NULL,
-  event_types text[] NOT NULL,
-  purpose text NOT NULL
-)".into(),
+        crate::source_expectations::sources(),
         "CREATE TABLE registry.derivations (
   name text PRIMARY KEY,
   kind text NOT NULL CHECK (kind IN ('per_event', 'keyed')),
@@ -564,9 +571,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         crate::source_declarations::fresh(statement);
     }
     tables.push(crate::source_declarations::TABLE.into());
-    tables.extend(crate::model_calls::tables());
+    tables.extend(crate::library_curation::tables());
     tables.extend(crate::vectors::tables());
-    tables.extend(crate::privacy_epoch::tables());
     tables.extend(crate::owner_protocol::statements());
     tables
 }
@@ -577,15 +583,12 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
     out.extend(crate::query_cursors::triggers());
-    out.extend(crate::privacy_epoch::hooks());
     out.extend(crate::source_declarations::hooks());
     for table in ["core.events"] {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",
-            "CREATE INDEX ON $T (ts_orig)",
-            "CREATE INDEX ON $T (source, ts_orig)",
             "CREATE INDEX ON $T (event_type, ts_orig)",
-            "CREATE INDEX ON $T (material_id, anchor)",
+            crate::event_indexes::RECORD_LOCATION,
             // Only derived events have parents. Without the pending list a
             // search never scans an unsorted backlog of bulk inserts (which
             // made each probe cost 0.6 ms after a backfill).
@@ -599,7 +602,6 @@ pub(crate) fn after_tables() -> Vec<String> {
         }
     }
     out.extend(blob_changes());
-    out.push(COVERAGE_RUNS.into());
     out
 }
 

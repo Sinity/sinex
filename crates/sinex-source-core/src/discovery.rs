@@ -62,20 +62,17 @@ pub struct DiscoverySpec {
     pub locations: &'static [Location],
     pub capabilities: &'static [&'static str],
     pub credentials: &'static [&'static str],
-    pub request_only: bool,
-    pub requests: &'static [&'static str],
     pub streams: &'static [CaptureStream],
 }
 
+/// What a deployment sets for one source. Where its inputs are is never a
+/// setting: discovery finds them at canonical locations.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SourceConfig {
-    pub paths: Vec<String>,
     pub zone: Option<String>,
     pub class: Option<sinex_model::Class>,
     pub options: Value,
-    /// Scopes explicit paths; discovery still considers every format.
-    pub format: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -103,16 +100,36 @@ pub struct DiscoveryContext {
     pub exclude: BTreeMap<String, Option<Exclusion>>,
 }
 
+/// Why an input cannot be read now. Unavailable is a state, never an empty
+/// source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cause {
+    /// The canonical input does not exist on this host.
+    NotPresent,
+    /// The input exists and this account may not read it.
+    PermissionDenied,
+    /// The input needs a credential the host does not have.
+    AwaitingCredentials,
+    /// The host lacks what the input needs: a display server, a bus, a program.
+    NotApplicable,
+    /// Reading the input or planning its bindings failed.
+    Failed,
+}
+
+/// What discovery knows about one input before any record is read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Availability {
-    Reading,
+    /// Found and read: an existing input, or a stream captured into a spool.
     Capturing,
-    ProducerReported,
-    WaitingForInput,
-    Unavailable,
+    Unavailable(Cause),
+    /// The operator excluded the source, with a reason.
     Excluded,
-    RequestOnly,
+    /// Records are written by request; there is no input to find.
+    OnDemand,
+    /// Captured by a session producer, which alone knows its state.
+    ProducerReported,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -169,7 +186,6 @@ pub struct Configuration {
     #[serde(default)]
     pub rhythm: serde_json::Value,
     pub signals: serde_json::Value,
-    pub model_accounting: serde_json::Value,
 }
 
 impl Configuration {

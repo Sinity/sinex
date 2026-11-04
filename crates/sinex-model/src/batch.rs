@@ -109,12 +109,8 @@ pub struct IngressFrame {
 
 #[derive(Clone, Debug)]
 pub struct OwnerCoverage {
-    /// Required for normal copied evidence; optional only for the owner-checked
-    /// compiled emergency receipt. Never accepted from a producer payload.
-    pub required: bool,
     pub stamp: String,
     pub position: i64,
-    pub policy_epoch: i64,
     pub scope: String,
     pub catalog: String,
     pub instance: String,

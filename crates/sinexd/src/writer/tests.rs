@@ -396,7 +396,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     }
     assert!(matches!(
         handle
-            .submit_source(Priority::Live, separate_file, Arc::new(|| Ok(())))
+            .submit_source(Priority::Live, separate_file, Arc::new(|| Ok(())), None)
             .await,
         Err(WriteError::Refused(_))
     ));
@@ -408,7 +408,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     assert_eq!(positions, 0);
     assert!(blobs.contains(&owned_blob).unwrap());
     let outcome = handle
-        .submit_source(Priority::Live, bad, Arc::new(|| Ok(())))
+        .submit_source(Priority::Live, bad, Arc::new(|| Ok(())), None)
         .await
         .unwrap();
     assert_eq!(outcome.admitted, 0);
@@ -426,6 +426,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
             Priority::Live,
             source("private\0value", 8, 15),
             Arc::new(|| Ok(())),
+            None,
         )
         .await
         .unwrap();
@@ -444,7 +445,8 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
             .submit_source(
                 Priority::Live,
                 source("after refusal", 16, bytes.len()),
-                Arc::new(|| Ok(()))
+                Arc::new(|| Ok(())),
+                None
             )
             .await
             .unwrap()
@@ -619,16 +621,10 @@ async fn reconnect_reclaims_and_reloads_privacy(db: devkit::pg::TestDatabase) {
         .fetch_one(&mut changes)
         .await
         .unwrap();
-    assert_eq!(class, "open", "source originals retain their offered class");
-    let projected: String = sqlx::query_scalar("SELECT class FROM privacy.event_outputs WHERE event_id=$1 AND epoch=(SELECT desired_epoch FROM privacy.policy_state WHERE id)")
-        .bind(outcome.admitted_ids[0].0).fetch_one(&mut changes).await.unwrap();
     assert_eq!(
-        projected, "guarded",
+        class, "guarded",
         "reconnected writer loads the current source floor"
     );
-    sinex_store::privacy::projection::ensure_current(&mut changes)
-        .await
-        .unwrap();
     sinex_store::query::set_grants(&mut changes, "guarded")
         .await
         .unwrap();

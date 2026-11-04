@@ -1,4 +1,6 @@
-//! Shell sessions: fused commands on one host grouped by a gap rule. Each
+//! Shell sessions: commands on one host grouped by a gap rule. Commands are
+//! read as fused commands plus the command records no fused command joins,
+//! so a command two shells saw is one member. Each
 //! command is a recorded span (start plus duration; a command without a
 //! duration is a point). A new session starts when a command begins more than
 //! `GAP` after the latest end in the current session, so overlapping and nested
@@ -8,6 +10,7 @@
 //! configured start, 04:00 by default). A session never crosses a day start;
 //! the rule says nothing about attention or real task boundaries.
 use crate::derived_event::derived;
+use crate::fusion::{Command, commands};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::{CommandFused, ShellSession};
@@ -27,48 +30,72 @@ fn key_parts(key: &Value) -> Option<(String, jiff::civil::Date)> {
 
 impl Keyed for ShellSessions {
     const NAME: &'static str = "shell.sessions";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const USES_TIME_SETTINGS: bool = true;
-    const INPUTS: &'static [&'static str] = &[CommandFused::EVENT_TYPE];
+    const INPUTS: &'static [&'static str] = &[
+        CommandFused::EVENT_TYPE,
+        "command.reported",
+        "command.executed",
+        "command.imported",
+        "terminal.reported",
+    ];
     const OUTPUTS: &'static [&'static str] = &[ShellSession::EVENT_TYPE];
 
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
-        let (Some(host), Some(t)) = (
-            input.payload.get("host").and_then(Value::as_str),
-            input.ts_orig,
-        ) else {
+        let host = commands().field_of(input.event_type, input.payload, "host");
+        let (Some(Value::String(host)), Some(t)) = (host, input.ts_orig) else {
             return vec![];
         };
-        match env.time_settings.day(t) {
-            Ok(day) => vec![json!({"host": host, "day": day.to_string()})],
-            Err(_) => vec![],
+        // A command's fused record may start in the neighbouring day.
+        let margin = commands().margin();
+        let days = [t.unix_ns() - margin, t.unix_ns() + margin]
+            .into_iter()
+            .filter_map(|ns| Timestamp::from_unix_ns(ns).ok())
+            .filter_map(|at| env.time_settings.day(at).ok());
+        let mut keys: Vec<Value> = Vec::new();
+        for day in days {
+            let key = json!({"host": host, "day": day.to_string()});
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
         }
+        keys
     }
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let (host, day) = key_parts(key)?;
-        Some(
-            InputQuery::window(
-                Self::INPUTS,
-                env.time_settings.day_start(day).ok()?,
-                env.time_settings.day_end(day).ok()?,
-            )
-            .only("host", Value::String(host)),
-        )
+        let (_, day) = key_parts(key)?;
+        let margin = commands().margin();
+        Some(InputQuery::of(
+            commands().kinds(),
+            Timestamp::from_unix_ns(env.time_settings.day_start(day).ok()?.unix_ns() - margin)
+                .ok()?,
+            Timestamp::from_unix_ns(env.time_settings.day_end(day).ok()?.unix_ns() + margin)
+                .ok()?,
+        ))
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], _env: &Env) -> Computed {
+    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
         let Some((host, day)) = key_parts(key) else {
             return Computed::default();
         };
-        let mut commands: Vec<(&Event, CommandFused)> = inputs
-            .iter()
-            .filter_map(|e| e.payload_as::<CommandFused>().map(|c| (e, c)))
-            .filter(|(_, c)| c.host == host)
+        let (Ok(day_start), Ok(day_end)) = (
+            env.time_settings.day_start(day),
+            env.time_settings.day_end(day),
+        ) else {
+            return Computed::default();
+        };
+        let mut commands: Vec<(&Event, Command)> = commands()
+            .occurrences(inputs)
+            .into_iter()
+            .filter_map(|o| {
+                let command = serde_json::from_value::<Command>(o.payload.into_owned()).ok()?;
+                Some((o.event, command))
+            })
+            .filter(|(_, c)| c.host == host && day_start <= c.started_at && c.started_at < day_end)
             .collect();
         commands.sort_by_key(|(e, c)| (c.started_at, e.id));
 
-        let mut groups: Vec<Vec<(&Event, CommandFused)>> = Vec::new();
+        let mut groups: Vec<Vec<(&Event, Command)>> = Vec::new();
         let mut latest_end: i128 = i128::MIN;
         for (e, c) in commands {
             let start = c.started_at.unix_ns();

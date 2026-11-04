@@ -2,20 +2,21 @@
 //! (`messages` and `threads` tables), on `SqliteRows`. Unlike the GDPR export
 //! it keeps Facebook's own IDs: each message has its ID, its thread's ID and
 //! its author's numeric account ID, but no names. The same message in a GDPR
-//! export is the same text at the same millisecond, which is how
-//! `conversation.fusion` joins the two.
+//! export is a separate record with the same text at the same millisecond.
 use super::fields;
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
 use sinex_source_core::drivers::sqlite_rows::SqliteRows;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.messenger-sqlite",
-    driver: Driver::SqliteRows,
+    origin: Origin::Input(Shape::SqliteRows),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "conversations with people",
     class: Class::Open,
     parser: "fbmessengerexport",
@@ -91,10 +92,11 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--read messenger-sqlite=PATH`: an `fbmessengerexport` database.
+/// `stage --parser messenger-sqlite PATH`: an `fbmessengerexport` database.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "messenger-sqlite",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -104,8 +106,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

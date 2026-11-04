@@ -57,7 +57,7 @@ async fn fixture(db: devkit::pg::TestDatabase) -> Fixture {
     Fixture { _db: db, ctx, dir }
 }
 
-/// Read `path` through the zsh driver to the end, as backfill does.
+/// Read `path` through the zsh driver to the end, as a stage does.
 async fn ingest(ctx: &mut ReaderContext, path: &Path, state: &mut AppendState) {
     let driver = zsh::driver(path.to_owned(), "h".into());
     ingest_with(ctx, |cursor| driver.poll(cursor, state).unwrap()).await;

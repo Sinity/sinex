@@ -6,7 +6,7 @@ struct ObservedInputs(Arc<AtomicBool>);
 impl Keyed for ObservedInputs {
     const NAME: &'static str = "library.items";
     const VERSION: u32 = 1;
-    const INPUTS: &'static [&'static str] = &["library.copy", "library.preview"];
+    const INPUTS: &'static [&'static str] = &["library.copy"];
     const OUTPUTS: &'static [&'static str] = &["library.item", "library.rendition"];
 
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {

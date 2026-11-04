@@ -104,7 +104,7 @@ async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Val
             )
         } else if table == "counters" {
             format!(
-                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','privacy_outputs','query_metadata') ORDER BY 1"
+                "SELECT to_jsonb(t) FROM {name} t WHERE name NOT IN ('blob_changes','excised','tombstoned','query_metadata') ORDER BY 1"
             )
         } else if table == "event_tombstones" {
             format!(
@@ -123,6 +123,9 @@ async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Val
             format!(
                 "SELECT to_jsonb(t)||jsonb_build_object('reason',CASE reason WHEN 'hide' THEN 'archive' WHEN 'unhide' THEN 'restore' ELSE reason END) FROM {name} t ORDER BY 1"
             )
+        } else if schema == "core" && table == "commit_log" {
+            // Positions are kept; an event's moves from its commit-log row to its own row.
+            "SELECT to_jsonb(p) FROM (SELECT commit_seq FROM core.commit_log UNION SELECT commit_seq FROM core.events) p ORDER BY 1".into()
         } else if table == "published" {
             format!("SELECT to_jsonb(t)-'stream_instance' FROM {name} t ORDER BY 1")
         } else if table == "search_text" {
@@ -240,6 +243,7 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
             to: sinex_schema::VERSION
         }
     );
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(
         rows(&mut conn, Some(&before)).await,
         before,
@@ -267,7 +271,6 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
         edges, retained,
         "the new edge index reproduces every retained parent exactly"
     );
-    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(crate::test_schema::catalog(&mut conn).await, catalog);
 }
 

@@ -8,21 +8,18 @@ pub struct InputState {
     pub commit: i64,
     pub changes: i64,
     pub tombstoned: i64,
-    #[serde(default)]
-    pub policy_epoch: Option<i64>,
 }
 
 pub async fn input_state(conn: &mut PgConnection, inputs: &[String]) -> Result<InputState> {
-    let (commit, changes, tombstoned, policy_epoch): (i64, i64, i64,i64) = sqlx::query_as(
+    let (commit, changes, tombstoned): (i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT coalesce(max(commit_seq),0) FROM core.events WHERE event_type=ANY($1)),
           (SELECT coalesce(max(a.change_seq),0) FROM audit.archive_changes a JOIN core.events e ON e.id=a.event_id WHERE e.event_type=ANY($1)),
-          (SELECT value FROM core.counters WHERE name='tombstoned'), privacy.require_active_epoch()")
+          (SELECT value FROM core.counters WHERE name='tombstoned')")
         .bind(inputs).fetch_one(conn).await?;
     Ok(InputState {
         commit,
         changes,
         tombstoned,
-        policy_epoch: Some(policy_epoch),
     })
 }
 
@@ -82,7 +79,6 @@ pub(crate) async fn validate(
             "logical-day settings changed after comparison; compare again".into(),
         ));
     }
-    crate::privacy::comparisons::require_scope(conn, &context).await?;
     let compared: InputState = serde_json::from_value(
         context.get("inputs").cloned().unwrap_or_default(),
     )

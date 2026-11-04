@@ -59,40 +59,70 @@ fn internal_edge_is_refused_for_every_dependency_kind() {
 }
 
 #[devkit::test]
-fn pure_crates_refuse_io_dependencies_directly_and_transitively() {
+fn pure_crates_refuse_io_dependencies_directly() {
     assert!(validate(workspace(vec![dep("tokio", None)])).is_err());
-    let wrapped = metadata(&[("sinex-model", vec![dep("wrapper", None)], vec!["wrapper"])]);
-    assert_eq!(
-        validate(wrapped).unwrap_err(),
-        "forbidden transitive dependency: sinex-model -> tokio"
-    );
 }
 
 #[devkit::test]
-fn an_optional_dependency_counts_only_when_a_feature_enables_it() {
-    let graph = |features: Vec<&str>| -> Metadata {
-        serde_json::from_value(json!({
-            "packages": [
-                {"id": "sinex-model", "name": "sinex-model", "dependencies": [dep("timelib", None)]},
-                {"id": "timelib", "name": "timelib",
-                 "dependencies": [{"name": "tokio", "kind": null, "target": null, "optional": true}],
-                 "features": {"std": ["tokio?/std"], "io": ["dep:tokio"]}},
-                {"id": "tokio", "name": "tokio", "dependencies": []},
-            ],
-            "workspace_members": ["sinex-model"],
-            "resolve": {"nodes": [
-                {"id": "sinex-model", "deps": [{"pkg": "timelib", "dep_kinds": [{"kind": null}]}]},
-                {"id": "timelib", "deps": [{"pkg": "tokio", "dep_kinds": [{"kind": null}]}], "features": features},
-                {"id": "tokio", "deps": []},
-            ]},
-        }))
-        .unwrap()
+fn pure_dependency_checks_follow_the_selected_runtime_features() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nresolver='2'\nmembers=['model','wrapper','consumer','tokio']\n",
+    )
+    .unwrap();
+    for name in ["model", "wrapper", "consumer", "tokio"] {
+        std::fs::create_dir_all(root.join(name).join("src")).unwrap();
+        std::fs::write(root.join(name).join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            root.join(name).join("Cargo.toml"),
+            format!("[package]\nname='{name}'\nversion='0.1.0'\nedition='2024'\n"),
+        )
+        .unwrap();
+    }
+    let append = |name: &str, text: &str| {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(root.join(name).join("Cargo.toml"))
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
     };
-    // `tokio?/std` names tokio weakly; it is not built.
-    assert!(validate(graph(vec!["std"])).is_ok());
+    append(
+        "wrapper",
+        "[dependencies]\ntokio={path='../tokio',optional=true}\n[features]\nstd=['tokio?/std']\nio=['dep:tokio']\n",
+    );
+    append("tokio", "[features]\nstd=[]\n");
+    append(
+        "consumer",
+        "[dev-dependencies]\nwrapper={path='../wrapper',features=['io']}\n",
+    );
+    let model = "[package]\nname='model'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nwrapper={path='../wrapper',features=['std']}\n";
+    std::fs::write(root.join("model/Cargo.toml"), model).unwrap();
+    let lock = devkit::cargo_command()
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    let host = host_triple().unwrap();
+    // Another workspace member's development feature and a weak feature edge
+    // cannot add a runtime dependency to this model.
+    runtime_dependencies(root, "model", RuntimeRule::NoIo, &host).unwrap();
+    std::fs::write(
+        root.join("model/Cargo.toml"),
+        model.replace("['std']", "['std','io']"),
+    )
+    .unwrap();
     assert_eq!(
-        validate(graph(vec!["std", "io"])).unwrap_err(),
-        "forbidden transitive dependency: sinex-model -> tokio"
+        runtime_dependencies(root, "model", RuntimeRule::NoIo, &host).unwrap_err(),
+        "forbidden transitive dependency: model -> tokio"
     );
 }
 
@@ -155,26 +185,54 @@ fn transport_owns_io_but_cannot_return_through_a_pure_protocol_edge() {
     }
 }
 
+fn wrapped_dependency(package: &str, dependency: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!("[workspace]\nresolver='2'\nmembers=['{package}','wrapper','{dependency}']\n"),
+    )
+    .unwrap();
+    for name in [package, "wrapper", dependency] {
+        std::fs::create_dir_all(root.join(name).join("src")).unwrap();
+        std::fs::write(root.join(name).join("src/lib.rs"), "").unwrap();
+        let edge = if name == package {
+            Some("wrapper")
+        } else if name == "wrapper" {
+            Some(dependency)
+        } else {
+            None
+        };
+        let mut manifest = format!("[package]\nname='{name}'\nversion='0.1.0'\nedition='2024'\n");
+        if let Some(edge) = edge {
+            manifest.push_str(&format!("[dependencies]\n{edge}={{path='../{edge}'}}\n"));
+        }
+        std::fs::write(root.join(name).join("Cargo.toml"), manifest).unwrap();
+    }
+    let output = devkit::cargo_command()
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    dir
+}
+
 #[devkit::test]
 fn a_pure_wrapper_cannot_hide_transport_io() {
-    let mut graph = metadata(&[
-        (
-            "sinex-protocol",
-            vec![dep("wrapper", None)],
-            vec!["wrapper"],
-        ),
-        ("sinex-transport", vec![], vec![]),
-    ]);
-    graph
-        .resolve
-        .nodes
-        .iter_mut()
-        .find(|n| n.id == "wrapper")
-        .unwrap()
-        .deps[0]
-        .pkg = "sinex-transport".into();
+    let dir = wrapped_dependency("sinex-protocol", "sinex-transport");
     assert_eq!(
-        validate(graph).unwrap_err(),
+        runtime_dependencies(
+            dir.path(),
+            "sinex-protocol",
+            RuntimeRule::NoIo,
+            &host_triple().unwrap()
+        )
+        .unwrap_err(),
         "forbidden transitive dependency: sinex-protocol -> sinex-transport"
     );
 }
@@ -198,16 +256,15 @@ fn quoted_catalog_names_are_found_in_store_text() {
 
 #[devkit::test]
 fn cli_cannot_acquire_database_work_through_a_wrapper() {
-    let mut graph = metadata(&[("sinexctl", vec![dep("wrapper", None)], vec!["wrapper"])]);
-    let wrapper = graph
-        .resolve
-        .nodes
-        .iter_mut()
-        .find(|node| node.id == "wrapper")
-        .unwrap();
-    wrapper.deps[0].pkg = "sqlx".into();
+    let dir = wrapped_dependency("sinexctl", "sqlx");
     assert_eq!(
-        validate(graph).unwrap_err(),
+        runtime_dependencies(
+            dir.path(),
+            "sinexctl",
+            RuntimeRule::NoDatabase,
+            &host_triple().unwrap()
+        )
+        .unwrap_err(),
         "forbidden transitive dependency: sinexctl -> sqlx"
     );
 }

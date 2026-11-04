@@ -22,7 +22,9 @@ pub fn subcommand(c: &Command) -> clap::Command {
                     "recall" | "mark" | "query-save" | "timeline"
                 )),
             (ArgKind::Bool, _) => arg.long(a.name).action(ArgAction::SetTrue).required(false),
-            (ArgKind::List, _) => arg.long(a.name).action(ArgAction::Append),
+            (ArgKind::List, true) => arg.num_args(1..).action(ArgAction::Append),
+            (ArgKind::List, false) => arg.long(a.name).action(ArgAction::Append),
+            (ArgKind::Objects, _) => arg.long(a.name).action(ArgAction::Append),
             (ArgKind::Integer, false) => arg.long(a.name).value_parser(clap::value_parser!(u64)),
             (_, false) => arg.long(a.name),
             (_, true) => arg,
@@ -63,6 +65,20 @@ pub fn arguments(spec: &Command, m: &ArgMatches) -> Map<String, Value> {
             ArgKind::Text | ArgKind::Reference => m
                 .get_one::<String>(a.name)
                 .map(|s| Value::String(s.clone())),
+            // Text that is not a JSON object stays text, and the request
+            // refuses it with the command's own message.
+            ArgKind::Objects => m.get_many::<String>(a.name).map(|values| {
+                Value::Array(
+                    values
+                        .map(|text| {
+                            serde_json::from_str::<Value>(text)
+                                .ok()
+                                .filter(Value::is_object)
+                                .unwrap_or_else(|| Value::String(text.clone()))
+                        })
+                        .collect(),
+                )
+            }),
         };
         if let Some(v) = value {
             out.insert(a.name.to_string(), v);

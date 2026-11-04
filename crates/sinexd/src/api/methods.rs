@@ -13,8 +13,8 @@ use sqlx::PgPool;
 
 mod analysis;
 mod forecast;
+mod fusion;
 mod kinds;
-mod model_calls;
 mod operations;
 mod privacy;
 mod queries;
@@ -41,6 +41,12 @@ pub(crate) struct Api {
     pub source_config: std::sync::Arc<crate::binding_runner::Config>,
     /// The bindings whose latest read attempt failed, kept by the binding runner.
     pub read_failures: crate::binding_runner::ReadFailures,
+    /// The stages this daemon is reading now, so one is never read twice
+    /// at once.
+    pub running_stages: crate::stage::Running,
+    /// The daemon's shutdown. A stage reading in the background stops at it,
+    /// ends `stopped_early`, and `resume` reads it again later.
+    pub stop: tokio::sync::watch::Receiver<bool>,
     pub library_roots: Vec<std::path::PathBuf>,
 }
 
@@ -79,13 +85,6 @@ fn timestamp(s: &str) -> Result<sinex_model::Timestamp, String> {
     time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
         .map(sinex_model::Timestamp)
         .map_err(|e| format!("{s}: not an RFC 3339 time: {e}"))
-}
-
-fn not_built(reason: impl Into<String>) -> Reply {
-    Reply::Refused {
-        reason: reason.into(),
-        not_built: true,
-    }
 }
 
 /// A result carrying captured text, with the data notice first.
@@ -199,23 +198,6 @@ impl Api {
         let actor = caller.actor;
         let method = request.method();
         match request {
-            Request::ModelCall { operation: _ } => self.model_call_disabled(),
-            Request::ModelPolicy { definition } => self.model_policy(caller, &definition).await,
-            Request::ModelRecord { policy, definition } => {
-                self.model_record(caller, &policy, &definition).await
-            }
-            Request::ModelReceipt { policy, definition } => {
-                self.model_receipt(
-                    caller,
-                    &policy,
-                    &definition,
-                    sinex_model::model_calls::Capabilities {
-                        actual_receipts: self.source_config.model_accounting.actual_receipts,
-                    },
-                )
-                .await
-            }
-
             Request::Signal {
                 action,
                 name,
@@ -238,6 +220,10 @@ impl Api {
             Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
                 Err(e) => refused(e.to_string()),
+            },
+            Request::SourcesDiscover => match self.sources_discover().await {
+                Ok(v) => Reply::Ok { result: v },
+                Err(e) => refused(e),
             },
             Request::Query {
                 query,
@@ -573,12 +559,42 @@ impl Api {
             | Request::AnalysisWhy { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
-            Request::Stage { .. } => not_built(
-                "stage needs the staging path of the source framework, which this daemon does not run yet",
-            ),
-            Request::Same { .. } | Request::Distinct { .. } => not_built(
-                "duplicate decisions need the fusion derivation's decision records, not built yet",
-            ),
+            Request::Stage {
+                path,
+                parser,
+                account,
+                export_date,
+                follow,
+            } => {
+                self.stage(
+                    caller,
+                    &path,
+                    &parser,
+                    account,
+                    export_date,
+                    follow.unwrap_or(false),
+                )
+                .await
+            }
+            Request::StageList { active } => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match sinex_store::stages::list(&mut conn, active.unwrap_or(false)).await {
+                    Ok(stages) => Reply::Ok {
+                        result: json!({ "stages": stages }),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::StageShow { operation } => self.stage_show(caller, &operation).await,
+            r @ (Request::Same { .. }
+            | Request::Distinct { .. }
+            | Request::WithdrawDecision { .. }) => match self.decide_pair(r, caller).await {
+                Ok(v) => data(v),
+                Err(e) => refused(e),
+            },
             r @ (Request::PrivacyRules { .. }
             | Request::PrivacyRule { .. }
             | Request::PrivacyEnd { .. }
@@ -588,14 +604,8 @@ impl Api {
             | Request::PrivacyVerify) => self.privacy(r, caller).await,
             r @ (Request::LibraryAdd { .. }
             | Request::LibraryItem { .. }
-            | Request::LibraryTag { .. }
-            | Request::LibraryUntag { .. }
-            | Request::LibrarySet { .. }
-            | Request::LibraryCollect { .. }
-            | Request::LibraryUncollect { .. }
+            | Request::LibraryCurate { .. }
             | Request::LibraryCollection { .. }
-            | Request::LibraryRate { .. }
-            | Request::LibraryCompare { .. }
             | Request::LibraryRank { .. }
             | Request::LibraryOpen { .. }
             | Request::LibraryViewed { .. }
@@ -626,7 +636,6 @@ impl Api {
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
         if text
-            .trim()
             .split_whitespace()
             .next()
             .is_some_and(|word| word.eq_ignore_ascii_case("recall"))
@@ -691,12 +700,28 @@ impl Api {
         }
     }
 
+    /// The discovery dry run: what this host's sources would capture, read
+    /// only from the inputs' metadata.
+    async fn sources_discover(&self) -> Result<Value, String> {
+        let context = self.source_config.context(&self.host);
+        let (inputs, unimplemented) = tokio::task::spawn_blocking(move || {
+            sinex_sources::discovery::status(&context)
+                .map(|inputs| (inputs, sinex_sources::unimplemented::census(&context)))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        Ok(json!({"inputs": inputs, "unimplemented": unimplemented}))
+    }
+
     async fn status(&self, caller: &Caller) -> Result<Value, String> {
         let mut conn = self.acquire(caller).await.map_err(|e| e.to_string())?;
         let row = sinex_store::diagnostics::positions(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
         let telemetry = sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE)
+            .await
+            .map_err(|e| e.to_string())?;
+        let upgrade_work = sinex_store::diagnostics::upgrade_work(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
         let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn)
@@ -750,14 +775,20 @@ impl Api {
         )
         .await
         .map_err(|error| error.to_string())?;
-        let evaluation_rows = sinex_store::signals::rule_rows(
+        // Ambiguity per fusion family: pairs awaiting a decision, decided
+        // pairs, and fused records chosen among several candidates.
+        let fusion_families: Vec<(String, String)> = sinex_derivations::fusion::families()
+            .iter()
+            .map(|f| (f.name.to_owned(), f.output.to_owned()))
+            .collect();
+        let fusion = sinex_store::diagnostics::fusion_ambiguity(
             &mut conn,
-            sinex_model::event_types::signal::EvaluationRecorded::EVENT_TYPE,
-            row.commit_seq,
+            &fusion_families,
+            sinex_model::event_types::fused::ConsideredPair::EVENT_TYPE,
         )
         .await
         .map_err(|error| error.to_string())?;
-        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
+        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>()});
         drop(conn);
         let sources = match self
             .query(
@@ -802,6 +833,8 @@ impl Api {
                 "behind": row.commit_seq - row.search_position.unwrap_or(0),
             },
             "schema_version": row.schema_version,
+            // Upgrade tasks the daemon still runs after start; empty when done.
+            "upgrade_work_after_start": upgrade_work,
             "failures_24h": row.failures_24h,
             // Inputs that cannot be read admit no records, so no record failure
             // counts them; each binding failing now is listed here instead.
@@ -816,6 +849,7 @@ impl Api {
             "telemetry": telemetry,
             "producer_versions": producer_versions,
             "signals":signals,
+            "fusion":fusion,
             "discovery": discovery,
             "exclusions": exclusions,
         }))

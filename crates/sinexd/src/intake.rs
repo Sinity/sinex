@@ -1,8 +1,8 @@
 //! One path from an acquisition to the writer, for bindings and API requests.
-use crate::backfill::Totals;
-use crate::writer::{AdmissionCheck, Priority, WriterHandle};
+use crate::stage::Totals;
+use crate::writer::{AdmissionCheck, Priority, StageCheckpoint, WriterHandle};
 use serde_json::Value;
-use sinex_model::{Class, EventPayload, MaterialId, RecordOutcome, RunId};
+use sinex_model::{Class, MaterialId, RecordOutcome, RunId};
 use sinex_source_core::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
@@ -36,13 +36,15 @@ impl Intake<'_> {
         carry: Value,
         totals: &mut Totals,
     ) -> Result<Submission, String> {
-        self.submit_using(acquired, carry, totals, |batch, check| async move {
+        self.submit_using(acquired, carry, totals, |batch, check, stage| async move {
             let result = if self.atomic {
                 self.writer
                     .submit_checked(self.priority, batch, check)
                     .await
             } else {
-                self.writer.submit_source(self.priority, batch, check).await
+                self.writer
+                    .submit_source(self.priority, batch, check, stage)
+                    .await
             };
             result.map_err(|e| e.to_string())
         })
@@ -59,31 +61,36 @@ impl Intake<'_> {
             acquired,
             Value::Null,
             &mut Totals::default(),
-            |batch, check| {
+            |batch, check, _| {
                 let checkpoint = checkpoint.take();
                 async move {
                     check()?;
-                    let mut checkpoint =
+                    let checkpoint =
                         checkpoint.ok_or("signal transition spans multiple admission batches")?;
-                    for decision in &mut checkpoint.decisions {
-                        let id = decision.payload["delivery_id"].as_str();
-                        let handoff = batch
-                            .events()
-                            .find(|event| {
-                                event.event_type
-                                    == sinex_model::event_types::signal::HandoffRecorded::EVENT_TYPE
-                                    && event.payload["delivery_id"].as_str() == id
-                            })
-                            .ok_or("signal decision lacks its physical handoff record")?;
-                        if let sinex_model::Origin::Derived { parents } = &mut decision.origin {
-                            parents.push(handoff.id);
-                        }
-                    }
                     self.writer
-                        .submit_signals(batch, checkpoint)
+                        .submit_signals(Some(batch), checkpoint)
                         .await
                         .map_err(|error| error.to_string())
                 }
+            },
+        )
+        .await
+    }
+
+    /// Submit planned library curation records, verified in admission.
+    pub(crate) async fn submit_curation(
+        &self,
+        acquired: drivers::Acquired,
+    ) -> Result<Submission, String> {
+        self.submit_using(
+            acquired,
+            Value::Null,
+            &mut Totals::default(),
+            |batch, check, _| async move {
+                self.writer
+                    .submit_curation(self.priority, batch, check)
+                    .await
+                    .map_err(|error| error.to_string())
             },
         )
         .await
@@ -97,7 +104,7 @@ impl Intake<'_> {
         mut admit: F,
     ) -> Result<Submission, String>
     where
-        F: FnMut(sinex_model::Batch, AdmissionCheck) -> A,
+        F: FnMut(sinex_model::Batch, AdmissionCheck, Option<StageCheckpoint>) -> A,
         A: std::future::Future<Output = Result<Outcome, String>>,
     {
         let check = self.material.admission_check(self.check.clone());
@@ -122,6 +129,9 @@ impl Intake<'_> {
             check()
         });
         let mut outcome = Outcome::default();
+        // The material's framed records, and how many of them are committed.
+        let mut material_framed = None;
+        let mut committed_records = 0u64;
         let result = async {
             while let Some(parsed) = batches.next().await {
                 let parsed = parsed?;
@@ -129,8 +139,30 @@ impl Intake<'_> {
                 if let Some(length) = parsed.material_length {
                     totals.poll(length);
                 }
+                let mut removed_now = 0;
+                if let Some((framed, removed)) = parsed.framed {
+                    totals.framed(framed, removed);
+                    material_framed = Some(framed);
+                    removed_now = removed;
+                }
                 totals.parse(parsed.elapsed);
                 let batch = parsed.batch;
+                totals.records(&batch);
+                let records = batch.records.len() as u64;
+                // A staged binding's accounting once this batch commits, short
+                // of admission's decisions, which the writer adds in the
+                // batch's transaction.
+                let stage = totals.committed.as_ref().map(|committed| {
+                    let mut accounting = committed.accounting.clone();
+                    accounting.framed += records;
+                    accounting.removed += removed_now;
+                    accounting.records(&batch.records);
+                    accounting.readings += batch.event_count() as u64;
+                    StageCheckpoint {
+                        operation: committed.operation,
+                        accounting,
+                    }
+                });
 
                 check()?;
                 let events = batch.event_count();
@@ -146,7 +178,7 @@ impl Intake<'_> {
                         .get_or_insert_with(Instant::now);
                     admission_check()
                 });
-                let admitted = admit(batch, writer_check).await?;
+                let admitted = admit(batch, writer_check, stage.clone()).await?;
                 let elapsed = started.elapsed();
                 let queue = service_started
                     .lock()
@@ -155,12 +187,23 @@ impl Intake<'_> {
                 totals.writer(queue, elapsed.saturating_sub(queue));
                 totals.batch(events, elapsed);
                 totals.add_outcome(&admitted);
+                if let (Some(committed), Some(stage)) = (totals.committed.as_mut(), stage) {
+                    committed.accounting = stage.accounting;
+                    crate::stage::decided(&mut committed.accounting, &admitted);
+                }
+                committed_records += records;
                 outcome += &admitted;
                 // Streaming submissions do not keep every committed event ID.
                 if self.atomic {
                     outcome.admitted_ids = admitted.admitted_ids;
                 }
                 permit.committed();
+            }
+            // All of the material is committed: the driver's count replaces
+            // the committed records it framed.
+            if let (Some(committed), Some(framed)) = (totals.committed.as_mut(), material_framed) {
+                committed.accounting.framed =
+                    committed.accounting.framed - committed_records + framed;
             }
             Ok(Submission { outcome, material })
         }
@@ -180,7 +223,48 @@ pub(crate) async fn request(
     host: &str,
     acquired: drivers::Acquired,
 ) -> Result<Submission, String> {
-    request_inner(conn, writer, blobs, source, binding, host, acquired, None).await
+    request_inner(
+        conn,
+        writer,
+        blobs,
+        source,
+        binding,
+        host,
+        acquired,
+        Admission::Plain,
+    )
+    .await
+}
+
+/// [`request`] for planned library curation records: admitted only if they
+/// still place as planned.
+pub(crate) async fn request_curation(
+    conn: &mut PgConnection,
+    writer: &WriterHandle,
+    blobs: &Blobs,
+    source: Arc<dyn Source>,
+    binding: &str,
+    host: &str,
+    acquired: drivers::Acquired,
+) -> Result<Submission, String> {
+    request_inner(
+        conn,
+        writer,
+        blobs,
+        source,
+        binding,
+        host,
+        acquired,
+        Admission::Curation,
+    )
+    .await
+}
+
+/// What a request's admission must also hold.
+enum Admission {
+    Plain,
+    Signals(sinex_store::signals::Commit),
+    Curation,
 }
 
 pub(crate) async fn request_checkpoint(
@@ -201,7 +285,7 @@ pub(crate) async fn request_checkpoint(
         binding,
         host,
         acquired,
-        Some(checkpoint),
+        Admission::Signals(checkpoint),
     )
     .await
 }
@@ -214,7 +298,7 @@ async fn request_inner(
     binding: &str,
     host: &str,
     acquired: drivers::Acquired,
-    checkpoint: Option<sinex_store::signals::Commit>,
+    admission: Admission,
 ) -> Result<Submission, String> {
     let spec = source.spec();
     let version = spec.parser_version.to_string();
@@ -246,11 +330,12 @@ async fn request_inner(
         )
         .await
         .map_err(|e| e.to_string())?;
-        let class = request_class(conn, source.as_ref()).await?.max(
-            checkpoint
-                .as_ref()
-                .map_or(Class::Open, |commit| commit.class),
-        );
+        let class = request_class(conn, source.as_ref())
+            .await?
+            .max(match &admission {
+                Admission::Signals(commit) => commit.class,
+                _ => Class::Open,
+            });
         let material = crate::material_access::MaterialAccess::new(
             blobs.clone(),
             class,
@@ -268,9 +353,10 @@ async fn request_inner(
             atomic: true,
             registered: None,
         };
-        match checkpoint {
-            Some(checkpoint) => intake.submit_checkpoint(acquired, checkpoint).await,
-            None => {
+        match admission {
+            Admission::Signals(checkpoint) => intake.submit_checkpoint(acquired, checkpoint).await,
+            Admission::Curation => intake.submit_curation(acquired).await,
+            Admission::Plain => {
                 intake
                     .submit(acquired, Value::Null, &mut Totals::default())
                     .await
@@ -329,6 +415,10 @@ impl Preparation {
     ) -> Result<(), String> {
         let started = Instant::now();
         (self.check)()?;
+        let mut framed = acquired
+            .material
+            .as_ref()
+            .map(|m| (m.records.len() as u64, m.removed.len() as u64));
         let prepared = drivers::prepare(
             self.source.as_ref(),
             &self.binding,
@@ -380,6 +470,7 @@ impl Preparation {
                 batch,
                 elapsed,
                 material_length: material_length.take(),
+                framed: framed.take(),
                 permit,
             }) {
                 return Ok(());

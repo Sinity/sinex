@@ -15,13 +15,16 @@ use sinex_source_core::drivers::api_cursor::ApiCursor;
 use sinex_source_core::drivers::held::HeldMaterial;
 use sinex_source_core::drivers::{Acquired, DriverError};
 use sinex_source_core::{
-    DeclaredSource, Driver, Parser, Reader, RecordContext, RecordError, SourceSpec,
+    DeclaredSource, Expectation, Origin, Parser, Reader, RecordContext, RecordError, Shape,
+    SourceSpec,
 };
 use std::path::Path;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.gmail",
-    driver: Driver::ApiCursor,
+    origin: Origin::Input(Shape::ApiCursor),
+    expect: Expectation::cadence_hours(1),
+    expires_after: None,
     purpose: "mail and provider history",
     class: Class::Guarded,
     parser: "gmail",
@@ -301,6 +304,7 @@ impl<T: api::Transport + 'static> Reader for GmailReader<T> {
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "gmail",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -310,8 +314,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &["client_id_file", "client_secret_file", "refresh_token_file"],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover,
         specs: || vec![&SPEC],
@@ -345,10 +347,10 @@ fn discover(
     format: &sinex_source_core::InputFormat,
     context: &sinex_source_core::discovery::DiscoveryContext,
 ) -> Vec<sinex_source_core::discovery::DiscoveredInput> {
-    use sinex_source_core::discovery::Availability;
+    use sinex_source_core::discovery::{Availability, Cause};
     let mut inputs = crate::discovery::discover_format(format, context);
     for input in &mut inputs {
-        if input.availability != Availability::Reading {
+        if input.availability != Availability::Capturing {
             continue;
         }
         let checked = input
@@ -368,7 +370,7 @@ fn discover(
                 Ok(())
             });
         if let Err(reason) = checked {
-            input.availability = Availability::Unavailable;
+            input.availability = Availability::Unavailable(Cause::AwaitingCredentials);
             input.reason = Some(reason);
             input.bindings.clear();
         }

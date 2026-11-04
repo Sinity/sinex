@@ -4,10 +4,14 @@
 //! through the query language, and `trace` leads from a day's number to the
 //! hours and the events behind it.
 //!
-//! A metric is declared once in [`METRICS`]: the events it counts, how it
+//! A metric is declared once in [`METRICS`]: the records it counts, how it
 //! counts them, the fields it breaks down by, and the sources whose coverage
-//! says whether a period was observed. Fused kinds are counted, never one
-//! source's view of them, so a command two shells saw counts once.
+//! says whether a period was observed. A metric over a fusion family counts
+//! its fused records and the source records no fused record joins, so a
+//! command two shells saw counts once. A metric over a family without fusion
+//! counts each source's records, broken down by source, so an occurrence two
+//! sources saw counts once for each; its seconds are the union of the
+//! sources' intervals.
 //!
 //! The hourly derivation is keyed by metric and logical day and emits that
 //! day's local hours (23 to 25 of them) from the day's input events. The
@@ -20,10 +24,13 @@
 //! in: missing evidence is not continued activity. A play with no end is of
 //! unknown length and counts no seconds.
 use crate::derived_event::derived;
+use crate::fusion::Family as FusionFamily;
+use crate::observed::{FOCUS, Family, PLAYS, VISITS};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind, Neighbour};
 use serde_json::{Value, json};
 use sinex_model::event_types::MetricFigure;
 use sinex_model::{Event, EventPayload, Timestamp};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 /// How a metric counts the events of a period.
@@ -44,13 +51,64 @@ pub enum Calculation {
     },
 }
 
+/// Which records a metric counts, and the payload it reads from each.
+#[derive(Clone, Copy)]
+pub enum Records {
+    /// Events of these kinds, as stored.
+    Stored(fn() -> Vec<Kind>),
+    /// A fusion family's occurrences, each once, in the fused kind's payload.
+    Fused(fn() -> &'static FusionFamily),
+    /// A family without fusion: each source's records, in the family's
+    /// common payload.
+    Observed(&'static Family),
+}
+
+impl Records {
+    fn kinds(self) -> Vec<Kind> {
+        match self {
+            Self::Stored(kinds) => kinds(),
+            Self::Fused(family) => family().kinds(),
+            Self::Observed(family) => family.kinds(),
+        }
+    }
+
+    /// How far beyond its own period a figure reads, so it holds the fused
+    /// record of every source record it holds.
+    fn margin(self) -> i128 {
+        match self {
+            Self::Fused(family) => family().margin(),
+            Self::Stored(_) | Self::Observed(_) => 0,
+        }
+    }
+
+    /// The counted records among `inputs`, each with the payload counted.
+    fn read<'a>(self, kinds: &[Kind], inputs: &'a [Event]) -> Vec<(&'a Event, Cow<'a, Value>)> {
+        match self {
+            Self::Stored(_) => inputs
+                .iter()
+                .filter(|e| kinds.iter().any(|k| k.admits(&e.event_type, &e.payload)))
+                .map(|e| (e, Cow::Borrowed(&e.payload)))
+                .collect(),
+            Self::Fused(family) => family()
+                .occurrences(inputs)
+                .into_iter()
+                .map(|o| (o.event, o.payload))
+                .collect(),
+            Self::Observed(family) => inputs
+                .iter()
+                .filter_map(|e| Some((e, Cow::Owned(family.read(e)?))))
+                .collect(),
+        }
+    }
+}
+
 /// One declared metric.
 #[derive(Clone, Copy)]
 pub struct Metric {
     pub name: &'static str,
     pub description: &'static str,
-    /// The events it counts.
-    pub inputs: fn() -> Vec<Kind>,
+    /// The records it counts.
+    pub records: Records,
     pub calculation: Calculation,
     /// Payload fields it is also broken down by.
     pub dimensions: &'static [&'static str],
@@ -67,7 +125,7 @@ impl Metric {
     /// them for each event it marks keys for.
     pub fn kinds(&'static self) -> &'static [Kind] {
         static KINDS: std::sync::OnceLock<Vec<Vec<Kind>>> = std::sync::OnceLock::new();
-        let all = KINDS.get_or_init(|| METRICS.iter().map(|m| (m.inputs)()).collect());
+        let all = KINDS.get_or_init(|| METRICS.iter().map(|m| m.records.kinds()).collect());
         METRICS
             .iter()
             .position(|m| std::ptr::eq(m, self))
@@ -85,7 +143,7 @@ const SHELLS: &[&str] = &[
     "terminal.bash-history",
     "terminal.fish-history",
 ];
-const FOCUS: &[&str] = &["desktop.hyprland", "desktop.activitywatch"];
+const WINDOWS: &[&str] = &["desktop.hyprland", "desktop.activitywatch"];
 const MUSIC: &[&str] = &["media.spotify-history", "media.mpris", "desktop.media"];
 const WEB: &[&str] = &[
     "browser.chromium-visits",
@@ -102,7 +160,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "shell.commands",
         description: "Commands run",
-        inputs: || vec![Kind::all("command.fused")],
+        records: Records::Fused(crate::fusion::commands),
         calculation: Calculation::Count,
         dimensions: &["host", "cwd"],
         sources: SHELLS,
@@ -111,7 +169,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "shell.failed_ratio",
         description: "Share of commands with a known exit code that failed",
-        inputs: || vec![Kind::all("command.fused")],
+        records: Records::Fused(crate::fusion::commands),
         calculation: Calculation::Ratio {
             numerator: |p| exit_known(p) && p["exit_code"] != 0,
             denominator: exit_known,
@@ -123,7 +181,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "shell.sessions",
         description: "Shell sessions",
-        inputs: || vec![Kind::all("shell.session")],
+        records: Records::Stored(|| vec![Kind::all("shell.session")]),
         calculation: Calculation::Count,
         dimensions: &["host"],
         sources: SHELLS,
@@ -132,7 +190,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "shell.session_seconds",
         description: "Time in shell sessions",
-        inputs: || vec![Kind::all("shell.session")],
+        records: Records::Stored(|| vec![Kind::all("shell.session")]),
         calculation: Calculation::Seconds {
             end: "ended_at",
             open: false,
@@ -144,7 +202,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "activity.active_seconds",
         description: "Time at the machine",
-        inputs: || vec![Kind::only("presence.interval", &[("state", "present")])],
+        records: Records::Stored(|| vec![Kind::only("presence.interval", &[("state", "present")])]),
         calculation: Calculation::Seconds {
             end: "ended_at",
             open: false,
@@ -156,28 +214,28 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "focus.seconds",
         description: "Time some window had focus, time away from the machine included",
-        inputs: || vec![Kind::all("focus.fused")],
+        records: Records::Observed(&FOCUS),
         calculation: Calculation::Seconds {
             end: "ended_at",
             open: true,
         },
         dimensions: &["app"],
-        sources: FOCUS,
+        sources: WINDOWS,
         tracked: false,
     },
     Metric {
         name: "focus.switches",
-        description: "Window focus changes",
-        inputs: || vec![Kind::all("focus.fused")],
+        description: "Window focus changes, per source: a change two sources saw counts for each",
+        records: Records::Observed(&FOCUS),
         calculation: Calculation::Count,
-        dimensions: &[],
-        sources: FOCUS,
+        dimensions: &["source"],
+        sources: WINDOWS,
         tracked: true,
     },
     Metric {
         name: "music.listen_seconds",
         description: "Time listening",
-        inputs: || vec![Kind::all("play.fused")],
+        records: Records::Observed(&PLAYS),
         calculation: Calculation::Seconds {
             end: "ended_at",
             open: false,
@@ -188,17 +246,17 @@ pub static METRICS: &[Metric] = &[
     },
     Metric {
         name: "music.plays",
-        description: "Tracks played",
-        inputs: || vec![Kind::all("play.fused")],
+        description: "Tracks played, per source: a play two sources saw counts for each",
+        records: Records::Observed(&PLAYS),
         calculation: Calculation::Count,
-        dimensions: &["artist"],
+        dimensions: &["artist", "source"],
         sources: MUSIC,
         tracked: false,
     },
     Metric {
         name: "git.commits",
         description: "Commits made",
-        inputs: || vec![Kind::all("git.commit")],
+        records: Records::Stored(|| vec![Kind::all("git.commit")]),
         calculation: Calculation::Count,
         dimensions: &["repository"],
         sources: &["code.git"],
@@ -207,12 +265,12 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "chat.lines",
         description: "Chat lines said (messages and actions)",
-        inputs: || {
+        records: Records::Stored(|| {
             vec![
                 Kind::only("chat.message", &[("kind", "message")]),
                 Kind::only("chat.message", &[("kind", "action")]),
             ]
-        },
+        }),
         calculation: Calculation::Count,
         dimensions: &["buffer"],
         sources: &["communication.weechat-log"],
@@ -221,10 +279,11 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "mail.messages",
         description: "Mail messages",
-        inputs: || vec![Kind::all("mail.fused")],
+        records: Records::Fused(crate::fusion::mail),
         calculation: Calculation::Count,
         dimensions: &[],
         sources: &[
+            "communication.gmail",
             "communication.imap",
             "communication.maildir",
             "communication.mbox",
@@ -238,7 +297,7 @@ pub static METRICS: &[Metric] = &[
         description: "Journal entries at error priority or worse",
         // syslog priorities 0-3: emergency, alert, critical, error. Sinex's
         // own entries are its reflection, not the machine's activity.
-        inputs: || {
+        records: Records::Stored(|| {
             (0..=3)
                 .map(|p| Kind {
                     event_type: "journal.entry".into(),
@@ -248,7 +307,7 @@ pub static METRICS: &[Metric] = &[
                     ],
                 })
                 .collect()
-        },
+        }),
         calculation: Calculation::Count,
         dimensions: &["unit"],
         sources: &["machine.journald"],
@@ -257,7 +316,7 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "input.key_presses",
         description: "Keys pressed, a held key's repeats included",
-        inputs: || vec![Kind::all("key.pressed")],
+        records: Records::Stored(|| vec![Kind::all("key.pressed")]),
         calculation: Calculation::Count,
         dimensions: &[],
         sources: &["desktop.input-log"],
@@ -266,12 +325,12 @@ pub static METRICS: &[Metric] = &[
     Metric {
         name: "input.clicks",
         description: "Pointer buttons pressed",
-        inputs: || {
+        records: Records::Stored(|| {
             vec![Kind {
                 event_type: "pointer.button".into(),
                 equal: vec![("pressed".into(), json!(true))],
             }]
-        },
+        }),
         calculation: Calculation::Count,
         dimensions: &["button"],
         sources: &["desktop.input-log"],
@@ -279,10 +338,10 @@ pub static METRICS: &[Metric] = &[
     },
     Metric {
         name: "web.visits",
-        description: "Pages visited",
-        inputs: || vec![Kind::all("visit.fused")],
+        description: "Pages visited, per source: a visit two sources saw counts for each",
+        records: Records::Observed(&VISITS),
         calculation: Calculation::Count,
-        dimensions: &[],
+        dimensions: &["source"],
         sources: WEB,
         tracked: true,
     },
@@ -414,12 +473,18 @@ fn union_secs(spans: &[(i128, i128)]) -> f64 {
 /// of each dimension.
 type Figures<'a> = BTreeMap<(String, String), Sum<'a>>;
 
-fn add<'a>(m: &Metric, sums: &mut Figures<'a>, event: &'a Event, part: (i128, i128)) {
+fn add<'a>(
+    m: &Metric,
+    sums: &mut Figures<'a>,
+    event: &'a Event,
+    payload: &Value,
+    part: (i128, i128),
+) {
     let mut breakdowns = vec![(String::new(), String::new())];
     breakdowns.extend(
         m.dimensions
             .iter()
-            .map(|d| ((*d).to_owned(), dimension_value(&event.payload, d))),
+            .map(|d| ((*d).to_owned(), dimension_value(payload, d))),
     );
     for b in breakdowns {
         let sum = sums.entry(b).or_default();
@@ -432,9 +497,9 @@ fn add<'a>(m: &Metric, sums: &mut Figures<'a>, event: &'a Event, part: (i128, i1
                 numerator,
                 denominator,
             } => {
-                if denominator(&event.payload) {
+                if denominator(payload) {
                     sum.denominator += 1.0;
-                    if numerator(&event.payload) {
+                    if numerator(payload) {
                         sum.numerator += 1.0;
                     }
                 }
@@ -448,21 +513,30 @@ pub struct DailyMetrics;
 
 impl Keyed for HourlyMetrics {
     const NAME: &'static str = "metric.hourly";
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
     const USES_TIME_SETTINGS: bool = true;
     // Every type some metric counts (a test checks the list); `keys_for`
     // picks the metrics.
     const INPUTS: &'static [&'static str] = &[
         "command.fused",
+        "command.reported",
+        "command.executed",
+        "command.imported",
+        "terminal.reported",
         "shell.session",
         "presence.interval",
-        "focus.fused",
-        "play.fused",
+        "state.interval",
+        "window.span",
+        "music.played",
+        "player.changed",
         "git.commit",
         "chat.message",
         "mail.fused",
+        "mail.message",
         "journal.entry",
-        "visit.fused",
+        "browser.visit",
+        "browser.history_entry",
+        "link.followed",
         "key.pressed",
         "pointer.button",
     ];
@@ -478,7 +552,9 @@ impl Keyed for HourlyMetrics {
             .filter(|m| m.admits(input.event_type, input.payload))
         {
             let (_, end) = span(m.calculation, start, input.payload, env);
-            let Ok(mut day) = env.time_settings.day(start) else {
+            let margin = m.records.margin();
+            let first = Timestamp::from_unix_ns(start.unix_ns() - margin).unwrap_or(start);
+            let Ok(mut day) = env.time_settings.day(first) else {
                 continue;
             };
             loop {
@@ -486,7 +562,7 @@ impl Keyed for HourlyMetrics {
                 let Ok(next_start) = env.time_settings.day_end(day) else {
                     break;
                 };
-                if next_start.unix_ns() >= end {
+                if next_start.unix_ns() >= end + margin {
                     break;
                 }
                 let Ok(next) = day.tomorrow() else { break };
@@ -499,18 +575,23 @@ impl Keyed for HourlyMetrics {
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let (m, day) = key_parts(key)?;
         let kinds = m.kinds().to_vec();
+        let margin = m.records.margin();
         let mut q = InputQuery::of(
             kinds.clone(),
-            env.time_settings.day_start(day).ok()?,
-            env.time_settings.day_end(day).ok()?,
+            Timestamp::from_unix_ns(env.time_settings.day_start(day).ok()?.unix_ns() - margin)
+                .ok()?,
+            Timestamp::from_unix_ns(env.time_settings.day_end(day).ok()?.unix_ns() + margin)
+                .ok()?,
         );
         if let Calculation::Seconds { .. } = m.calculation {
-            // The interval that may still run when the day starts.
-            q.before.push(Neighbour {
-                kinds,
+            // The interval of each source kind that may still run when the
+            // day starts.
+            q.before.extend(kinds.into_iter().map(|kind| Neighbour {
+                kinds: vec![kind],
                 per: None,
                 count: 1,
-            });
+                lifetime: None,
+            }));
         }
         Some(q)
     }
@@ -526,6 +607,7 @@ impl Keyed for HourlyMetrics {
             return Computed::default();
         };
         let label = day.to_string();
+        let records = m.records.read(m.kinds(), inputs);
         let mut outputs = Vec::new();
         let mut hour = start;
         while hour < end {
@@ -534,12 +616,9 @@ impl Keyed for HourlyMetrics {
             };
             let period = (hour.unix_ns(), next.unix_ns());
             let mut sums: Figures<'_> = BTreeMap::new();
-            for e in inputs {
+            for (e, payload) in &records {
                 let Some(at) = e.ts_orig.at else { continue };
-                if !m.admits(&e.event_type, &e.payload) {
-                    continue;
-                }
-                let (s, f) = span(m.calculation, at, &e.payload, env);
+                let (s, f) = span(m.calculation, at, payload, env);
                 let part = (s.max(period.0), f.min(period.1));
                 let counted = match m.calculation {
                     Calculation::Seconds { .. } => part.1 > part.0,
@@ -548,7 +627,7 @@ impl Keyed for HourlyMetrics {
                     }
                 };
                 if counted {
-                    add(m, &mut sums, e, part);
+                    add(m, &mut sums, e, payload, part);
                 }
             }
             for ((dimension, value), sum) in &sums {

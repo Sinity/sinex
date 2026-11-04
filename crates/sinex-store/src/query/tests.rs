@@ -68,7 +68,17 @@ pub(crate) async fn admit_commands(
                 session: Some("s".into()),
                 duration_ns: Some(2_000_000_000),
                 exit_code,
-                observed_by: vec!["terminal.atuin".into()],
+                execution: None,
+                members: vec![sinex_model::event_types::fused::Member {
+                    record: format!("fixture:{}", "terminal.atuin"),
+                    source: "terminal.atuin".into(),
+                    event_type: "command.executed".into(),
+                    joined: sinex_model::event_types::fused::Joined::Lead,
+                }],
+                basis: sinex_model::event_types::fused::Basis::Rule,
+                ambiguous: 1,
+                competitors: vec![],
+                rule_version: 1,
             },
             "derive.shell-fusion",
             Origin::Derived {
@@ -315,10 +325,16 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
         .unwrap();
     let ids = world(&mut conn).await;
     let before = current_seq(&mut conn).await.unwrap();
+    // The command is archived at its source record; its fused record follows
+    // as part of the chain (docs/lifecycle.md: "It moves the scope's live
+    // readings and their whole live chains"). Archiving only the fused record
+    // would leave its member to be read as the command (docs/derivations.md:
+    // "A consumer of a fused family reads the fused records plus the family's
+    // unmatched source records").
     crate::lifecycle::move_events(
         &mut conn,
         sinex_model::lifecycle::Act::Archive,
-        vec![EventId(ids[0].0)],
+        vec![EventId(ids[0].1)],
         &NoDerivations,
     )
     .await;
@@ -341,7 +357,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
     assert_eq!(old.total, 1);
     assert_eq!(old.resolved.commit_seq, before - 1);
     let archive = ask(&mut conn, "archive where reason = archive").await;
-    assert_eq!(archive.total, 1);
+    assert_eq!(archive.total, 2, "the source record and its fused record");
 }
 
 #[devkit::test]
@@ -416,7 +432,7 @@ async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDataba
     world(&mut conn).await;
     // A registered source that never recorded anything is not configured
     // here, not silent, so it is never listed as having no data.
-    sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('export.never-staged','export-archive',1,ARRAY['synthetic.record'],'synthetic query test')")
+    sqlx::query("INSERT INTO registry.sources(name,shapes,version,event_types,purpose,expectation) VALUES ('export.never-staged',ARRAY['export-archive'],1,ARRAY['synthetic.record'],'synthetic query test','export')")
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -559,25 +575,34 @@ async fn admit_derived<P: sinex_model::EventPayload>(
 
 #[devkit::test]
 async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDatabase) {
-    use sinex_model::event_types::fused::FocusFused;
     use sinex_model::event_types::{MetricFigure, StateInterval};
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
-    let interval = |id: &str, ended: Option<i64>| StateInterval {
+    let interval = |state: &str, id: &str, ended: Option<i64>| StateInterval {
         fenced_at: None,
         interval_id: id.into(),
-        state_kind: "desktop.focus".into(),
+        state_kind: state.into(),
         subject_id: Some(id.into()),
         label: Some(format!("{id} window")),
         started_at: at(0),
         ended_at: ended.map(at),
         start_event_type: "window.focused".into(),
         end_event_type: ended.map(|_| "window.focused".into()),
-        attributes: Default::default(),
+        attributes: [("class", id), ("title", "vim")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect(),
     };
-    admit_derived(&mut conn, &[interval("a", Some(90)), interval("b", None)]).await;
+    admit_derived(
+        &mut conn,
+        &[
+            interval("desktop.focus", "kitty", Some(90)),
+            interval("desktop.focus", "b", None),
+        ],
+    )
+    .await;
     let figure = |grain: &str, dimension: &str, value: f64| MetricFigure {
         metric: "shell.commands".into(),
         grain: grain.into(),
@@ -600,15 +625,6 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
         ],
     )
     .await;
-    let focus = FocusFused {
-        record: "r".into(),
-        started_at: at(0),
-        ended_at: Some(at(120)),
-        app: Some("kitty".into()),
-        title: Some("vim".into()),
-        observed_by: vec!["desktop.hyprland".into(), "desktop.activitywatch".into()],
-    };
-    admit_derived(&mut conn, &[focus]).await;
 
     let now = ask(&mut conn, "now").await;
     assert_eq!(now.total, 1);
@@ -627,16 +643,146 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
     .await;
     assert_eq!(days.total, 1);
     assert_eq!(column(&days, "value")[0].as_f64(), Some(3.0));
-    let focus = ask(
+    let focus = ask(&mut conn, "focus where app = kitty fields duration, title").await;
+    assert_eq!(column(&focus, "duration")[0].as_f64(), Some(90.0));
+    assert_eq!(column(&focus, "title"), vec![json!("vim")]);
+    // Other state intervals are not focus.
+    admit_derived(&mut conn, &[interval("desktop.lock", "locked", Some(30))]).await;
+    assert_eq!(ask(&mut conn, "focus").await.total, 2);
+    assert_eq!(ask(&mut conn, "intervals").await.total, 3);
+}
+
+/// A command two shells saw is its fused record; a command one shell saw is
+/// that shell's record. The `commands` alias shows each once.
+#[devkit::test]
+async fn commands_show_each_occurrence_once(db: devkit::pg::TestDatabase) {
+    use sinex_model::event_types::CommandImported;
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
+    let location = |anchor| Origin::Record {
+        location: RecordLocation {
+            material: MaterialId::new(),
+            anchor,
+        },
+        output_index: 0,
+    };
+    let zsh = |command: &str, secs: i64, anchor: u64| {
+        Event::build(
+            &CommandImported {
+                command: command.into(),
+                hostname: "kestrel".into(),
+                started_at: Some(at(secs)),
+                header_elapsed: Some(0),
+                paths: vec![],
+                n: 0,
+            },
+            "terminal.zsh",
+            location(anchor),
+            ReadingOrder(1),
+            *blake3::hash(command.as_bytes()).as_bytes(),
+            Class::Open,
+        )
+        .unwrap()
+    };
+    let atuin = Event::build(
+        &CommandExecuted {
+            native_id: "both".into(),
+            command: "make".into(),
+            cwd: "/src".into(),
+            session: "s".into(),
+            hostname: "kestrel".into(),
+            started_at: at(0),
+            duration_ns: Some(2_000_000_000),
+            exit_code: Some(0),
+            deleted_at: None,
+            author: None,
+            intent: None,
+            shell: None,
+            extra: Default::default(),
+        },
+        "terminal.atuin",
+        location(0),
+        ReadingOrder(1),
+        [1; 32],
+        Class::Open,
+    )
+    .unwrap();
+    let joined = zsh("make", 0, 1);
+    let alone = zsh("ls", 60, 2);
+    let fused = Event::build(
+        &CommandFused {
+            record: "command.executed:both".into(),
+            command: "make".into(),
+            host: "kestrel".into(),
+            started_at: at(0),
+            cwd: Some("/src".into()),
+            session: Some("s".into()),
+            duration_ns: Some(2_000_000_000),
+            exit_code: Some(0),
+            execution: None,
+            members: vec![
+                sinex_model::event_types::fused::Member {
+                    record: format!("fixture:{}", "terminal.atuin"),
+                    source: "terminal.atuin".into(),
+                    event_type: "command.executed".into(),
+                    joined: sinex_model::event_types::fused::Joined::Lead,
+                },
+                sinex_model::event_types::fused::Member {
+                    record: format!("fixture:{}", "terminal.zsh"),
+                    source: "terminal.zsh".into(),
+                    event_type: "command.executed".into(),
+                    joined: sinex_model::event_types::fused::Joined::Lead,
+                },
+            ],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
+        },
+        "command.fusion",
+        Origin::Derived {
+            parents: vec![atuin.id, joined.id],
+        },
+        ReadingOrder(1),
+        [2; 32],
+        Class::Open,
+    )
+    .unwrap();
+    for events in [vec![atuin, joined, alone], vec![fused]] {
+        let batch = Batch {
+            run: RunId::new(),
+            kind: BatchKind::Api {
+                actor: "test".into(),
+            },
+            records: vec![RecordOutcome::Events {
+                location: None,
+                events,
+            }],
+            archive: vec![],
+        };
+        let mut tx = conn.begin().await.unwrap();
+        tx.admit(&batch, &NoDerivations).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    let commands = ask(
         &mut conn,
-        "focus where app = kitty fields duration, observed_by",
+        "commands sort when fields command, observed_by, end",
     )
     .await;
-    assert_eq!(column(&focus, "duration")[0].as_f64(), Some(120.0));
+    assert_eq!(commands.total, 2);
     assert_eq!(
-        column(&focus, "observed_by"),
-        vec![json!("desktop.hyprland,desktop.activitywatch")]
+        column(&commands, "command"),
+        vec![json!("make"), json!("ls")]
     );
+    assert_eq!(
+        column(&commands, "observed_by"),
+        vec![json!("terminal.atuin,terminal.zsh"), json!("terminal.zsh")]
+    );
+    // A history file records no duration: its command is an instant.
+    let ends = column(&commands, "end");
+    assert!(!ends[1].is_null(), "{ends:?}");
 }
 
 #[cfg(test)]
@@ -651,25 +797,3 @@ mod signals;
 mod calendar;
 
 mod follow;
-
-#[devkit::test]
-async fn read_only_sql_rejects_stale_projection_even_when_the_view_is_pruned(
-    db: devkit::pg::TestDatabase,
-) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let positive = super::read_sql::run(&mut conn, "SELECT 7 AS n")
-        .await
-        .unwrap();
-    assert_eq!(positive, vec![serde_json::json!({"n":7})]);
-    sqlx::query("INSERT INTO privacy.source_classes(source,class,author) VALUES('synthetic-stale','guarded','test')").execute(&mut conn).await.unwrap();
-    let error = super::read_sql::run(
-        &mut conn,
-        "SELECT count(*) FROM core.visible_search_text WHERE false",
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        error.to_string().contains("privacy_projection_stale"),
-        "{error}"
-    );
-}

@@ -72,8 +72,8 @@ impl Library<'_> {
             vec![reader],
         ))
         .await?;
-        let files = counts.events_offered;
-        let seen = counts.admitted;
+        let files = counts.accounting.readings;
+        let seen = counts.accounting.new + counts.accounting.revised;
         let after = reads::copies(conn, self.host, &root_text)
             .await
             .map_err(e)?;
@@ -110,7 +110,7 @@ impl Library<'_> {
             "stored_bytes": !reference,
             "files_described": files,
             "copies_admitted": seen,
-            "scan_failures": counts.to_json()["failures"],
+            "scan_failures": counts.accounting.failures,
             "items_new": new_items,
             "items_moved": moves,
             "item_revisions": revisions,

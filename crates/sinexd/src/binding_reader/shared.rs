@@ -3,8 +3,8 @@
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
 use super::{BindingReader, Reading};
 mod acquisition;
-use crate::backfill::Totals;
 use crate::material_access::Access;
+use crate::stage::Totals;
 use crate::writer::WriterHandle;
 use serde_json::Value;
 use sinex_model::{Class, ObservationFacts, RunId};
@@ -83,8 +83,11 @@ pub(super) async fn read_shared(
         .map(|stored| (stored.blob.clone(), stored.length));
     let mut routes = Vec::new();
     let mut slots = Vec::new();
-    let mut totals: Vec<Result<Totals, String>> =
-        pass.indices.iter().map(|_| Ok(Totals::default())).collect();
+    let mut totals: Vec<Result<Totals, String>> = pass
+        .indices
+        .iter()
+        .map(|&index| Ok(Totals::committed(readers[index].committed.clone())))
+        .collect();
     for (slot, &index) in pass.indices.iter().enumerate() {
         let route = async {
             let b = &mut readers[index];

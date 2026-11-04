@@ -3,10 +3,13 @@
 //! and the status view.
 use crate::{DrainInput, DrainOutput, Parser, RecordError};
 use sinex_model::Class;
+pub use sinex_model::source::{Expectation, days};
+use std::time::Duration;
 
-/// The input shape a source reads, which picks its driver.
+/// The input shape a source reads, which picks its driver: how change in the
+/// input is detected and how its bytes become material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Driver {
+pub enum Shape {
     AppendFile,
     SqliteRows,
     ExportArchive,
@@ -14,25 +17,40 @@ pub enum Driver {
     ApiCursor,
     DirSnapshot,
     Media,
-    Producer,
-    /// Records written through the API by the operator or an agent, stored as
-    /// the request's own bytes (library requests).
-    ApiRequest,
 }
 
-impl Driver {
-    /// The driver's name in the catalog and the registry.
+impl Shape {
+    /// The shape's name in the catalog and the registry.
     pub fn name(self) -> &'static str {
         match self {
-            Driver::AppendFile => "append-file",
-            Driver::SqliteRows => "sqlite-rows",
-            Driver::ExportArchive => "export-archive",
-            Driver::LiveStream => "live-stream",
-            Driver::ApiCursor => "api-cursor",
-            Driver::DirSnapshot => "dir-snapshot",
-            Driver::Media => "media",
-            Driver::Producer => "producer",
-            Driver::ApiRequest => "api-request",
+            Shape::AppendFile => "append-file",
+            Shape::SqliteRows => "sqlite-rows",
+            Shape::ExportArchive => "export-archive",
+            Shape::LiveStream => "live-stream",
+            Shape::ApiCursor => "api-cursor",
+            Shape::DirSnapshot => "dir-snapshot",
+            Shape::Media => "media",
+        }
+    }
+}
+
+/// Where a source's records come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// An input Sinex finds at its canonical location or is given, read by the
+    /// driver for its shape.
+    Input(Shape),
+    /// Records written through the API by the operator or an agent, stored as
+    /// the request's own bytes. There is no input to find.
+    Request,
+}
+
+impl Origin {
+    /// The input shape, or `None` for records written by request.
+    pub fn shape(self) -> Option<Shape> {
+        match self {
+            Origin::Input(shape) => Some(shape),
+            Origin::Request => None,
         }
     }
 }
@@ -40,12 +58,19 @@ impl Driver {
 mod framing;
 pub use framing::Framer;
 
+/// One source's declaration: the single home of its facts. The catalog, the
+/// NixOS options, the source registry and status are generated from it.
 #[derive(Clone, Debug)]
 pub struct SourceSpec {
     pub name: &'static str,
-    pub driver: Driver,
+    pub origin: Origin,
     /// What the source's events are for.
     pub purpose: &'static str,
+    /// When the source should have something.
+    pub expect: Expectation,
+    /// How long the provider keeps its own records, where it expires them
+    /// (Chromium history keeps 90 days); `None` when it keeps them.
+    pub expires_after: Option<Duration>,
     pub class: Class,
     pub parser: &'static str,
     pub parser_version: u32,

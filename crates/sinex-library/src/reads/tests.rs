@@ -50,7 +50,6 @@ fn revision_history_keeps_all_content_transitions_in_capture_order() {
         label: None,
         by: "library.items".into(),
         at: Timestamp::from_unix_secs(1).unwrap(),
-        withdrawn_at: None,
     };
     let copies = [copy(3, "a"), copy(1, "a"), copy(2, "b"), copy(4, "a")]
         .into_iter()

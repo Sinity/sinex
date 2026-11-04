@@ -10,24 +10,8 @@ use serde_json::{Map, Value};
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Status,
-    #[serde(rename = "model-call")]
-    ModelCall {
-        operation: String,
-    },
-    #[serde(rename = "model-policy")]
-    ModelPolicy {
-        definition: String,
-    },
-    #[serde(rename = "model-record")]
-    ModelRecord {
-        policy: String,
-        definition: String,
-    },
-    #[serde(rename = "model-receipt")]
-    ModelReceipt {
-        policy: String,
-        definition: String,
-    },
+    #[serde(rename = "sources-discover")]
+    SourcesDiscover,
     Signal {
         action: String,
         name: Option<String>,
@@ -138,9 +122,24 @@ pub enum Request {
         query: String,
     },
     Stage {
-        path: String,
+        path: Vec<String>,
         #[serde(default)]
-        parser: Option<String>,
+        parser: Vec<String>,
+        #[serde(default)]
+        account: Option<String>,
+        #[serde(default, rename = "export-date")]
+        export_date: Option<String>,
+        #[serde(default)]
+        follow: Option<bool>,
+    },
+    #[serde(rename = "stage-list")]
+    StageList {
+        #[serde(default)]
+        active: Option<bool>,
+    },
+    #[serde(rename = "stage-show")]
+    StageShow {
+        operation: String,
     },
     Replay {
         #[serde(default)]
@@ -257,6 +256,11 @@ pub enum Request {
         a: String,
         b: String,
     },
+    #[serde(rename = "withdraw-decision")]
+    WithdrawDecision {
+        a: String,
+        b: String,
+    },
     Mark {
         #[serde(default)]
         text: Option<String>,
@@ -360,60 +364,30 @@ pub enum Request {
     LibraryItem {
         item: String,
     },
-    #[serde(rename = "library-tag")]
-    LibraryTag {
-        item: String,
-        tag: String,
-    },
-    #[serde(rename = "library-untag")]
-    LibraryUntag {
-        item: String,
-        tag: String,
-    },
-    #[serde(rename = "library-set")]
-    LibrarySet {
-        item: String,
-        field: String,
+    #[serde(rename = "library-curate")]
+    LibraryCurate {
+        /// The caller's ID for this request, reused on retry so it is
+        /// written once; a new one is chosen when absent.
         #[serde(default)]
-        value: Option<String>,
-        #[serde(default)]
-        empty: Option<bool>,
-    },
-    #[serde(rename = "library-collect")]
-    LibraryCollect {
-        collection: String,
-        item: String,
-    },
-    #[serde(rename = "library-uncollect")]
-    LibraryUncollect {
-        collection: String,
-        item: String,
+        request: Option<String>,
+        writes: Vec<sinex_model::event_types::library::Act>,
     },
     #[serde(rename = "library-collection")]
     LibraryCollection {
         #[serde(default)]
         collection: Option<String>,
     },
-    #[serde(rename = "library-rate")]
-    LibraryRate {
-        item: String,
-        value: String,
-        #[serde(default)]
-        scale: Option<String>,
-        #[serde(default)]
-        of: Option<String>,
-    },
-    #[serde(rename = "library-compare")]
-    LibraryCompare {
-        winner: String,
-        loser: String,
-        #[serde(default)]
-        scale: Option<String>,
-    },
     #[serde(rename = "library-rank")]
     LibraryRank {
+        scale: String,
         #[serde(default)]
-        scale: Option<String>,
+        judges: Option<String>,
+        #[serde(default)]
+        collection: Option<String>,
+        #[serde(default)]
+        k: Option<u64>,
+        #[serde(default)]
+        rule: Option<String>,
     },
     #[serde(rename = "library-open")]
     LibraryOpen {
@@ -460,10 +434,7 @@ impl Request {
     pub fn method(&self) -> &'static str {
         match self {
             Request::Status => "status",
-            Request::ModelCall { .. } => "model-call",
-            Request::ModelPolicy { .. } => "model-policy",
-            Request::ModelRecord { .. } => "model-record",
-            Request::ModelReceipt { .. } => "model-receipt",
+            Request::SourcesDiscover => "sources-discover",
             Request::Signal { .. } => "signal",
             Request::Kinds { .. } => "kinds",
             Request::Fields { .. } => "fields",
@@ -483,6 +454,8 @@ impl Request {
             Request::Trace { .. } => "trace",
             Request::Follow { .. } => "follow",
             Request::Stage { .. } => "stage",
+            Request::StageList { .. } => "stage-list",
+            Request::StageShow { .. } => "stage-show",
             Request::Replay { .. } => "replay",
             Request::Recompute { .. } => "recompute",
             Request::Comparisons { .. } => "comparisons",
@@ -494,6 +467,7 @@ impl Request {
             Request::Resume { .. } => "resume",
             Request::Same { .. } => "same",
             Request::Distinct { .. } => "distinct",
+            Request::WithdrawDecision { .. } => "withdraw-decision",
             Request::Mark { .. } => "mark",
             Request::PrivacyRules { .. } => "privacy-rules",
             Request::PrivacyRule { .. } => "privacy-rule",
@@ -510,14 +484,8 @@ impl Request {
             Request::Brief { .. } => "brief",
             Request::LibraryAdd { .. } => "library-add",
             Request::LibraryItem { .. } => "library-item",
-            Request::LibraryTag { .. } => "library-tag",
-            Request::LibraryUntag { .. } => "library-untag",
-            Request::LibrarySet { .. } => "library-set",
-            Request::LibraryCollect { .. } => "library-collect",
-            Request::LibraryUncollect { .. } => "library-uncollect",
+            Request::LibraryCurate { .. } => "library-curate",
             Request::LibraryCollection { .. } => "library-collection",
-            Request::LibraryRate { .. } => "library-rate",
-            Request::LibraryCompare { .. } => "library-compare",
             Request::LibraryRank { .. } => "library-rank",
             Request::LibraryOpen { .. } => "library-open",
             Request::LibraryViewed { .. } => "library-viewed",
@@ -530,14 +498,9 @@ impl Request {
     /// keep explicit access so decoding one cannot bypass authorization or
     /// panic.
     pub fn access(&self) -> Access {
-        match self {
-            Self::Stage { .. } | Self::Same { .. } | Self::Distinct { .. } => Access::Agent,
-            _ => {
-                command(self.method())
-                    .expect("implemented request is in the command table")
-                    .access
-            }
-        }
+        command(self.method())
+            .expect("implemented request is in the command table")
+            .access
     }
 }
 

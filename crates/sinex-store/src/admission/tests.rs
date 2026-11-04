@@ -455,15 +455,14 @@ async fn commit_seq_is_dense_and_in_batch_order(db: devkit::pg::TestDatabase) {
     let events: Vec<Event> = (0..5).map(|k| keyed("s", k, 1, 1)).collect();
     let out = admit_one(&mut conn, &batch(events.clone())).await;
     assert_eq!(out.commit_seq, Some((1, 5)));
-    let seqs = sqlx::query!("SELECT event_id, commit_seq FROM core.commit_log ORDER BY commit_seq")
+    let seqs = sqlx::query!("SELECT id, commit_seq FROM core.events ORDER BY commit_seq")
         .fetch_all(&mut conn)
         .await
         .unwrap();
-    let ids: Vec<_> = seqs
-        .iter()
-        .map(|r| r.event_id.expect("admitted event entry"))
-        .collect();
+    let ids: Vec<_> = seqs.iter().map(|r| r.id).collect();
     assert_eq!(ids, events.iter().map(|e| e.id.0).collect::<Vec<_>>());
+    let positions: Vec<_> = seqs.iter().map(|r| r.commit_seq).collect();
+    assert_eq!(positions, (1..=5).collect::<Vec<i64>>());
 }
 
 struct ByDay;
@@ -485,10 +484,9 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     let mut tx = conn.begin().await.unwrap();
     let out = tx.admit(&batch(events), &ByDay).await.unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(
-        out.dirty_keys, 4,
-        "both original and projected input keys are marked for each event"
-    );
+    // One stored payload per event, so one key per event (docs/privacy.md:
+    // "Stored payloads stay raw"; there is no second, projected payload).
+    assert_eq!(out.dirty_keys, 2, "each event marks its one input key");
     let n: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM derivation.dirty WHERE derivation = 'daily'"#
     )
@@ -681,6 +679,7 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat(
 mod archive_history;
 mod commit_order;
 mod compressed;
+mod event_edges;
 mod source_counts;
 
 mod library_upgrade;
@@ -722,6 +721,28 @@ async fn derived_outputs_require_committed_live_parents(db: devkit::pg::TestData
     }
 }
 
+/// A read mark holds while its selected readings remain live; replacing a
+/// reading ends it.
+#[devkit::test]
+async fn a_read_mark_holds_until_its_readings_are_replaced(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let first = keyed("source", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![first.clone()])).await;
+    let read = ReadMark::now(&mut conn).await.unwrap();
+    assert!(read.holds(&mut conn, &[first.id.0]).await.unwrap());
+
+    let second = keyed("source", 1, 2, 2);
+    admit_one(&mut conn, &batch(vec![second.clone()])).await;
+    assert!(
+        !read.holds(&mut conn, &[first.id.0]).await.unwrap(),
+        "the replaced reading is archived"
+    );
+    let current = ReadMark::now(&mut conn).await.unwrap();
+    assert!(current.holds(&mut conn, &[second.id.0]).await.unwrap());
+}
+
 mod kinds;
 
 mod cache;
@@ -745,6 +766,7 @@ fn outcomes_add_all_counts_positions_and_ids() {
             failures: 8,
             dirty_keys: 9,
             replay_archived: 10,
+            removed_at_source: 11,
             commit_seq: Some(position),
             admitted_ids: vec![id],
             registered_kinds: vec![],
@@ -764,6 +786,7 @@ fn outcomes_add_all_counts_positions_and_ids() {
             failures: 16,
             dirty_keys: 18,
             replay_archived: 20,
+            removed_at_source: 22,
             commit_seq: Some((5, 12)),
             admitted_ids: vec![first_id, second_id],
             registered_kinds: vec![],
@@ -840,7 +863,7 @@ async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_in
 ) {
     let mut catalog = PgConnection::connect(&db.url(None)).await.unwrap();
     let kind = sinex_model::event_types::declarations()
-        .into_iter()
+        .iter()
         .find(|kind| kind.kind.name == "command.executed")
         .unwrap();
     let declarations =
@@ -973,10 +996,6 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let policy_epoch = crate::privacy::projection::epoch(&mut conn)
-        .await
-        .unwrap()
-        .active;
     let offered = |position: i64, content: u8| {
         let mut event = keyed("canonical", 1, content, position);
         event.origin = Origin::Derived {
@@ -990,10 +1009,8 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
             source_fingerprint: None,
             host: None,
             coverage: Some(sinex_model::OwnerCoverage {
-                required: true,
                 stamp: "already-validated-by-admission".into(),
                 position,
-                policy_epoch,
                 scope: "scope".into(),
                 catalog: "catalog".into(),
                 instance: "instance".into(),

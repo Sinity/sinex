@@ -53,26 +53,12 @@ let
     StartLimitIntervalSec = 600;
   };
 
-  backfillInputs = lib.mapAttrs (_: inputs:
-    map (input: lib.concatStringsSep "=" (lib.tail (lib.splitString "=" input))) inputs
-  ) (lib.groupBy (input: lib.head (lib.splitString "=" input)) (lib.flatten (lib.attrValues cfg.backfills)));
-  discoveryInputs = lib.zipAttrsWith (_: values: lib.unique (lib.flatten values)) [ cfg.discovery.inputs backfillInputs ];
 
   sourceOption = spec: {
-    paths = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      description = "Where ${spec.name} reads from on this host.";
-    };
     class = mkOption {
       type = types.enum [ "open" "guarded" "sealed" ];
       default = spec.class;
       description = "Privacy class of ${spec.name}'s events.";
-    };
-    format = mkOption {
-      type = types.nullOr types.str;
-      default = null;
-      description = "The format for ${spec.name}'s explicit paths: one of ${concatStringsSep ", " spec.formats}; every applicable format when null. Canonical discovery still considers every format.";
     };
     zone = mkOption {
       type = types.nullOr types.str;
@@ -207,12 +193,7 @@ in
     signals = mkOption {
       type = types.nullOr types.attrs;
       default = null;
-      description = "Shared host signal policy and deployment-owned outlets. The daemon validates interrupt_budget_per_hour, quiet_hours, private, notifications, values, actions and outlet_timeout_ms as one configuration.";
-    };
-    modelAccounting.actualReceipts = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Permit operator-authorized accounting of recorded actual model receipts; this enables no provider call.";
+      description = "The host deliverer's signal policy and deployment-owned outlets. The daemon validates interrupt_budget_per_hour, quiet_hours, notifications (bus_address, away_command), values, actions and outlet_timeout_ms as one configuration.";
     };
 
     nats = {
@@ -243,10 +224,7 @@ in
           options.canonicalKinds = mkOption { type = types.listOf types.attrs; default = []; description = "Exact owner-installed canonical kind declarations allowed without a native SourceRef."; };
           options.writeKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Kind prefixes this credential may write for its configured family."; };
           options.writeClasses = mkOption { type = types.listOf (types.enum [ "open" "guarded" "sealed" ]); default = []; description = "Classes this credential may offer for admission."; };
-          options.emergencySinexBlockedHost = mkOption { type = types.nullOr types.str; default = null; description = "Host for which this canonical producer may import its compiled Sinex-blocked emergency completion with owner-issued context proof."; };
-          options.emergencyLeaseSeconds = mkOption { type = types.nullOr (types.ints.between 1 3600); default = null; description = "Explicit bounded offline permission for the compiled desktop Sinex-blocked alert. Requires its emergency host grant; ordinary cached settings keep their separate lifetime."; };
-          options.authorAttestation = mkOption { type = types.nullOr types.attrs; default = null; description = "Explicit family author attestation: operator permission and exact shipped rule ID/revision/fingerprint allowlist. Canonical write authority alone grants neither."; };
-          options.forwardSignals = mkOption { type = types.bool; default = false; description = "Allow this canonical family publisher to forward shared signal intents and owned outlet receipts."; };
+          options.forwardSignals = mkOption { type = types.bool; default = false; description = "Allow this canonical family publisher to forward its evaluator reports to this host's signal deliverer."; };
           options.canonicalKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Canonical summary prefixes assigned exclusively to this credential within its family; at most one credential per family may have this role."; };
           options.readKindPrefixes = mkOption {
             type = types.listOf types.str; default = [];
@@ -315,7 +293,7 @@ in
       type = types.listOf (types.attrsOf types.anything);
       default = [ ];
       example = lib.literalExpression ''
-        [ { tag = "editor"; event_type = "focus.fused"; when = [ { field = "/app"; is = "kitty"; } { field = "/title"; contains = "nvim"; } ]; } ]
+        [ { tag = "editor"; event_type = "window.span"; when = [ { field = "/app"; is = "kitty"; } { field = "/title"; contains = "nvim"; } ]; } ]
       '';
       description = ''
         Rules the tag applier attaches tags with: each names a tag, an event
@@ -372,20 +350,19 @@ in
         type = types.listOf types.str;
         default = [ "graphical-session.target" ];
       };
+      shellIntegration = mkOption {
+        type = types.bool;
+        default = cfg.session.user != "";
+        description = "Load Sinex's shell integration into interactive zsh, bash (with bash-preexec) and fish: one execution token per command, reported to the session socket and handed to kitty, so command fusion joins by identifier.";
+      };
     };
 
-    backfills = mkOption {
-      type = types.attrsOf (types.listOf types.str);
-      default = { };
-      example = { takeout-2025 = [ "takeout=/data/takeout-2025.tgz" ]; };
+    stagingRoots = mkOption {
+      type = types.listOf types.path;
+      default = [ ];
       description = ''
-        One-shot imports of large exports, each a `sinex-backfill-NAME`
-        service that is started by hand, never at activation. Each entry is a
-        list of `format=path` inputs (`sinexd admin catalog` lists the formats).
-        These paths also enter automatic discovery as provider inputs.
-        The database has one writer, so starting a backfill stops sinexd and
-        starts it again when the backfill ends; live captures spool meanwhile.
-        The inputs are mounted read-only for it.
+        Directories agents may stage files from, besides the declared source
+        locations. Staging any other path needs the operator.
       '';
     };
 
@@ -491,22 +468,19 @@ in
           classes = producer.writeClasses or [];
           canonical_prefixes = producer.canonicalKindPrefixes or [];
           forward_signals = producer.forwardSignals or false;
-          author_attestation = producer.authorAttestation or null;
-          emergency_sinex_blocked_host = producer.emergencySinexBlockedHost or null;
-          emergency_lease_seconds = producer.emergencyLeaseSeconds or null;
         };
       }) producers);
       environment.etc."sinex/sources.json".text = builtins.toJSON {
         signals = cfg.signals;
-        model_accounting.actual_receipts = cfg.modelAccounting.actualReceipts;
         sources = cfg.sources;
         exclude = cfg.exclude;
         discovery = cfg.discovery // {
           spool = "${cfg.stateDir}/spool";
           watch = cfg.session.watch;
-          inputs = discoveryInputs;
+          inputs = cfg.discovery.inputs;
         };
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
+        staging_roots = cfg.stagingRoots;
         inherit (cfg) tags activity project_attribution rhythm;
       };
 
@@ -738,6 +712,18 @@ in
       systemd.tmpfiles.settings.sinex-session = lib.mkIf (cfg.session.user != "" && !sessionStateInHome) {
         "${cfg.session.stateDir}".d = { mode = "0700"; user = cfg.session.user; group = config.users.users.${cfg.session.user}.group; };
       };
+      # The hooks report through `sinex-session report-command`; without a
+      # listening session socket a report is dropped.
+      programs.zsh.interactiveShellInit = mkIf cfg.session.shellIntegration ''
+        SINEX_SESSION_BIN=${cfg.package}/bin/sinex-session source ${self}/integrations/shell/sinex.zsh
+      '';
+      programs.bash.interactiveShellInit = mkIf cfg.session.shellIntegration ''
+        SINEX_SESSION_BIN=${cfg.package}/bin/sinex-session source ${self}/integrations/shell/sinex.bash
+      '';
+      programs.fish.interactiveShellInit = mkIf cfg.session.shellIntegration ''
+        set -g SINEX_SESSION_BIN ${cfg.package}/bin/sinex-session
+        source ${self}/integrations/shell/sinex.fish
+      '';
       systemd.user.services.sinex-session = mkIf (cfg.session.user != "") {
         description = "Sinex session sources";
         wantedBy = cfg.session.wantedBy;
@@ -802,45 +788,6 @@ in
           };
         })
       ];
-    })
-
-    # Declared backfills, apart from the attribute set above that names
-    # services one by one.
-    (mkIf cfg.enable {
-      systemd.services = lib.mapAttrs'
-        (name: inputs: lib.nameValuePair "sinex-backfill-${name}" {
-          description = "Sinex backfill ${name}";
-          after = [ "sinex-db-setup.service" "sinexd.service" ];
-          requires = [ "sinex-db-setup.service" ];
-          restartIfChanged = false;
-          path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
-          serviceConfig = {
-            Type = "oneshot";
-            User = cfg.user;
-            Group = cfg.group;
-            UMask = "0007";
-            ReadOnlyPaths = map (input: lib.last (lib.splitString "=" input)) inputs;
-            # The database has one writer: sinexd stops for the import and
-            # starts after it however it ends, stopped by hand included. A
-            # unit dependency (Conflicts) would cancel this start job when
-            # sinexd starts again.
-            ExecStartPre = "+${config.systemd.package}/bin/systemctl stop sinexd.service";
-            ExecStopPost = "+${config.systemd.package}/bin/systemctl start --no-block sinexd.service";
-          } // lib.optionalAttrs cfg.readAnyFile {
-            AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
-            CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
-          };
-          script = ''
-            exec ${cfg.package}/bin/sinexd backfill \
-              --database ${escapeShellArg dbUrl} \
-              --store ${escapeShellArg cfg.storeDir} \
-              --host ${escapeShellArg cfg.host} \
-              ${optionalString (zone != null) "--zone ${escapeShellArg zone}"} \
-              --day-start ${escapeShellArg cfg.dayStart} \
-              ${concatMapStringsSep " " (input: "--read ${escapeShellArg input}") inputs}
-          '';
-        })
-        cfg.backfills;
     })
 
     (mkIf node.enable {

@@ -91,32 +91,25 @@ impl AdmissionTransaction<'_> {
             self.privacy,
             batch,
             keys,
-            self.blobs.as_ref(),
         )
         .await
     }
-    /// Operational model accounting shares the claimed writer transaction.
-    /// Its capability is trusted in-process metadata, never a source payload.
-    pub async fn model_call(
-        &mut self,
-        actor: &str,
-        action: &sinex_model::model_calls::Action,
-        capabilities: sinex_model::model_calls::Capabilities,
-    ) -> Result<sinex_model::model_calls::Outcome> {
-        let conn = self.transaction.as_mut().expect("open transaction");
-        sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE")
-            .execute(&mut **conn)
-            .await?;
-        let epoch = privacy::projection::lock_epoch(conn).await?;
-        if matches!(action, sinex_model::model_calls::Action::Reserve { .. }) && !epoch.ready() {
-            return Ok(sinex_model::model_calls::Outcome::Refused {
-                refusal: sinex_model::model_calls::Refusal::Invalid {
-                    detail: "current model input projection is pending".into(),
-                },
-            });
-        }
-        crate::model_calls::apply(conn, self.blobs.as_ref(), actor, action, capabilities).await
+    /// The transaction's connection, for statements outside admission that
+    /// commit with it.
+    pub fn connection(&mut self) -> &mut sqlx::PgConnection {
+        self.transaction.as_mut().expect("open transaction")
     }
+
+    /// Register a staged file stored with no parser; committing the
+    /// transaction commits its bytes' extents with the rows that cite them.
+    pub async fn register_unparsed(&mut self, unparsed: &crate::stages::Unparsed) -> Result<()> {
+        crate::stages::register_unparsed(
+            self.transaction.as_mut().expect("open transaction"),
+            unparsed,
+        )
+        .await
+    }
+
     pub async fn commit(mut self) -> Result<()> {
         let receipt = if let Some(blobs) = &self.blobs {
             let store = blobs.clone();

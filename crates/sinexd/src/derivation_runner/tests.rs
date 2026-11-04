@@ -45,7 +45,7 @@ fn atuin(id: &str, command: &str, secs: i64, exit: i64, order: i64) -> Event {
             shell: None,
             extra: Default::default(),
         },
-        "terminal.atuin",
+        "terminal.atuin-history",
         location(0),
         ReadingOrder(order),
         *blake3::hash(format!("{id}{command}{exit}{order}").as_bytes()).as_bytes(),
@@ -64,7 +64,7 @@ fn zsh(command: &str, secs: i64, anchor: u64) -> Event {
             paths: vec![],
             n: 0,
         },
-        "terminal.zsh",
+        "terminal.zsh-history",
         location(anchor),
         ReadingOrder(0),
         *blake3::hash(command.as_bytes()).as_bytes(),
@@ -226,9 +226,17 @@ async fn commands_fuse_into_sessions_and_figures(db: devkit::pg::TestDatabase) {
     let mut d = w.runner().await;
     d.catch_up().await.unwrap();
 
+    // The two commands both shells saw fuse; the one only zsh saw stays a
+    // zsh record, and every consumer counts each command once.
     let fused: Vec<CommandFused> = w.live().await;
-    assert_eq!(fused.len(), 3, "{fused:?}");
-    assert_eq!(fused[0].observed_by, vec!["terminal.atuin", "terminal.zsh"]);
+    assert_eq!(fused.len(), 2, "{fused:?}");
+    assert!(fused.iter().all(|f| {
+        f.members
+            .iter()
+            .map(|m| m.source.as_str())
+            .collect::<Vec<_>>()
+            == ["terminal.atuin-history", "terminal.zsh-history"]
+    }));
     let sessions: Vec<ShellSession> = w.live().await;
     assert_eq!(sessions.len(), 2, "{sessions:?}");
     assert_eq!(sessions[0].commands, 2);
@@ -238,7 +246,7 @@ async fn commands_fuse_into_sessions_and_figures(db: devkit::pg::TestDatabase) {
         .iter()
         .find(|f| f.grain == "day" && f.metric == "shell.commands" && f.dimension.is_empty())
         .unwrap();
-    assert_eq!(commands.value, Some(3.0), "fused commands, each once");
+    assert_eq!(commands.value, Some(3.0), "each command once");
     assert_eq!(
         w.count("SELECT count(*) FROM derivation.dirty").await,
         0,
@@ -263,10 +271,14 @@ async fn a_changed_input_replaces_outputs_downstream(db: devkit::pg::TestDatabas
     // Atuin rewrote the row: the command failed after all.
     w.admit(vec![atuin("1", "make", 0, 2, 2)]).await;
     d.catch_up().await.unwrap();
-    let fused: Vec<CommandFused> = w.live().await;
-    assert_eq!(fused.len(), 1, "replaced, not duplicated");
-    assert_eq!(fused[0].exit_code, Some(2));
-    assert_eq!(w.live::<ShellSession>().await[0].failed, 1);
+    assert!(
+        w.live::<CommandFused>().await.is_empty(),
+        "one shell saw it"
+    );
+    let sessions: Vec<ShellSession> = w.live().await;
+    assert_eq!(sessions.len(), 1, "replaced, not duplicated");
+    assert_eq!(sessions[0].commands, 1);
+    assert_eq!(sessions[0].failed, 1);
 }
 
 #[devkit::test]
@@ -277,15 +289,16 @@ async fn an_output_no_longer_produced_is_archived(db: devkit::pg::TestDatabase) 
     w.admit(vec![a, zsh("make", 1, 10)]).await;
     let mut d = w.runner().await;
     d.catch_up().await.unwrap();
-    assert_eq!(w.live::<CommandFused>().await[0].observed_by.len(), 2);
+    assert_eq!(w.live::<CommandFused>().await[0].members.len(), 2);
 
-    // Archiving the Atuin reading leaves zsh alone: the two-source fused
-    // command goes, a zsh-only one takes its place.
+    // Archiving the Atuin reading leaves zsh alone: the fused command goes
+    // and the zsh record is read directly.
     w.moved(Act::Archive, vec![a_id]).await;
     d.catch_up().await.unwrap();
-    let fused: Vec<CommandFused> = w.live().await;
-    assert_eq!(fused.len(), 1);
-    assert_eq!(fused[0].observed_by, vec!["terminal.zsh"]);
+    assert!(w.live::<CommandFused>().await.is_empty());
+    let sessions: Vec<ShellSession> = w.live().await;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].commands, 1);
     assert!(
         w.count(
             "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id WHERE e.event_type = 'command.fused' AND a.reason = 'archive'"
@@ -347,7 +360,12 @@ impl Keyed for Waiting {
             session: None,
             duration_ns: None,
             exit_code: None,
-            observed_by: vec![],
+            execution: None,
+            members: vec![],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         };
         Computed {
             error: None,
@@ -478,7 +496,12 @@ impl<const V: u32> Keyed for Count<V> {
             session: None,
             duration_ns: None,
             exit_code: None,
-            observed_by: vec![],
+            execution: None,
+            members: vec![],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         };
         Computed {
             error: None,
@@ -550,7 +573,12 @@ impl sinex_derivations::PerEvent for Echo {
                 session: None,
                 duration_ns: None,
                 exit_code: None,
-                observed_by: vec![],
+                execution: None,
+                members: vec![],
+                basis: sinex_model::event_types::fused::Basis::Rule,
+                ambiguous: 1,
+                competitors: vec![],
+                rule_version: 1,
             },
             "test.echo",
             [input],
@@ -574,10 +602,8 @@ async fn per_event_derivations_read_in_commit_order_and_keep_their_place(
     assert_eq!(
         w.count("SELECT commit_seq FROM derivation.positions WHERE derivation = 'test.echo'")
             .await,
-        w.count(
-            "SELECT max(commit_seq) FROM core.commit_log WHERE event_type = 'command.imported'"
-        )
-        .await
+        w.count("SELECT max(commit_seq) FROM core.events WHERE event_type = 'command.imported'")
+            .await
     );
 }
 
@@ -779,10 +805,10 @@ mod external;
 
 mod selected_provenance;
 
+mod retired;
+
+mod tokens;
+
 mod embedding;
 
-mod policy;
-
 mod exact;
-
-mod estimability;

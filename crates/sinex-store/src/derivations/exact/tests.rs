@@ -45,16 +45,6 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
         }],
         archive: vec![],
     };
-    let mut tx = conn.begin().await.unwrap();
-    tx.admit(&batch, &NoDerivations).await.unwrap();
-    tx.commit().await.unwrap();
-    crate::lifecycle::move_events(
-        &mut conn,
-        sinex_model::lifecycle::Act::Archive,
-        vec![ids[0]],
-        &NoDerivations,
-    )
-    .await;
     crate::privacy::add_rule(
         &mut conn,
         &crate::privacy::NewRule {
@@ -71,9 +61,16 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
     )
     .await
     .unwrap();
-    crate::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![ids[0]],
+        &NoDerivations,
+    )
+    .await;
     let mut reader =
         ExactInputs::new(vec![ids[0], ids[1], ids[1], ids[2], EventId::new()], 1, 1).unwrap();
     let first = reader.next(&mut conn).await.unwrap().unwrap();
@@ -88,7 +85,7 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
     assert!(second[0].event.ts_orig.at.is_none());
     assert_eq!(
         first[0].event.record_hash, events[1].record_hash,
-        "canonical identity is retained separately from transformed values"
+        "the record hash identifies the source record, not the masked payload"
     );
 }
 
@@ -121,14 +118,7 @@ async fn exact_targets_never_expand_to_unrequested_retained_position_siblings(
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,event_type) VALUES(3,NULL,NULL)")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
     tx.commit().await.unwrap();
-    crate::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
     let mut reader = ExactInputs::new(expected.iter().copied().collect(), 1, 1).unwrap();
     let mut seen = std::collections::BTreeSet::new();
     let mut pages = 0;

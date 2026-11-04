@@ -43,6 +43,8 @@ const RUN_STATUS: &[&str] = &["running", "finished"];
 /// Unix epoch itself, which a reader that found no time often writes. A label
 /// only; the time is kept as stated.
 const TIME_SUSPECT: &[&str] = &["future", "epoch zero"];
+const DUPLICATE_STRATEGIES: &[&str] = &["identifier", "window", "fallback", "decision"];
+const PAIR_STATES: &[&str] = &["undecided", "same", "distinct"];
 
 macro_rules! event_fields {
     ($($extra:expr),* $(,)?) => {
@@ -139,10 +141,34 @@ const SOURCES: &[Field] = &[
     ),
     f("binding", FieldType::Text, "binding"),
     f("source", FieldType::Text, "source"),
-    f("driver", FieldType::Text, "driver"),
+    f(
+        "shapes",
+        FieldType::Text,
+        "input shapes of its declarations; empty when written only on request",
+    ),
     f("version", FieldType::Integer, "version"),
     f("event_types", FieldType::Text, "event types"),
     f("purpose", FieldType::Text, "purpose"),
+    f(
+        "expectation",
+        FieldType::Enum(crate::source::Expectation::NAMES),
+        "when it should have something",
+    ),
+    f(
+        "silent_after",
+        FieldType::Integer,
+        "seconds without a record after which a continuous source is suspicious",
+    ),
+    f(
+        "every",
+        FieldType::Integer,
+        "seconds without a read after which a scheduled source is suspicious",
+    ),
+    f(
+        "expires_after",
+        FieldType::Integer,
+        "seconds the provider keeps its own records",
+    ),
     f("events", FieldType::Integer, "live events"),
     f("first", FieldType::Time, "oldest event time of any reading"),
     f(
@@ -302,7 +328,8 @@ impl Table {
             ],
             Table::Sources => &[
                 "binding",
-                "driver",
+                "shapes",
+                "expectation",
                 "event_types",
                 "events",
                 "last_event",
@@ -329,9 +356,29 @@ pub struct Alias {
     pub fields: &'static [Field],
     /// Whether rows have a span (`start`, `end`), for `during` and `containing`.
     pub spans: bool,
-    /// A fixed payload condition beyond the kind, `(field, value)`: `now` is
-    /// `intervals` whose `open` is `true`.
+    /// A fixed condition beyond the kind, `(field, value)`, over a field's SQL
+    /// in the store, listed in `fields` or not: `now` is `intervals` whose
+    /// `open` is `true`.
     pub only: Option<(&'static str, &'static str)>,
+    /// A fusion family's fused kind: the alias leaves out every row a live
+    /// record of that kind names as a parent, so each occurrence is one row.
+    pub fused: Option<&'static str>,
+    /// Which rows of a listed kind the alias keeps; kinds not named here
+    /// keep every row.
+    pub kind_rows: &'static [KindRows],
+}
+
+/// Conditions over top-level payload fields that every kept row of `kind`
+/// meets.
+#[derive(Debug, PartialEq, Eq)]
+pub struct KindRows {
+    pub kind: &'static str,
+    /// Fields that must hold exactly this text.
+    pub equal: &'static [(&'static str, &'static str)],
+    /// Fields that must be present and not null.
+    pub present: &'static [&'static str],
+    /// Fields whose text, when present, must be none of these values.
+    pub not_in: &'static [(&'static str, &'static [&'static str])],
 }
 
 pub const ALIASES: &[Alias] = &[
@@ -345,10 +392,17 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "commands",
-        kinds: &["command.fused"],
+        kinds: &[
+            "command.fused",
+            "command.reported",
+            "command.executed",
+            "command.imported",
+        ],
         phrase: "commands, each once however many shells saw it",
         fields: &[
             f("command", FieldType::Text, "command"),
@@ -362,6 +416,38 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: Some("command.fused"),
+        kind_rows: &[],
+    },
+    Alias {
+        name: "duplicates",
+        kinds: &["fusion.considered_pair"],
+        phrase: "pairs a fusion family had to choose about, and their duplicate decisions",
+        fields: &[
+            f("family", FieldType::Text, "fusion family"),
+            f("left", FieldType::Text, "first record"),
+            f("right", FieldType::Text, "second record"),
+            f("left_source", FieldType::Text, "first record's source"),
+            f("right_source", FieldType::Text, "second record's source"),
+            f(
+                "strategy",
+                FieldType::Enum(DUPLICATE_STRATEGIES),
+                "matching strategy",
+            ),
+            f("candidates", FieldType::Integer, "candidates chosen among"),
+            f("distance", FieldType::Number, "time distance in seconds"),
+            f("chosen", FieldType::Bool, "joined in a fused record"),
+            f(
+                "decision",
+                FieldType::Enum(PAIR_STATES),
+                "duplicate decision",
+            ),
+            f("decided_by", FieldType::Text, "decision author"),
+        ],
+        spans: false,
+        only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "shell-sessions",
@@ -383,6 +469,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "intervals",
@@ -398,6 +486,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "now",
@@ -413,6 +503,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: Some(("open", "true")),
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "figures",
@@ -433,38 +525,47 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "focus",
-        kinds: &["focus.fused"],
-        phrase: "window focus, each once however many sources saw it",
+        kinds: &["state.interval", "window.span"],
+        phrase: "window focus as each source recorded it",
         fields: &[
             f("app", FieldType::Text, "application"),
             f("title", FieldType::Text, "window title"),
             f("start", FieldType::Time, "start"),
             f("end", FieldType::Time, "end"),
             f("duration", FieldType::Number, "duration in seconds"),
-            f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: true,
         only: None,
+        fused: None,
+        kind_rows: &[KindRows {
+            kind: "state.interval",
+            equal: &[("state_kind", "desktop.focus")],
+            present: &[],
+            not_in: &[],
+        }],
     },
     Alias {
         name: "visits",
-        kinds: &["visit.fused"],
-        phrase: "page visits, each once however many sources saw it",
+        kinds: &["browser.visit", "browser.history_entry", "link.followed"],
+        phrase: "page visits as each source recorded them",
         fields: &[
             f("url", FieldType::Text, "address"),
             f("title", FieldType::Text, "page title"),
-            f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "plays",
-        kinds: &["play.fused"],
-        phrase: "tracks played, each once however many sources saw it",
+        kinds: &["music.played", "player.changed"],
+        phrase: "tracks played as each source recorded them",
         fields: &[
             f("title", FieldType::Text, "track title"),
             f("artist", FieldType::Text, "artist"),
@@ -473,10 +574,17 @@ pub const ALIASES: &[Alias] = &[
             f("start", FieldType::Time, "start"),
             f("end", FieldType::Time, "end"),
             f("duration", FieldType::Number, "duration in seconds"),
-            f("observed_by", FieldType::Text, "observing sources"),
         ],
         spans: true,
         only: None,
+        fused: None,
+        // A player's report of a track starting or playing.
+        kind_rows: &[KindRows {
+            kind: "player.changed",
+            equal: &[],
+            present: &["title"],
+            not_in: &[("status", &["Paused", "Stopped"])],
+        }],
     },
     Alias {
         name: "items",
@@ -495,6 +603,8 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
         name: "media",
@@ -512,23 +622,54 @@ pub const ALIASES: &[Alias] = &[
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
     Alias {
-        name: "assignments",
-        kinds: &["library.assignment"],
-        phrase: "library tags and property values",
+        name: "curation",
+        kinds: &["library.curation"],
+        phrase: "library curation records",
         fields: &[
-            f("item", FieldType::Text, "item"),
-            f("field", FieldType::Text, "field"),
+            f("item", FieldType::Text, "target item"),
+            f(
+                "kind",
+                FieldType::Enum(&[
+                    "tag",
+                    "property",
+                    "note",
+                    "rating",
+                    "comparison",
+                    "entry",
+                    "collection",
+                    "scale",
+                    "property_definition",
+                    "tag_definition",
+                    "tag_relation",
+                    "dismissal",
+                    "withdrawal",
+                ]),
+                "kind",
+            ),
+            // `key` and `origin` are core event fields (the equivalence key,
+            // material or derived), so the record's own are named apart.
+            f(
+                "name",
+                FieldType::Text,
+                "tag, property, scale or collection",
+            ),
             f("value", FieldType::Text, "value"),
             f(
-                "level",
-                FieldType::Enum(&["override", "import", "proposal"]),
-                "level",
+                "value_origin",
+                FieldType::Enum(&["authored", "imported", "proposed"]),
+                "authored, imported or proposed",
             ),
+            f("author", FieldType::Text, "author"),
+            f("request", FieldType::Text, "request"),
         ],
         spans: false,
         only: None,
+        fused: None,
+        kind_rows: &[],
     },
 ];
 

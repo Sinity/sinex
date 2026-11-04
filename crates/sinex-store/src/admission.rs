@@ -2,7 +2,7 @@
 //! caller's transaction:
 //!
 //! 1. register the source's input, observation, revision and material;
-//! 2. validate configured rules while preserving original payloads;
+//! 2. apply privacy rules to each payload;
 //! 3. stage the events with one `COPY`;
 //! 4. classify every staged event in one set-based query against the live side
 //!    tables: new, repeat, newer, older, or superseded by a newer reading in
@@ -20,9 +20,7 @@
 //! The caller commits; events and progress are then durable together.
 use crate::{Result, privacy};
 use serde_json::Value;
-use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Class, Event, EventId, EventPayload, Origin, ReadingOrder,
-};
+use sinex_model::{ArchiveRequest, Batch, BatchKind, Class, Event, EventId, Origin, ReadingOrder};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -37,8 +35,7 @@ mod write;
 pub(crate) use archive::{archive_at, position, remove_live, restore_at};
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
 pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty};
-pub use register::native_key;
-pub(crate) use register::{native_keys, recorded};
+pub(crate) use register::observed;
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]
@@ -102,6 +99,9 @@ pub struct Outcome {
     pub dirty_keys: usize,
     /// Live readings a replay archived before admitting its new readings.
     pub replay_archived: usize,
+    /// Readings admission made for records their source dropped, one per
+    /// live reading of each: offered beside the batch's own events.
+    pub removed_at_source: usize,
     /// The commit sequence range given to admitted events.
     pub commit_seq: Option<(i64, i64)>,
     pub admitted_ids: Vec<EventId>,
@@ -122,6 +122,7 @@ impl std::ops::AddAssign<&Outcome> for Outcome {
         self.failures += other.failures;
         self.dirty_keys += other.dirty_keys;
         self.replay_archived += other.replay_archived;
+        self.removed_at_source += other.removed_at_source;
         for (&stage, &elapsed) in &other.timings {
             *self.timings.entry(stage).or_default() += elapsed;
         }
@@ -148,7 +149,6 @@ pub(crate) async fn admit(
     cache: &mut privacy::Cache,
     batch: &Batch,
     keys: &dyn DirtyKeys,
-    blobs: Option<&crate::Blobs>,
 ) -> Result<Outcome> {
     if let BatchKind::Ingress(frame) = &batch.kind
         && !frame.frame.is_empty()
@@ -159,7 +159,6 @@ pub(crate) async fn admit(
     sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE")
         .execute(&mut *conn)
         .await?;
-    privacy::projection::lock_epoch(conn).await?;
     // The existing receipt sequence is reserved only after exact retry lookup.
     // Its deferred FK lets immutable event rows cite the final receipt on first insert.
     let frame_number = match &batch.kind {
@@ -176,55 +175,9 @@ pub(crate) async fn admit(
         }
         _ => None,
     };
-    let validated_epoch = match &batch.kind {
+    let validated = match &batch.kind {
         BatchKind::Ingress(frame) => crate::read_coverage::validate(conn, frame).await?,
-        _ => None,
-    };
-    // Only a newly validated owner proof can certify copied external evidence.
-    // Native replay keeps this original mark instead of assigning today's policy.
-    let marked_batch;
-    let batch = if let (Some(epoch), BatchKind::Ingress(frame)) = (validated_epoch, &batch.kind)
-        && frame
-            .material
-            .as_ref()
-            .and_then(|progress| progress.material.as_ref())
-            .is_some_and(|material| {
-                material.manifest.media_type.as_deref() == Some("application/x-sinex-signals-frame")
-            }) {
-        let read = ReadMark::now(conn).await?;
-        if read.policy_epoch != Some(epoch) {
-            return Err(crate::Error::Invalid(
-                "signal certified policy changed".into(),
-            ));
-        }
-        let coverage = frame.coverage.as_ref().expect("validated coverage").clone();
-        marked_batch = {
-            let mut marked = batch.clone();
-            if let BatchKind::Ingress(frame) = &mut marked.kind
-                && let Some(material) = frame
-                    .material
-                    .as_mut()
-                    .and_then(|progress| progress.material.as_mut())
-            {
-                material.manifest.details.insert(
-                    "signal_read_mark".into(),
-                    serde_json::to_value(read)
-                        .map_err(|error| crate::Error::Invalid(error.to_string()))?,
-                );
-                material.manifest.details.insert(
-                    "signal_position".into(),
-                    serde_json::json!(coverage.position),
-                );
-                material.manifest.details.insert(
-                    "signal_settings_identity".into(),
-                    Value::String(coverage.settings_identity.clone()),
-                );
-            }
-            marked
-        };
-        &marked_batch
-    } else {
-        batch
+        _ => false,
     };
 
     let provenance = register::provenance(conn, batch, frame_number).await?;
@@ -285,13 +238,13 @@ pub(crate) async fn admit(
     outcome.timings.insert("replay_archive", started.elapsed());
     let mut events: Vec<Event> = batch.events().cloned().collect();
     let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
-    register::native_keys(conn, batch, &mut events).await?;
+    register::native_inputs(conn, batch, &events).await?;
     let started = std::time::Instant::now();
     apply_privacy(conn, cache, batch, &mut events).await?;
     orders::assign(conn, batch, &mut events).await?;
     outcome.timings.insert("privacy", started.elapsed());
     let started = std::time::Instant::now();
-    removed_at_source(conn, batch, &mut events).await?;
+    outcome.removed_at_source = removed_at_source(conn, batch, &mut events).await?;
     let missing: Vec<_> = events
         .iter()
         .map(Event::kind_ref)
@@ -325,16 +278,6 @@ pub(crate) async fn admit(
         let started = std::time::Instant::now();
         classify::keep_known(conn, &mut events, &classified.replaced, &declarations).await?;
         outcome.timings.insert("keep_known", started.elapsed());
-        let requests: Vec<_> = classified
-            .admit
-            .iter()
-            .filter_map(|ordinal| {
-                let event = &events[usize::try_from(*ordinal).expect("classified ordinal")];
-                (event.event_type == sinex_model::event_types::model_call::ModelRequest::EVENT_TYPE)
-                    .then(|| event.clone())
-            })
-            .collect();
-        crate::model_calls::validate_requests(conn, blobs, &requests).await?;
         if !classified.admit.is_empty() {
             write::insert_admitted(
                 conn,
@@ -346,28 +289,9 @@ pub(crate) async fn admit(
                 &provenance,
             )
             .await?;
-            let ids: Vec<_> = outcome.admitted_ids.iter().map(|id| id.0).collect();
-            let rules = cache.load(conn).await?.clone();
-            privacy::projection::admitted(conn, &ids, &rules).await?;
         }
-        let rules = cache.load(conn).await?.clone();
-        if validated_epoch.is_some()
-            && let BatchKind::Ingress(frame) = &batch.kind
-        {
+        if validated && let BatchKind::Ingress(frame) = &batch.kind {
             crate::read_coverage::validate_parents(conn, frame, &events).await?;
-        }
-        let mut projected = privacy::projection::certify_basis(
-            conn,
-            batch,
-            &events,
-            &classified.resolved,
-            &rules,
-            validated_epoch,
-        )
-        .await?;
-        projected.extend(outcome.admitted_ids.iter().map(|id| id.0));
-        if !projected.is_empty() {
-            mark_projected_inputs_dirty(conn, &projected, keys, &mut outcome).await?;
         }
         resolved = classified.resolved;
     }
@@ -398,7 +322,8 @@ pub(crate) async fn admit(
     Ok(outcome)
 }
 
-/// Preserve source originals and validate the configured output transform.
+/// Apply the privacy rules to every event, once: reads never apply a rule
+/// again.
 async fn apply_privacy(
     conn: &mut PgConnection,
     cache: &mut privacy::Cache,
@@ -455,8 +380,7 @@ async fn apply_privacy(
     }
     let rules = cache.load(conn).await?;
     for event in events.iter_mut() {
-        // Validate sealing/rule configuration without changing the original.
-        rules.apply(&mut event.clone())?;
+        rules.apply(event)?;
     }
     keep_removed_class(conn, events).await?;
     sqlx::query!(
@@ -516,15 +440,17 @@ async fn keep_removed_class(conn: &mut PgConnection, events: &mut [Event]) -> Re
 }
 
 /// Records the source dropped: a newer reading of each live one, removed.
-/// Built from the private original reading; output policy applies to its projection.
+/// Built from the stored reading, whose privacy rules already applied.
+/// Returns how many readings it added.
 async fn removed_at_source(
     conn: &mut PgConnection,
     batch: &Batch,
     events: &mut Vec<Event>,
-) -> Result<()> {
+) -> Result<usize> {
+    let before = events.len();
     for request in &batch.archive {
         if let ArchiveRequest::RemovedAtSource { locations } = request {
-            for live in crate::derivations::live_originals_at(conn, locations).await? {
+            for live in crate::derivations::live_at(conn, locations).await? {
                 if live.record_state == sinex_model::RecordState::Removed {
                     continue;
                 }
@@ -545,30 +471,8 @@ async fn removed_at_source(
             }
         }
     }
-    Ok(())
+    Ok(events.len() - before)
 }
 
 #[cfg(test)]
 mod tests;
-
-/// New values can produce different keys after a configured field transform.
-/// Use the existing key functions on the one projection as well as old keys.
-async fn mark_projected_inputs_dirty(
-    conn: &mut PgConnection,
-    ids: &[Uuid],
-    keys: &dyn DirtyKeys,
-    outcome: &mut Outcome,
-) -> Result<()> {
-    let rows:Vec<(String,Option<time::OffsetDateTime>,Value,i64)>=sqlx::query_as("SELECT e.event_type,e.ts_orig,o.payload,e.commit_seq FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id JOIN privacy.policy_state p ON p.id WHERE e.id=ANY($1) AND o.epoch=p.desired_epoch AND o.state='complete'").bind(ids).fetch_all(&mut *conn).await?;
-    let seq = rows.iter().map(|row| row.3).max().unwrap_or(0);
-    let inputs: Vec<_> = rows
-        .iter()
-        .map(|row| KeyInput {
-            event_type: &row.0,
-            ts_orig: row.1,
-            payload: &row.2,
-        })
-        .collect();
-    outcome.dirty_keys += derived::mark_inputs_dirty(conn, &inputs, seq, keys).await?;
-    Ok(())
-}

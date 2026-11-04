@@ -43,6 +43,9 @@ pub async fn reference(
             "material {material}: invalid persisted length or version"
         ))
     };
+    let (Some(parser), Some(parser_version)) = (row.parser, row.parser_version) else {
+        return Err(unparsed(material.0));
+    };
     Ok(Some(sinex_model::MaterialRef {
         id: MaterialId(row.id),
         input: row.input_id.map(sinex_model::InputId),
@@ -50,11 +53,19 @@ pub async fn reference(
         length: u64::try_from(row.length).map_err(|_| invalid())?,
         part_index: u32::try_from(row.part_index).map_err(|_| invalid())?,
         previous_part: row.previous_part_id.map(MaterialId),
-        parser: row.parser,
-        parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
+        parser,
+        parser_version: u32::try_from(parser_version).map_err(|_| invalid())?,
         manifest: serde_json::from_value(row.manifest)
             .map_err(|e| crate::Error::Invalid(format!("material {material}: manifest: {e}")))?,
     }))
+}
+
+/// A material stored with no parser is not part of any parsed sequence and
+/// has no reader yet.
+fn unparsed(material: uuid::Uuid) -> crate::Error {
+    crate::Error::Invalid(format!(
+        "material {material} is stored without a parser; no parser has been assigned to read it"
+    ))
 }
 
 /// Up to `count` parts of a sequence, newest first: `newest` and the parts before
@@ -90,6 +101,9 @@ pub async fn parts_from(
                     row.id
                 ))
             };
+            let (Some(parser), Some(parser_version)) = (row.parser, row.parser_version) else {
+                return Err(unparsed(row.id));
+            };
             Ok((
                 sinex_model::MaterialRef {
                     id: MaterialId(row.id),
@@ -98,8 +112,8 @@ pub async fn parts_from(
                     length: u64::try_from(row.length).map_err(|_| invalid())?,
                     part_index: u32::try_from(row.part_index).map_err(|_| invalid())?,
                     previous_part: row.previous_part_id.map(MaterialId),
-                    parser: row.parser,
-                    parser_version: u32::try_from(row.parser_version).map_err(|_| invalid())?,
+                    parser,
+                    parser_version: u32::try_from(parser_version).map_err(|_| invalid())?,
                     manifest: serde_json::from_value(row.manifest).map_err(|e| {
                         crate::Error::Invalid(format!("material {}: manifest: {e}", row.id))
                     })?,
@@ -137,15 +151,9 @@ pub async fn lengths(
 
 /// Public raw bytes need whole-material evidence. Without field-offset proof,
 /// any transforming rule for a contributing source withholds the whole body.
-/// Capture and native parser replay read originals through their private path.
+/// Capture and native parser replay read the bytes through their private path.
 pub async fn authorize_raw(conn: &mut PgConnection, material: MaterialId) -> Result<()> {
-    let policy = crate::privacy::projection::epoch(conn).await?;
-    if !policy.ready() {
-        return Err(crate::Error::Invalid(
-            "current privacy projection is not ready".into(),
-        ));
-    }
-    let row: Option<(String, serde_json::Value)> =
+    let row: Option<(Option<String>, serde_json::Value)> =
         sqlx::query_as("SELECT parser,manifest FROM raw.materials WHERE id=$1")
             .bind(material.0)
             .fetch_optional(&mut *conn)
@@ -153,30 +161,22 @@ pub async fn authorize_raw(conn: &mut PgConnection, material: MaterialId) -> Res
     let Some((parser, manifest)) = row else {
         return Err(crate::Error::Invalid("material is missing".into()));
     };
-    if parser == "signals"
+    if parser.as_deref() == Some("signals")
         && manifest.get("media_type").and_then(|value| value.as_str())
             == Some("application/x-sinex-signals-frame")
     {
-        return Err(crate::Error::Invalid("signal intent evidence requires current derived visibility; raw copied frame ranges are withheld".into()));
+        return Err(crate::Error::Invalid("forwarded signal reports are read through their events; raw signal frames are withheld".into()));
     }
-    let rows:Vec<(String,Option<String>,Option<i64>,Option<bool>,Option<String>)>=sqlx::query_as("SELECT DISTINCT e.source,o.class,o.epoch,o.changed,o.state FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.material_id=$1")
-        .bind(material.0).fetch_all(&mut *conn).await?;
-    if rows.iter().any(|(_, class, epoch, changed, state)| {
-        class.is_none()
-            || *epoch != Some(policy.active)
-            || *changed != Some(false)
-            || state.as_deref() != Some("complete")
-    }) {
-        return Err(crate::Error::Invalid(
-            "current privacy rules or incomplete projection withhold raw material bytes".into(),
-        ));
-    }
-    let sources = rows.iter().map(|row| row.0.clone()).collect::<Vec<_>>();
+    let sources: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT e.source FROM core.events e WHERE e.material_id=$1")
+            .bind(material.0)
+            .fetch_all(&mut *conn)
+            .await?;
     let rules = crate::privacy::active_rules(conn, &sources).await?;
     if rules.iter().any(|rule| rule.action.transforms()) {
         return Err(crate::Error::Invalid("current privacy rules withhold raw material bytes; no verified field range is available".into()));
     }
-    if rows.is_empty() {
+    if sources.is_empty() {
         return Err(crate::Error::Invalid(
             "raw material field coverage and classification are unknown".into(),
         ));

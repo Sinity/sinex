@@ -135,6 +135,7 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
             to: sinex_schema::VERSION
         }
     );
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     sinex_schema::require_current(&mut conn).await.unwrap();
     assert_eq!(kept(&mut conn).await, expected);
     assert_eq!(
@@ -142,7 +143,6 @@ async fn upgrading_from_version_0_counts_the_stored_events(db: devkit::pg::TestD
         3,
         "every stored event of the run"
     );
-    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(
         without_positions(crate::test_schema::catalog(&mut conn).await),
         fresh
@@ -215,12 +215,12 @@ async fn upgrading_from_version_3_registers_query_kinds_and_keeps_events(
             to: sinex_schema::VERSION
         }
     );
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     let after: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
         .fetch_all(&mut conn)
         .await
         .unwrap();
     assert_eq!(before, after);
-    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
 }
 
@@ -290,6 +290,7 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
             to: sinex_schema::VERSION
         }
     );
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     let after: Vec<Value> = sqlx::query_scalar(
         "SELECT to_jsonb(e)-'kind_version'-'validation' FROM core.events e ORDER BY e.id",
     )
@@ -320,11 +321,10 @@ async fn upgrade_keeps_activity_and_telemetry(db: devkit::pg::TestDatabase, from
         "activity.session",
         "activity.span",
         "conversation.day",
-        "rest.fused",
         "document.text",
     ];
     let expected = sinex_model::event_types::declarations()
-        .into_iter()
+        .iter()
         .filter(|kind| names.contains(&kind.kind.name.as_str()))
         .collect::<Vec<_>>();
     assert_eq!(expected.len(), names.len());

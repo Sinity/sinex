@@ -18,27 +18,49 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         ));
     }
 
-    let input = sqlx::query_scalar!(
+    for key in &p.data_keys {
+        crate::sealed::store_key(conn, key.material, &key.key_ref, &key.wrapped).await?;
+    }
+    let (input, revision) =
+        observed(conn, &p.binding, &p.input, &p.observation, p.revision).await?;
+
+    let Some(m) = &p.material else { return Ok(()) };
+    material(conn, input, revision, m).await?;
+
+    Ok(())
+}
+
+/// Upsert the input, record the observation, and open a revision when the
+/// content changed in a way that is not a plain append. Returns the input's
+/// and the current revision's IDs.
+pub(crate) async fn observed(
+    conn: &mut PgConnection,
+    binding: &str,
+    input: &sinex_model::InputRef,
+    observation: &sinex_model::ObservationFacts,
+    revision: RevisionChange,
+) -> Result<(Uuid, Uuid)> {
+    let input_id = sqlx::query_scalar!(
         r#"INSERT INTO raw.inputs (id, binding, kind, locator, host) VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (binding, locator, host) DO UPDATE SET kind = EXCLUDED.kind
            RETURNING id"#,
         InputId::new().0,
-        p.binding,
-        p.input.kind,
-        p.input.locator,
-        p.input.host,
+        binding,
+        input.kind,
+        input.locator,
+        input.host,
     )
     .fetch_one(&mut *conn)
     .await?;
 
-    let at = p.observation.observed_at.unwrap_or_else(Timestamp::now).0;
-    let o = &p.observation;
+    let at = observation.observed_at.unwrap_or_else(Timestamp::now).0;
+    let o = observation;
     if o.changed || o.unavailable.is_some() {
         sqlx::query!(
             r#"INSERT INTO raw.observations (id, input_id, observed_at, size, mtime_ns, ctime_ns, inode, device, unavailable, last_looked_at)
                VALUES ($1, $2, $3, $4::text::numeric, $5::text::numeric, $6::text::numeric, $7::text::numeric, $8::text::numeric, $9, $3)"#,
             ObservationId::new().0,
-            input,
+            input_id,
             at,
             o.size.map(|v| v.to_string()),
             o.mtime_ns.map(|v| v.to_string()),
@@ -53,7 +75,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         sqlx::query!(
             r#"UPDATE raw.observations SET unchanged_looks = unchanged_looks + 1, last_looked_at = $2
                WHERE id = (SELECT id FROM raw.observations WHERE input_id = $1 ORDER BY observed_at DESC LIMIT 1)"#,
-            input,
+            input_id,
             at,
         )
         .execute(&mut *conn)
@@ -62,14 +84,11 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
 
     let current = sqlx::query_scalar!(
         "SELECT id FROM raw.revisions WHERE input_id = $1 ORDER BY started_at DESC, id DESC LIMIT 1",
-        input
+        input_id
     )
     .fetch_optional(&mut *conn)
     .await?;
-    for key in &p.data_keys {
-        crate::sealed::store_key(conn, key.material, &key.key_ref, &key.wrapped).await?;
-    }
-    let revision = match (p.revision, current) {
+    let revision_id = match (revision, current) {
         (RevisionChange::Same | RevisionChange::Appended, Some(current)) => current,
         (change, previous) => {
             let kind = match change {
@@ -82,7 +101,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
             sqlx::query_scalar!(
                 "INSERT INTO raw.revisions (id, input_id, previous_id, kind) VALUES ($1, $2, $3, $4) RETURNING id",
                 RevisionId::new().0,
-                input,
+                input_id,
                 previous,
                 kind,
             )
@@ -91,10 +110,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         }
     };
 
-    let Some(m) = &p.material else { return Ok(()) };
-    material(conn, input, revision, m).await?;
-
-    Ok(())
+    Ok((input_id, revision_id))
 }
 
 /// Whether a registered material with this ID has these facts; `None` when no
@@ -252,6 +268,7 @@ pub(crate) async fn recorded(
         failures: count("failures")?,
         dirty_keys: count("dirty_keys")?,
         replay_archived: count("replay_archived")?,
+        removed_at_source: count("removed_at_source")?,
         commit_seq: row
             .outcome
             .get("commit_range")
@@ -385,6 +402,7 @@ impl Outcome {
             "commit_range": self.commit_seq,
             "superseded_input": self.superseded_input,
             "replay_archived": self.replay_archived,
+            "removed_at_source": self.removed_at_source,
             "dirty_keys": self.dirty_keys,
             "admitted": self.admitted,
             "repeats": self.repeats,
@@ -399,12 +417,13 @@ impl Outcome {
     }
 }
 
-/// A native field key names one immutable input copy. Neither a declared host
-/// nor a caller-selected input UUID can join another copy's reading history.
-pub(crate) async fn native_keys(
+/// Native keyed readings cite materials and inputs registered by the owner.
+/// Their field keys remain the keys the kind declares, independent of which
+/// captured copy supplied the reading.
+pub(crate) async fn native_inputs(
     conn: &mut PgConnection,
     batch: &Batch,
-    events: &mut [Event],
+    events: &[Event],
 ) -> Result<()> {
     let native = match &batch.kind {
         BatchKind::Source(progress) => progress.source.as_ref(),
@@ -424,51 +443,18 @@ pub(crate) async fn native_keys(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let rows: Vec<(Uuid, Uuid)> =
-        sqlx::query_as("SELECT id,input_id FROM raw.materials WHERE id=ANY($1)")
-            .bind(&ids)
-            .fetch_all(conn)
-            .await?;
-    let inputs = rows
-        .into_iter()
-        .collect::<std::collections::HashMap<_, _>>();
-    for event in events {
-        if let Origin::Record { location, .. } = &event.origin
-            && let Some(key) = &mut event.equivalence_key
-        {
-            let input = inputs.get(&location.material.0).ok_or_else(|| {
-                Error::Invalid("native reading has no owner-registered immutable input".into())
-            })?;
-            key.0 = scoped_native_key(input, &key.0)?;
-        }
+    let registered: BTreeSet<Uuid> = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM raw.materials WHERE id=ANY($1) AND input_id IS NOT NULL",
+    )
+    .bind(&ids)
+    .fetch_all(conn)
+    .await?
+    .into_iter()
+    .collect();
+    if ids.iter().any(|id| !registered.contains(id)) {
+        return Err(Error::Invalid(
+            "native reading has no owner-registered immutable input".into(),
+        ));
     }
     Ok(())
-}
-
-fn scoped_native_key(input: &Uuid, key: &str) -> Result<String> {
-    let encoded =
-        serde_json::to_vec(&(input, key)).map_err(|error| Error::Invalid(error.to_string()))?;
-    Ok(blake3::derive_key("sinex.native_input_key.v1", &encoded)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
-}
-
-/// Resolve the native field key using this material's owner-registered input.
-/// The input scope is never supplied by a producer or inferred from payload text.
-pub async fn native_key(
-    conn: &mut PgConnection,
-    material: sinex_model::MaterialId,
-    key: &sinex_model::EquivalenceKey,
-) -> Result<sinex_model::EquivalenceKey> {
-    let input: Uuid = sqlx::query_scalar("SELECT input_id FROM raw.materials WHERE id=$1")
-        .bind(material.0)
-        .fetch_optional(conn)
-        .await?
-        .ok_or_else(|| {
-            Error::Invalid("native reading has no owner-registered immutable input".into())
-        })?;
-    Ok(sinex_model::EquivalenceKey(scoped_native_key(
-        &input, &key.0,
-    )?))
 }

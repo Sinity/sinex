@@ -23,6 +23,7 @@ pub mod coverage;
 pub mod dbus;
 #[cfg(feature = "full")]
 pub mod documents;
+pub mod duplicate_decision;
 pub(crate) mod fields;
 pub mod file_watch;
 #[cfg(feature = "full")]
@@ -56,8 +57,6 @@ pub mod mail_imap;
 pub mod media_capture;
 #[cfg(feature = "full")]
 pub mod messenger;
-#[cfg(feature = "full")]
-pub mod model_calls;
 /// Media players (MPRIS) on the session bus.
 pub mod mpris;
 #[cfg(feature = "full")]
@@ -153,7 +152,7 @@ use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::registry::{Source, SourceSpec};
 
 /// Every input format and the sources that read it: the one list the
-/// catalog, backfill, the binding runner, `sinex-session` and replay all
+/// catalog, staging, the binding runner, `sinex-session` and replay all
 /// work from.
 pub fn formats() -> &'static [&'static InputFormat] {
     #[cfg(not(feature = "full"))]
@@ -242,9 +241,9 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &library::FORMAT,
         &coverage::FORMAT,
         &forecast::FORMAT,
+        &duplicate_decision::FORMAT,
         &query::FORMAT,
         &analysis::FORMAT,
-        &model_calls::FORMAT,
         &signals::FORMAT,
         &page_crawl::FORMAT,
         &telemetry::FORMAT,
@@ -268,7 +267,7 @@ pub fn specs() -> Vec<&'static SourceSpec> {
     out
 }
 
-/// The format named `name` (`--read NAME=PATH`).
+/// The format named `name` (`stage --parser NAME`).
 pub fn format(name: &str) -> Option<&'static InputFormat> {
     formats().iter().copied().find(|k| k.name == name)
 }

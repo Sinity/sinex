@@ -525,7 +525,7 @@ async fn plan(
                 r#"WITH RECURSIVE chain(id) AS (
                      SELECT unnest($1::uuid[])
                      UNION
-                     SELECT c.child FROM core.event_children c JOIN chain ON c.parent = chain.id)
+                     SELECT c.child FROM chain CROSS JOIN LATERAL core.event_children_of(chain.id) c)
                    SELECT e.id, e.event_type FROM chain JOIN core.events e ON e.id = chain.id
                    WHERE EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = e.id)
                       OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)"#,
@@ -550,7 +550,7 @@ async fn plan(
                 r#"WITH RECURSIVE chain(id) AS (
                      SELECT unnest($1::uuid[])
                      UNION
-                     SELECT c.child FROM core.event_children c JOIN chain ON c.parent = chain.id)
+                     SELECT c.child FROM chain CROSS JOIN LATERAL core.event_children_of(chain.id) c)
                    SELECT e.id, e.event_type,
                      (EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = e.id)
                       OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)) AS "live!"
@@ -596,7 +596,7 @@ async fn plan_restore(
              WHERE a.event_id = ANY($1)
              UNION
              SELECT c.child, chain.operation, chain.seq
-             FROM chain JOIN core.event_children c ON c.parent = chain.id
+             FROM chain CROSS JOIN LATERAL core.event_children_of(chain.id) c
              JOIN audit.archived a ON a.event_id = c.child
                AND ((chain.operation IS NOT NULL AND a.operation_id = chain.operation)
                  OR (chain.operation IS NULL AND a.operation_id IS NULL AND a.archived_seq = chain.seq)))

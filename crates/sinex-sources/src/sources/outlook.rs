@@ -12,19 +12,21 @@
 //!
 //! The CSV export carries no message ID and no date, only the people, subject,
 //! body and a few Outlook fields. Each row is identified by its record
-//! location; the same message in the PST is a separate record,
-//! combined by fusion if at all.
+//! location; the same message in the PST is a separate record, and with no
+//! Message-ID mail fusion never joins the two.
 use crate::sources::{fields, mail};
 use sinex_model::Class;
 use sinex_model::event_types::communication::MailMessage;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const PST: SourceSpec = SourceSpec {
     name: "communication.outlook",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
@@ -38,7 +40,9 @@ pub const PST: SourceSpec = SourceSpec {
 
 pub const CSV: SourceSpec = SourceSpec {
     name: "communication.outlook-csv",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "mail recall and correspondence history",
     class: Class::Open,
     parser: "outlook-csv",
@@ -166,11 +170,12 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--read outlook=PATH`: each `.pst` under PATH, converted with `readpst`
+/// `stage --parser outlook PATH`: each `.pst` under PATH, converted with `readpst`
 /// to one mbox per folder, each folder its own stable binding of the PST.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "outlook",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -180,8 +185,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&PST],
@@ -191,10 +194,11 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         capture: None,
     };
 
-/// `--read outlook-csv=PATH`: each Outlook CSV export under PATH.
+/// `stage --parser outlook-csv PATH`: each Outlook CSV export under PATH.
 pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "outlook-csv",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -204,8 +208,6 @@ pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&CSV],

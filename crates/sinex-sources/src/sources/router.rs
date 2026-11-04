@@ -18,14 +18,16 @@ use sinex_model::event_types::router::{
 };
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
 const fn spec(lane: &'static str, event_type: &'static [&'static str]) -> SourceSpec {
     SourceSpec {
         name: "network.router",
-        driver: Driver::AppendFile,
+        origin: Origin::Input(Shape::AppendFile),
+        expect: Expectation::continuous_hours(6),
+        expires_after: None,
         purpose: "which devices were on the home network, their traffic and the router's log",
         // Leases and clients name the household's devices, and the log
         // their addresses.
@@ -465,12 +467,13 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--read router=PATH`: every lane day file under PATH (the router
+/// `stage --parser router PATH`: every lane day file under PATH (the router
 /// directory, one lane's directory or one day file), read in the binding's
 /// zone, recorded when it is planned.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "router",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[
@@ -486,8 +489,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || LANES.iter().map(|(spec, _)| spec).collect(),

@@ -14,6 +14,7 @@ pub mod coverage;
 pub mod derived;
 pub mod desktop;
 pub mod documents;
+pub mod duplicate;
 pub mod embedding;
 pub mod environment;
 pub mod finance;
@@ -26,7 +27,6 @@ pub mod input;
 pub mod library;
 pub mod machine;
 pub mod media;
-pub mod model_call;
 pub mod operator;
 pub mod peripheral;
 pub mod portfolio;
@@ -47,7 +47,7 @@ pub use derived::{
 };
 pub use fused::CommandFused;
 use serde_json::Value;
-pub use shell::{CommandExecuted, CommandImported, ShellSession};
+pub use shell::{CommandExecuted, CommandImported, CommandReported, ShellSession};
 
 /// A registered event type, as the schema registry stores it.
 #[derive(Clone, Debug)]
@@ -154,15 +154,9 @@ pub fn declarations() -> &'static [crate::KindDeclaration] {
 /// Every bundled payload validator. Outside kinds are stored declarations.
 pub const ALL: &[RegisteredEventType] = &[
     info::<signal::RuleWritten>(),
-    info::<signal::CheckpointRecorded>(),
-    info::<signal::EvaluationRecorded>(),
-    info::<signal::IntentRecorded>(),
-    info::<signal::EmergencyCompleted>(),
     info::<signal::DeliveryRecorded>(),
-    info::<signal::HandoffRecorded>(),
-    info::<signal::ReceivedRecorded>(),
-    info::<signal::ReceiptRecorded>(),
-    info::<signal::DesktopReceiptRecorded>(),
+    info::<signal::OutcomeRecorded>(),
+    info::<signal::ReportReceived>(),
     info::<analysis::AnalysisRequest>(),
     info::<analysis::AnalysisPanel>(),
     info::<analysis::RecipeAnswer>(),
@@ -180,6 +174,7 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<forecast::Resolved>(),
     info::<CommandExecuted>(),
     info::<CommandImported>(),
+    info::<CommandReported>(),
     info::<finance::TransactionPosted>(),
     info::<finance::JournalDirective>(),
     info::<finance::JournalImported>(),
@@ -271,15 +266,9 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<work::AgentctlEvent>(),
     // Derived
     info::<CommandFused>(),
-    info::<fused::FocusFused>(),
-    info::<fused::VisitFused>(),
-    info::<fused::PlayFused>(),
-    info::<fused::ClipboardFused>(),
-    info::<fused::NotificationFused>(),
     info::<fused::MailFused>(),
-    info::<fused::RestFused>(),
-    info::<fused::PostFused>(),
-    info::<fused::ConversationFused>(),
+    info::<fused::ConsideredPair>(),
+    info::<duplicate::Duplicate>(),
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<MetricFigure>(),
@@ -340,22 +329,12 @@ pub const ALL: &[RegisteredEventType] = &[
     info::<operator::LogEntry>(),
     info::<operator::SteeringRow>(),
     // Library
-    info::<model_call::ModelPolicy>(),
-    info::<model_call::ModelRequest>(),
-    info::<model_call::RecordedResponse>(),
-    info::<model_call::ModelReceipt>(),
     info::<library::FileCopy>(),
     info::<library::DocumentText>(),
     info::<library::Item>(),
     info::<library::Rendition>(),
-    info::<library::Preview>(),
-    info::<library::Assignment>(),
-    info::<library::Collection>(),
-    info::<library::Entry>(),
-    info::<library::Rating>(),
-    info::<library::Comparison>(),
+    info::<library::Curation>(),
     info::<library::View>(),
-    info::<library::Dismissal>(),
 ];
 
 /// The registered type named `event_type`, for code that holds a type name

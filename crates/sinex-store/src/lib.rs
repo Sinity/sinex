@@ -14,10 +14,10 @@ pub mod copy_text;
 pub mod coverage;
 pub mod derivations;
 pub mod diagnostics;
+pub mod library_shown;
 pub mod lifecycle;
 pub mod live;
 pub mod material_bytes;
-pub mod model_calls;
 pub mod owner_protocol;
 pub mod payloads;
 pub mod positions;
@@ -33,13 +33,13 @@ pub mod sealed;
 pub mod signals;
 pub mod source_declarations;
 mod stage;
+pub mod stages;
 pub mod telemetry;
 pub mod vectors;
 pub mod writer_lock;
 
 pub use admission::{
-    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
-    ReadMark, native_key,
+    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, ReadMark,
 };
 pub use blobs::Blobs;
 pub use blobs::Verified;

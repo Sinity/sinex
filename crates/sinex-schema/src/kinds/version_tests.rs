@@ -10,7 +10,6 @@ pub(crate) const CURRENT_VERSION_TWO: &[&str] = &[
     "input.coverage",
     "tag.applied",
     "conversation.day",
-    "rest.fused",
     "work.act",
     "work.episode",
     "work.suspension",
@@ -30,7 +29,7 @@ pub(crate) const CURRENT_VERSION_TWO: &[&str] = &[
 
 #[test]
 fn current_kind_map_separates_known_version_two_from_unknown_version_one() {
-    assert_eq!(CURRENT_VERSION_TWO.len(), 22);
+    assert_eq!(CURRENT_VERSION_TWO.len(), 21);
     let names: std::collections::BTreeSet<_> = CURRENT_VERSION_TWO.iter().collect();
     assert_eq!(names.len(), CURRENT_VERSION_TWO.len());
     for name in CURRENT_VERSION_TWO {
@@ -103,7 +102,7 @@ async fn already_versioned_compressed_readings_keep_known_schemas_and_references
     let material = MaterialId::new();
     sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,kind_version,validation) VALUES($1,'tag.applied','fixture',$2,$3,123,32767,'unknown',1,$4,$5,1,decode(repeat('01',32),'hex'),1,'validated')")
         .bind(id.0).bind(RunId::new().0).bind(material.0).bind(&payload).bind(evaluated.equivalence_key.map(|key|key.0)).execute(&mut conn).await.unwrap();
-    conn.execute("INSERT INTO core.live_equivalence SELECT source,event_type,core.encode_equivalence_key(equivalence_key),id,reading_order,record_hash FROM core.events; INSERT INTO core.commit_log SELECT commit_seq,id,event_type FROM core.events; UPDATE core.counters SET value=1 WHERE name='commit_seq'").await.unwrap();
+    conn.execute("INSERT INTO core.live_equivalence SELECT source,event_type,core.encode_equivalence_key(equivalence_key),id,reading_order,record_hash FROM core.events; UPDATE core.counters SET value=1 WHERE name='commit_seq'").await.unwrap();
     let reference_sql = "SELECT to_jsonb(e)||jsonb_build_object('citation','sinex:record/'||material_id||'/'||anchor||'/'||event_type||'/'||output_index) FROM core.events e WHERE id=$1";
     let before: Value = sqlx::query_scalar(reference_sql)
         .bind(id.0)

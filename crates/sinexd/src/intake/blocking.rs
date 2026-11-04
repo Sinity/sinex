@@ -58,6 +58,9 @@ pub(super) struct Parsed {
     pub batch: Batch,
     pub elapsed: Duration,
     pub material_length: Option<Option<usize>>,
+    /// With the material's first batch: the records its driver framed and
+    /// the records the input no longer holds.
+    pub framed: Option<(u64, u64)>,
     pub permit: BatchPermit,
 }
 

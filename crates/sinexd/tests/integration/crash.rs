@@ -88,7 +88,7 @@ impl Inputs {
             .into_bytes()
     }
 
-    /// The binding backfill files the zsh history under.
+    /// The binding a stage files the zsh history under.
     fn zsh_binding(&self) -> String {
         format!("terminal.zsh-history:{}@{HOST}", self.zsh.display())
     }
@@ -198,12 +198,11 @@ impl Target {
         c
     }
 
-    fn backfill(&self, inputs: &Inputs) -> Command {
-        let mut c = self.sinexd(&["backfill", "--host", HOST]);
-        c.arg("--read")
-            .arg(format!("atuin={}", inputs.atuin.display()))
-            .arg("--read")
-            .arg(format!("zsh={}", inputs.zsh.display()));
+    /// Stage the Atuin database and the zsh history in one operation, each
+    /// recognised by its declared structure.
+    fn stage(&self, inputs: &Inputs) -> Command {
+        let mut c = self.sinexd(&["admin", "stage", "--host", HOST]);
+        c.arg(&inputs.atuin).arg(&inputs.zsh);
         c
     }
 
@@ -226,10 +225,9 @@ impl Target {
         c
     }
 
-    fn backfill_clipboard(&self, spool: &Path) -> Command {
-        let mut c = self.sinexd(&["backfill", "--host", HOST]);
-        c.arg("--read")
-            .arg(format!("clipboard={}", spool.display()));
+    fn stage_clipboard(&self, spool: &Path) -> Command {
+        let mut c = self.sinexd(&["admin", "stage", "--host", HOST, "--parser", "clipboard"]);
+        c.arg(spool);
         c
     }
 
@@ -570,14 +568,9 @@ fn lock(table: &str) -> String {
     format!("LOCK TABLE {table} IN SHARE MODE")
 }
 
-/// Block every use of `table`, for a step that only reads it.
-fn read_lock(table: &str) -> String {
-    format!("LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
-}
-
-/// Kill the backfill at a step, run it again to the end, and compare with a
+/// Kill the stage at a step, run it again to the end, and compare with a
 /// run that was never interrupted.
-async fn verified_backfill_state(target: &Target, inputs: &Inputs) -> State {
+async fn verified_stage_state(target: &Target, inputs: &Inputs) -> State {
     // The generic extractor below is also used by unrelated clipboard and
     // lifecycle laws. Its old normalized positions are replaced only AFTER
     // both native cursor claims have passed the independent custody proof.
@@ -651,25 +644,25 @@ async fn checked_unchanged_coverage(target: &Target, bindings: &[String], before
     }
 }
 
-async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
+async fn stage_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
     let reference = Target::new(&inputs);
-    finish(&mut reference.backfill(&inputs));
+    finish(&mut reference.stage(&inputs));
     let verify = ready.is_some();
     let expected = if verify {
         consistent(&reference).await;
-        verified_backfill_state(&reference, &inputs).await
+        verified_stage_state(&reference, &inputs).await
     } else {
         state(&mut reference.connect().await).await
     };
     assert_eq!(expected.events as usize, inputs.expected_events);
 
     let target = Target::new(&inputs);
-    kill_at(&target, &mut target.backfill(&inputs), ready, lock_sql).await;
+    kill_at(&target, &mut target.stage(&inputs), ready, lock_sql).await;
     consistent(&target).await;
-    finish(&mut target.backfill(&inputs));
+    finish(&mut target.stage(&inputs));
     consistent(&target).await;
     let actual = if verify {
-        verified_backfill_state(&target, &inputs).await
+        verified_stage_state(&target, &inputs).await
     } else {
         state(&mut target.connect().await).await
     };
@@ -682,12 +675,12 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
         for (owner, before) in [(&reference, &expected), (&target, &actual)] {
             let native_materials = material_ids(owner, Some(&bindings)).await;
             let all_materials = material_ids(owner, None).await;
-            finish(&mut owner.backfill(&inputs));
+            finish(&mut owner.stage(&inputs));
             consistent(owner).await;
             same(
-                &verified_backfill_state(owner, &inputs).await,
+                &verified_stage_state(owner, &inputs).await,
                 before,
-                "unchanged future backfill",
+                "an unchanged path staged again",
             );
             assert_eq!(
                 material_ids(owner, Some(&bindings)).await,
@@ -708,8 +701,8 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
         finish(&mut target.replay(&scope));
         consistent(&reference).await;
         consistent(&target).await;
-        let replayed_reference = verified_backfill_state(&reference, &inputs).await;
-        let replayed_target = verified_backfill_state(&target, &inputs).await;
+        let replayed_reference = verified_stage_state(&reference, &inputs).await;
+        let replayed_target = verified_stage_state(&target, &inputs).await;
         for (label, replayed, before) in [
             ("reference", &replayed_reference, &expected),
             ("restarted", &replayed_target, &actual),
@@ -740,33 +733,34 @@ async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) 
     }
 }
 
-macro_rules! backfill_steps {
+macro_rules! stage_steps {
     ($inputs:expr; $($name:ident: $ready:expr, $lock:expr;)*) => {$(
+        /// law: sx.stage.idempotent-progress
         #[devkit::test]
         async fn $name() {
-            backfill_survives($inputs, $ready, &$lock).await;
+            stage_survives($inputs, $ready, &$lock).await;
         }
     )*};
 }
 
-// One test per state a kill inside the first backfill can leave. Every
+// One test per state a kill inside the first stage can leave. Every
 // statement of an admission transaction leaves the same state (nothing of the
 // transaction committed, no bytes past the committed segment end), so one kill
 // stands for them all; the run registration before it and the synced bytes
 // at its commit leave different states.
-backfill_steps! { Inputs::first_transaction();
-    backfill_killed_allocating_commit_seq: None, lock("core.counters");
-    backfill_killed_registering_the_material: None, lock("raw.inputs");
-    backfill_killed_recording_synced_extents: None, lock("core.blob_extents");
+stage_steps! { Inputs::first_transaction();
+    stage_killed_allocating_commit_seq: None, lock("core.counters");
+    stage_killed_registering_the_material: None, lock("raw.inputs");
+    stage_killed_recording_synced_extents: None, lock("core.blob_extents");
 }
 
-backfill_steps! { Inputs::multiple_batches();
+stage_steps! { Inputs::multiple_batches();
     // A restart after a committed batch must read the rest of the material
     // again: its bytes are stored, its readings are not.
-    backfill_killed_between_zsh_batches:
+    stage_killed_between_zsh_batches:
         Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash')"),
         "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash' FOR UPDATE";
-    backfill_killed_between_atuin_batches:
+    stage_killed_between_atuin_batches:
         Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash')"),
         "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash' FOR UPDATE";
 }
@@ -780,16 +774,16 @@ async fn replay_survives(lock_sql: &str) {
     note("inputs ready");
     let expected = {
         let reference = Target::new(&inputs);
-        finish(&mut reference.backfill(&inputs));
-        note("reference backfill complete");
+        finish(&mut reference.stage(&inputs));
+        note("reference stage complete");
         finish(&mut reference.replay(&["--binding", &inputs.zsh_binding()]));
         note("reference replay complete");
         state(&mut reference.connect().await).await
     };
 
     let target = Target::new(&inputs);
-    finish(&mut target.backfill(&inputs));
-    note("target backfill complete");
+    finish(&mut target.stage(&inputs));
+    note("target stage complete");
     let before = state(&mut target.connect().await).await;
     assert_eq!(before.live, expected.live, "replay changes no content");
     kill_at(
@@ -840,7 +834,7 @@ replay_steps! {
 async fn an_interrupted_replay_resumes_where_it_stopped() {
     let inputs = Inputs::multiple_batches();
     let target = Target::new(&inputs);
-    finish(&mut target.backfill(&inputs));
+    finish(&mut target.stage(&inputs));
     // Two sequences: the zsh history and the Atuin rows.
     let scope = [
         "--event-type",
@@ -919,7 +913,7 @@ async fn tombstone_survives(lock_sql: &str) {
     let inputs = Inputs::first_transaction();
     let target = Target::new(&inputs);
     let spool = clipboard_spool(&inputs.dir, 64);
-    finish(&mut target.backfill_clipboard(&spool));
+    finish(&mut target.stage_clipboard(&spool));
     let mut c = target.connect().await;
     let (event, material, blob): (uuid::Uuid, uuid::Uuid, String) = sqlx::query_as(
         "SELECT e.id, e.material_id, m.blob FROM core.events e
@@ -1030,7 +1024,7 @@ tombstone_steps! {
 async fn publisher_survives(between_pages: bool) {
     let inputs = Inputs::publisher_pages();
     let target = Target::new(&inputs);
-    finish(&mut target.backfill(&inputs));
+    finish(&mut target.stage(&inputs));
     let nats = devkit::nats::test_nats().expect("run through `xtask test`");
     let subjects = sinex_protocol::Subjects::new(nats.prefix());
     let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
@@ -1097,9 +1091,9 @@ async fn publisher_survives(between_pages: bool) {
     daemon.wait().unwrap();
     consistent(&target).await;
 
-    let committed = scalar(&mut c, "SELECT count(*) FROM core.commit_log").await;
+    let committed = scalar(&mut c, "SELECT count(*) FROM core.events").await;
     let expected: std::collections::BTreeMap<sinex_model::EventId, i64> =
-        sqlx::query_as::<_, (uuid::Uuid, i64)>("SELECT event_id,commit_seq FROM core.commit_log")
+        sqlx::query_as::<_, (uuid::Uuid, i64)>("SELECT id,commit_seq FROM core.events")
             .fetch_all(&mut c)
             .await
             .unwrap()
@@ -1175,13 +1169,13 @@ async fn synced_uncommitted_segment_tail_is_truncated_on_restart() {
     let inputs = Inputs::first_transaction();
     let expected = {
         let reference = Target::new(&inputs);
-        finish(&mut reference.backfill(&inputs));
+        finish(&mut reference.stage(&inputs));
         state(&mut reference.connect().await).await
     };
     let target = Target::new(&inputs);
     kill_at(
         &target,
-        &mut target.backfill(&inputs),
+        &mut target.stage(&inputs),
         None,
         &lock("core.blob_segments"),
     )
@@ -1205,8 +1199,8 @@ async fn synced_uncommitted_segment_tail_is_truncated_on_restart() {
         scalar(&mut conn, "SELECT count(*) FROM raw.positions").await,
         0
     );
-    // Backfill reopens through the same recovery path as ordinary daemon startup.
-    finish(&mut target.backfill(&inputs));
+    // A local stage reopens through the same recovery path as ordinary daemon startup.
+    finish(&mut target.stage(&inputs));
     consistent(&target).await;
     same(
         &state(&mut conn).await,
@@ -1228,10 +1222,8 @@ async fn partial_segment_append_recovers_without_advancing_its_cursor() {
     use std::os::unix::process::ExitStatusExt;
     let inputs = Inputs::new(1, 512);
     let input = |target: &Target, format: &str, path: &Path| {
-        let mut command = target.sinexd(&["backfill", "--host", HOST]);
-        command
-            .arg("--read")
-            .arg(format!("{format}={}", path.display()));
+        let mut command = target.sinexd(&["admin", "stage", "--host", HOST, "--parser", format]);
+        command.arg(path);
         command
     };
     let (expected, append_bytes, largest_preparation) = {
@@ -1287,11 +1279,11 @@ async fn partial_segment_append_recovers_without_advancing_its_cursor() {
         }
         assert!(
             child.try_wait().unwrap().is_none(),
-            "backfill stopped before material preparation completed"
+            "the stage stopped before material preparation completed"
         );
         assert!(
             Instant::now() < deadline,
-            "backfill never reached admission staging"
+            "the stage never reached the admission copy"
         );
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
@@ -1389,14 +1381,14 @@ async fn derive_survives(ready: Option<&str>, lock_sql: &str) {
     let inputs = Inputs::first_transaction();
     let expected = {
         let reference = Target::new(&inputs);
-        finish(&mut reference.backfill(&inputs));
+        finish(&mut reference.stage(&inputs));
         finish(&mut reference.derive());
         derived_state(&mut reference.connect().await).await
     };
     assert!(expected.1 > 0, "the inputs produce derived events");
 
     let target = Target::new(&inputs);
-    finish(&mut target.backfill(&inputs));
+    finish(&mut target.stage(&inputs));
     kill_at(&target, &mut target.derive(), ready, lock_sql).await;
     consistent(&target).await;
     let mut c = target.connect().await;

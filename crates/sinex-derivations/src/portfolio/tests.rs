@@ -191,12 +191,14 @@ fn late_rhythm_input_dirties_its_future_baseline_days() {
 }
 #[devkit::test]
 fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
-    let command = record(
-        "command.fused",
-        json!({"record":"native-command-7","command":"example","started_at":at(0),"duration_ns":10*SECOND,
-        "exit_code":0,"host":"box","cwd":"/example","observed_by":[]}),
+    // Atuin's rows are the command family's database member.
+    let mut command = record(
+        "command.executed",
+        json!({"native_id":"native-command-7","command":"example","started_at":at(0),"duration_ns":10*SECOND,
+        "exit_code":0,"hostname":"box:u","cwd":"/example","session":"s"}),
         0,
     );
+    command.source = "terminal.atuin-history".into();
     let session = record(
         "shell.session",
         json!({"host":"box","started_at":at(0),"ended_at":at(10),"day":"2023-11-14","commands":1,"failed":0,"cwds":["/example"]}),
@@ -205,7 +207,7 @@ fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
     let mark = record(
         "operator.mark",
         json!({"host":"box","at":at(5),"text":"Example","cwd":"/example","command":"example",
-        "app":null,"title":null,"by":"synthetic","written_at":at(5),"command_record":"native-command-7"}),
+        "app":null,"title":null,"by":"synthetic","written_at":at(5),"command_record":"command.executed:native-command-7"}),
         0,
     );
     let env = Env::at(
@@ -221,6 +223,19 @@ fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
     for link in &after.outputs {
         assert!(matches!(&link.origin,Origin::Derived{parents}if parents.contains(&mark.id)));
     }
+    // A fused command that joins the record is the one target.
+    let shells = [
+        command.clone(),
+        crate::fusion::tests::zsh("example", 1_700_000_000.0),
+    ];
+    let mut joined = crate::fusion::tests::fuse_events(crate::fusion::commands(), &shells);
+    assert_eq!(joined.len(), 1);
+    let fused_id = joined[0].id;
+    joined.push(mark.clone());
+    joined.extend(shells);
+    let links = marks::MarkLinks.compute(&key, &joined, &env).outputs;
+    assert_eq!(links.len(), 1);
+    assert!(matches!(&links[0].origin, Origin::Derived { parents } if parents.contains(&fused_id)));
     let mut no_key = mark;
     no_key
         .payload
@@ -250,7 +265,6 @@ fn default_portfolio_registers_the_named_stored_products() {
         "activity.span",
         "metric.figure",
         "rhythm.deviation",
-        "rest.fused",
         "health.figure",
         "conversation.day",
         "input.bout",

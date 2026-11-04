@@ -6,7 +6,7 @@ pub struct ActivityWindows;
 
 impl Keyed for ActivityWindows {
     const NAME: &'static str = "activity.windows";
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUTS;
     const OUTPUTS: &'static [&'static str] = &["activity.window"];
@@ -77,6 +77,8 @@ impl Keyed for ActivityWindows {
                 });
             }
         }
+        // A command record a fused command joins counts through the fused one.
+        let joined = crate::fusion::commands().joined(inputs);
         let mut outputs = Vec::new();
         let mut waiting = false;
         for (scope, mut active) in by_scope {
@@ -123,7 +125,8 @@ impl Keyed for ActivityWindows {
                 let context: Vec<_> = inputs
                     .iter()
                     .filter(|event| {
-                        super::scope(&event.payload, &event.event_type) == scope
+                        !joined.contains(&event.id)
+                            && super::scope(&event.payload, &event.event_type) == scope
                             && event.ts_orig.at.is_some_and(|at| {
                                 clipped_start <= at.unix_ns() && at.unix_ns() <= clipped_end
                             })
@@ -131,13 +134,7 @@ impl Keyed for ActivityWindows {
                     .collect();
                 let mut apps: Vec<_> = context
                     .iter()
-                    .filter_map(|event| {
-                        event
-                            .payload
-                            .get("app")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned)
-                    })
+                    .filter_map(|event| FOCUS.read(event)?.get("app")?.as_str().map(str::to_owned))
                     .collect();
                 apps.sort();
                 apps.dedup();

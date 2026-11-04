@@ -4,14 +4,24 @@
 use crate::Result;
 use sqlx::PgConnection;
 
-/// A source as the registry records it.
+/// A source as the registry records it: its declaration, so queries and
+/// status can list what is declared and what each source is expected to do.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Source {
     pub name: String,
-    pub driver: String,
+    /// Input shapes of the declarations that read it; empty when its records
+    /// are written only on request.
+    pub shapes: Vec<String>,
     pub version: i32,
     pub event_types: Vec<String>,
     pub purpose: String,
+    pub expect: sinex_model::Expectation,
+    pub expires_after: Option<std::time::Duration>,
+}
+
+/// Whole seconds, as the registry stores intervals.
+fn seconds(duration: Option<std::time::Duration>) -> Option<i64> {
+    duration.map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Make `registry.sources` hold exactly `catalog`.
@@ -25,14 +35,23 @@ pub async fn write_sources(conn: &mut PgConnection, catalog: &[Source]) -> Resul
     .await?;
     for s in catalog {
         sqlx::query!(
-            r#"INSERT INTO registry.sources (name, driver, version, event_types, purpose) VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (name) DO UPDATE SET driver = EXCLUDED.driver, version = EXCLUDED.version,
-                 event_types = EXCLUDED.event_types, purpose = EXCLUDED.purpose"#,
+            r#"INSERT INTO registry.sources (name, shapes, version, event_types, purpose,
+                 expectation, silent_after, every, expires_after)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::bigint * interval '1 second',
+                 $8::bigint * interval '1 second', $9::bigint * interval '1 second')
+               ON CONFLICT (name) DO UPDATE SET shapes = EXCLUDED.shapes, version = EXCLUDED.version,
+                 event_types = EXCLUDED.event_types, purpose = EXCLUDED.purpose,
+                 expectation = EXCLUDED.expectation, silent_after = EXCLUDED.silent_after,
+                 every = EXCLUDED.every, expires_after = EXCLUDED.expires_after"#,
             s.name,
-            s.driver,
+            &s.shapes,
             s.version,
             &s.event_types,
             s.purpose,
+            s.expect.name(),
+            seconds(s.expect.silent_after()),
+            seconds(s.expect.every()),
+            seconds(s.expires_after),
         )
         .execute(&mut *conn)
         .await?;
@@ -104,3 +123,23 @@ pub async fn latest_comparisons(
 
 #[cfg(test)]
 mod tests;
+
+/// Registered derivations that are not among `known`: producers a build
+/// removed, whose outputs are archived once and whose registration then ends.
+pub async fn retired_derivations(conn: &mut PgConnection, known: &[String]) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar!(
+        "SELECT name FROM registry.derivations WHERE name <> ALL($1::text[]) ORDER BY name",
+        known,
+    )
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// End a retired derivation's registration once its outputs are archived, so
+/// a later start, or an undo of that archive, finds nothing to retire.
+pub async fn forget_derivation(conn: &mut PgConnection, name: &str) -> Result<()> {
+    sqlx::query!("DELETE FROM registry.derivations WHERE name = $1", name)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}

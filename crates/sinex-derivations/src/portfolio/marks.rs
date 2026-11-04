@@ -1,7 +1,10 @@
 //! Delayed mark links use native record identities or exact session containment.
+//! A command record a fused command joins is linked through the fused one.
 use crate::activity::{evidence, stable};
 use crate::derived_event::{derived, record_identity};
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
+use crate::fusion::commands;
+use crate::observed::FOCUS;
+use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::portfolio::MarkLink;
 use sinex_model::{Event, Timestamp};
@@ -21,24 +24,37 @@ fn host(payload: &Value) -> Option<String> {
 }
 impl Keyed for MarkLinks {
     const NAME: &'static str = "reference.marks";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[
         "operator.mark",
         "command.fused",
-        "focus.fused",
+        "command.reported",
+        "command.executed",
+        "command.imported",
+        "terminal.reported",
+        "state.interval",
+        "window.span",
         "shell.session",
         "activity.session",
     ];
     const OUTPUTS: &'static [&'static str] = &["reference.about"];
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
-        let Some(start) = input.ts_orig else {
+        let Some(at) = input.ts_orig else {
             return vec![];
         };
+        // A command's fused record may lie in the neighbouring day.
+        let margin = if commands().reads(input.event_type) {
+            commands().margin()
+        } else {
+            0
+        };
+        let start = Timestamp::from_unix_ns(at.unix_ns() - margin).unwrap_or(at);
         let Ok(mut day) = env.time_settings.day(start) else {
             return vec![];
         };
-        let end = time(input.payload, "ended_at").unwrap_or(start);
+        let end = time(input.payload, "ended_at").unwrap_or(at);
+        let end = Timestamp::from_unix_ns(end.unix_ns() + margin).unwrap_or(end);
         let Ok(last) = env.time_settings.day(end) else {
             return vec![];
         };
@@ -55,10 +71,20 @@ impl Keyed for MarkLinks {
     }
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let day = key["day"].as_str()?.parse().ok()?;
-        let mut query = InputQuery::window(
-            Self::INPUTS,
-            env.time_settings.day_start(day).ok()?,
-            env.time_settings.day_end(day).ok()?,
+        let margin = commands().margin();
+        let mut kinds = vec![
+            Kind::all("operator.mark"),
+            Kind::all("shell.session"),
+            Kind::all("activity.session"),
+        ];
+        kinds.extend(commands().kinds());
+        kinds.extend(FOCUS.kinds());
+        let mut query = InputQuery::of(
+            kinds,
+            Timestamp::from_unix_ns(env.time_settings.day_start(day).ok()?.unix_ns() - margin)
+                .ok()?,
+            Timestamp::from_unix_ns(env.time_settings.day_end(day).ok()?.unix_ns() + margin)
+                .ok()?,
         );
         query.intervals = vec![
             (
@@ -69,17 +95,27 @@ impl Keyed for MarkLinks {
                 "activity.session",
                 sinex_model::clock::IntervalEnd::At("ended_at"),
             ),
-            (
-                "focus.fused",
-                sinex_model::clock::IntervalEnd::At("ended_at"),
-            ),
         ];
+        query.intervals.extend(FOCUS.intervals());
         Some(query)
     }
     fn key_state(&self, _: &Value, _: &Env) -> KeyState {
         KeyState::Closed
     }
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+        let commands: Vec<_> = commands()
+            .occurrences(inputs)
+            .into_iter()
+            .map(|o| (o.event, "command_record"))
+            .collect();
+        let focus = inputs
+            .iter()
+            .filter(|e| FOCUS.admits(&e.event_type, &e.payload))
+            .map(|e| (e, "focus_record"));
+        let records: Vec<_> = commands.into_iter().chain(focus).collect();
+        let sessions = inputs
+            .iter()
+            .filter(|e| matches!(e.event_type.as_str(), "shell.session" | "activity.session"));
         let mut outputs = vec![];
         for mark in inputs
             .iter()
@@ -96,43 +132,26 @@ impl Keyed for MarkLinks {
             {
                 continue;
             }
-            for target in inputs
-                .iter()
-                .filter(|event| event.event_type != "operator.mark")
-            {
-                let method = match target.event_type.as_str() {
-                    "command.fused" | "focus.fused" => {
-                        let field = if target.event_type == "command.fused" {
-                            "command_record"
-                        } else {
-                            "focus_record"
-                        };
-                        let Some(record) = mark.payload[field].as_str() else {
-                            continue;
-                        };
-                        if record != record_identity(target)
-                            && target.payload["record"].as_str() != Some(record)
-                        {
-                            continue;
-                        }
-                        "native_record_key"
-                    }
-                    "shell.session" | "activity.session" => {
-                        if host(&target.payload).as_deref() != mark.payload["host"].as_str() {
-                            continue;
-                        }
-                        let (Some(start), Some(end)) =
-                            (target.ts_orig.at, time(&target.payload, "ended_at"))
-                        else {
-                            continue;
-                        };
-                        if at < start || at > end {
-                            continue;
-                        }
-                        "containing_session"
-                    }
-                    _ => continue,
-                };
+            let by_record = records.iter().filter_map(|(target, field)| {
+                let record = mark.payload[*field].as_str()?;
+                // A fused command is the record of each of its members.
+                let member = target.payload["members"]
+                    .as_array()
+                    .is_some_and(|members| members.iter().any(|m| m["record"] == record));
+                (record == record_identity(target)
+                    || target.payload["record"].as_str() == Some(record)
+                    || member)
+                    .then_some((*target, "native_record_key"))
+            });
+            let by_session = sessions.clone().filter_map(|target| {
+                if host(&target.payload).as_deref() != mark.payload["host"].as_str() {
+                    return None;
+                }
+                let start = target.ts_orig.at?;
+                let end = time(&target.payload, "ended_at")?;
+                (start <= at && at <= end).then_some((target, "containing_session"))
+            });
+            for (target, method) in by_record.chain(by_session) {
                 outputs.push(derived(
                     &MarkLink {
                         mark_record: stable(mark),

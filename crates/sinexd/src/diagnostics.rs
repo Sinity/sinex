@@ -23,6 +23,7 @@ fn snapshot_json(s: &Snapshot) -> Value {
             "behind": s.commit_seq - s.search_position.unwrap_or(0),
         },
         "failures_24h": s.failures_24h,
+        "upgrade_work_after_start": s.upgrade_work,
         "blobs": s.blobs,
         "sources": s.sources.iter().map(|src| json!({
             "source": src.source,

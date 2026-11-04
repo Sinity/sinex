@@ -13,16 +13,6 @@ pub(crate) async fn validate_parents(
     parents::validate(conn, frame, events).await
 }
 
-/// Revalidate explicitly cited retained inputs under the writer's epoch fence.
-/// The new private acquisition fact is not an external input certificate.
-pub async fn validate_inputs(
-    conn: &mut PgConnection,
-    frame: &sinex_model::IngressFrame,
-    ids: &[sinex_model::EventId],
-) -> Result<()> {
-    parents::inputs(conn, frame, ids).await
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorityError {
     #[error("{0}")]
@@ -64,7 +54,6 @@ pub struct Claims {
     pub cache: String,
     pub scope: String,
     pub position: i64,
-    pub policy_epoch: i64,
     pub instance: String,
     pub catalog: String,
     pub host: String,
@@ -102,12 +91,6 @@ pub async fn current(
             "coverage_position_outside_owner_history".into(),
         ));
     }
-    let epoch = crate::privacy::projection::epoch(conn).await?;
-    if !epoch.ready() || epoch.active != claims.policy_epoch {
-        return Err(AuthorityError::Invalidated(
-            "coverage_policy_epoch_changed".into(),
-        ));
-    }
     let saved: Option<(i64, serde_json::Value)> =
         sqlx::query_as("SELECT revision,state FROM core.signal_checkpoints WHERE host=$1")
             .bind(&claims.host)
@@ -137,50 +120,32 @@ pub async fn current(
     }
     Ok(())
 }
-/// Called only for a new frame, after retry lookup and under the admission epoch lock.
-pub async fn validate(
-    conn: &mut PgConnection,
-    frame: &sinex_model::IngressFrame,
-) -> Result<Option<i64>> {
+/// Called only for a new frame, after retry lookup and under the admission lock.
+pub async fn validate(conn: &mut PgConnection, frame: &sinex_model::IngressFrame) -> Result<bool> {
     let Some(expected) = &frame.coverage else {
-        return Ok(None);
+        return Ok(false);
     };
-    // Reading the private key remains an operational dependency. Only a
-    // semantically unusable optional stamp loses certification, not DB errors.
     let key = crate::owner_protocol::key(conn).await?;
-    let claims: Claims = match crate::owner_protocol::open(&key, DOMAIN, &expected.stamp) {
-        Ok(claims) => claims,
-        Err(Error::Invalid(_)) if !expected.required => return Ok(None),
-        Err(error) => return Err(error),
-    };
+    let claims: Claims = crate::owner_protocol::open(&key, DOMAIN, &expected.stamp)?;
     if claims.replay_root.is_none()
         || claims.purpose != "write"
         || claims.producer != frame.producer
         || frame.family.as_deref() != Some(claims.family.as_str())
         || claims.position != expected.position
-        || claims.policy_epoch != expected.policy_epoch
         || claims.scope != expected.scope
         || claims.catalog != expected.catalog
         || claims.instance != expected.instance
         || claims.host != expected.host
         || claims.settings_identity != expected.settings_identity
     {
-        return if expected.required {
-            Err(Error::Invalid("coverage_frame_authority_changed".into()))
-        } else {
-            Ok(None)
-        };
+        return Err(Error::Invalid("coverage_frame_authority_changed".into()));
     }
     sqlx::query("SELECT host FROM core.signal_checkpoints WHERE host=$1 FOR SHARE")
         .bind(&claims.host)
         .execute(&mut *conn)
         .await?;
-    match current(conn, &claims).await {
-        Ok(()) => {}
-        Err(AuthorityError::Invalidated(_)) if !expected.required => return Ok(None),
-        Err(error) => return Err(error.into()),
-    }
-    Ok(Some(claims.policy_epoch))
+    current(conn, &claims).await?;
+    Ok(true)
 }
 
 #[derive(sqlx::FromRow)]
@@ -197,7 +162,6 @@ pub struct InputRow {
     pub archived: bool,
     pub lifecycle_position: Option<i64>,
     pub history_unknown: bool,
-    pub changed: bool,
 }
 pub async fn inputs(
     conn: &mut PgConnection,
@@ -210,12 +174,12 @@ pub async fn inputs(
         .iter()
         .map(|(kind, _)| kind.name.clone())
         .collect::<Vec<_>>();
-    Ok(sqlx::query_as("SELECT e.id,e.commit_seq,e.source,e.event_type,e.kind_version,e.source_version,e.source_fingerprint,e.producer_family,o.payload,o.changed,coalesce(h.archived,false) AS archived,h.commit_seq AS lifecycle_position,(h.commit_seq IS NULL AND (EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id AND a.archived_seq<=$1) OR coalesce((SELECT NOT c.archived FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq>$1 ORDER BY c.commit_seq LIMIT 1),false))) AS history_unknown FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id LEFT JOIN LATERAL (SELECT c.archived,c.commit_seq FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq<=$1 ORDER BY c.commit_seq DESC LIMIT 1) h ON true WHERE e.event_type=ANY($2) AND e.commit_seq<=$1 AND ($3::bigint IS NULL OR (e.commit_seq,e.id)>($3,$4::uuid)) AND o.class=ANY($6) ORDER BY e.commit_seq,e.id LIMIT $5")
+    Ok(sqlx::query_as("SELECT e.id,e.commit_seq,e.source,e.event_type,e.kind_version,e.source_version,e.source_fingerprint,e.producer_family,e.payload,coalesce(h.archived,false) AS archived,h.commit_seq AS lifecycle_position,(h.commit_seq IS NULL AND (EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id AND a.archived_seq<=$1) OR coalesce((SELECT NOT c.archived FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq>$1 ORDER BY c.commit_seq LIMIT 1),false))) AS history_unknown FROM core.events e LEFT JOIN LATERAL (SELECT c.archived,c.commit_seq FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq<=$1 ORDER BY c.commit_seq DESC LIMIT 1) h ON true WHERE e.event_type=ANY($2) AND e.commit_seq<=$1 AND ($3::bigint IS NULL OR (e.commit_seq,e.id)>($3,$4::uuid)) AND e.class=ANY($6) ORDER BY e.commit_seq,e.id LIMIT $5")
         .bind(claims.position).bind(names).bind(after.map(|after|after.0)).bind(after.map(|after|after.1)).bind(limit).bind(&claims.classes).fetch_all(conn).await?)
 }
 
 /// Complete scoped indexing and raw reducer eligibility are different claims.
-/// Never omit an unknown projection or kind version inside the fixed catalog.
+/// Never omit an unknown kind version inside the fixed catalog.
 pub async fn projection_contract(
     conn: &mut PgConnection,
     claims: &Claims,
@@ -239,21 +203,13 @@ pub async fn projection_contract(
         .iter()
         .map(|kind| kind.name.clone())
         .collect::<Vec<_>>();
-    let rows:Vec<(String,i64,Option<String>,Option<i64>,Option<String>)>=sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,o.class,o.epoch,o.state FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
+    let rows: Vec<(String, i64, String)> = sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,e.class FROM core.events e WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
         .bind(names).bind(claims.position).fetch_all(conn).await?;
-    for (name, version, class, epoch, state) in rows {
-        let Some(class) = class else {
-            return Err(AuthorityError::Invalidated(
-                "projection_class_unknown".into(),
-            ));
-        };
+    for (name, version, class) in rows {
         if !claims.classes.contains(&class) {
             continue;
         }
-        if class == "sealed"
-            || epoch != Some(claims.policy_epoch)
-            || state.as_deref() != Some("complete")
-        {
+        if class == "sealed" {
             return Err(AuthorityError::Invalidated(
                 "projection_indexed_input_unavailable".into(),
             ));
@@ -294,32 +250,15 @@ pub async fn input_contract(
         .iter()
         .map(|kind| kind.name.clone())
         .collect::<Vec<_>>();
-    let rows:Vec<(String,i64,String,Option<i64>,Option<String>,Option<String>,Option<String>,Option<i64>,Option<bool>,Option<String>)>=sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,e.source,e.source_version,e.source_fingerprint,e.producer_family,o.class,o.epoch,o.changed,o.state FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
+    let rows:Vec<RequiredInput>=sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,e.source,e.source_version,e.source_fingerprint,e.producer_family,e.class FROM core.events e WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
         .bind(names).bind(claims.position).fetch_all(&mut *conn).await?;
-    for (
-        kind,
-        version,
-        source,
-        source_version,
-        fingerprint,
-        family,
-        class,
-        epoch,
-        changed,
-        state,
-    ) in rows
-    {
-        if family.as_deref() != Some(claims.family.as_str())
-            || epoch != Some(claims.policy_epoch)
-            || changed != Some(false)
-            || state.as_deref() != Some("complete")
-            || class.is_none()
-        {
+    for (kind, version, source, source_version, fingerprint, family, class) in rows {
+        if family.as_deref() != Some(claims.family.as_str()) {
             return Err(AuthorityError::Invalidated(
-                "coverage_required_projection_incomplete_or_changed".into(),
+                "coverage_required_input_family_changed".into(),
             ));
         }
-        if class.as_deref() == Some("sealed") {
+        if class == "sealed" {
             return Err(AuthorityError::Invalidated(
                 "coverage_required_projection_locked".into(),
             ));
@@ -376,9 +315,21 @@ pub async fn required_classes(
         .iter()
         .map(|(kind, _)| kind.name.clone())
         .collect::<Vec<_>>();
-    Ok(sqlx::query_as("SELECT DISTINCT e.event_type,o.class FROM core.events e JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.event_type=ANY($1) AND e.commit_seq<=$2 AND o.epoch=$3")
-        .bind(names).bind(claims.position).bind(claims.policy_epoch).fetch_all(conn).await?)
+    Ok(sqlx::query_as("SELECT DISTINCT e.event_type,e.class FROM core.events e WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
+        .bind(names).bind(claims.position).fetch_all(conn).await?)
 }
+
+/// One distinct required input: kind, kind version, source, source version,
+/// source fingerprint, producer family and class.
+type RequiredInput = (
+    String,
+    i64,
+    String,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    String,
+);
 
 #[cfg(test)]
 mod tests;

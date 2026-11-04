@@ -15,15 +15,22 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **source**: a named kind of record Sinex reads, `<area>.<name>` (`terminal.atuin-history`), with one declaration holding its parser, its kinds and its settings ([sources](sources.md#one-declaration-per-source)).
 - **source family**: a group of sources about one domain (shell, browsers, mail …) whose fidelity requirements are stated together ([source families](source-families.md)).
 - **input**: something Sinex observes repeatedly: a file, a directory, a database, a socket, an account collection.
-- **input shape**: how an input is read (append-only file, database rows, export archive, directory, live stream, account API, producer).
+- **input shape**: how an input is read (append-only file, database rows, export archive, directory, live stream, account API, media); it picks the driver.
+- **origin**: where a source's records come from: an input of one shape, or requests through the API (records written by the operator or an agent). A producer is a transport, not an origin.
 - **change model**: how a source learns that its input changed and what a change means.
 - **binding**: one configured instance of a source: the source, its input and its settings.
 - **stage**: to hand bytes to Sinex as material; the one way anything enters, whether once (`stage PATH`) or continuously (a binding) ([staging](materials.md#staging)).
+- **inventory**: what a stage holds, known before any record is parsed: every member of every staged file once, read, failed or stored and not interpreted ([inventory and accounting](materials.md#inventory-and-accounting)).
+- **accounting**: what became of every record a material framed and of every reading those records made; it balances by construction, and a mismatch is a defect ([inventory and accounting](materials.md#inventory-and-accounting)).
+- **stored, not interpreted**: bytes kept as material that no parser reads yet, with the candidate parsers when several would ([staging before a parser exists](materials.md#staging-before-a-parser-exists)).
 - **observation**: the recorded facts of one look at an input (size, time, whether it changed).
 - **revision**: an input's content as of an observation that found a change.
 - **spool**: a live capture's local directory of segment files, written before anything is sent; binary spools are pcapng ([streams](streams.md#spools)).
 - **gap**: an interval in which a capture may have missed data, recorded as a `capture.gap` event with its reason ([gaps](sources.md#gaps)).
 - **exclusion**: the one per-source setting: a source or input left out, with a recorded reason.
+- **expectation**: a source's declared answer to "when should this source have something": continuous (silent after a deadline is suspicious), cadence (read at least every period), export (arrives in exports the operator takes) or on demand (exists only when someone makes it).
+- **availability**: what discovery knows about an input before any record is read: capturing, unavailable (not present, permission denied, awaiting credentials, not applicable, failed), excluded, on demand, or reported by a session producer.
+- **unimplemented census**: the catalog sources with no parser yet whose provider's data exists on this host, listed by the discovery dry run.
 - **source health**: whether a source is observing as its declaration expects; shown in status.
 - **expectation** (`expect`): when a source should have something: continuous with a `silent_after`, a cadence, an export, or on demand ([sources](sources.md#one-declaration-per-source)).
 - **input state**: the one computed state of an input: capturing, backlogged, quiet, stalled, held, unavailable (with cause), excluded (with reason), finished ([input states](sources.md#input-states)).
@@ -90,8 +97,10 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **admission**: the one function that stores events and source progress together ([admission](admission.md)).
 - **writer**: the daemon task that runs admission, one commit group at a time.
 - **commit log**: committed changes in commit order; each has a **commit position**.
-- **read model**: a table maintained by admission for reading (liveness, detector hits, `duplicates`).
+- **read model**: a table maintained by admission for reading (liveness, detector hits).
 - **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinexd admin upgrade` while the daemon is stopped.
+- **work after start**: the part of a schema upgrade the daemon finishes after it starts (filling tables from stored rows, building indexes), as ordered tasks that each resume from a mark.
+- **upgrade preparation**: what `sinexd admin upgrade --prepare` builds beside the serving daemon for the upgrade to swap in.
 
 ## Producers and transport
 
@@ -120,8 +129,11 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **derivation**: a declared computation whose outputs are stored events; **per-event** or **keyed** ([derivations](derivations.md)).
 - **dirty key**: a key whose inputs changed and whose output set will be recomputed.
 - **provisional**: the value of a key whose time window is still open.
-- **fusion**: joining readings of one occurrence seen by several sources, for a defined family, into a **fused record** with its **basis**.
-- **duplicate decision**: an authored `same` or `distinct` decision on an ambiguous pair in `duplicates`, or on a candidate pair in the library's duplicate review.
+- **fusion**: joining readings of one occurrence seen by several sources, for a defined family, into a **fused record** with its **basis**. A **fusion family** is declared in data: its members, scope, identifiers and windows.
+- **fused record**: the association record of one occurrence: its members by record citation, how each joined, its basis and ambiguity.
+- **duplicates**: the pairs a fusion pass had to choose about (`fusion.considered_pair` events), with their decision state.
+- **duplicate decision**: an authored `same` or `distinct` record on an unordered pair (`curation.duplicate`), shared by fusion and the library's duplicate review; `withdraw-decision` withdraws it.
+- **execution token**: the UUIDv7 the shell integration mints for one command execution and hands to every observer it reaches (its own report, kitty), beside the Atuin row ID started for it.
 - **interval**: a state with a start and maybe an end, computed by a derivation.
 - **figure**: a measure over one period and grain, stored as an event (a figure cell) whose state has no default: observed, partial, lower bound, missing with a reason, not applicable, not estimable ([figure cells](evidence.md#figure-cells)).
 - **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).
@@ -175,7 +187,10 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **move candidates**: missing and new equal-byte paths whose correspondence is ambiguous; curation stays separate.
 - **scan record**: a file's changed facts or removal in a captured scan part; part order is independent of wall-clock order.
 - **item revision**: an item's content hash; returning to the same bytes reuses the revision while preserving the transition history.
-- **preview evidence**: the stored result of rendering a revision, from which the library derives a rendition.
+- **preview**: a rendition with role `preview`, written by a preview request that cites the rendered bytes; one kind (`library.rendition`) holds originals and everything made from them.
+- **curation record**: one revision of an authored library statement (tag, property, note, rating, comparison, collection entry, collection, scale, withdrawal), current by the descendant rule shared with Polylogue's assertions.
+- **origin**: whether a curated value is authored, imported or proposed; with the author it decides the shown value.
+- **order key**: a base-62 fraction placing a collection entry; a key exists between any two.
 
 ## Development tooling
 

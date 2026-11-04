@@ -161,12 +161,6 @@ impl Requests {
         sinex_store::query::read_one_snapshot(&mut conn)
             .await
             .map_err(unavailable)?;
-        let epoch = sinex_store::privacy::projection::epoch(&mut conn)
-            .await
-            .map_err(unavailable)?;
-        if !epoch.ready() {
-            return Err(unavailable("current privacy projection is not ready"));
-        }
         let tombstone = sinex_store::commit_log::erased_reading(&mut conn, id)
             .await
             .map_err(unavailable)?;
@@ -219,20 +213,8 @@ impl Requests {
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        if output.epoch != Some(epoch.active) || output.state.as_deref() != Some("complete") {
-            return Err(unavailable("event privacy projection is incomplete"));
-        }
-        if super::coverage::required_kind(&output.kind) && output.changed != Some(false) {
-            return Err(unavailable(
-                "required canonical input is affected by current privacy rules",
-            ));
-        }
-        let output_class: Class = serde_json::from_value(Value::String(
-            output
-                .class
-                .ok_or_else(|| unavailable("event privacy class is unavailable"))?,
-        ))
-        .map_err(unavailable)?;
+        let output_class: Class =
+            serde_json::from_value(Value::String(output.class)).map_err(unavailable)?;
         if !grant.kind(&output.kind) || !grant.class(output_class) {
             return Err(denied());
         }
@@ -319,10 +301,7 @@ impl Requests {
                 equivalence_key: field(&view, "key")?,
                 reading_order: field(&view, "reading_order")?,
                 record_hash: field(&view, "record_hash")?,
-                projection: sinex_protocol::ProjectionIdentity::for_payload(
-                    epoch.active,
-                    &view["payload"],
-                ),
+                projection: sinex_protocol::ProjectionIdentity::for_payload(&view["payload"]),
                 payload: view["payload"].clone(),
             }),
             ..Default::default()
@@ -389,14 +368,6 @@ impl Requests {
             sinex_store::query::set_grants(&mut conn, &classes)
                 .await
                 .map_err(unavailable)?;
-            let epoch = sinex_store::privacy::projection::epoch(&mut conn)
-                .await
-                .map_err(unavailable)?;
-            if !epoch.ready() {
-                return Err(unavailable(
-                    "current privacy projection is not ready for raw material access",
-                ));
-            }
             let events =
                 sinex_store::producer_reads::material_classes(&mut conn, request.material.0)
                     .await
@@ -405,23 +376,8 @@ impl Requests {
                 return Err(denied());
             }
             for event in events {
-                if event.epoch != Some(epoch.active) || event.state.as_deref() != Some("complete") {
-                    return Err(unavailable(
-                        "material privacy output is incomplete at the current policy epoch",
-                    ));
-                }
-                if event.changed != Some(false) {
-                    return Err(Refusal {
-                        kind: FetchRefusalKind::Denied,
-                        reason: "current privacy rules withhold raw material bytes".into(),
-                    });
-                }
-                let class: Class = serde_json::from_value(Value::String(
-                    event
-                        .class
-                        .ok_or_else(|| unavailable("material privacy class is unavailable"))?,
-                ))
-                .map_err(unavailable)?;
+                let class: Class =
+                    serde_json::from_value(Value::String(event.class)).map_err(unavailable)?;
                 if !grant.kind(&event.kind) || !grant.class(class) {
                     return Err(denied());
                 }
@@ -476,7 +432,7 @@ impl Requests {
                 material: Some(MaterialFrame {
                     source,
                     id: material.id,
-                    input: input,
+                    input,
                     blob: material.blob,
                     length: material.length,
                     parser: material.parser,

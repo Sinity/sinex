@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 sinex-model.workspace = true
+authored.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true

@@ -106,7 +106,7 @@ No numeric confidence floor admits an inferred tier. Each inferred method carrie
 
 - For every eligible operator interval, shares plus unallocated equal one.
 - One exact uncontradicted owner receives the time. Conflicting exact owners leave it unallocated unless a recorded allocation rule supplies shares; equal division is never invented.
-- Cross-device overlap first forms one operator-time union; within a device, source records and the fused records built from them never both count. Three observers of ten minutes are ten operator minutes.
+- Cross-device overlap first forms one operator-time union; within a device, overlapping source records form one union and a fused record and its members never both count. Three observers of ten minutes are ten operator minutes.
 - Operator time, shell runtime, machine work and agent time are separate measures; a background agent's runtime never multiplies operator time. Supervising time is shown beside operator project time, not counted in it, so either total can be read.
 - AI commit authorship comes only from trustworthy identities (commit trailers, Polylogue's commit links), never from a commit author string alone.
 
@@ -124,7 +124,7 @@ Anchors are structured objectives only, in order: an explicit task reference nam
 
 `work.episode` carries the anchor kind and reference; project; scope, supported start and end; `state` (`open`, `dormant`, or `closed` with its closing evidence); `operator_s` and `agent_s`; member references; suspension and resumption references; the last acts as references; open items (a failing check with no later pass on the same commit, unanswered agent questions or permission waits, unchecked todos, open child tasks, uncommitted changes when captured); the coverage snapshot; and split and merge membership links.
 
-**Labels are extractive and name their source**: the task title, pull-request title, branch name, the first human prompt's derived title, or the top commit subjects. An abstractive label written by a model is a [model-calling](derivations.md#model-calling) step.
+**Labels are extractive and name their source**: the task title, pull-request title, branch name, the first human prompt's derived title, or the top commit subjects. An abstractive label written by a model is a [model feature](derivations.md#model-features).
 
 **Outcomes are distinct facts**: recorded work, commit, push, pull request opened, pull request merged, task closed, check passed on a named commit, deployed revision, accepted behaviour. A closed task is not proof of verification; a nearby passing test does not certify another revision; an agent message saying "done" is an authored claim, not acceptance. Contradictions and reopened work stay visible, and every "current" item carries its observation time and coverage.
 
@@ -203,19 +203,20 @@ Narratives are a first-class product: rich prose over the operator's recent past
 - **`narrative.period`** (day, week, month, project, thread) is model-written prose over the stored pack and findings, with per-claim citations and slot-bound numbers: every number in the prose is bound to a slot in the pack, and every claim cites its evidence. A narrative with an unsupported number, a nonexistent citation or a lost material caveat is refused at admission.
 - The deterministic assembly supplies the evidence and the fallback: template prose from stored facts.
 - Model narratives are judged on their own purpose (usefulness, insight, coverage, zero unsupported claims), not on whether they shorten resumption; the resume card leads for resumption.
-- Model calls are off ([model calling](derivations.md#model-calling)), so the template fallback is what runs; the contract, prompt design and evaluation are specified so that model narratives can be enabled once they beat it.
+- Model features are off ([model features](derivations.md#model-features)), so the template fallback is what runs; the contract, prompt design and evaluation are specified so that model narratives can be enabled once they beat it.
 
 ### The narrative corpus
 
 - The corpus is a set of `narrative.entry` events per period, project and thread that agents and the operator extend and revise over stored evidence. Each entry has an author (computed by the daemon), citations, and the entry or entries it revises; a revision is a new entry naming its predecessor, never an edit.
 - It differs from the assembly: the assembly is deterministic and keyed; the corpus is authored and accumulates.
 - It is read in the [reader web](web.md) and through the query language. Agents write entries through the ordinary authored-write path (`record`, [callers](interfaces.md#callers)); outside agents may also write through the ingress as outside derivations ([producers](producers.md)).
-- Writing entries with a model is a model-calling feature and is off; the record contract and the reader exist without it.
+- Writing entries with a model is a model feature and is off; the record contract and the reader exist without it.
 
 ## Rest and the wake view
 
 - `rest.interval` comes from native wearable and phone exports, with measured or inferred boundaries and the instrument tier (band, phone, or inferred from input absence). A night without samples is `unknown`, never unslept. Source formats are in [source families](source-families.md).
 - `day.wake` is derived from `rest.interval` ends: one event per wake, with the rest interval as its parent. It offers a wake-to-wake view beside the logical day ([time](derivations.md#time)).
+- Rest has no fusion family: each provider's records stay separate. Overlapping records of one night are one rest for the wake view, whose wake is their latest end and whose parents are all of them.
 
 ## Other products
 
@@ -244,7 +245,7 @@ Self-reports are [notes](recall.md#notes) whose body carries an instrument value
 
 ### Model suggestions
 
-`model.suggestion` events (a proposed link, label or note, with its evidence) are written by a model-calling derivation and are off with the rest ([model calling](derivations.md#model-calling)). A suggestion is never applied without an authored act.
+`model.suggestion` events (a proposed link, label or note, with its evidence) are written by a model derivation and are off with the rest ([model features](derivations.md#model-features)). A suggestion is never applied without an authored act.
 
 ## What Lynchpin's purposes become
 

@@ -2,10 +2,9 @@
 slow-timeout = { period = "30s", terminate-after = 4 }
 fail-fast = false
 
-# The crash harness runs whole backfills against the test PostgreSQL, whose
-# data lives on a few-GB tmpfs shared with every other database test; two at a
-# time bound the space the competing backfills and replay transactions take,
-# while the rest of the suite keeps running beside them.
+# The crash harness runs whole stages against the development PostgreSQL,
+# whose data lives on a few-GB tmpfs shared with other work; two at a time
+# bound the competing stages and replay transactions.
 [test-groups]
 crash = { max-threads = 2 }
 

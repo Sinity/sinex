@@ -18,6 +18,15 @@ fn record(kind: &str, payload: Value, anchor: u64) -> Event {
     )
     .unwrap()
 }
+/// A night as a sleep tracker recorded it.
+fn sleep(start: i64, end: i64) -> Event {
+    record(
+        "health.record",
+        json!({"provider":"sleep-as-android","category":"sleep","native_id":format!("{start}"),
+            "start":at(start),"end":at(end),"offset_minutes":null,"values":{}}),
+        start as u64,
+    )
+}
 fn snapshot(id: &str, branch: &str, prompts: &[i64], position: i64) -> Event {
     record(
         "polylogue.work_snapshot",
@@ -186,13 +195,6 @@ async fn archiving_a_parent_moves_all_stored_work_levels_before_recomputation(
 #[devkit::test]
 async fn wake_day_reads_stop_at_the_next_recorded_wake(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let sleep = |start, end| {
-        record(
-            "rest.fused",
-            json!({"record":format!("{start}"),"started_at":at(start),"ended_at":at(end),"kind":"sleep","observed_by":[]}),
-            start as u64,
-        )
-    };
     w.admit(vec![sleep(0, 100), sleep(900, 1000), sleep(1900, 2000)])
         .await;
     let env = Env::at(
@@ -237,11 +239,7 @@ async fn an_open_wake_day_updates_for_later_spans_without_dirtying_itself(
     db: devkit::pg::TestDatabase,
 ) {
     let w = World::new(db).await;
-    let sleep = record(
-        "rest.fused",
-        json!({"record":"sleep","started_at":at(0),"ended_at":at(100),"kind":"sleep","observed_by":[]}),
-        0,
-    );
+    let sleep = sleep(0, 100);
     w.admit(vec![
         sleep,
         super::activity::physical(150),

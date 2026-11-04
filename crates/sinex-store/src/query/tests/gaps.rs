@@ -124,7 +124,7 @@ async fn a_live_run_keeps_unrecorded_buckets_unknown(db: devkit::pg::TestDatabas
         .await
         .unwrap();
     world(&mut conn).await;
-    sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO registry.sources(name,shapes,version,event_types,purpose,expectation,silent_after) VALUES ('terminal.atuin',ARRAY['live-stream'],1,ARRAY['command.executed'],'synthetic query test','continuous',interval '2 days')").execute(&mut conn).await.unwrap();
     let unknown = ask(
         &mut conn,
         "sources where source = terminal.atuin fields continuity",
@@ -159,7 +159,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
         .await
         .unwrap();
     world(&mut conn).await;
-    sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO registry.sources(name,shapes,version,event_types,purpose,expectation,silent_after) VALUES ('terminal.atuin',ARRAY['live-stream'],1,ARRAY['command.executed'],'synthetic query test','continuous',interval '2 days')").execute(&mut conn).await.unwrap();
     sqlx::query(
         "INSERT INTO core.runs (id,name,host,started_at,ended_at) SELECT DISTINCT run_id,'synthetic','synthetic','2026-09-14T04:00:00Z'::timestamptz,'2026-09-14T06:00:00Z'::timestamptz FROM core.events",
     )
@@ -385,7 +385,7 @@ async fn source_gaps_page_without_embedding_run_history(db: devkit::pg::TestData
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    sqlx::query("INSERT INTO registry.sources(name,driver,version,event_types,purpose) VALUES ('terminal.atuin','live-stream',1,ARRAY['command.executed'],'synthetic query test')").execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO registry.sources(name,shapes,version,event_types,purpose,expectation,silent_after) VALUES ('terminal.atuin',ARRAY['live-stream'],1,ARRAY['command.executed'],'synthetic query test','continuous',interval '2 days')").execute(&mut conn).await.unwrap();
     for (index, command) in [
         "synthetic first",
         "synthetic second",

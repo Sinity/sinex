@@ -184,6 +184,14 @@ pub(crate) async fn publish_pending_measured(
     subjects: &Subjects,
     mut page_done: impl FnMut(PageTiming),
 ) -> Result<Published, String> {
+    // Until the upgrade's publication key is built after start, a second copy
+    // of an event has no key to go under; the saved position shows the wait.
+    if sinex_schema::online::pending(conn, sinex_schema::online::Task::PublishedKey)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(Published::default());
+    }
     let stream = confirmed_stream(js, subjects).await?;
     let instance = stream_instance(&stream);
     let consumer = consumer_for(&instance);
@@ -328,34 +336,18 @@ async fn publish_chunk(
 ) -> Result<(Duration, Duration, Duration), String> {
     let acknowledge_started = Instant::now();
     let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
-    let policy = sinex_store::privacy::projection::lock_epoch(&mut tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    if !policy.ready() {
-        return Err("privacy_projection_stale".into());
-    }
     let mut acks = Vec::new();
     for entry in entries {
         let (message, subject, id, event) = match &entry.change {
-            commit_log::Change::Event(event) => {
-                let class = sinex_store::privacy::projection::publication_class(
-                    &mut tx,
-                    event.id,
-                    policy.active,
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-                let class = class.ok_or("privacy_projection_unavailable")?;
-                (
-                    Confirmed::EventReference {
-                        commit_seq: event.commit_seq,
-                        event: EventId(event.id),
-                    },
-                    subjects.confirmed_event(&class, &event.event_type),
-                    format!("event-{}", entry.position),
-                    Some(event.id),
-                )
-            }
+            commit_log::Change::Event(event) => (
+                Confirmed::EventReference {
+                    commit_seq: event.commit_seq,
+                    event: EventId(event.id),
+                },
+                subjects.confirmed_event(&event.class, &event.event_type),
+                format!("event-{}", entry.position),
+                Some(event.id),
+            ),
             commit_log::Change::Archive(lifecycle) => {
                 let change = &lifecycle.archive;
                 let message = if change.archived {
@@ -368,17 +360,9 @@ async fn publish_chunk(
                         operation: change.operation_id.map(OperationId),
                     })
                 };
-                let class = sinex_store::privacy::projection::lifecycle_publication_class(
-                    &mut tx,
-                    change.event_id,
-                    policy.active,
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-                let class = class.ok_or("privacy_projection_unavailable")?;
                 (
                     message,
-                    subjects.confirmed_lifecycle(&class, &lifecycle.event_type),
+                    subjects.confirmed_lifecycle(&lifecycle.class, &lifecycle.event_type),
                     format!("archive-{}", change.change_seq),
                     None,
                 )
@@ -467,10 +451,10 @@ async fn erase_tombstoned_in(
             .map_err(|error| error.to_string())?;
         for item in &pending {
             let seq = u64::try_from(item.stream_seq).map_err(|error| error.to_string())?;
-            if let Err(error) = stream.delete_message(seq).await {
-                if !error.to_string().contains("no message found") {
-                    return Err(format!("erase stream message {seq}: {error}"));
-                }
+            if let Err(error) = stream.delete_message(seq).await
+                && !error.to_string().contains("no message found")
+            {
+                return Err(format!("erase stream message {seq}: {error}"));
             }
         }
         let pairs: Vec<_> = pending

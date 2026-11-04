@@ -16,14 +16,16 @@ use sinex_model::event_types::machine::{ScrollbackCaptured, ScrollbackWindow};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.kitty-scrollback",
-    driver: Driver::DirSnapshot,
+    origin: Origin::Input(Shape::DirSnapshot),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "terminal recall: what kitty windows showed",
     // What terminals show includes what was typed into them.
     class: Class::Guarded,
@@ -314,10 +316,11 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `--read kitty-scrollback=DIR`: the lake's scrollback snapshots in DIR.
+/// `stage --parser kitty-scrollback DIR`: the lake's scrollback snapshots in DIR.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "kitty-scrollback",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -327,8 +330,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

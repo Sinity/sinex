@@ -407,10 +407,15 @@ async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
     .await
     .unwrap();
     assert_eq!(tail.events.len(), 1);
-    sqlx::query("DELETE FROM core.commit_log")
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    // Positions whose events are gone (tombstoned) are covered without events.
+    sqlx::raw_sql(
+        "SELECT set_config('sinex.tombstone_operation', gen_random_uuid()::text, false);
+         DELETE FROM core.events;
+         RESET sinex.tombstone_operation",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
     let gap = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
         .await
         .unwrap();

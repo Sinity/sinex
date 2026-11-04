@@ -58,9 +58,7 @@ async fn server(
         task,
     }
 }
-fn attempt(token: CancellationToken) -> AttemptContext {
-    AttemptContext::new(Duration::from_secs(5), None, token)
-}
+const DEADLINE: Duration = Duration::from_secs(5);
 
 #[devkit::test]
 async fn async_value_http_has_one_request_and_distinguishes_success_from_refusal() {
@@ -72,12 +70,7 @@ async fn async_value_http_has_one_request_and_distinguishes_success_from_refusal
         ),
     ] {
         let server = server(status, None, None).await;
-        let result = http_value(
-            &server.url,
-            b"synthetic-value".to_vec(),
-            &attempt(CancellationToken::new()),
-        )
-        .await;
+        let result = http_value(&server.url, b"synthetic-value".to_vec(), DEADLINE).await;
         assert_eq!(result, expected);
         assert_eq!(server.requests.load(Ordering::SeqCst), 1);
     }
@@ -93,76 +86,31 @@ async fn async_value_http_does_not_follow_a_redirect() {
     )
     .await;
     assert_eq!(
-        http_value(
-            &redirect.url,
-            b"synthetic-value".to_vec(),
-            &attempt(CancellationToken::new())
-        )
-        .await,
+        http_value(&redirect.url, b"synthetic-value".to_vec(), DEADLINE).await,
         DeliveryOutcome::NotSent("value_http_status".into())
     );
     assert_eq!(redirect.requests.load(Ordering::SeqCst), 1);
     assert_eq!(destination.requests.load(Ordering::SeqCst), 0);
 }
 
+/// A request already sent when the deadline passes may have reached its
+/// target: its outcome is unknown, and it is never sent again.
 #[devkit::test]
-async fn cancelled_value_attempt_sends_no_http_request_or_file_publication() {
-    let server = server(StatusCode::OK, None, None).await;
-    let token = CancellationToken::new();
-    let attempt = attempt(token.clone());
-    token.cancel();
-    assert_eq!(
-        http_value(&server.url, vec![], &attempt).await,
-        DeliveryOutcome::NotSent("attempt_cancelled".into())
-    );
-    assert_eq!(server.requests.load(Ordering::SeqCst), 0);
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("value");
-    std::fs::write(&path, b"original").unwrap();
-    assert_eq!(
-        file_value(&path, b"replacement", &attempt).await,
-        DeliveryOutcome::NotSent("attempt_cancelled".into())
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), b"original");
-    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
-}
-
-#[devkit::test]
-async fn elapsed_attempt_budget_is_not_renewed_by_the_http_or_file_phase() {
-    let server = server(StatusCode::OK, None, None).await;
-    let attempt = AttemptContext::new(
-        Duration::from_secs(5),
-        Some(tokio::time::Instant::now()),
-        CancellationToken::new(),
-    );
-    let deadline = attempt.deadline();
-    assert_eq!(
-        http_value(&server.url, vec![], &attempt).await,
-        DeliveryOutcome::NotSent("attempt_deadline".into())
-    );
-    let directory = tempfile::tempdir().unwrap();
-    assert_eq!(
-        file_value(&directory.path().join("value"), b"replacement", &attempt).await,
-        DeliveryOutcome::NotSent("attempt_deadline".into())
-    );
-    assert_eq!(attempt.deadline(), deadline);
-    assert_eq!(server.requests.load(Ordering::SeqCst), 0);
-    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
-}
-
-#[devkit::test]
-async fn cancellation_after_an_http_request_retains_unknown_without_retry() {
+async fn value_http_past_its_deadline_after_sending_is_unknown_and_sent_once() {
     let entered = Arc::new(tokio::sync::Notify::new());
     let server = server(StatusCode::OK, None, Some(entered.clone())).await;
     let url = server.url.clone();
-    let token = CancellationToken::new();
-    let context = attempt(token.clone());
-    let task =
-        tokio::spawn(async move { http_value(&url, b"synthetic-value".to_vec(), &context).await });
+    let task = tokio::spawn(async move {
+        http_value(
+            &url,
+            b"synthetic-value".to_vec(),
+            Duration::from_millis(500),
+        )
+        .await
+    });
     tokio::time::timeout(Duration::from_secs(3), entered.notified())
         .await
         .unwrap();
-    token.cancel();
     assert_eq!(task.await.unwrap(), DeliveryOutcome::Unknown);
     assert_eq!(server.requests.load(Ordering::SeqCst), 1);
 }
@@ -172,33 +120,11 @@ async fn file_value_is_synced_and_published_once_with_private_staging_cleanup() 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("value");
     assert_eq!(
-        file_value(
-            &path,
-            b"synthetic-value",
-            &attempt(CancellationToken::new())
-        )
-        .await,
+        file_value(&path, b"synthetic-value").await,
         DeliveryOutcome::Delivered
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"synthetic-value");
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
-}
-
-#[devkit::test]
-async fn private_staging_ack_does_not_start_a_publication_after_cancellation() {
-    let token = CancellationToken::new();
-    let context = attempt(token.clone());
-    token.cancel();
-    let published = AtomicUsize::new(0);
-    let result = stage(&context, async {
-        published.fetch_add(1, Ordering::SeqCst);
-    })
-    .await;
-    assert!(matches!(
-        result,
-        Err((signal_delivery::Interrupted::Cancelled, false))
-    ));
-    assert_eq!(published.load(Ordering::SeqCst), 0);
 }
 
 #[devkit::test]
@@ -239,12 +165,7 @@ async fn value_https_preserves_certificate_validation_and_sanitizes_its_receipt(
             }
         }
     });
-    let receipt = http_value(
-        &url,
-        b"synthetic-value".to_vec(),
-        &attempt(CancellationToken::new()),
-    )
-    .await;
+    let receipt = http_value(&url, b"synthetic-value".to_vec(), DEADLINE).await;
     assert_eq!(
         receipt,
         DeliveryOutcome::NotSent("value_http_connect".into())
@@ -275,57 +196,41 @@ async fn accepted_value_http_does_not_require_an_unrelated_streaming_response_bo
             .unwrap();
         std::future::pending::<()>().await;
     });
-    let result = http_value(
-        &url,
-        b"synthetic-value".to_vec(),
-        &attempt(CancellationToken::new()),
-    )
-    .await;
+    let result = http_value(&url, b"synthetic-value".to_vec(), DEADLINE).await;
     task.abort();
     let _ = task.await;
     assert_eq!(result, DeliveryOutcome::Delivered);
 }
 
+/// A command that exits unsuccessfully sent nothing it vouches for; one
+/// still running at its deadline may have acted, so it is stopped and its
+/// outcome stays unknown.
 #[devkit::test]
-async fn cancelled_command_before_spawn_is_no_send_but_a_spawned_command_stays_unknown() {
+async fn failed_command_is_not_sent_and_a_command_past_its_deadline_stays_unknown() {
     use std::os::unix::fs::PermissionsExt;
     let directory = tempfile::tempdir().unwrap();
     let script = directory.path().join("controlled");
     let sink = directory.path().join("actions");
-    let entered = directory.path().join("entered");
     std::fs::write(
         &script,
-        b"#!/usr/bin/env bash\nprintf '%s\\n' synthetic >> \"$1\"\ntouch \"$2\"\nexec sleep 30\n",
+        b"#!/usr/bin/env bash\nprintf '%s\\n' \"$2\" >> \"$1\"\nif [[ \"$2\" == fail ]]; then exit 3; fi\nexec sleep 30\n",
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     let command = Command {
         program: script,
-        arguments: vec![sink.display().to_string(), entered.display().to_string()],
+        arguments: vec![sink.display().to_string()],
     };
-    let before = CancellationToken::new();
-    let cancelled = attempt(before.clone());
-    before.cancel();
     assert_eq!(
-        command_effect(&command, "synthetic-reference", &cancelled).await,
-        DeliveryOutcome::NotSent("attempt_cancelled".into())
+        command_effect(&command, "fail", DEADLINE).await,
+        DeliveryOutcome::NotSent("action_exit".into())
     );
-    assert!(!sink.exists());
-    let token = CancellationToken::new();
-    let context = attempt(token.clone());
-    let task =
-        tokio::spawn(
-            async move { command_effect(&command, "synthetic-reference", &context).await },
-        );
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-    while !entered.exists() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "controlled command did not enter"
-        );
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    token.cancel();
-    assert_eq!(task.await.unwrap(), DeliveryOutcome::Unknown);
-    assert_eq!(std::fs::read_to_string(&sink).unwrap().lines().count(), 1);
+    assert_eq!(
+        command_effect(&command, "synthetic-reference", Duration::from_millis(500)).await,
+        DeliveryOutcome::Unknown
+    );
+    assert_eq!(
+        std::fs::read_to_string(&sink).unwrap(),
+        "fail\nsynthetic-reference\n"
+    );
 }

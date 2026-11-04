@@ -22,11 +22,13 @@ pub(crate) fn from(table: Table) -> &'static str {
         Table::Runs => "core.runs {t} LEFT JOIN core.manifests {t}_m ON {t}_m.id = {t}.manifest_id",
         // Registered sources, and every other source that has had events.
         Table::Sources => {
-            "(SELECT r.name, r.driver, r.version, r.event_types, r.purpose FROM registry.sources r \
+            "(SELECT r.name, r.shapes, r.version, r.event_types, r.purpose, r.expectation, \
+                r.silent_after, r.every, r.expires_after FROM registry.sources r \
               UNION ALL \
-              SELECT c.source, NULL, NULL, NULL, NULL FROM core.source_counts c \
+              SELECT c.source, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM core.source_counts c \
               WHERE NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = c.source)) \
-             {t}(name, driver, version, event_types, purpose)"
+             {t}(name, shapes, version, event_types, purpose, expectation, silent_after, every, \
+               expires_after)"
         }
         Table::Operations => "core.operations {t}",
         Table::Failures => {
@@ -150,7 +152,11 @@ pub(crate) fn field(table: Table, name: &str) -> Option<String> {
                     super::source_views::field(name)?
                 }
                 "binding" | "source" => "{t}.name".to_string(),
-                "driver" => "{t}.driver".to_string(),
+                "shapes" => "array_to_string({t}.shapes, ',')".to_string(),
+                "expectation" => "{t}.expectation".to_string(),
+                "silent_after" => "extract(epoch FROM {t}.silent_after)::bigint".to_string(),
+                "every" => "extract(epoch FROM {t}.every)::bigint".to_string(),
+                "expires_after" => "extract(epoch FROM {t}.expires_after)::bigint".to_string(),
                 "version" => "{t}.version::bigint".to_string(),
                 "event_types" => "array_to_string({t}.event_types, ',')".to_string(),
                 "purpose" => "{t}.purpose".to_string(),
@@ -227,33 +233,72 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
         ("commands", "exit_code") => payload_number("exit_code"),
         ("commands", "duration") => format!("({} / 1e9)", payload_number("duration_ns")),
         ("commands", "start") => payload_time("started_at"),
+        // A command without a recorded duration (a history file, or a shell
+        // that did not report one) is placed at its start instant; an unknown
+        // end must not read as a command still running.
         ("commands", "end") => format!(
-            "({} + make_interval(secs => {} / 1e9))",
-            payload_time("started_at"),
-            payload_number("duration_ns")
+            "coalesce({start} + make_interval(secs => {} / 1e9), {start})",
+            payload_number("duration_ns"),
+            start = payload_time("started_at"),
         ),
         ("commands", "session") => payload_text("session"),
-        ("commands" | "focus" | "visits" | "plays", "observed_by") => {
-            "(SELECT string_agg(x, ',') FROM jsonb_array_elements_text(\
-              CASE WHEN jsonb_typeof({t}.payload -> 'observed_by') = 'array' THEN {t}.payload -> 'observed_by' END) x)"
+        // A fused command was observed by its members' sources; a command
+        // record no fused command joins, by its own source.
+        ("commands", "observed_by") => {
+            "coalesce((SELECT string_agg(m ->> 'source', ',' ORDER BY n) FROM jsonb_array_elements(\
+              CASE WHEN jsonb_typeof({t}.payload -> 'members') = 'array' THEN {t}.payload -> 'members' END) WITH ORDINALITY AS x(m, n)), {t}.source)"
                 .to_string()
         }
-        ("focus", "app" | "title") | ("visits", "url" | "title") => payload_text(name),
-        ("plays", "title" | "artist" | "album" | "player") => payload_text(name),
-        ("focus" | "plays", "start") => payload_time("started_at"),
-        ("focus" | "plays", "end") => payload_time("ended_at"),
+        ("duplicates", "family" | "left" | "right" | "left_source" | "right_source" | "strategy" | "decided_by") => {
+            payload_text(name)
+        }
+        ("duplicates", "candidates") => payload_number(name),
+        ("duplicates", "distance") => format!("({} / 1e9)", payload_number("distance_ns")),
+        ("duplicates", "chosen") => payload_bool(name),
+        ("duplicates", "decision") => payload_text("state"),
+        ("focus", "app") => format!("coalesce({}, {})", payload_text("attributes,class"), payload_text("app")),
+        ("focus", "title") => format!("coalesce({}, {})", payload_text("attributes,title"), payload_text("title")),
+        ("visits", "url") => format!("coalesce({}, {})", payload_text("url"), payload_text("to_url")),
+        ("visits", "title") => format!("coalesce({}, {})", payload_text("title"), payload_text("to_title")),
+        ("plays", "title") => format!(
+            "coalesce({}, {}, {})",
+            payload_text("track_name"),
+            payload_text("episode_name"),
+            payload_text("title")
+        ),
+        ("plays", "artist") => format!(
+            "coalesce({}, {}, {})",
+            payload_text("artist_name"),
+            payload_text("show_name"),
+            payload_text("artists,0")
+        ),
+        ("plays", "album") => format!("coalesce({}, {})", payload_text("album_name"), payload_text("album")),
+        ("plays", "player") => payload_text("player"),
+        ("plays", "start") => "{t}.ts_orig".to_string(),
+        // A player's report ends its track's length later; a stream of
+        // unknown length reports a length no track reaches.
+        ("plays", "end") => format!(
+            "coalesce({}, CASE WHEN {length} BETWEEN 0 AND 9223372036854775 \
+              THEN {{t}}.ts_orig + make_interval(secs => {length} / 1e6) END)",
+            payload_time("ended_at"),
+            length = payload_number("length_us"),
+        ),
+        ("focus", "start") => payload_time("started_at"),
+        ("focus", "end") => payload_time("ended_at"),
         ("focus" | "plays", "duration") => format!(
             "extract(epoch from ({} - {}))",
-            payload_time("ended_at"),
-            payload_time("started_at")
+            alias_field(alias, "end")?,
+            alias_field(alias, "start")?
         ),
         ("items", "item" | "label" | "revision" | "content" | "media_type") => payload_text(name),
         ("media", "path" | "media_type" | "content") => payload_text(name),
         ("media", "size" | "width" | "height") => payload_number(name),
         ("media", "duration") => format!("({} / 1e3)", payload_number("duration_ms")),
         ("media", "stored") => payload_bool(name),
-        ("assignments", "item") => payload_text("target,item"),
-        ("assignments", "field" | "value" | "level") => payload_text(name),
+        ("curation", "item") => payload_text("target,item"),
+        ("curation", "name") => payload_text("key"),
+        ("curation", "value_origin") => payload_text("origin"),
+        ("curation", "kind" | "value" | "author" | "request") => payload_text(name),
         ("figures", "metric" | "grain" | "day" | "dimension" | "dimension_value") => {
             payload_text(name)
         }

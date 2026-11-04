@@ -12,13 +12,15 @@ use serde_json::{Map, Value};
 use sinex_model::event_types::account::{NoteItem, NoteObserved};
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.assistant",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "notes and lists kept through Google Assistant",
     class: Class::Open,
     parser: "google-assistant-notes",

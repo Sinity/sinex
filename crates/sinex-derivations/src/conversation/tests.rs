@@ -7,10 +7,6 @@ fn at(secs: i64) -> Timestamp {
     Timestamp::from_unix_secs(T + secs).unwrap()
 }
 
-fn parent(secs: i64) -> Event {
-    crate::fusion::tests::zsh("x", (T + secs) as f64)
-}
-
 fn chat(buffer: &str, nick: &str, secs: i64, kind: ChatLineKind) -> Event {
     crate::fusion::tests::captured(
         &ChatMessage {
@@ -26,21 +22,41 @@ fn chat(buffer: &str, nick: &str, secs: i64, kind: ChatLineKind) -> Event {
     )
 }
 
+/// A message one mail source of the account holds.
 fn mail(id: &str, subject: Option<&str>, thread: Option<&str>, from: &str, secs: i64) -> Event {
-    derived(
-        &MailFused {
+    mail_in("communication.imap", id, subject, thread, from, secs)
+}
+
+fn mail_in(
+    source: &str,
+    id: &str,
+    subject: Option<&str>,
+    thread: Option<&str>,
+    from: &str,
+    secs: i64,
+) -> Event {
+    crate::fusion::tests::captured(
+        &sinex_model::event_types::communication::MailMessage {
             account: Some("synthetic-account".into()),
-            labels: vec![],
-            record: id.into(),
             message_id: Some(id.into()),
-            subject: subject.map(str::to_owned),
+            native_id: None,
+            date: Some(at(secs)),
             from: vec![from.into()],
+            to: vec![],
+            cc: vec![],
+            bcc: vec![],
+            subject: subject.map(str::to_owned),
+            in_reply_to: None,
+            references: vec![],
+            labels: vec![],
             thread_id: thread.map(str::to_owned),
-            sent_at: at(secs),
-            observed_by: vec!["communication.imap".into()],
+            text: None,
+            html_only: false,
+            attachments: vec![],
+            size: 10,
         },
-        "mail.fusion",
-        [&parent(secs)],
+        source,
+        sinex_model::Class::Open,
     )
 }
 
@@ -193,4 +209,28 @@ fn provider_account_and_missing_native_ids_never_merge_unrelated_mail() {
     other.payload["account"] = Value::Null;
     other.payload["message_id"] = Value::Null;
     assert_eq!(days(&[unknown, other]).len(), 2);
+}
+
+#[devkit::test]
+fn a_message_two_mail_sources_hold_counts_once() {
+    let sources = [
+        mail_in("communication.imap", "<1>", Some("Plans"), None, "a@x", 100),
+        mail_in("communication.mbox", "<1>", Some("Plans"), None, "a@x", 100),
+        mail_in("communication.mbox", "<2>", Some("Other"), None, "b@x", 200),
+    ];
+    let mut inputs = crate::fusion::tests::fuse_events(crate::fusion::mail(), &sources);
+    assert_eq!(inputs.len(), 1);
+    inputs.extend(sources);
+    let got = days(&inputs);
+    let summary: Vec<(&str, u64)> = got
+        .iter()
+        .map(|d| (d.conversation.as_str(), d.messages))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (r#"["synthetic-account","message:<1>"]"#, 1),
+            (r#"["synthetic-account","message:<2>"]"#, 1)
+        ]
+    );
 }

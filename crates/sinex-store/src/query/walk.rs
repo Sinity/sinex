@@ -186,7 +186,7 @@ pub(crate) async fn walk(
                WHEN e.material_id IS NULL THEN 'derived' ELSE 'material' END,
              'material', e.material_id, 'offset', e.anchor, 'output', e.output_index,
              'parents', coalesce(to_jsonb(e.parents),
-               (SELECT jsonb_agg(c.parent ORDER BY c.parent) FROM core.event_children c WHERE c.child=f.id)),
+               (SELECT jsonb_agg(c.parent ORDER BY c.parent) FROM core.event_parents_of(f.id) c)),
              'bytes', CASE WHEN e.material_id IS NULL THEN NULL
                WHEN m.id IS NULL THEN 'unavailable: material record missing' ELSE m.blob END,
              'parser', m.parser, 'parser_version', m.parser_version,
@@ -220,11 +220,11 @@ async fn lineage(
     while !frontier.is_empty() {
         let adjacent = match direction {
             Walk::Descendants => sqlx::query_scalar!(
-                "SELECT DISTINCT child FROM core.event_children WHERE parent=ANY($1) ORDER BY child",
+                r#"SELECT DISTINCT c.child AS "child!" FROM unnest($1::uuid[]) f(id) CROSS JOIN LATERAL core.event_children_of(f.id) c ORDER BY 1"#,
                 &frontier,
             ).fetch_all(&mut *conn).await?,
             Walk::Trace | Walk::Parents => sqlx::query_scalar!(
-                "SELECT DISTINCT parent FROM core.event_children WHERE child=ANY($1) ORDER BY parent",
+                r#"SELECT DISTINCT c.parent AS "parent!" FROM unnest($1::uuid[]) f(id) CROSS JOIN LATERAL core.event_parents_of(f.id) c ORDER BY 1"#,
                 &frontier,
             ).fetch_all(&mut *conn).await?,
         };

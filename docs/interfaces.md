@@ -112,7 +112,7 @@ more affordances" (cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:
 | Act | Rule | Reason |
 |---|---|---|
 | confirming a tombstone's cascade preview | any caller requests and previews; the operator confirms interactively (default; open operator question) | tombstoning is the one irreversible deletion ([tombstone](lifecycle.md#tombstone)) |
-| `same`/`distinct` duplicate decisions that govern fusion | every caller records them; the operator's govern, and a per-rule setting admits others' | duplicate decisions shape every fused record ([fusion](derivations.md#fusion)) |
+| `same`/`distinct` duplicate decisions that govern fusion | every caller records decisions; the operator's govern, and a per-family setting admits others' | duplicate decisions shape every fused record ([fusion](derivations.md#fusion)) |
 
 ### Computed authorship
 
@@ -236,19 +236,20 @@ here pack.
 The semantics are [lifecycle](lifecycle.md)'s and [staging](materials.md#staging)'s;
 the surfaces are:
 
-- `stage PATH | DIR | DB [--parser NAME] [--export-date DATE] [--account NAME] [--follow]`,
-  showing its inventory at once and ending with an account by event type (admitted,
-  suppressed with example references, failed) and `stopped_early` when it did not
-  finish; `stage list` and `stage show OP` show progress and what paces it, and give no
-  estimate while the rate varies ([inventory](materials.md#inventory-and-progress));
+- `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow]`,
+  answering with the operation and the inventory of every staged member at once, and
+  with `--follow` ending with each product's accounting and `stopped_early` when it did
+  not finish ([staging](materials.md#inventory-and-accounting)); `stage-list
+  [--active]` and `stage-show OPERATION` read stages later. With the daemon stopped,
+  `sinexd admin stage` runs the same command with its own writer;
 - `archive REF | QUERY | --material ID… | --run ID | --source S [--after T] [--before T]`
   and `restore` over the same scopes or `--operation OP` (the chains that operation
   archived), each refusing when any part cannot move; `--compare` prints the cascade and
   what would refuse and changes nothing;
 - `undo OPERATION [--compare]` archives what the operation made live and restores what it
   archived, for an archive, a restore, a replay or an undo;
-- `resume OPERATION` continues an archive, restore, tombstone, undo or replay that ended
-  `stopped_early` or whose daemon stopped mid-run;
+- `resume OPERATION` continues an archive, restore, tombstone, undo, replay or stage that
+  ended `stopped_early` or whose daemon stopped mid-run;
 - `replay QUERY [--parser NAME] [--compare]` and its undo, with `--compare` showing per-field changes; `recompute DERIVATION [--compare]` and
   `recompute DERIVATION --switch` ([versions](derivations.md#versions));
 - `tombstone` over the same scopes as `restore`, only on archived chains; `--compare`
@@ -396,8 +397,8 @@ holder through the reader role while the daemon is down.
   Gaps, inputs and payload shapes are the query tables `gaps`, `inputs` and `shapes`
   ([tables](query.md#tables)), read and paged like any query, so there are no separate
   gap, continuity, drift or readiness commands.
-- Fields: `source`, `binding`, `driver`, `version`, `event_types`, `purpose`,
-  `exclusion` and its reason, `state`, `last_run`, `expect`, `silent_after`,
+- Fields: `source`, `binding`, `shapes`, `version`, `event_types`, `purpose`,
+  `exclusion` and its reason, `state`, `last_run`, `expectation`, `silent_after`, `every`,
   `expires_after` and the remaining margin, `coverage`, `behind`, `rate`,
   `refused_rate`, `shape_changed`, `days_with_data_30d`, `gaps_30d`, `last_success`,
   `last_error`.
@@ -460,11 +461,15 @@ its conformance cases run in Sinex. What Sinex supplies:
 - **Passive by default:** a delivery appears in the inbox, Today's Signals pane, the
   status bar and the day pack. **Interrupting** only for rules marked so, under the
   one interrupt budget.
-- **Three event kinds** (decided target, 2026-11-01): `signal.rule`, `signal.delivery`
-  and `signal.outcome`, plus `notice.submitted` from producers and `instrument.defined`
-  for elicitation. The evaluator checkpoint is daemon state, not events. Every delivery
-  stores its route decision and reason, so "why did this fire" and "why didn't it
-  interrupt" are both queries.
+- **Event kinds:** `signal.rule` (an authored rule revision), `signal.delivery` (one
+  handoff by the host deliverer, derived from the rule or forwarded report that fired
+  and the readings its rows were computed from) and `signal.outcome` (what happened to
+  a delivery afterwards: an outlet's attempt, shown, cleared, closed), plus
+  `signal.report` for evaluator reports another product forwards. Decided target, not
+  built: `notice.submitted` from producers and `instrument.defined` for elicitation.
+  The evaluator and host policy checkpoint is daemon state, not events. Every delivery
+  stores its route decision, holds and attention, so "why did this fire" and "why
+  didn't it interrupt" are both queries.
 - **Acts:** `delivery:ID open|ack|snooze 1h`, `quiet until 14:00 | quiet off`.
   `QUERY wait [--for D] [--timeout T] [--until-empty]` blocks until the query first
   matches or empties, recording nothing; `signal:NAME backtest since:30d` replays a rule
@@ -476,14 +481,42 @@ its conformance cases run in Sinex. What Sinex supplies:
 
 ### The host deliverer
 
-Decided target (2026-11-01). Sinex is the one deliverer on its host. Polylogue on Sinex
-writes its deliveries as `polylogue.delivery` facts through the producer path with
-their interrupt request and urgency; Sinex's deliverer routes them under the host's
-attention with its own, and a `cleared` outcome closes a current-state notice. Polylogue
-shows only its own "Sinex blocked" notice directly, because the path to the deliverer is
-what is broken.
+Sinex is the one deliverer on its host. A product whose grant has `forward_signals`
+(Polylogue on Sinex) sends its evaluator's reports (firings, cleared conditions, rule
+revisions and withdrawals, progress) in a signals frame through the producer path; each
+report is stored as a `signal.report` naming its authenticated producer and family. A
+report about any product but that family is refused, a cleared report takes effect only
+on that product's deliveries, and the `sinex` family cannot forward. Sinex's host policy takes
+them in beside its own rules' reports and routes their firings under the host's
+attention, budget and quiet hours; a forwarded current-state firing is held until its
+producer reports being up to date. A forwarded value or action is recorded not sent,
+because its configured outlet belongs to its own product. Polylogue shows only its own
+"Sinex blocked" notice directly, because the path to the deliverer is what is broken.
 
-- **Any producer may notify.** A credentialed producer submits a `notice.submitted` fact
+- **Outlets.** An interrupting decision becomes a desktop notification through the
+  common deliverer (`notifications.bus_address`, or the session bus) and, for a notice
+  sent away while the operator is away, the configured `notifications.away_command`.
+  A value is written to its configured file or loopback URL, and an action runs its
+  configured command. Each attempt is recorded `unknown` and committed before the
+  outlet runs, so an interrupted attempt is never run twice; an outlet still running at
+  `outlet_timeout_ms` may have acted and stays unknown.
+- **Deliveries cite what fired.** A delivery's parents are the rule's reading (or the
+  forwarded report) and the readings each matched row was computed from when it was
+  first seen: the reading itself, or every reading a group selected. Replaying one of
+  those readings archives the delivery with the rest of the chain, like any derived
+  reading.
+- **A firing whose basis changed is withdrawn.** When a cited reading is archived (by a
+  replay or a lifecycle step) or the privacy policy changes between selecting a row and
+  handing its firing off, the handoff is withdrawn: no delivery is recorded and no
+  outlet runs, only an outcome `not_sent` with reason `basis_changed`. Its evidence was
+  read under a policy or from readings that no longer hold, so it is never certified
+  under the current ones. The evaluator retracts the firing and the rules are read
+  again: if the rule still finds the occurrence, it fires afresh under the same
+  delivery identity, citing the readings selected now; a threshold, change or daily
+  firing fires again only on a new crossing, change or day.
+  The current build checks the cited readings against the lifecycle. Policy-change
+  withdrawal belongs to the output-time privacy design and is not built.
+- **Any producer may notify** (decided target, not built). A credentialed producer submits a `notice.submitted` fact
   (title, body, reference or URL, an interrupt request, a `key` for grouping and
   replacement, an optional `clears` key); it is a delivery of the implicit rule
   `producer:<name>` with author class `producer`, inside the budget and passive unless
@@ -491,16 +524,11 @@ what is broken.
   [--key K] [--clears K] [--interrupt]` is the CLI for scripts, so a host's scripts, job
   runners and CI reports share one budget, grouping, quiet hours and inbox instead of
   calling a notification command themselves.
-- **Own notifications are excluded.** A notification captured by Sinex's D-Bus source
+- **Own notifications are excluded** (decided target, not built). A notification captured by Sinex's D-Bus source
   whose hints carry a product's delivery identifier is marked as a signal origin, and no
   rule reads it.
 - `sinexctl attention` prints presence, quiet, the budget, held notices and the last 24
   hours of interruptions.
-- Decided target: the current build's authorization layer for forwarded signals (author
-  attestations, the offline emergency lease and its signed capability, per-attempt
-  policy re-authorization) and its seven further signal event kinds go; the handoff
-  rechecks of the common host policy are one function, and with one deliverer per host
-  no attempt changes owner.
 
 ### Shipped rules
 
@@ -539,7 +567,7 @@ decides which prompts may be sent (default; open operator question).
 
 ### Stall alerts
 
-- The stall rule fires from the binding's declared `expect` and `silent_after` and its
+- The stall rule fires from the source's declared expectation (`silent_after` or `every`) and its
   durable poll outcomes. It tells apart an unchanged successful poll, an event-driven
   source with no recent events, an unavailable input, a parser rejection, an excluded
   source, source lag, a host out of contact within its deadline, and an actual missed
@@ -592,7 +620,7 @@ Journey budgets on top:
 - the machine section answers within Polylogue's 100 ms deadline;
 - confirmed delivery to `follow` and outside handlers arrives under 5 s after a row is
   queryable;
-- a stall alert arrives within the binding's `silent_after` plus one evaluator tick and
+- a stall alert arrives within the source's `silent_after` or `every` plus one evaluator tick and
   measured delivery delay.
 
 A miss is recorded with its measurement, never met by relaxing the number. Measurement

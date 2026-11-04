@@ -1,6 +1,6 @@
 use super::*;
 use sqlx::Connection;
-fn claims(epoch: i64) -> Claims {
+fn claims() -> Claims {
     Claims {
         purpose: "write".into(),
         producer: "producer".into(),
@@ -8,7 +8,6 @@ fn claims(epoch: i64) -> Claims {
         cache: "cache".into(),
         scope: "scope".into(),
         position: 0,
-        policy_epoch: epoch,
         instance: "instance".into(),
         catalog: "catalog".into(),
         host: "host".into(),
@@ -23,7 +22,7 @@ fn claims(epoch: i64) -> Claims {
 #[devkit::test]
 fn owner_proofs_reject_corruption_and_another_protocol_domain() {
     let key = [3; 32];
-    let claims = claims(4);
+    let claims = claims();
     let stamp = crate::owner_protocol::sign(&key, DOMAIN, &claims).unwrap();
     assert_eq!(
         crate::owner_protocol::open::<Claims>(&key, DOMAIN, &stamp).unwrap(),
@@ -48,15 +47,14 @@ fn owner_proofs_reject_corruption_and_another_protocol_domain() {
     assert!(crate::owner_protocol::open::<Claims>(&key, DOMAIN, &forged).is_err());
 }
 #[devkit::test]
-async fn unchanged_settings_accept_newer_real_revisions_but_reject_stale_epoch_and_identity(
+async fn unchanged_settings_accept_newer_real_revisions_but_reject_changed_identity(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let epoch = crate::privacy::projection::epoch(&mut conn).await.unwrap();
     // Only the public projection fields consumed by this validator are seeded;
     // the host-policy projection itself has a separate typed checkpoint suite.
     sqlx::query("INSERT INTO core.signal_checkpoints(host,revision,state) VALUES('host',7,'{\"settings_identity\":\"settings\"}')").execute(&mut conn).await.unwrap();
-    let claims = claims(epoch.active);
+    let claims = claims();
     current(&mut conn, &claims).await.unwrap();
     sqlx::query("UPDATE core.signal_checkpoints SET revision=8 WHERE host='host'")
         .execute(&mut conn)
@@ -65,23 +63,15 @@ async fn unchanged_settings_accept_newer_real_revisions_but_reject_stale_epoch_a
     current(&mut conn, &claims).await.unwrap();
     sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"changed\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
     assert!(current(&mut conn, &claims).await.is_err());
-    sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"settings\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
-    sqlx::query("UPDATE privacy.policy_state SET desired_epoch=desired_epoch+1 WHERE id")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    assert!(current(&mut conn, &claims).await.is_err());
 }
 
-fn covered_frame(claims: &Claims, stamp: String, required: bool) -> sinex_model::IngressFrame {
+fn covered_frame(claims: &Claims, stamp: String) -> sinex_model::IngressFrame {
     sinex_model::IngressFrame {
         content_hash: None,
         receipt_number: None,
         coverage: Some(sinex_model::OwnerCoverage {
-            required,
             stamp,
             position: claims.position,
-            policy_epoch: claims.policy_epoch,
             scope: claims.scope.clone(),
             catalog: claims.catalog.clone(),
             instance: claims.instance.clone(),
@@ -105,52 +95,36 @@ fn covered_frame(claims: &Claims, stamp: String, required: bool) -> sinex_model:
     }
 }
 
+/// A coverage stamp certifies a frame only with its exact outer claims and
+/// the owner's current settings; anything else is refused, and a missing or
+/// malformed signing key is an error, never a silent loss of certification.
 #[devkit::test]
-async fn optional_emergency_stamp_loses_certification_without_relaxing_required_proofs(
+async fn coverage_stamp_requires_its_exact_claims_and_current_settings(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let epoch = crate::privacy::projection::epoch(&mut conn).await.unwrap();
     sqlx::query("INSERT INTO core.signal_checkpoints(host,revision,state) VALUES('host',7,'{\"settings_identity\":\"settings\"}')").execute(&mut conn).await.unwrap();
-    let claims = claims(epoch.active);
+    let claims = claims();
     let stamp = sign(&mut conn, &claims).await.unwrap();
-    let mandatory = covered_frame(&claims, stamp.clone(), true);
-    let optional = covered_frame(&claims, stamp, false);
-    assert_eq!(
-        validate(&mut conn, &mandatory).await.unwrap(),
-        Some(epoch.active)
-    );
-    assert_eq!(
-        validate(&mut conn, &optional).await.unwrap(),
-        Some(epoch.active)
-    );
-    let mut forged = mandatory.clone();
-    forged.coverage.as_mut().unwrap().policy_epoch += 1;
+    let covered = covered_frame(&claims, stamp);
+    assert!(validate(&mut conn, &covered).await.unwrap());
+    let mut forged = covered.clone();
+    forged.coverage.as_mut().unwrap().position += 1;
     assert!(
         validate(&mut conn, &forged).await.is_err(),
-        "a valid stamp does not authenticate a changed outer epoch"
+        "a valid stamp does not authenticate a changed outer position"
     );
-    forged.coverage.as_mut().unwrap().required = false;
-    assert_eq!(validate(&mut conn, &forged).await.unwrap(), None);
-    sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"changed\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
-    assert!(validate(&mut conn, &mandatory).await.is_err());
-    assert_eq!(validate(&mut conn, &optional).await.unwrap(), None);
-    let malformed = covered_frame(&claims, "bad-stamp".into(), false);
-    assert_eq!(validate(&mut conn, &malformed).await.unwrap(), None);
-    let malformed = covered_frame(&claims, "bad-stamp".into(), true);
+    let malformed = covered_frame(&claims, "bad-stamp".into());
     assert!(validate(&mut conn, &malformed).await.is_err());
     let mut unavailable = conn.begin().await.unwrap();
     sqlx::query("DELETE FROM core.owner_protocol_key")
         .execute(&mut *unavailable)
         .await
         .unwrap();
-    assert!(
-        matches!(
-            validate(&mut unavailable, &optional).await,
-            Err(Error::Database(sqlx::Error::RowNotFound))
-        ),
-        "optional certification cannot turn missing owner signing authority into a semantic refusal"
-    );
+    assert!(matches!(
+        validate(&mut unavailable, &covered).await,
+        Err(Error::Database(sqlx::Error::RowNotFound))
+    ));
     unavailable.rollback().await.unwrap();
     let mut corrupt = conn.begin().await.unwrap();
     sqlx::query(
@@ -163,9 +137,8 @@ async fn optional_emergency_stamp_loses_certification_without_relaxing_required_
         .execute(&mut *corrupt)
         .await
         .unwrap();
-    assert!(
-        validate(&mut corrupt, &optional).await.is_err(),
-        "optional proof validation cannot drop certification silently when private signing authority is malformed"
-    );
+    assert!(validate(&mut corrupt, &covered).await.is_err());
     corrupt.rollback().await.unwrap();
+    sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"changed\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
+    assert!(validate(&mut conn, &covered).await.is_err());
 }

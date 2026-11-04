@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use sinex_model::event_types::system::DeviceChanged;
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.udev",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_days(30),
+    expires_after: None,
     purpose: "which devices were attached when, peripheral and storage history",
     class: Class::Open,
     parser: "udev-blocks",
@@ -204,10 +206,11 @@ pub fn capture(
     Ok(count)
 }
 
-/// `--read udev=SPOOL`: device events from udev, captured into SPOOL.
+/// `stage --parser udev SPOOL`: device events from udev, captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "udev",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -221,8 +224,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: &[],
                 capabilities: &[],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

@@ -301,7 +301,10 @@ async fn mark_links(
                 row["event_type"].as_str(),
                 row["key"].as_str(),
             ) {
-                serde_json::json!(format!("sinex:key/{source}/{kind}/{key}"))
+                serde_json::json!(sinex_model::query::citation(
+                    "key",
+                    &format!("{source}/{kind}/{key}")
+                ))
             } else {
                 serde_json::json!(format!("sinex:ev/{}", row["id"].as_str().unwrap_or("")))
             };

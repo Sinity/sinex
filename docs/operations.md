@@ -44,7 +44,11 @@ After a successful drain, copy the stopped state with ownership, modes and bytes
 
 ### Upgrading
 
-Activating a new version does not change the schema. When a version brings a schema upgrade, `sinexd` refuses to start and names the command ([admission.md](admission.md#schema-evolution)). With `sinexd` stopped, run `systemctl start sinex-schema-upgrade` (`sinexd admin upgrade` as the Sinex user), which returns when the one upgrade transaction commits or rolls back, then start `sinexd`. Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture. Rewrites of stored rows and index rebuilds an upgrade defers run in the daemon after start ([admission.md](admission.md#schema-evolution)). While the search trigram index is rebuilt, search maintenance waits (the search position shows the delay) and a tombstone started then waits for the build.
+Activating a new version does not change the schema. When a version brings a schema upgrade, `sinexd` refuses to start and names the command ([admission.md](admission.md#schema-evolution)). With `sinexd` stopped, run `systemctl start sinex-schema-upgrade` (`sinexd admin upgrade` as the Sinex user), which returns when the one upgrade transaction commits or rolls back, then start `sinexd`. Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture.
+
+Before stopping the daemon, run `sinexd admin upgrade --prepare` from the new build as the Sinex user. It builds the work the upgrade can swap in while the old daemon serves, and returns when that work is complete; it is safe to run again after an interruption, and `sinexd admin upgrade --unprepare` removes it. Without it the upgrade still succeeds, but rewrites the equivalence keys while admission waits.
+
+After start, the daemon finishes the rest of the upgrade on its own ([admission.md](admission.md#schema-evolution)). `sinexctl status` lists what remains under `upgrade_work_after_start`; the list is empty when the store matches a fresh one. Meanwhile the publisher holds until the publication key exists, and the chunk being indexed waits for its index. While the search trigram index is rebuilt, search maintenance waits (the search position shows the delay) and a tombstone started then waits for the build.
 
 ### PostgreSQL tuning
 
@@ -54,7 +58,7 @@ The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log
 
 Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Every key will be listed in [planned reference/settings.md](reference/README.md#planned-pages); current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
 
-**What deployment configuration holds:** the logical day, the API's listen address and authentication, the optional notification command ([signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
+**What deployment configuration holds:** the logical day, the API's listen address and authentication, desktop notifications and the optional away command ([signals](interfaces.md#the-host-deliverer)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
 
 ### Listen address and authentication
 
@@ -113,7 +117,7 @@ One configurable day boundary per deployment, used by every day- and hour-grain 
 | `services.sinex.dayStart` | when a logical day starts, as `HH:MM` | `04:00` |
 
 - **Validated at start.** A zone that does not resolve to a named zone stops the daemon before connecting to the database, with a clear error; there is no fallback to UTC.
-- **NixOS host zone.** An explicit `services.sinex.zone` takes precedence over `time.timeZone`. When only the host zone is configured, the module passes that name to the daemon and declared backfills. When both are null, startup must resolve the actual system zone to an IANA name. NixOS's UTC display default without a configured named zone does not supply that evidence; configure `time.timeZone` or `services.sinex.zone` for such a deployment.
+- **NixOS host zone.** An explicit `services.sinex.zone` takes precedence over `time.timeZone`. When only the host zone is configured, the module passes that name to the daemon. When both are null, startup must resolve the actual system zone to an IANA name. NixOS's UTC display default without a configured named zone does not supply that evidence; configure `time.timeZone` or `services.sinex.zone` for such a deployment.
 - **One home.** Sinex's configuration holds the setting. Polylogue running on Sinex reads the day from Sinex at connect and on each change notice and has no value of its own; standalone Polylogue keeps its own ([Polylogue operations](https://github.com/Sinity/polylogue/blob/master/docs/operations.md)).
 - **Changing it** is a version change of every day-grain derivation, which re-derives them by the ordinary mechanism ([derivations.md](derivations.md)); every day- and hour-grain value records the boundary and zone it was cut with.
 - A wake-to-wake view is a separate derived kind shown beside the logical day, never a second definition of it ([higher-layer.md](higher-layer.md)). A coarse source time stays in the calendar the source meant ([events.md](events.md#time)).

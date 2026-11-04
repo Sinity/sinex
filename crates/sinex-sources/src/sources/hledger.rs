@@ -13,7 +13,7 @@ use sinex_model::{
 };
 use sinex_source_core::binding::{self, InputFormat};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
@@ -24,7 +24,9 @@ const TRANSACTIONS: Framing = Framing::Custom {
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "finance.hledger",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::continuous_days(30),
+    expires_after: None,
     purpose: "journal transactions and their postings",
     class: Class::Guarded,
     parser: "hledger",
@@ -397,6 +399,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 
 pub const FORMAT: InputFormat = InputFormat {
     name: "hledger",
+    accepts: &[],
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
         locations: &[
@@ -416,8 +419,6 @@ pub const FORMAT: InputFormat = InputFormat {
         capabilities: &[],
         credentials: &[],
         streams: &[],
-        requests: &[],
-        request_only: false,
     },
     discover: |format, context| {
         let mut context = context.clone();

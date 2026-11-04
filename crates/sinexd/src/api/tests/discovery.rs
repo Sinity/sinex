@@ -2,7 +2,7 @@
 use super::*;
 
 #[devkit::test]
-async fn discovery_omits_unimplemented_commands_and_unimplemented_calls_refuse_explicitly(
+async fn discovery_lists_implemented_commands_and_decisions_require_write_access(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
@@ -26,18 +26,19 @@ async fn discovery_omits_unimplemented_commands_and_unimplemented_calls_refuse_e
         .map(|command| command["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"recall"));
+    for built in ["stage", "same", "distinct", "withdraw-decision"] {
+        assert!(names.contains(&built), "{built}");
+    }
     for value in [
-        json!({"method":"stage", "path":"/synthetic/input"}),
         json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
         json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
     ] {
-        assert!(!names.contains(&value["method"].as_str().unwrap()));
         let (status, _) = call(&w, Some(READ), value.clone()).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, body) = call(&w, Some(AGENT), value).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["outcome"], "refused");
-        assert_eq!(body["not_built"], true);
+        assert_ne!(body["not_built"], true);
         assert!(!body["reason"].as_str().unwrap().is_empty());
     }
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")

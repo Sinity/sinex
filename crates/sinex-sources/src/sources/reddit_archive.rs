@@ -3,19 +3,21 @@
 //! object per line), on `ExportArchive`. The archive copied each item when
 //! Reddit served it, so it holds items the operator later deleted and items
 //! newer than the last GDPR export. Its items carry Reddit's own IDs, which
-//! the GDPR export writes too; `post.fusion` joins the two.
+//! the GDPR export writes too; the two stay separate records.
 use super::fields;
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::social::PostPublished;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "social.reddit-archive",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "what the operator wrote at Reddit, including what the GDPR export lacks",
     class: Class::Open,
     parser: "reddit-archive",
@@ -127,11 +129,12 @@ fn archive_file(path: &std::path::Path) -> bool {
         .is_some_and(|n| n == "comments.jsonl" || n == "submissions.jsonl")
 }
 
-/// `--read reddit-archive=PATH`: an Arctic Shift pull of the operator's
+/// `stage --parser reddit-archive PATH`: an Arctic Shift pull of the operator's
 /// items, a directory holding its two files.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "reddit-archive",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -141,8 +144,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

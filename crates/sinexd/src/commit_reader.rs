@@ -1,5 +1,5 @@
 //! The commit-log reader for read models: one task that reads committed events
-//! in commit order from `core.commit_log` and feeds every read-model maintainer
+//! in commit order (event positions and `core.commit_log`) and feeds every read-model maintainer
 //! (never database triggers). Each maintainer updates its tables and its
 //! position (`core.consumer_positions`) in one transaction, so a restart
 //! resumes exactly where it stopped: nothing is skipped, and nothing is applied
@@ -62,19 +62,6 @@ pub(crate) async fn run(
     loop {
         if *stop.borrow() {
             return Ok(());
-        }
-        if sinex_store::privacy::projection::ensure_current(&mut conn)
-            .await
-            .is_err()
-        {
-            // Output views remain unavailable until a complete epoch activates.
-            // A transient database failure must not retire the maintainer.
-            eprintln!("sinexd: privacy output projection unavailable; retrying");
-            tokio::select! {
-                _ = tokio::time::sleep(RETRY) => {}
-                _ = stop.changed() => {}
-            }
-            continue;
         }
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);

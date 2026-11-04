@@ -13,10 +13,7 @@ struct Parent {
     source_version: Option<i64>,
     source_fingerprint: Option<String>,
     producer_family: Option<String>,
-    class: Option<String>,
-    epoch: Option<i64>,
-    changed: Option<bool>,
-    state: Option<String>,
+    class: String,
 }
 
 pub(super) async fn validate(
@@ -59,27 +56,6 @@ pub(super) async fn validate(
     )
 }
 
-pub(super) async fn inputs(
-    conn: &mut PgConnection,
-    frame: &IngressFrame,
-    ids: &[sinex_model::EventId],
-) -> Result<()> {
-    if super::validate(conn, frame).await?.is_none() {
-        return Err(Error::Invalid("coverage_inputs_uncertified".into()));
-    }
-    let proof = frame.coverage.as_ref().expect("validated above");
-    let claims = open(conn, &proof.stamp).await?;
-    let ids = ids
-        .iter()
-        .map(|id| id.0)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    checked(conn, &claims, &ids, &BTreeSet::new())
-        .await
-        .map(drop)
-}
-
 async fn checked(
     conn: &mut PgConnection,
     claims: &Claims,
@@ -89,7 +65,7 @@ async fn checked(
     if ids.is_empty() {
         return Ok(BTreeSet::new());
     }
-    let rows: Vec<Parent> = sqlx::query_as("SELECT e.id,e.commit_seq,e.event_type,e.kind_version,e.source,e.source_version,e.source_fingerprint,e.producer_family,o.class,o.epoch,o.changed,o.state FROM core.events e LEFT JOIN privacy.event_outputs o ON o.event_id=e.id WHERE e.id=ANY($1)")
+    let rows: Vec<Parent> = sqlx::query_as("SELECT e.id,e.commit_seq,e.event_type,e.kind_version,e.source,e.source_version,e.source_fingerprint,e.producer_family,e.class FROM core.events e WHERE e.id=ANY($1)")
         .bind(ids).fetch_all(&mut *conn).await?;
     if rows.len() != ids.len() {
         return Err(Error::Invalid("coverage_cited_parent_missing".into()));
@@ -118,13 +94,8 @@ async fn checked(
                 .map(|kind| kind.definition_hash())
                 .as_ref()
                 != hash
-            || row.epoch != Some(claims.policy_epoch)
-            || row.state.as_deref() != Some("complete")
-            || row.changed != Some(false)
-            || row
-                .class
-                .as_ref()
-                .is_none_or(|class| class == "sealed" || !claims.classes.contains(class))
+            || row.class == "sealed"
+            || !claims.classes.contains(&row.class)
         {
             return Err(Error::Invalid(
                 "coverage_cited_parent_outside_certified_view".into(),

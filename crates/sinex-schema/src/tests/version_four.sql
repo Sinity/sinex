@@ -1,3 +1,8 @@
+-- Undo the library curation upgrade.
+DROP TABLE core.library_shown;
+-- Undo parser-free staging before exercising the forward upgrade.
+ALTER TABLE raw.materials DROP CONSTRAINT parser_with_version,
+  ALTER COLUMN parser SET NOT NULL, ALTER COLUMN parser_version SET NOT NULL;
 -- Undo the lifecycle upgrade.
 DROP TABLE raw.material_changes;
 ALTER TABLE raw.materials DROP COLUMN status, DROP COLUMN status_operation;
@@ -47,20 +52,24 @@ END $$;
 ALTER TABLE core.events DROP CONSTRAINT events_producer_frame;
 DROP TABLE registry.source_declarations;
 DROP FUNCTION registry.keep_source_declaration();
-DROP VIEW core.derivation_events;
 DROP TABLE core.owner_protocol_key;
-DROP TABLE derivation.model_calls,derivation.model_policies;
-DROP TRIGGER rules_policy_epoch ON privacy.rules;
-DROP TRIGGER floors_policy_epoch ON privacy.source_classes;
 DROP TABLE core.signal_checkpoints;
 DROP FUNCTION core.advance_query_metadata() CASCADE;
-DELETE FROM core.counters WHERE name IN ('query_metadata','privacy_outputs');
+DELETE FROM core.counters WHERE name='query_metadata';
 DROP VIEW core.visible_embedding_vectors;
 DROP TABLE core.embedding_vectors,core.embedding_spaces,core.query_cursor_key;
 ALTER TABLE core.ingress_frames DROP COLUMN family, DROP COLUMN write_kind_prefixes;
 -- Reconstruct the deployed predecessor before exercising the forward chain.
+DROP INDEX core.events_record_location;
+CREATE INDEX ON core.events (ts_orig);
+CREATE INDEX ON core.events (source, ts_orig);
+CREATE INDEX ON core.events (material_id, anchor);
+CREATE INDEX events_coverage ON core.events (source, run_id, ts_orig) INCLUDE (commit_seq);
+ALTER TABLE core.commit_log ADD COLUMN event_id uuid, ADD COLUMN event_type text,
+  ADD CONSTRAINT commit_log_check CHECK ((event_id IS NULL) = (event_type IS NULL));
 CREATE SCHEMA telemetry;
 CREATE TABLE telemetry.events (LIKE core.events INCLUDING ALL);
+DROP FUNCTION core.event_children_of(uuid), core.event_parents_of(uuid);
 DROP TABLE core.event_children;
 ALTER TABLE core.event_tombstones DROP COLUMN commit_seq, DROP COLUMN original_commit_seq, DROP COLUMN class;
 DROP TABLE core.producer_orders;
@@ -116,7 +125,3 @@ ALTER TABLE core.published ADD CONSTRAINT published_pkey PRIMARY KEY (event_id);
 DROP TRIGGER blob_changes ON core.blobs;
 DROP FUNCTION core.note_blob_change();
 DELETE FROM core.counters WHERE name='blob_changes';
-
-DROP FUNCTION privacy.require_active_epoch();
-DROP FUNCTION privacy.invalidate_outputs();
-DROP TABLE privacy.derivation_contracts,privacy.derivation_epochs,privacy.output_builds,privacy.event_outputs,privacy.original_events,privacy.policy_state;

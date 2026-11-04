@@ -2,13 +2,15 @@
 //! one provider. Chat lines group by their buffer, Messenger and SMS messages
 //! by their thread (its participants), and mail by its recorded thread ID. Mail
 //! without a thread ID stays separate by message ID: a shared subject does not
-//! identify a conversation. Mail is read fused, so a message several sources
-//! hold counts once.
+//! identify a conversation. Mail is read as fused messages plus the mail
+//! records no fused message joins, so a message several sources of one
+//! account hold counts once.
 //!
 //! The key is the logical day: one read of the day's messages gives every
 //! conversation's day, so a thread of any length costs one key per day it was
 //! active.
 use crate::derived_event::derived;
+use crate::fusion::{Mail, mail};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::ConversationDay;
@@ -21,8 +23,9 @@ pub struct ConversationDays;
 
 type Messages<'a> = Vec<(&'a Event, String, Timestamp)>;
 
-/// The channel, conversation, sender and time of one message.
-fn message(e: &Event) -> Option<(&'static str, String, String, Timestamp)> {
+/// The channel, conversation, sender and time of one message; mail is read
+/// in the fused kind's payload.
+fn message(e: &Event, payload: &Value) -> Option<(&'static str, String, String, Timestamp)> {
     match e.event_type.as_str() {
         t if t == ChatMessage::EVENT_TYPE => {
             let m: ChatMessage = e.payload_as()?;
@@ -38,8 +41,8 @@ fn message(e: &Event) -> Option<(&'static str, String, String, Timestamp)> {
                 m.sent_at,
             ))
         }
-        t if t == MailFused::EVENT_TYPE => {
-            let m: MailFused = e.payload_as()?;
+        t if mail().reads(t) => {
+            let m: Mail = serde_json::from_value(payload.clone()).ok()?;
             let thread = match (
                 m.account.as_deref(),
                 m.thread_id
@@ -73,45 +76,85 @@ fn day_of(key: &Value) -> Option<jiff::civil::Date> {
 
 impl Keyed for ConversationDays {
     const NAME: &'static str = "conversation.days";
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[
         ChatMessage::EVENT_TYPE,
         ConversationMessage::EVENT_TYPE,
         MailFused::EVENT_TYPE,
+        "mail.message",
     ];
     const OUTPUTS: &'static [&'static str] = &[ConversationDay::EVENT_TYPE];
 
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
-        input
-            .ts_orig
-            .and_then(|t| env.time_settings.day(t).ok())
-            .map(|day| json!({ "day": day.to_string() }))
-            .into_iter()
-            .collect()
+        let Some(t) = input.ts_orig else {
+            return vec![];
+        };
+        // A message's fused record may lie in the neighbouring day.
+        let margin = if mail().reads(input.event_type) {
+            mail().margin()
+        } else {
+            0
+        };
+        let mut keys: Vec<Value> = Vec::new();
+        for ns in [t.unix_ns() - margin, t.unix_ns() + margin] {
+            let Some(day) = Timestamp::from_unix_ns(ns)
+                .ok()
+                .and_then(|at| env.time_settings.day(at).ok())
+            else {
+                continue;
+            };
+            let key = json!({ "day": day.to_string() });
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys
     }
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         let day = day_of(key)?;
+        let margin = mail().margin();
+        let mut kinds = vec![
+            Kind::only(ChatMessage::EVENT_TYPE, &[("kind", "message")]),
+            Kind::only(ChatMessage::EVENT_TYPE, &[("kind", "action")]),
+            Kind::all(ConversationMessage::EVENT_TYPE),
+        ];
+        kinds.extend(mail().kinds());
         Some(InputQuery::of(
-            vec![
-                Kind::only(ChatMessage::EVENT_TYPE, &[("kind", "message")]),
-                Kind::only(ChatMessage::EVENT_TYPE, &[("kind", "action")]),
-                Kind::all(ConversationMessage::EVENT_TYPE),
-                Kind::all(MailFused::EVENT_TYPE),
-            ],
-            env.time_settings.day_start(day).ok()?,
-            env.time_settings.day_end(day).ok()?,
+            kinds,
+            Timestamp::from_unix_ns(env.time_settings.day_start(day).ok()?.unix_ns() - margin)
+                .ok()?,
+            Timestamp::from_unix_ns(env.time_settings.day_end(day).ok()?.unix_ns() + margin)
+                .ok()?,
         ))
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
         let Some(day) = day_of(key) else {
             return Computed::default();
         };
+        let (Ok(day_start), Ok(day_end)) = (
+            env.time_settings.day_start(day),
+            env.time_settings.day_end(day),
+        ) else {
+            return Computed::default();
+        };
+        let messages = mail().occurrences(inputs);
+        let others = inputs
+            .iter()
+            .filter(|e| !mail().reads(&e.event_type))
+            .map(|e| (e, std::borrow::Cow::Borrowed(&e.payload)));
         let mut days: BTreeMap<(&'static str, String), Messages<'_>> = BTreeMap::new();
-        for e in inputs {
-            if let Some((channel, conversation, sender, at)) = message(e) {
+        for (e, payload) in messages
+            .into_iter()
+            .map(|o| (o.event, o.payload))
+            .chain(others)
+        {
+            if let Some((channel, conversation, sender, at)) = message(e, &payload)
+                && day_start <= at
+                && at < day_end
+            {
                 days.entry((channel, conversation))
                     .or_default()
                     .push((e, sender, at));

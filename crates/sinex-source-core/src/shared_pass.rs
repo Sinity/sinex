@@ -8,7 +8,7 @@ use sinex_model::{Class, MaterialId, ObservationFacts};
 use std::path::{Path, PathBuf};
 
 pub use crate::drivers::export_archive::group::{
-    ArchivePassStats, Input, ReadSeek, Route, read_input as read,
+    ArchivePassStats, Input, ListedMember, ReadSeek, Route, members, read_input as read,
 };
 
 /// Native input retained before a converter's output is admitted.
@@ -45,6 +45,12 @@ pub trait SharedPass: Send + Sync {
 
     /// This binding's part in a pass that starts from `cursor`.
     fn route(&self, cursor: Value, class: Class) -> Route;
+
+    /// Which archive members this binding reads, by path inside the archive;
+    /// `None` when it reads the whole file.
+    fn member_selection(&self) -> Option<fn(&str) -> bool> {
+        None
+    }
 }
 
 /// What a binding needs from the next pass.

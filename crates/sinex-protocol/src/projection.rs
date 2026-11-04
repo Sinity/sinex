@@ -6,14 +6,12 @@ use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectionIdentity {
-    pub policy_epoch: i64,
     /// Lowercase hex BLAKE3 of the SJSON1 payload bytes.
     pub payload_hash: String,
 }
 impl ProjectionIdentity {
-    pub fn for_payload(policy_epoch: i64, payload: &Value) -> Self {
+    pub fn for_payload(payload: &Value) -> Self {
         Self {
-            policy_epoch,
             payload_hash: Self::hash(payload),
         }
     }

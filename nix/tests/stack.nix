@@ -1,7 +1,7 @@
 # The deployed stack on one host: PostgreSQL, NATS, sinexd, the journald
 # capture and the session service, with a file change reaching the database
 # through the session's NATS ingress, a source read from a private home
-# directory, and a declared backfill.
+# directory, and an export staged through the running daemon.
 self: {
   name = "sinex-stack";
   nodes.machine = { pkgs, ... }: {
@@ -43,10 +43,7 @@ self: {
       exclude."media.mpris".reason = "The stack fixture tests file changes, not media players.";
       exclude."session.integrations".reason = "The stack fixture tests file changes, not editor and terminal integrations.";
       readAnyFile = true;
-      sources."terminal.zsh-history" = {
-        paths = [ "/home/alice/.zsh_history" ];
-      };
-      backfills.books = [ "goodreads=/etc/sinex-test/library_export.csv" ];
+      discovery.environment.ZSH_HISTFILE = "/home/alice/.zsh_history";
       session = {
         user = "alice";
         passwordFile = "/etc/sinex-test/nats-session";
@@ -130,10 +127,10 @@ self: {
     with subtest("the operator's login shell reaches the daemon"):
         machine.succeed("su - alice -c 'sinexctl status'")
 
-    with subtest("a declared backfill stops sinexd, imports, and starts it again"):
-        machine.succeed("systemctl start sinex-backfill-books.service")
+    with subtest("an export staged through the running daemon is read without stopping it"):
+        machine.succeed("su - alice -c 'sinexctl stage --parser goodreads --follow /etc/sinex-test/library_export.csv'")
         assert count("event_type = 'book.status'") == 2
-        machine.wait_until_succeeds("systemctl is-active sinexd.service", timeout=120)
+        machine.succeed("systemctl is-active sinexd.service")
 
     with subtest("sinexd comes back after a crash"):
         machine.succeed("systemctl kill -s KILL sinexd.service")

@@ -10,16 +10,16 @@ use sqlx::PgConnection;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-struct World {
+pub(super) struct World {
     _db: devkit::pg::TestDatabase,
-    conn: PgConnection,
-    writer: writer::WriterHandle,
-    blobs: Blobs,
-    root: PathBuf,
+    pub(super) conn: PgConnection,
+    pub(super) writer: writer::WriterHandle,
+    pub(super) blobs: Blobs,
+    pub(super) root: PathBuf,
 }
 
 /// Archive or restore one reading through the writer, as the operator does.
-async fn move_event(w: &mut World, act: sinex_model::lifecycle::Act, id: uuid::Uuid) {
+pub(super) async fn move_event(w: &mut World, act: sinex_model::lifecycle::Act, id: uuid::Uuid) {
     let scope = sinex_model::lifecycle::Scope::Events {
         events: vec![sinex_model::EventId(id)],
         query: None,
@@ -33,7 +33,7 @@ async fn move_event(w: &mut World, act: sinex_model::lifecycle::Act, id: uuid::U
     );
 }
 
-async fn world(db: devkit::pg::TestDatabase) -> World {
+pub(super) async fn world(db: devkit::pg::TestDatabase) -> World {
     let url = db.url(None);
     let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
@@ -73,7 +73,11 @@ async fn world(db: devkit::pg::TestDatabase) -> World {
 }
 
 impl World {
-    async fn run(&mut self, request: Request) -> Result<Value, String> {
+    pub(super) async fn run(&mut self, request: Request) -> Result<Value, String> {
+        self.run_as("operator", request).await
+    }
+
+    pub(super) async fn run_as(&mut self, actor: &str, request: Request) -> Result<Value, String> {
         dispatch(
             &mut self.conn,
             Some(&self.writer),
@@ -83,12 +87,31 @@ impl World {
             sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
                 .expect("fixture day setting"),
             request,
-            "operator",
+            actor,
         )
         .await
     }
 
-    async fn ok(&mut self, request: Request) -> Value {
+    /// One curation request of `writes` (JSON acts), as `actor`.
+    pub(super) async fn curate_as(&mut self, actor: &str, writes: Value) -> Result<Value, String> {
+        let writes = serde_json::from_value(writes).unwrap_or_else(|e| panic!("acts: {e}"));
+        self.run_as(
+            actor,
+            Request::LibraryCurate {
+                request: None,
+                writes,
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn curate(&mut self, writes: Value) -> Value {
+        self.curate_as("operator", writes)
+            .await
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    pub(super) async fn ok(&mut self, request: Request) -> Value {
         let is_add = matches!(request, Request::LibraryAdd { .. });
         let before = self.derived_count().await;
         let answer = self.run(request).await.unwrap_or_else(|e| panic!("{e}"));
@@ -108,7 +131,7 @@ impl World {
             .unwrap()
     }
 
-    async fn item_at(&mut self, path: &Path) -> String {
+    pub(super) async fn item_at(&mut self, path: &Path) -> String {
         let key = sinex_library::copy_key("h", &path.display().to_string());
         let holders = sinex_library::reads::items_at(&mut self.conn, &[key])
             .await
@@ -148,7 +171,7 @@ fn ffmpeg() -> bool {
 
 /// A real image when ffmpeg is installed (so previews can be made), a bare
 /// PNG header otherwise.
-fn image(path: &Path, colour: &str) {
+pub(super) fn image(path: &Path, colour: &str) {
     if ffmpeg() {
         let ok = std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
@@ -211,66 +234,36 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     assert_eq!(again["library_records_written"], 0);
 
     // Curation.
-    w.ok(Request::LibraryTag {
-        item: ia.clone(),
-        tag: "colour:red".into(),
-    })
+    let t = |item: &str| json!({ "item": item });
+    w.curate(json!([
+        {"act": "tag", "target": t(&ia), "tag": "colour:red"},
+        {"act": "tag", "target": t(&ia), "tag": "temp"},
+    ]))
     .await;
-    w.ok(Request::LibraryTag {
-        item: ia.clone(),
-        tag: "temp".into(),
-    })
-    .await;
-    w.ok(Request::LibraryUntag {
-        item: ia.clone(),
-        tag: "temp".into(),
-    })
-    .await;
+    w.curate(json!([{"act": "untag", "target": t(&ia), "tag": "temp"}]))
+        .await;
     assert!(
-        w.run(Request::LibraryUntag {
-            item: ia.clone(),
-            tag: "never".into()
-        })
+        w.curate_as(
+            "operator",
+            json!([{"act": "untag", "target": t(&ia), "tag": "never"}])
+        )
         .await
         .is_err()
     );
-    w.ok(Request::LibrarySet {
-        item: ia.clone(),
-        field: "medium".into(),
-        value: Some("digital".into()),
-        empty: None,
-    })
-    .await;
-    w.ok(Request::LibrarySet {
-        item: ia.clone(),
-        field: "medium".into(),
-        value: Some("render".into()),
-        empty: None,
-    })
-    .await;
-    w.ok(Request::LibrarySet {
-        item: ib.clone(),
-        field: "medium".into(),
-        value: None,
-        empty: Some(true),
-    })
-    .await;
-    w.ok(Request::LibraryCollect {
-        collection: "favourites".into(),
-        item: ia.clone(),
-    })
-    .await;
-    w.ok(Request::LibraryCollect {
-        collection: "favourites".into(),
-        item: ib.clone(),
-    })
+    w.curate(json!([{"act": "set", "target": t(&ia), "property": "medium", "value": "digital"}]))
+        .await;
+    w.curate(json!([{"act": "set", "target": t(&ia), "property": "medium", "value": "render"}]))
+        .await;
+    w.curate(json!([{"act": "set", "target": t(&ib), "property": "medium", "value": null}]))
+        .await;
+    w.curate(json!([
+        {"act": "collect", "target": t(&ia), "collection": "favourites"},
+        {"act": "collect", "target": t(&ib), "collection": "favourites"},
+    ]))
     .await;
     // The same item twice is two entries.
-    w.ok(Request::LibraryCollect {
-        collection: "favourites".into(),
-        item: ia.clone(),
-    })
-    .await;
+    w.curate(json!([{"act": "collect", "target": t(&ia), "collection": "favourites"}]))
+        .await;
     let fav = w
         .ok(Request::LibraryCollection {
             collection: Some("favourites".into()),
@@ -283,11 +276,9 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         .map(|e| e["item"].as_str().unwrap())
         .collect();
     assert_eq!(order, [ia.as_str(), ib.as_str(), ia.as_str()]);
-    w.ok(Request::LibraryUncollect {
-        collection: "favourites".into(),
-        item: ib.clone(),
-    })
-    .await;
+    let b_entry = fav["entries"][1]["entry"].as_str().unwrap().to_owned();
+    w.curate(json!([{"act": "uncollect", "entry": b_entry}]))
+        .await;
     let fav = w
         .ok(Request::LibraryCollection {
             collection: Some("favourites".into()),
@@ -295,78 +286,82 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         .await;
     assert_eq!(fav["entries"].as_array().unwrap().len(), 2);
 
-    w.ok(Request::LibraryRate {
-        item: ia.clone(),
-        value: "4".into(),
-        scale: None,
-        of: None,
-    })
-    .await;
+    w.curate(json!([{"act": "define_scale", "name": "stars", "question": "How good is it?", "range": [0, 5]}]))
+        .await;
+    w.curate(json!([{"act": "rate", "target": t(&ia), "scale": "stars", "value": 4}]))
+        .await;
     assert!(
-        w.run(Request::LibraryRate {
-            item: ia.clone(),
-            value: "9".into(),
-            scale: None,
-            of: None
-        })
+        w.curate_as(
+            "operator",
+            json!([{"act": "rate", "target": t(&ia), "scale": "stars", "value": 9}])
+        )
         .await
         .is_err()
     );
-    w.ok(Request::LibraryCompare {
-        winner: ia.clone(),
-        loser: ib.clone(),
-        scale: None,
-    })
+    w.curate(json!([
+        {"act": "judge", "scale": "stars", "order": [[t(&ia)], [t(&ib)]]},
+        {"act": "judge", "scale": "stars", "order": [[t(&ia)], [t(&ib)]]},
+    ]))
     .await;
-    w.ok(Request::LibraryCompare {
-        winner: ia.clone(),
-        loser: ib.clone(),
-        scale: None,
-    })
-    .await;
-    let rank = w.ok(Request::LibraryRank { scale: None }).await;
+    let rank = w
+        .ok(Request::LibraryRank {
+            scale: "stars".into(),
+            judges: None,
+            collection: None,
+            k: None,
+            rule: None,
+        })
+        .await;
     assert_eq!(rank["ranking"][0]["item"], json!(ia));
     assert_eq!(rank["comparisons"], 2);
 
-    // Import: the sidecar's values arrive at the import level; the
-    // operator's `-tag` hides one of them.
+    // Import: the sidecar's values arrive as imported values; the
+    // operator's rejection outranks one of them.
     let imported = w
         .ok(Request::LibraryImport {
             path: w.root.display().to_string(),
         })
         .await;
     assert_eq!(imported["files_with_sidecars_matched"], 1, "{imported}");
-    w.ok(Request::LibraryTag {
-        item: ia.clone(),
-        tag: "-square".into(),
-    })
-    .await;
+    let again = w
+        .ok(Request::LibraryImport {
+            path: w.root.display().to_string(),
+        })
+        .await;
+    assert_eq!(
+        again["values_imported"], 0,
+        "reimporting writes nothing: {again}"
+    );
+    w.curate(json!([{"act": "reject", "target": t(&ia), "tag": "square"}]))
+        .await;
 
     let view = w.ok(Request::LibraryItem { item: ia.clone() }).await;
-    let tags: Vec<(String, String)> = view["tags"]
+    let tags: Vec<(String, String, String)> = view["tags"]
         .as_array()
         .unwrap()
         .iter()
         .map(|t| {
             (
                 t["tag"].as_str().unwrap().to_owned(),
+                t["state"].as_str().unwrap().to_owned(),
                 t["level"].as_str().unwrap().to_owned(),
             )
         })
         .collect();
+    let applies = |tag: &str, level: &str| {
+        tags.contains(&(tag.to_owned(), "applies".to_owned(), level.to_owned()))
+    };
+    assert!(applies("colour:red", "operator"), "{tags:?}");
+    assert!(applies("artist:someone", "imported"), "{tags:?}");
+    assert!(applies("red", "imported"), "{tags:?}");
     assert!(
-        tags.contains(&("colour:red".into(), "override".into())),
+        tags.contains(&("square".into(), "rejected".into(), "operator".into())),
         "{tags:?}"
     );
-    assert!(
-        tags.contains(&("artist:someone".into(), "import".into())),
-        "{tags:?}"
-    );
-    assert!(tags.contains(&("red".into(), "import".into())));
-    assert!(!tags.iter().any(|(t, _)| t == "square" || t == "temp"));
+    assert!(!tags.iter().any(|(t, _, _)| t == "temp"));
     assert_eq!(view["properties"]["medium"]["value"], "render");
     assert_eq!(view["properties"]["content_rating"]["value"], "general");
-    assert_eq!(view["ratings"][0]["value"], 4.0);
+    assert_eq!(view["ratings"][0]["value"], 4);
     assert_eq!(view["collections"].as_array().unwrap().len(), 2);
     assert_eq!(view["copies"][0]["present"], true);
     let vb = w.ok(Request::LibraryItem { item: ib.clone() }).await;
@@ -389,7 +384,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         rows(&mut w.conn, "media where media_type = \"image/png\"").await,
         2
     );
-    assert!(rows(&mut w.conn, "assignments where level = import").await >= 4);
+    assert!(rows(&mut w.conn, "curation where value_origin = imported").await >= 4);
 
     // Opening: a verified copy on disk; then the view.
     let open = w
@@ -601,7 +596,7 @@ async fn library_add_through_an_alias_keeps_one_copy(db: devkit::pg::TestDatabas
 }
 
 #[devkit::test]
-async fn archiving_scans_recomputes_items_and_preview_renditions(db: devkit::pg::TestDatabase) {
+async fn archiving_scans_recomputes_items_and_original_renditions(db: devkit::pg::TestDatabase) {
     use sinex_model::lifecycle::Act;
     let mut w = world(db).await;
     let file = w.root.join("a.png");
@@ -651,10 +646,21 @@ async fn archiving_scans_recomputes_items_and_preview_renditions(db: devkit::pg:
         let renditions = sinex_library::reads::renditions(&mut w.conn, &item)
             .await
             .unwrap();
-        assert_eq!(!renditions.is_empty(), visible);
-        if visible && ffmpeg() {
-            assert!(renditions.iter().any(|rendition| rendition.role
-                == sinex_model::event_types::library::RenditionRole::Preview));
+        use sinex_model::event_types::library::RenditionRole;
+        assert_eq!(
+            renditions
+                .iter()
+                .any(|rendition| rendition.role == RenditionRole::Original),
+            visible
+        );
+        // A preview is its request's own record, not a reading of the scan:
+        // archiving the scans leaves it live, without item support.
+        if ffmpeg() {
+            assert!(
+                renditions
+                    .iter()
+                    .any(|rendition| rendition.role == RenditionRole::Preview)
+            );
         }
     }
     move_event(&mut w, Act::Restore, second).await;
@@ -679,11 +685,8 @@ async fn a_returning_path_continues_its_item_and_curation(db: devkit::pg::TestDa
     };
     w.ok(add.clone()).await;
     let item = w.item_at(&file).await;
-    w.ok(Request::LibraryTag {
-        item: item.clone(),
-        tag: "kept".into(),
-    })
-    .await;
+    w.curate(json!([{"act": "tag", "target": {"item": item}, "tag": "kept"}]))
+        .await;
     let moved = w.root.join("b.txt");
     std::fs::rename(&file, &moved).unwrap();
     w.ok(add.clone()).await;
@@ -729,11 +732,8 @@ async fn ambiguous_moves_preserve_both_items_curation(db: devkit::pg::TestDataba
     let first = w.item_at(&a).await;
     let second = w.item_at(&b).await;
     for (item, tag) in [(&first, "first"), (&second, "second")] {
-        w.ok(Request::LibraryTag {
-            item: item.clone(),
-            tag: tag.into(),
-        })
-        .await;
+        w.curate(json!([{"act": "tag", "target": {"item": item}, "tag": tag}]))
+            .await;
     }
     // Create both replacements before removing the originals to ensure
     // their device and inode cannot match either original.
@@ -882,11 +882,8 @@ async fn a_new_file_at_a_moved_items_old_path_keeps_curation_separate(
     };
     w.ok(add.clone()).await;
     let original = w.item_at(&a).await;
-    w.ok(Request::LibraryTag {
-        item: original.clone(),
-        tag: "original".into(),
-    })
-    .await;
+    w.curate(json!([{"act": "tag", "target": {"item": original}, "tag": "original"}]))
+        .await;
     std::fs::rename(&a, &b).unwrap();
     w.ok(add.clone()).await;
     assert_eq!(w.item_at(&b).await, original);
@@ -895,11 +892,8 @@ async fn a_new_file_at_a_moved_items_old_path_keeps_curation_separate(
     assert_eq!(added["items_new"], 1);
     let new = w.item_at(&a).await;
     assert_ne!(original, new);
-    w.ok(Request::LibraryTag {
-        item: new.clone(),
-        tag: "new".into(),
-    })
-    .await;
+    w.curate(json!([{"act": "tag", "target": {"item": new}, "tag": "new"}]))
+        .await;
     let old_view = w
         .ok(Request::LibraryItem {
             item: original.clone(),
@@ -981,11 +975,8 @@ async fn one_to_many_move_ambiguity_is_visible_without_transferring_curation(
     };
     w.ok(add.clone()).await;
     let old = w.item_at(&old_path).await;
-    w.ok(Request::LibraryTag {
-        item: old.clone(),
-        tag: "kept".into(),
-    })
-    .await;
+    w.curate(json!([{"act": "tag", "target": {"item": old}, "tag": "kept"}]))
+        .await;
     for path in ["a.txt", "b.txt"] {
         std::fs::copy(&old_path, w.root.join(path)).unwrap();
     }

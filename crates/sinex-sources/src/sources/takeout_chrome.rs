@@ -6,13 +6,15 @@ use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::browser::BrowserHistoryEntry;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "browser.takeout-chrome-history",
-    driver: Driver::ExportArchive,
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    expires_after: None,
     purpose: "browsing recall before live capture",
     class: Class::Open,
     parser: "takeout-chrome-history",
@@ -85,10 +87,11 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `--read takeout-chrome=PATH`: each Takeout Chrome history in PATH.
+/// `stage --parser takeout-chrome PATH`: each Takeout Chrome history in PATH.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "takeout-chrome",
+        accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(select)],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -98,8 +101,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

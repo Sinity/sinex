@@ -564,10 +564,13 @@ fn discovery_reports_awaiting_credentials_without_planning_a_reader() {
             .find(|input| input.input.as_deref() == Some(directory.path()))
             .unwrap();
         if content == Some("synthetic-token") {
-            assert_eq!(input.availability, Availability::Reading);
+            assert_eq!(input.availability, Availability::Capturing);
             assert_eq!(input.bindings.len(), 1);
         } else {
-            assert_eq!(input.availability, Availability::Unavailable);
+            assert_eq!(
+                input.availability,
+                Availability::Unavailable(sinex_source_core::discovery::Cause::AwaitingCredentials)
+            );
             assert!(
                 input
                     .reason

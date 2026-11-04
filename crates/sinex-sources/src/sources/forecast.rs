@@ -6,11 +6,15 @@ use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
 use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::{DeclaredSource, Driver, Parser, RecordContext, RecordError, SourceSpec};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec,
+};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",
-    driver: Driver::ApiRequest,
+    origin: Origin::Request,
+    expect: Expectation::OnDemand,
+    expires_after: None,
     purpose: "submitted probability forecasts",
     class: Class::Guarded,
     parser: "forecast-request",
@@ -143,14 +147,13 @@ pub fn request_material(
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "forecast",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: true,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&REQUEST],

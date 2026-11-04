@@ -11,7 +11,8 @@ fn backlog(
     recovering: Option<&Value>,
 ) -> Result<Backlog, String> {
     let mut result_counts = Backlog::default();
-    let media = sources::source_for(binding)?.spec().driver == sinex_source_core::Driver::Media;
+    let media = sources::source_for(binding)?.spec().origin
+        == sinex_source_core::Origin::Input(sinex_source_core::Shape::Media);
     let mut bytes = 0u64;
     let mut records = 0u64;
     let result = (|| -> std::io::Result<()> {

@@ -66,26 +66,29 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
             &binary,
             "6G",
             &[
-                "backfill".as_ref(),
+                "admin".as_ref(),
+                "stage".as_ref(),
+                input.as_os_str(),
+                "--parser".as_ref(),
+                "takeout".as_ref(),
                 "--database".as_ref(),
                 cluster.url().as_ref(),
                 "--store".as_ref(),
                 out.join("store").as_os_str(),
                 "--host".as_ref(),
                 "bench".as_ref(),
-                "--read".as_ref(),
-                format!("takeout={}", input.display()).as_ref(),
             ],
             Some(&phase),
         )?;
-        let totals = &result["sources"]["google.youtube-history"];
+        let accounting = &result["sources"]["google.youtube-history"]["accounting"];
         // The archived reading's record has no live reading, so reading it
         // again admits it as new; every other changed record replaces.
+        let count = |key: &str| accounting[key].as_u64().unwrap_or(0);
         let admitted = if name == "repeat" { 0 } else { events };
         let repeats = if name == "repeat" { events } else { 0 };
-        if totals["admitted"].as_u64() != Some(admitted)
-            || totals["repeats"].as_u64() != Some(repeats)
-            || (changed && totals["replaced"].as_u64() != Some(events.saturating_sub(1)))
+        if count("new") + count("revised") != admitted
+            || count("same") != repeats
+            || (changed && count("revised") != events.saturating_sub(1))
         {
             save(&phase, "result.json", &result)?;
             return Err(format!(
@@ -123,27 +126,30 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
         &binary,
         "6G",
         &[
-            "backfill".as_ref(),
+            "admin".as_ref(),
+            "stage".as_ref(),
+            inputs[0].path.as_os_str(),
+            "--parser".as_ref(),
+            "zsh".as_ref(),
             "--database".as_ref(),
             cluster.url().as_ref(),
             "--store".as_ref(),
             out.join("store").as_os_str(),
             "--host".as_ref(),
             "bench".as_ref(),
-            "--read".as_ref(),
-            format!("zsh={}", inputs[0].path.display()).as_ref(),
         ],
         Some(&phase),
     )?;
-    fs::rename(phase.join("backfill.stdout"), phase.join("source.stdout"))
+    fs::rename(phase.join("stage.stdout"), phase.join("source.stdout"))
         .map_err(|e| e.to_string())?;
-    fs::rename(phase.join("backfill.stderr"), phase.join("source.stderr"))
+    fs::rename(phase.join("stage.stderr"), phase.join("source.stderr"))
         .map_err(|e| e.to_string())?;
     let result = sinexd_recorded(
         &binary,
         "6G",
         &[
             "derive".as_ref(),
+            "--json".as_ref(),
             "--database".as_ref(),
             cluster.url().as_ref(),
             "--store".as_ref(),

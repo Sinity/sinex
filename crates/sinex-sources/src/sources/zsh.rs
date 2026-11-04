@@ -10,13 +10,15 @@
 use crate::sources::shell_history::Seen;
 use sinex_model::{Class, Timestamp, event_types::CommandImported};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.zsh-history",
-    driver: Driver::AppendFile,
+    origin: Origin::Input(Shape::AppendFile),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "command fusion and shell recall",
     class: Class::Open,
     parser: "zsh-extended-history",
@@ -150,10 +152,30 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `--read zsh=PATH`: a zsh history file.
+/// Whether `line` is an extended zsh history record's header line
+/// (`: <start>:<elapsed>;<command>`): the structure `stage` recognises. A plain
+/// history has no structure of its own and is staged with `--parser zsh`.
+pub fn extended_line(line: &[u8]) -> bool {
+    let Some(header) = line.strip_prefix(b": ") else {
+        return false;
+    };
+    let digits = |field: &[u8]| !field.is_empty() && field.iter().all(u8::is_ascii_digit);
+    let Some(colon) = header.iter().position(|b| *b == b':') else {
+        return false;
+    };
+    let Some(semicolon) = header.iter().position(|b| *b == b';') else {
+        return false;
+    };
+    colon < semicolon && digits(&header[..colon]) && digits(&header[colon + 1..semicolon])
+}
+
+/// `stage --parser zsh PATH`: a zsh history file.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "zsh",
+        accepts: &[sinex_source_core::stage::Structure::FirstLine(
+            extended_line,
+        )],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -163,8 +185,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

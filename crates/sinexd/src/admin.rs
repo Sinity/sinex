@@ -22,11 +22,17 @@ pub(crate) enum Admin {
     },
     /// Upgrade an older schema to this build's version in one transaction,
     /// with sinexd stopped; refuses while a writer holds the database.
+    /// `--prepare`, run by the new build while the old daemon still serves,
+    /// builds the work the upgrade can swap in; `--unprepare` removes it.
     Upgrade {
         #[arg(long)]
         database: String,
         #[arg(long = "kind-owner")]
         kind_owners: Vec<String>,
+        #[arg(long, conflicts_with = "unprepare")]
+        prepare: bool,
+        #[arg(long)]
+        unprepare: bool,
     },
     /// As the database superuser: create the extensions and roles the schema
     /// needs, and give `owner` the roles. The owner then applies the schema.
@@ -39,13 +45,6 @@ pub(crate) enum Admin {
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
-    /// Read-only discovery of this host's inputs and exclusions.
-    Discover {
-        #[arg(long)]
-        sources: PathBuf,
-        #[arg(long, default_value = "localhost")]
-        host: String,
-    },
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
     /// are read from files, so they never pass through the Nix store, and the
@@ -97,6 +96,23 @@ async fn schema(database: &str, kind_owners: Vec<String>, upgrade: bool) -> Resu
         .map_err(|e| e.to_string())
 }
 
+async fn connect(database: &str) -> Result<sqlx::PgConnection, String> {
+    use sqlx::Connection;
+    sqlx::PgConnection::connect(database)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// `sinexd admin upgrade --prepare`: build what the upgrade can swap in,
+/// beside the serving daemon.
+async fn prepare(database: &str) -> Result<(), String> {
+    let mut connection = connect(database).await?;
+    sinex_schema::prepare::prepare(&mut connection, sinex_schema::prepare::BATCH)
+        .await
+        .map(|prepared| println!("{prepared}"))
+        .map_err(|e| e.to_string())
+}
+
 pub(crate) async fn run(command: Admin) -> Result<(), String> {
     match command {
         Admin::Diagnostics { command } => crate::diagnostics::run(command).await,
@@ -107,7 +123,24 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
         } => schema(&database, kind_owners, false).await,
         Admin::Upgrade {
             database,
+            prepare: true,
+            ..
+        } => prepare(&database).await,
+        Admin::Upgrade {
+            database,
+            unprepare: true,
+            ..
+        } => {
+            let mut connection = connect(&database).await?;
+            sinex_schema::prepare::unprepare(&mut connection)
+                .await
+                .map(|()| println!("removed the upgrade preparation"))
+                .map_err(|e| e.to_string())
+        }
+        Admin::Upgrade {
+            database,
             kind_owners,
+            ..
         } => schema(&database, kind_owners, true).await,
         Admin::PrepareDatabase { database, owner } => {
             use sqlx::Connection;
@@ -117,19 +150,6 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
             sinex_schema::prepare(&mut connection, &owner)
                 .await
                 .map_err(|e| e.to_string())
-        }
-        Admin::Discover { sources, host } => {
-            let config = crate::binding_runner::Config::load(&sources)?;
-            let context = config.context(&host);
-            let inputs =
-                tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
-                    .await
-                    .map_err(|error| error.to_string())??;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&inputs).map_err(|error| error.to_string())?
-            );
-            Ok(())
         }
         Admin::Catalog => {
             print!("{}", catalog::render());
@@ -221,8 +241,19 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         )
         .try_get_matches_from(&args)
         .map_err(|e| e.to_string())?;
-    let request =
+    let mut request =
         sinex_protocol::Request::from_args(name, sinex_protocol::cli::arguments(spec, &matches))?;
+    // The process ends with the command, so a local stage runs to its end;
+    // its paths are recorded as absolute paths.
+    if let sinex_protocol::Request::Stage { path, follow, .. } = &mut request {
+        *follow = Some(true);
+        for given in path.iter_mut() {
+            *given = std::path::absolute(&*given)
+                .map_err(|e| format!("{given}: {e}"))?
+                .display()
+                .to_string();
+        }
+    }
     let database: &String = matches.get_one("database").expect("required");
     let store: &PathBuf = matches.get_one("store").expect("required");
     let host: &String = matches.get_one("host").expect("defaulted");
@@ -239,9 +270,9 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
             sinex_protocol::Request::Replay {
                 sealed: Some(true),
                 ..
-            }
+            } | sinex_protocol::Request::Stage { .. }
         ) {
-            return Err("--identity-file requires replay --sealed".into());
+            return Err("--identity-file requires replay --sealed or stage".into());
         }
         let identity =
             std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -255,6 +286,8 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         sinex_model::time_settings::TimeSettings::from_parts(zone.clone(), day_start),
     )
     .await?;
+    // A local command stops only when it ends.
+    let (_running, stop) = tokio::sync::watch::channel(false);
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect(database)
@@ -263,6 +296,8 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     let local = api::Api {
         source_config: Default::default(),
         read_failures: Default::default(),
+        running_stages: Default::default(),
+        stop,
         reads,
         writer: Some(ctx.writer.clone()),
         blobs: ctx.blobs.clone(),

@@ -152,7 +152,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -163,7 +163,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -286,6 +286,18 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "authored"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?rev=8c22e127bb1f5c10d8c1740de4c4f0bfe53ffdb7#8c22e127bb1f5c10d8c1740de4c4f0bfe53ffdb7"
+dependencies = [
+ "blake3",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "autocfg"
@@ -1031,7 +1043,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "clap",
@@ -1049,7 +1061,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1211,7 +1223,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2291,7 +2303,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -3550,7 +3562,7 @@ dependencies = [
 [[package]]
 name = "query-language"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "jiff",
@@ -3627,7 +3639,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3738,6 +3750,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "ranking"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8aa70b7fad0c875eea1e350ed0861786ae154dfb"
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3773,6 +3790,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "references"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]
@@ -4007,7 +4034,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4378,13 +4405,12 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "signal-delivery"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "futures-util",
  "serde_json",
  "signals",
  "tokio",
- "tokio-util",
  "zbus",
 ]
 
@@ -4411,7 +4437,7 @@ dependencies = [
 [[package]]
 name = "signals"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#d4310f31c0ec9b1c59ffd0e8c144ecb34b90538f"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "jiff",
@@ -4487,6 +4513,7 @@ dependencies = [
 name = "sinex-derivations"
 version = "0.1.0"
 dependencies = [
+ "authored",
  "blake3",
  "devkit",
  "jiff",
@@ -4515,8 +4542,11 @@ dependencies = [
 name = "sinex-library"
 version = "0.1.0"
 dependencies = [
+ "authored",
  "blake3",
  "devkit",
+ "proptest",
+ "ranking",
  "serde",
  "serde_json",
  "sinex-model",
@@ -4539,12 +4569,14 @@ dependencies = [
 name = "sinex-model"
 version = "0.1.0"
 dependencies = [
+ "authored",
  "blake3",
  "caseless",
  "devkit",
  "jiff",
  "proptest",
  "query-language",
+ "references",
  "schemars",
  "serde",
  "serde_json",
@@ -4771,6 +4803,7 @@ version = "0.1.0"
 dependencies = [
  "age",
  "async-nats",
+ "authored",
  "axum",
  "base64 0.22.1",
  "bcrypt",
@@ -4783,7 +4816,9 @@ dependencies = [
  "http-body-util",
  "jiff",
  "jsonschema",
+ "proptest",
  "query-language",
+ "ranking",
  "reqwest",
  "rusqlite",
  "serde",
@@ -4837,7 +4872,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5147,7 +5182,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5296,7 +5331,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -5478,7 +5512,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

@@ -128,3 +128,82 @@ fn integrated_source_families_are_registered_with_discovery() {
             .any(|spec| spec.parser == google_takeout::assistant::SPEC.parser)
     );
 }
+
+/// law: sx.decl.one-expectation
+#[devkit::test]
+fn one_expectation_per_source_name() {
+    for spec in specs() {
+        for other in specs().into_iter().filter(|other| other.name == spec.name) {
+            assert_eq!(
+                (other.expect, other.expires_after),
+                (spec.expect, spec.expires_after),
+                "{} is declared with two expectations ({} and {})",
+                spec.name,
+                spec.parser,
+                other.parser
+            );
+        }
+    }
+}
+
+/// law: sx.decl.expectation-fits-origin
+#[devkit::test]
+fn expectation_fits_origin() {
+    use sinex_source_core::{Expectation, Origin};
+    for format in formats() {
+        for spec in (format.specs)() {
+            if format.on_demand(spec) {
+                assert_eq!(
+                    spec.expect,
+                    Expectation::OnDemand,
+                    "{} has no input to watch, so silence means nothing",
+                    spec.name
+                );
+            }
+            if spec.expect == Expectation::Export {
+                assert!(
+                    spec.origin != Origin::Request,
+                    "{}: an export is an input the operator takes",
+                    spec.name
+                );
+            }
+            for deadline in [
+                spec.expect.silent_after(),
+                spec.expect.every(),
+                spec.expires_after,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                assert!(!deadline.is_zero(), "{}", spec.name);
+            }
+        }
+    }
+}
+
+/// The two silent stalls of 2026-10-27 and 2026-10-29 (Atuin history and the
+/// session producer's streams) are exactly the sources whose silence must
+/// become visible, so each declares a deadline.
+/// law: sx.decl.continuous-sources-declare-silence
+#[devkit::test]
+fn continuous_sources_declare_silence() {
+    for name in [
+        "terminal.atuin-history",
+        "terminal.zsh-history",
+        "desktop.hyprland",
+        "desktop.clipboard",
+        "session.integrations",
+        "machine.journald",
+    ] {
+        let spec = spec(name).unwrap_or_else(|| panic!("{name} is declared"));
+        assert!(
+            spec.expect.silent_after().is_some(),
+            "{name} is continuous with a deadline"
+        );
+    }
+    // A provider that expires its own records declares it.
+    assert_eq!(
+        spec("browser.chromium-visits").unwrap().expires_after,
+        Some(sinex_source_core::registry::days(90))
+    );
+}

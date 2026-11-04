@@ -1,7 +1,7 @@
 //! The `crawl` command: fetch pages from stored browser history whose host is
 //! on the allow list and that have not been fetched yet. The allow list is the
 //! opt-in: nothing is fetched without one.
-use crate::backfill::Totals;
+use crate::stage::Totals;
 use crate::writer::WriterHandle;
 use sinex_source_core::{Binding, Settings};
 use sinex_sources::sources;
@@ -14,18 +14,27 @@ use std::time::Duration;
 // One binding has one committed cursor, so requests cannot interleave URL lists.
 static CRAWL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// URLs from live browser records, deduplicated in commit order.
+/// The browser records that name a visited page, and the field holding its URL.
+const VISITED: &[(&str, &str)] = &[
+    ("browser.visit", "url"),
+    ("browser.history_entry", "url"),
+    ("link.followed", "to_url"),
+];
+
+/// URLs from live browser records, deduplicated, each kind in commit order.
 async fn history_urls(read_conn: &mut PgConnection) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
-    let rows = payloads::live_all(read_conn, "visit.fused", RecordStates::Present)
-        .await
-        .map_err(|e| e.to_string())?;
-    for payload in rows {
-        if let Some(url) = payload.get("url").and_then(serde_json::Value::as_str)
-            && seen.insert(url.to_owned())
-        {
-            out.push(url.to_owned());
+    for (event_type, field) in VISITED {
+        let rows = payloads::live_all(read_conn, event_type, RecordStates::Present)
+            .await
+            .map_err(|e| e.to_string())?;
+        for payload in rows {
+            if let Some(url) = payload.get(*field).and_then(serde_json::Value::as_str)
+                && seen.insert(url.to_owned())
+            {
+                out.push(url.to_owned());
+            }
         }
     }
     Ok(out)

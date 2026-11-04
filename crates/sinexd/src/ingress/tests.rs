@@ -71,9 +71,6 @@ fn test_write(
         }],
         canonical_kinds: vec![],
         forward_signals: false,
-        author_attestation: None,
-        emergency_sinex_blocked_host: None,
-        emergency_lease_seconds: None,
         kind_prefixes: prefixes,
         classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
         canonical_prefixes: vec![],
@@ -1920,13 +1917,13 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
             .refusal_kind(),
         Some(FrameRefusal::Malformed)
     );
-    sinex_store::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
+    let (_running, stop) = tokio::sync::watch::channel(false);
     let api = crate::api::Api {
         derivations: Default::default(),
         source_config: Default::default(),
         read_failures: Default::default(),
+        running_stages: Default::default(),
+        stop,
         library_roots: Vec::new(),
         reads: h.reads.clone(),
         writer: Some(h.writer.clone()),

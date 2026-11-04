@@ -22,10 +22,10 @@ fn binding(context: &DiscoveryContext, source: &str) -> Vec<Binding> {
 }
 
 #[devkit::test]
-fn every_format_declares_discovery_or_a_request_only_role() {
+fn every_format_declares_discovery_or_is_written_on_request() {
     for format in sources::formats() {
         assert!(
-            format.discovery.request_only
+            format.plan.is_none()
                 || !format.discovery.locations.is_empty()
                 || !format.discovery.streams.is_empty(),
             "{}",
@@ -48,22 +48,31 @@ fn discovers_late_inputs_and_distinguishes_empty_missing_and_unreadable() {
             .find(|input| input.format == "atuin")
             .unwrap()
     };
-    assert_eq!(states().availability, Availability::WaitingForInput);
+    assert_eq!(
+        states().availability,
+        Availability::Unavailable(Cause::NotPresent)
+    );
     let path = context.data_home.as_ref().unwrap().join("atuin/history.db");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, b"").unwrap();
-    assert_eq!(states().availability, Availability::Reading);
+    assert_eq!(states().availability, Availability::Capturing);
     assert_eq!(states().bindings.len(), 1);
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0)).unwrap();
-    assert_eq!(states().availability, Availability::Unavailable);
+    assert_eq!(
+        states().availability,
+        Availability::Unavailable(Cause::PermissionDenied)
+    );
     std::fs::remove_file(&path).unwrap();
-    assert_eq!(states().availability, Availability::WaitingForInput);
+    assert_eq!(
+        states().availability,
+        Availability::Unavailable(Cause::NotPresent)
+    );
 }
 
 #[devkit::test]
 fn every_browser_profile_and_shared_source_format_is_discovered() {
     let root = tempfile::tempdir().unwrap();
-    let mut context = context(root.path());
+    let context = context(root.path());
     for browser in ["chromium", "google-chrome"] {
         for profile in ["Default", "Profile 1"] {
             let dir = context
@@ -78,13 +87,6 @@ fn every_browser_profile_and_shared_source_format_is_discovered() {
     }
     assert_eq!(binding(&context, "browser.chromium-visits").len(), 4);
     assert_eq!(binding(&context, "browser.chromium-urls").len(), 4);
-    context.sources.insert(
-        "desktop.clipboard".into(),
-        SourceConfig {
-            format: Some("sinnix-lake".into()),
-            ..Default::default()
-        },
-    );
     let inputs = discover(&context).unwrap();
     assert!(
         inputs
@@ -98,8 +100,9 @@ fn every_browser_profile_and_shared_source_format_is_discovered() {
     );
 }
 
+/// law: sx.cap.exclusion-reasoned
 #[devkit::test]
-fn exclusion_requires_a_known_source_and_non_whitespace_reason() {
+fn exclusion_reasoned_and_for_a_known_source() {
     let mut context = DiscoveryContext::default();
     context.exclude.insert(
         "desktop.clipboard".into(),
@@ -309,7 +312,7 @@ fn named_capture_paths_come_from_the_host_layout() {
     let inputs = discover(&context).unwrap();
     assert!(inputs.iter().any(|input| input.format == "kitty-scrollback"
         && input.input.as_ref() == Some(&dir)
-        && input.availability == Availability::Reading));
+        && input.availability == Availability::Capturing));
 }
 
 #[devkit::test]
@@ -322,7 +325,7 @@ fn missing_imap_credentials_are_unavailable_without_disabling_other_inputs() {
     let discovered = discover(&context).unwrap();
     assert!(discovered.iter().any(|input| {
         input.format == "imap"
-            && input.availability == Availability::Unavailable
+            && input.availability == Availability::Unavailable(Cause::AwaitingCredentials)
             && input
                 .reason
                 .as_ref()
@@ -332,7 +335,7 @@ fn missing_imap_credentials_are_unavailable_without_disabling_other_inputs() {
         discovered
             .iter()
             .any(|input| input.format == "forecast"
-                && input.availability == Availability::RequestOnly)
+                && input.availability == Availability::OnDemand)
     );
 }
 
@@ -363,10 +366,8 @@ fn invalid_capture_settings_do_not_disable_other_streams() {
         },
     );
     let inputs = discover(&context).unwrap();
-    assert!(
-        inputs.iter().any(|input| input.source == "session.media"
-            && input.availability == Availability::Unavailable)
-    );
+    assert!(inputs.iter().any(|input| input.source == "session.media"
+        && input.availability == Availability::Unavailable(Cause::Failed)));
     assert!(
         captures(&context, Owner::Session)
             .unwrap()
@@ -374,8 +375,10 @@ fn invalid_capture_settings_do_not_disable_other_streams() {
             .iter()
             .any(|(_, binding)| binding.source == "session.integrations")
     );
-    assert!(inputs.iter().any(|input| input.source == "library.request"
-        && input.availability == Availability::RequestOnly));
+    assert!(
+        inputs.iter().any(|input| input.source == "library.request"
+            && input.availability == Availability::OnDemand)
+    );
 }
 
 #[devkit::test]
@@ -471,6 +474,130 @@ fn daemon_status_reports_session_ownership_without_session_capabilities() {
                     .unwrap()
                     .contains("no status frame received")
             );
+        }
+    }
+}
+
+/// A home tree holding the canonical inputs of several sources, as a host
+/// would have them; everything is synthetic.
+fn synthetic_home(root: &Path) -> DiscoveryContext {
+    let mut context = context(root);
+    let data = context.data_home.clone().unwrap();
+    let config = context.config_home.clone().unwrap();
+    for (path, bytes) in [
+        (data.join("atuin/history.db"), &b""[..]),
+        (config.join("chromium/Default/History"), b""),
+        (root.join(".zsh_history"), b": 1:0;true\n"),
+        (root.join("notes/today.md"), b"# synthetic\n"),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+    context.environment.insert(
+        "ZSH_HISTFILE".into(),
+        root.join(".zsh_history").display().to_string(),
+    );
+    context
+        .input_roots
+        .insert("notes".into(), vec![root.join("notes")]);
+    context
+}
+
+/// law: sx.cap.default-total
+#[devkit::test]
+fn default_total_on_a_fixture_host() {
+    let root = tempfile::tempdir().unwrap();
+    let context = synthetic_home(root.path());
+    let inputs = discover(&context).unwrap();
+    // No declared source is silently absent from discovery.
+    for spec in sources::specs() {
+        assert!(
+            inputs.iter().any(|input| input.source == spec.name),
+            "{} is missing from discovery",
+            spec.name
+        );
+    }
+    // Each input is capturing, or carries the reason it is not.
+    for input in &inputs {
+        match input.availability {
+            Availability::Capturing | Availability::OnDemand => {}
+            Availability::Unavailable(_) | Availability::Excluded => assert!(
+                input
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty()),
+                "{} {:?} without a reason",
+                input.source,
+                input.availability
+            ),
+            Availability::ProducerReported => {
+                panic!("discovery itself never defers to a producer")
+            }
+        }
+    }
+    // Every source whose canonical input the fixture host has is captured,
+    // with no per-source setting.
+    for source in [
+        "terminal.atuin-history",
+        "browser.chromium-visits",
+        "browser.chromium-urls",
+        "terminal.zsh-history",
+        "knowledge.notes-vault",
+    ] {
+        assert!(
+            inputs.iter().any(|input| input.source == source
+                && input.availability == Availability::Capturing
+                && !input.bindings.is_empty()),
+            "{source} is not captured"
+        );
+    }
+    // A source whose input the host lacks is unavailable, not empty.
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input.source == "desktop.activitywatch"
+                && input.availability == Availability::Unavailable(Cause::NotPresent))
+    );
+}
+
+/// law: sx.cap.no-host-coupling
+#[devkit::test]
+fn no_host_coupling_in_declared_locations() {
+    const ROOTS: &[&str] = &[
+        "home",
+        "data",
+        "config",
+        "runtime",
+        "environment",
+        "input",
+        "declared",
+        "spool",
+        "capture",
+        "projects",
+    ];
+    let locations = sources::formats()
+        .iter()
+        .flat_map(|format| format.discovery.locations)
+        .chain(
+            crate::unimplemented::UNIMPLEMENTED
+                .iter()
+                .flat_map(|source| source.locations),
+        );
+    for location in locations {
+        assert!(ROOTS.contains(&location.root), "{location:?}");
+        assert!(
+            !location.path.starts_with('/') && !location.path.starts_with('~'),
+            "{location:?} is a host path"
+        );
+    }
+    // Every root a location can name resolves only from what the deployment
+    // supplies: an empty context finds nothing.
+    let empty = DiscoveryContext::default();
+    for format in sources::formats() {
+        for location in format.discovery.locations {
+            if location.root != "spool" {
+                assert!(paths(location, &empty).unwrap().is_empty(), "{location:?}");
+            }
         }
     }
 }

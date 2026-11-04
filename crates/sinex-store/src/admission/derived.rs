@@ -27,11 +27,7 @@ pub enum DerivedScope {
     },
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
     /// no events; the keys are marked dirty like admission marks them.
-    Recompute {
-        keys: Vec<Value>,
-        #[serde(default)]
-        policy_refresh: Option<crate::privacy::refresh::Refresh>,
-    },
+    Recompute { keys: Vec<Value> },
     /// Atomically select a compared producer, archive its old chains and schedule its outputs.
     Select {
         selection: crate::derivations::selection::Selection,
@@ -48,30 +44,47 @@ pub struct ReadMark {
     pub changes: i64,
     /// How many readings had been tombstoned.
     pub tombstoned: i64,
-    /// Current transformed-input policy, captured in the input snapshot.
-    #[serde(default)]
-    pub policy_epoch: Option<i64>,
 }
 
 impl ReadMark {
     /// Where archiving and tombstoning stand now.
     pub async fn now(conn: &mut PgConnection) -> Result<Self> {
-        let (changes, tombstoned, desired, active): (i64, i64, i64, i64) = sqlx::query_as(
+        let (changes, tombstoned): (i64, i64) = sqlx::query_as(
             "SELECT (SELECT coalesce(max(change_seq),0) FROM audit.archive_changes),
-             (SELECT value FROM core.counters WHERE name='tombstoned'),desired_epoch,active_epoch
-             FROM privacy.policy_state WHERE id",
+             (SELECT value FROM core.counters WHERE name='tombstoned')",
         )
         .fetch_one(conn)
         .await?;
-        if desired != active {
-            return Err(Error::Invalid("privacy_projection_stale".into()));
-        }
         Ok(Self {
             changes,
             tombstoned,
-            policy_epoch: Some(active),
         })
     }
+
+    /// Whether every reading selected under this mark is still live.
+    pub async fn holds(&self, conn: &mut PgConnection, readings: &[Uuid]) -> Result<bool> {
+        Ok(not_live(conn, readings).await?.is_empty())
+    }
+}
+
+/// The readings among `ids` that are no longer live.
+async fn not_live(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+) -> Result<std::collections::HashSet<Uuid>> {
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    Ok(sqlx::query_scalar!(
+        r#"SELECT p.id AS "id!" FROM unnest($1::uuid[]) AS p(id)
+           WHERE NOT EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = p.id)
+             AND NOT EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = p.id)"#,
+        ids,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect())
 }
 
 /// One key of a [`DerivedScope::Keys`] batch.
@@ -117,7 +130,7 @@ pub(super) async fn apply_derived(
                 "WITH RECURSIVE descendants AS (
                   SELECT e.id FROM core.events e WHERE e.source=$1
                     AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
-                  UNION SELECT c.child FROM core.event_children c JOIN descendants p ON c.parent=p.id)
+                  UNION SELECT c.child FROM descendants p CROSS JOIN LATERAL core.event_children_of(p.id) c)
                  SELECT d.id FROM descendants d WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)")
                 .bind(derivation).fetch_all(&mut *conn).await?
             } else {
@@ -152,17 +165,11 @@ pub(super) async fn apply_derived(
                 )
                 .await?)
         }
-        DerivedScope::Recompute {
-            keys: marked,
-            policy_refresh,
-        } => {
+        DerivedScope::Recompute { keys: marked } => {
             let seq =
                 sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
                     .fetch_one(&mut *conn)
                     .await?;
-            if let Some(refresh) = &policy_refresh {
-                crate::privacy::refresh::record(conn, derivation, refresh).await?;
-            }
             let name = derivation.to_string();
             mark_dirty(
                 conn,
@@ -353,9 +360,6 @@ pub(super) async fn without_superseded_inputs(
     };
     // Nothing archived or tombstoned since the inputs were read: all still live.
     let now = ReadMark::now(conn).await?;
-    if read.policy_epoch.is_some() && read.policy_epoch != now.policy_epoch {
-        return Err(Error::Invalid("derivation_policy_epoch_changed".into()));
-    }
     if now.changes <= read.changes && now.tombstoned <= read.tombstoned {
         return Ok(None);
     }
@@ -372,16 +376,7 @@ pub(super) async fn without_superseded_inputs(
     }
     parents.sort_unstable();
     parents.dedup();
-    let superseded: std::collections::HashSet<Uuid> = sqlx::query_scalar!(
-        r#"SELECT p.id AS "id!" FROM unnest($1::uuid[]) AS p(id)
-           WHERE NOT EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = p.id)
-             AND NOT EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = p.id)"#,
-        &parents,
-    )
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .collect();
+    let superseded = not_live(conn, &parents).await?;
     if superseded.is_empty() {
         return Ok(None);
     }
@@ -502,21 +497,14 @@ pub(crate) async fn mark_inputs_dirty(
 ) -> Result<usize> {
     let mut dirty = Vec::new();
     let mut ranges = Vec::new();
-    // No event/projection membership changes during this invocation. Separate
-    // calls before and after projection each execute their own exact windows.
     // keys.keys maps a selected input to every registered producer target;
     // sharing a read never narrows that complete producer/version mapping.
     let mut nearby = std::collections::HashMap::<crate::derivations::Window, usize>::new();
     let mut repeated_marks = 0;
-    let policy_ready = crate::privacy::projection::epoch(conn).await?.ready();
     for input in inputs {
         dirty.extend(keys.keys(input));
         ranges.extend(keys.affected_ranges(input));
-        for query in keys
-            .nearby_inputs(input)
-            .into_iter()
-            .filter(|_| policy_ready)
-        {
+        for query in keys.nearby_inputs(input) {
             if let Some(marks) = nearby.get(&query) {
                 repeated_marks += *marks;
                 continue;
@@ -574,9 +562,9 @@ pub(crate) async fn mark_archived_dirty(
 ) -> Result<usize> {
     let descendants = sqlx::query_scalar!(
         r#"WITH RECURSIVE descendants(id) AS (
-             SELECT child FROM core.event_children WHERE parent = ANY($1)
+             SELECT edge.child FROM unnest($1::uuid[]) root(id) CROSS JOIN LATERAL core.event_children_of(root.id) edge
              UNION
-             SELECT edge.child FROM core.event_children edge JOIN descendants d ON edge.parent = d.id)
+             SELECT edge.child FROM descendants d CROSS JOIN LATERAL core.event_children_of(d.id) edge)
            SELECT d.id AS "id!" FROM descendants d
            WHERE NOT (d.id = ANY($1))
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = d.id)"#,

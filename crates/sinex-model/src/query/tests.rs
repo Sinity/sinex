@@ -389,6 +389,27 @@ fn walks_and_references() {
     assert!(parse_reference("sinex:at/2026-09-14/session").is_err());
 }
 
+/// law: citation-key-round-trip
+/// A source record key may hold any text, including the grammar's own `@`,
+/// `#` and `%`: printed through the shared grammar it parses back unchanged.
+#[devkit::test]
+fn key_citations_escape_the_grammar_and_parse_back() {
+    for key in ["<a1@mail.example>", "thread#7/50% done", "plain"] {
+        let printed = citation("key", &format!("mail.imap/mail.message/{key}"));
+        assert_eq!(
+            parse_reference(&printed).unwrap(),
+            Reference::Key {
+                source: "mail.imap".into(),
+                event_type: "mail.message".into(),
+                key: key.into(),
+            },
+            "{printed}"
+        );
+    }
+    assert!(parse_reference("polylogue:session/claude-code:abc").is_err());
+    assert!(parse_reference("sinex:ev/0190a1b2-0000-7000-8000-000000000000@2").is_err());
+}
+
 #[devkit::test]
 fn recall_windows() {
     let query = q("recall 2026-03-02 14:05 ±20m");
@@ -651,3 +672,24 @@ fn numeric_looking_payload_text_keeps_its_literal_spelling() {
 }
 
 mod literals;
+
+#[devkit::test]
+fn curation_fields_bind_without_shadowing_core_fields() {
+    let curation = Alias::from_name("curation").unwrap();
+    for field in curation.fields {
+        assert!(
+            Table::Events.field(field.name).is_none(),
+            "curation.{} is also a core event field",
+            field.name
+        );
+    }
+    q("curation where value_origin = imported");
+    q("curation where name = favourites AND kind = collection");
+    // `origin` stays the core field: material or derived.
+    q("curation where origin = material");
+    assert!(
+        err("curation where origin = imported")
+            .message
+            .contains("origin")
+    );
+}

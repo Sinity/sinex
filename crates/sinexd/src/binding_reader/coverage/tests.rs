@@ -18,8 +18,8 @@ fn source_read_outcomes_distinguish_empty_partial_and_failed_reads() {
     assert_eq!(empty.events, 0);
     assert!(empty.reason.unwrap().contains("successfully"));
     let mut totals = Totals::default();
-    totals.failures = 2;
-    totals.events_offered = 3;
+    totals.accounting.failures = 2;
+    totals.accounting.readings = 3;
     let partial = outcome(&binding(), at, &Ok(totals));
     assert_eq!(partial.state, CoverageState::Partial);
     assert_eq!(partial.events, 3);

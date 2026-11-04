@@ -16,6 +16,18 @@ and the program never waits.
   `$SINEX_KITTY_SCROLLBACK_SECONDS` (180) and when the window closes or kitty
   quits (`scrollback.captured`).
 
+- `shell/sinex.{zsh,bash,fish}`: the shell integration. For each command
+  it mints a UUIDv7 execution token in the shell's preexec hook, hands it to
+  kitty as the `sinex_execution` user variable (kitty's watcher then records
+  it on the command's start and end), and reports the finished execution
+  (token, command line as received, cwd, start, duration, exit, the shell's
+  process ID and the Atuin row started for it) through `sinex-session
+  report-command` in the background (`command.reported`). The NixOS module
+  loads it into interactive shells when `services.sinex.session.shellIntegration`
+  is on (the default with a session user). Bash needs bash 5.1 and
+  bash-preexec, as Atuin's bash integration does. Command fusion joins a
+  report and the Atuin row it names by identifier, not by time.
+
 Each new Kitty and Neovim record with a cwd includes a capture-time
 `git_identity` (`common_dir`, all reachable `root_commits`, `head`, `branch`).
 A failed or timed-out probe records an unknown identity. Historical cwd values

@@ -7,13 +7,15 @@
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp, event_types::CommandExecuted};
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.atuin-history",
-    driver: Driver::SqliteRows,
+    origin: Origin::Input(Shape::SqliteRows),
+    expect: Expectation::continuous_days(2),
+    expires_after: None,
     purpose: "command fusion and shell recall",
     class: Class::Open,
     parser: "atuin-history",
@@ -132,10 +134,23 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `--read atuin=PATH`: Atuin's history database.
+/// `stage --parser atuin PATH`: Atuin's history database.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "atuin",
+        accepts: &[sinex_source_core::stage::Structure::SqliteTable {
+            table: "history",
+            columns: &[
+                "id",
+                "timestamp",
+                "duration",
+                "exit",
+                "command",
+                "cwd",
+                "session",
+                "hostname",
+            ],
+        }],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::System,
             locations: &[sinex_source_core::discovery::Location {
@@ -145,8 +160,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
             capabilities: &[],
             credentials: &[],
             streams: &[],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

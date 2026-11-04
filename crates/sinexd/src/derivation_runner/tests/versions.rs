@@ -75,7 +75,12 @@ impl<const V: u32> Keyed for Days<V> {
             session: None,
             duration_ns: None,
             exit_code: None,
-            observed_by: vec![],
+            execution: None,
+            members: vec![],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         };
         Computed {
             outputs: vec![sinex_derivations::derived_event::derived(

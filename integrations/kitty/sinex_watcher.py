@@ -4,6 +4,10 @@ In kitty.conf:
 
     watcher /path/to/sinex_watcher.py
 
+With Sinex's shell integration, a command's start and end carry the
+execution token the shell minted for it (`execution`), the same token the
+shell's own report carries.
+
 Each event is one JSON line on the socket ($SINEX_SESSION_SOCKET, or
 $XDG_RUNTIME_DIR/sinex/session.sock). When nothing listens the event is
 dropped: kitty never waits on Sinex. Command start and end need kitty's shell
@@ -35,6 +39,9 @@ _timer = None
 _sent = {}
 # Windows whose scrollback was sent in full as kitty quit.
 _finished = set()
+# Window id -> the execution token Sinex's shell integration minted for the
+# command running there (the `sinex_execution` user variable).
+_execution = {}
 
 
 def _path():
@@ -183,12 +190,25 @@ def on_close(boss, window, data):
         pass
     _sent.pop(window.id, None)
     _finished.discard(window.id)
+    _execution.pop(window.id, None)
     _send("close", window)
 
 
+def on_set_user_var(boss, window, data):
+    if data.get("key") == "sinex_execution":
+        value = data.get("value")
+        if value:
+            _execution[window.id] = value
+        else:
+            _execution.pop(window.id, None)
+
+
 def on_cmd_startstop(boss, window, data):
+    # The shell sets the token in its preexec hook; kitty's own hook may mark
+    # the start first, so a start carries the token only when it arrived.
+    execution = _execution.get(window.id)
     if data.get("is_start"):
-        _send("cmd_start", window, cmdline=data.get("cmdline"))
+        _send("cmd_start", window, cmdline=data.get("cmdline"), execution=execution)
         return
     try:
         output = window.cmd_output(as_ansi=True)
@@ -200,4 +220,6 @@ def on_cmd_startstop(boss, window, data):
         cmdline=data.get("cmdline"),
         exit_status=data.get("exit_status"),
         output=output,
+        execution=execution,
     )
+    _execution.pop(window.id, None)

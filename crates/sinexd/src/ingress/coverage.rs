@@ -16,12 +16,9 @@ enum Failure {
     Unverified(String),
 }
 impl Failure {
-    fn basis(&self, policy_epoch: Option<i64>, scope: Option<String>) -> ReplayBasisStatus {
+    fn basis(&self, scope: Option<String>) -> ReplayBasisStatus {
         match self {
-            Self::Invalidated(_) => ReplayBasisStatus::Invalidated {
-                policy_epoch,
-                scope,
-            },
+            Self::Invalidated(_) => ReplayBasisStatus::Invalidated { scope },
             Self::Unverified(_) => ReplayBasisStatus::Unverified,
         }
     }
@@ -237,7 +234,6 @@ impl Requests {
         cache: &str,
         cursor: Option<&str>,
     ) -> InputReplayReply {
-        let mut current_epoch = None;
         let current_scope = self
             .read_grants
             .get(producer)
@@ -275,10 +271,6 @@ impl Requests {
             sinex_store::query::read_one_snapshot(&mut tx)
                 .await
                 .map_err(|error| error.to_string())?;
-            let policy = sinex_store::privacy::projection::epoch(&mut tx)
-                .await
-                .map_err(|error| error.to_string())?;
-            current_epoch = policy.ready().then_some(policy.active);
             let context = self
                 .public_context
                 .snapshot(
@@ -321,11 +313,6 @@ impl Requests {
                 }
                 cursor
             } else {
-                if !policy.ready() {
-                    return Err(Failure::Invalidated(
-                        "coverage_policy_projection_pending".into(),
-                    ));
-                }
                 Cursor {
                     claims: Claims {
                         purpose: "projection".into(),
@@ -341,7 +328,6 @@ impl Requests {
                         position: sinex_store::query::current_seq(&mut tx)
                             .await
                             .map_err(|error| error.to_string())?,
-                        policy_epoch: policy.active,
                         kinds,
                         indexed_kinds,
                         classes,
@@ -411,21 +397,13 @@ impl Requests {
                             "coverage_native_source_schema_changed".into(),
                         ));
                     }
-                    if row.changed {
-                        return Err(Failure::Invalidated(
-                            "coverage_required_projection_affected".into(),
-                        ));
-                    }
                 }
                 inputs.push(InputReference {
                     event: EventId(row.id),
                     commit_seq: row.commit_seq,
                     archived: row.archived,
                     lifecycle_position: row.lifecycle_position,
-                    projection: sinex_protocol::ProjectionIdentity::for_payload(
-                        cursor.claims.policy_epoch,
-                        &row.payload,
-                    ),
+                    projection: sinex_protocol::ProjectionIdentity::for_payload(&row.payload),
                     kind,
                     kind_definition_hash,
                     source,
@@ -461,14 +439,13 @@ impl Requests {
                                     .await
                                     .map_err(|error| error.to_string())?,
                                 position: raw.position,
-                                policy_epoch: raw.policy_epoch,
                                 scope: raw.scope,
                             },
                         }
                     }
                     Err(reason) => CoverageStatus::Incomplete {
                         reason: reason.to_string(),
-                        basis: reason.basis(current_epoch, current_scope.clone()),
+                        basis: reason.basis(current_scope.clone()),
                     },
                 };
                 ReplayContinuation::Complete {
@@ -478,7 +455,6 @@ impl Requests {
             };
             Ok(InputReplayReply::Page {
                 position: cursor.claims.position,
-                policy_epoch: cursor.claims.policy_epoch,
                 scope: cursor.claims.scope,
                 inputs,
                 continuation,
@@ -487,7 +463,7 @@ impl Requests {
         .await;
         result.unwrap_or_else(|failure| {
             let reason = failure.to_string();
-            let basis = failure.basis(current_epoch, current_scope);
+            let basis = failure.basis(current_scope);
             InputReplayReply::Incomplete { reason, basis }
         })
     }
@@ -499,16 +475,11 @@ impl Requests {
         request: &CoverageRequest,
         context: &sinex_protocol::PublicContext,
     ) -> CoverageStatus {
-        let mut current_epoch = None;
         let current_scope = self
             .read_grants
             .get(producer)
             .map(|grant| grant.consumer_scope(producer, &self.subjects).1);
         let result: Result<_, Failure> = async {
-            let policy = sinex_store::privacy::projection::epoch(conn)
-                .await
-                .map_err(|error| error.to_string())?;
-            current_epoch = policy.ready().then_some(policy.active);
             let sinex_protocol::PublicContext::Available {
                 settings_identity,
                 owner_revision,
@@ -540,7 +511,6 @@ impl Requests {
             if claims.replay_root.is_none()
                 || claims.purpose != "basis"
                 || basis.position != claims.position
-                || basis.policy_epoch != claims.policy_epoch
                 || basis.scope != claims.scope
                 || request.completed_position < claims.position
                 || !same(
@@ -591,7 +561,6 @@ impl Requests {
             Ok(CoverageProof {
                 stamp,
                 position: claims.position,
-                policy_epoch: claims.policy_epoch,
                 scope: claims.scope,
             })
         }
@@ -600,7 +569,7 @@ impl Requests {
             Ok(proof) => CoverageStatus::Complete { proof },
             Err(failure) => CoverageStatus::Incomplete {
                 reason: failure.to_string(),
-                basis: failure.basis(current_epoch, current_scope),
+                basis: failure.basis(current_scope),
             },
         }
     }
@@ -612,7 +581,6 @@ impl Ingest {
         producer: &str,
         frame: Option<&Ingress>,
     ) -> Result<Option<sinex_model::OwnerCoverage>, Check> {
-        let optional = matches!(frame,Some(Ingress::Signals{signals,emergency,..}) if signals.is_empty()&&!emergency.is_empty());
         let (coverage, required) = match frame {
             Some(Ingress::Events {
                 events,
@@ -635,9 +603,6 @@ impl Ingest {
                 }
                 (coverage, required)
             }
-            Some(Ingress::Signals {
-                coverage, signals, ..
-            }) => (coverage, !signals.is_empty()),
             _ => return Ok(None),
         };
         let Some(proof) = coverage else {
@@ -670,10 +635,8 @@ impl Ingest {
             .await
             .map_err(Check::Unavailable)?;
             Ok(sinex_model::OwnerCoverage {
-                required: !optional,
                 stamp: proof.stamp.clone(),
                 position: proof.position,
-                policy_epoch: proof.policy_epoch,
                 scope,
                 catalog,
                 instance: native,
@@ -685,11 +648,7 @@ impl Ingest {
             })
         }
         .await;
-        match claim {
-            Ok(claim) => Ok(Some(claim)),
-            Err(_) if optional => Ok(None),
-            Err(error) => Err(error),
-        }
+        claim.map(Some)
     }
 }
 
@@ -781,14 +740,6 @@ impl Requests {
                     *coverage = status;
                 }
             }
-            self.public_context.grant_offline_emergency(
-                &mut context,
-                producer,
-                self.read_grants
-                    .get(producer)
-                    .and_then(|grant| grant.write.as_ref()),
-                Timestamp::now(),
-            )?;
             self.public_context
                 .sign_snapshot(&mut tx, producer, &mut context)
                 .await?;

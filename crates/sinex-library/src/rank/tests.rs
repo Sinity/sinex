@@ -1,41 +1,75 @@
 use super::*;
+use serde_json::json;
+use sinex_model::Timestamp;
+use sinex_model::event_types::library::ValueOrigin;
 
-fn j(w: &str, l: &str) -> (String, String) {
-    (w.into(), l.into())
+fn comparison(rev: &str, author: &str, scale: &str, order: Value) -> Curation {
+    Curation {
+        root: rev.into(),
+        rev: rev.into(),
+        revises: vec![],
+        withdraws: vec![],
+        kind: CurationKind::Comparison,
+        target: None,
+        key: Some(scale.into()),
+        value: Some(json!({ "order": order, "blind": false })),
+        origin: ValueOrigin::Authored,
+        cites: None,
+        author: author.into(),
+        via: "test".into(),
+        at: Timestamp::from_unix_secs(1).unwrap(),
+        request: rev.into(),
+        request_digest: String::new(),
+        slots: vec![],
+    }
+}
+
+fn t(item: &str) -> Value {
+    json!({ "item": item, "revision": "r", "rendition": null, "part": null })
 }
 
 #[devkit::test]
-fn a_consistent_order_is_recovered() {
-    let judgements = vec![
-        j("a", "b"),
-        j("b", "c"),
-        j("a", "c"),
-        j("c", "d"),
-        j("b", "d"),
-        j("a", "b"),
+fn a_comparison_is_one_judgment_with_its_tie_groups() {
+    let records = [
+        comparison(
+            "c1",
+            "operator",
+            "liking",
+            json!([[t("a")], [t("b"), t("c")], [t("d")]]),
+        ),
+        comparison("c2", "operator", "other", json!([[t("a")], [t("b")]])),
     ];
-    let r = bradley_terry(&judgements);
-    let order: Vec<&str> = r.iter().map(|x| x.item.as_str()).collect();
-    assert_eq!(order, ["a", "b", "c", "d"]);
-    assert!(r.iter().all(|x| x.strength.is_finite() && x.strength > 0.0));
-    assert_eq!(r[0].wins, 3);
-    assert_eq!(r[3].losses, 2);
+    let found = judgments(&records, "liking");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].judge, "operator");
+    assert_eq!(
+        found[0].order,
+        vec![
+            vec!["a".to_owned()],
+            vec!["b".to_owned(), "c".to_owned()],
+            vec!["d".to_owned()]
+        ]
+    );
 }
 
+/// law: lib.rank.judge-isolation
 #[devkit::test]
-fn an_unbeaten_item_stays_finite_and_ties_are_repeatable() {
-    let r = bradley_terry(&[j("x", "y")]);
-    assert_eq!(r[0].item, "x");
-    assert!(r[0].strength.is_finite());
-    let tie = bradley_terry(&[j("p", "q"), j("q", "p")]);
-    assert_eq!(tie[0].item, "p");
-    assert!((tie[0].strength - tie[1].strength).abs() < 1e-9);
-    assert!(bradley_terry(&[]).is_empty());
-}
-
-#[devkit::test]
-fn the_next_pair_is_the_least_compared_neighbours() {
-    let judgements = vec![j("a", "b"), j("a", "b"), j("b", "c")];
-    let r = bradley_terry(&judgements);
-    assert_eq!(next_pair(&r, &judgements), Some(("b".into(), "c".into())));
+fn the_default_judge_set_is_the_operator_and_agents_change_nothing_in_it() {
+    let operator = comparison("c1", "operator", "liking", json!([[t("a")], [t("b")]]));
+    let agent = comparison("c2", "agent", "liking", json!([[t("b")], [t("a")]]));
+    let items = ["a".to_owned(), "b".to_owned()];
+    let options = ranking::FitOptions {
+        judges: judge_set(None),
+        ..ranking::FitOptions::default()
+    };
+    let alone = ranking::fit(&items, &judgments(&[operator.clone()], "liking"), &options).unwrap();
+    let with_agent =
+        ranking::fit(&items, &judgments(&[operator, agent], "liking"), &options).unwrap();
+    assert_eq!(alone, with_agent);
+    assert_eq!(alone.items[0].item, "a");
+    assert_eq!(judge_set(Some("all")), JudgeSet::All);
+    assert_eq!(
+        judge_set(Some("agent, operator")),
+        JudgeSet::named(["agent", "operator"])
+    );
 }

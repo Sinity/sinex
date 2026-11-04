@@ -86,7 +86,17 @@ async fn standing_queries_keep_native_and_group_keys_through_projection_and_repl
             session: Some("s".into()),
             duration_ns: Some(2_000_000_000),
             exit_code: Some(0),
-            observed_by: vec!["terminal.atuin".into()],
+            execution: None,
+            members: vec![sinex_model::event_types::fused::Member {
+                record: format!("fixture:{}", "terminal.atuin"),
+                source: "terminal.atuin".into(),
+                event_type: "command.executed".into(),
+                joined: sinex_model::event_types::fused::Joined::Lead,
+            }],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         },
         "derive.shell-fusion",
         Origin::Derived {
@@ -141,12 +151,10 @@ async fn signal_observations_do_not_feed_standing_event_queries(db: devkit::pg::
         .await
         .unwrap();
     world(&mut conn).await;
-    let payload = sinex_model::event_types::signal::CheckpointRecorded {
-        host: "fixture".into(),
-        revision: 1,
-        settings_identity: "public-policy".into(),
-        read_as: 0,
-        written_at: Timestamp::from_unix_secs(BASE).unwrap(),
+    let payload = sinex_model::event_types::signal::OutcomeRecorded {
+        delivery_id: "fixture".into(),
+        outcome: ::signals::Outcome::Shown,
+        recorded_at: Timestamp::from_unix_secs(BASE).unwrap(),
     };
     let event = Event::build(
         &payload,
@@ -208,11 +216,17 @@ async fn admit_signal_fixture(conn: &mut crate::AdmissionContext, event: Event) 
     tx.commit().await.unwrap();
     result
 }
+fn fired(reports: Vec<::signals::Report>) -> usize {
+    reports
+        .iter()
+        .filter(|report| matches!(report, ::signals::Report::Fired(_)))
+        .count()
+}
 fn observation(identity: String, reference: String, at: i64) -> ::signals::Row {
     ::signals::Row {
         occurrence: ::signals::Occurrence {
             id: identity,
-            episode: "record".into(),
+            period: "record".into(),
         },
         reference,
         observed: at,
@@ -223,7 +237,7 @@ fn observation(identity: String, reference: String, at: i64) -> ::signals::Row {
     }
 }
 #[devkit::test]
-async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
+async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -254,11 +268,10 @@ async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
         author: ::signals::Author::Agent("fixture".into()),
         via: "fixture".into(),
         live: false,
+        shipped: Default::default(),
     };
     let at = 1_800_000_000_000;
-    let mut evaluator =
-        ::signals::Evaluator::new(at - 1, vec![active.clone()], Default::default(), &calendar)
-            .unwrap();
+    let mut evaluator = ::signals::Evaluator::new(at - 1, vec![active.clone()], &calendar).unwrap();
     evaluator
         .observe(::signals::Evaluation {
             rule: active.version.clone(),
@@ -272,48 +285,7 @@ async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
             value: None,
         })
         .unwrap();
-    assert_eq!(
-        evaluator
-            .advance_in_mode(at, &calendar, ::signals::EvaluationMode::Forward)
-            .unwrap()
-            .intents
-            .len(),
-        1
-    );
-    crate::privacy::add_rule(
-        &mut conn,
-        &crate::privacy::NewRule {
-            name: "native key protection".into(),
-            source: "derive.shell-fusion".into(),
-            event_type: Some("command.fused".into()),
-            field: Some("/record".into()),
-            matcher: "all".into(),
-            matcher_arg: None,
-            class: Class::Open,
-            action: crate::privacy::Action::Hash,
-            author: "fixture".into(),
-        },
-    )
-    .await
-    .unwrap();
-    crate::privacy::projection::ensure_current(&mut conn)
-        .await
-        .unwrap();
-    let protected = standing_query(&mut conn, question, &ctx(), seq)
-        .await
-        .unwrap();
-    assert_eq!(
-        protected
-            .rows
-            .iter()
-            .map(|row| &row.identity)
-            .collect::<Vec<_>>(),
-        before
-            .rows
-            .iter()
-            .map(|row| &row.identity)
-            .collect::<Vec<_>>()
-    );
+    assert_eq!(fired(evaluator.reports(at, &calendar).unwrap()), 1);
     let mut reread = Event::build(
         &CommandFused {
             record: format!("command.executed:{}", ids[0].1),
@@ -324,7 +296,17 @@ async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
             session: Some("s".into()),
             duration_ns: None,
             exit_code: Some(0),
-            observed_by: vec!["terminal.atuin".into()],
+            execution: None,
+            members: vec![sinex_model::event_types::fused::Member {
+                record: format!("fixture:{}", "terminal.atuin"),
+                source: "terminal.atuin".into(),
+                event_type: "command.executed".into(),
+                joined: sinex_model::event_types::fused::Joined::Lead,
+            }],
+            basis: sinex_model::event_types::fused::Basis::Rule,
+            ambiguous: 1,
+            competitors: vec![],
+            rule_version: 1,
         },
         "derive.shell-fusion",
         Origin::Derived {
@@ -362,12 +344,41 @@ async fn privacy_key_projection_and_new_readings_do_not_refire_the_native_fact(
             value: None,
         })
         .unwrap();
-    assert!(
-        evaluator
-            .advance_in_mode(at + 1, &calendar, ::signals::EvaluationMode::Forward)
-            .unwrap()
-            .intents
-            .is_empty()
+    assert_eq!(fired(evaluator.reports(at + 1, &calendar).unwrap()), 0);
+    crate::privacy::add_rule(
+        &mut conn,
+        &crate::privacy::NewRule {
+            name: "native key protection".into(),
+            source: "derive.shell-fusion".into(),
+            event_type: Some("command.fused".into()),
+            field: Some("/record".into()),
+            matcher: "all".into(),
+            matcher_arg: None,
+            class: Class::Open,
+            action: crate::privacy::Action::Hash,
+            author: "fixture".into(),
+        },
+    )
+    .await
+    .unwrap();
+    // Rules apply when a reading is admitted (the mechanism Sinex runs until
+    // output-time rules are built; docs/privacy.md describes that design), so
+    // a rule written after both readings leaves the native fact's identity
+    // as it was.
+    let protected = standing_query(&mut conn, question, &ctx(), seq)
+        .await
+        .unwrap();
+    assert_eq!(
+        protected
+            .rows
+            .iter()
+            .map(|row| &row.identity)
+            .collect::<Vec<_>>(),
+        before
+            .rows
+            .iter()
+            .map(|row| &row.identity)
+            .collect::<Vec<_>>()
     );
 }
 

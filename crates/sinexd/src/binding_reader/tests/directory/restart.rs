@@ -110,7 +110,7 @@ async fn prefix(
     sink: &dyn drivers::MaterialSink,
     sealing: Option<&crate::material_access::sealing::SealingSink>,
 ) -> MaterialRef {
-    crate::backfill::record(&mut ctx.read_conn, &b.binding)
+    crate::stage::record(&mut ctx.read_conn, &b.binding)
         .await
         .unwrap();
     let (cursor, carry) = positions::load(&mut ctx.read_conn, &b.binding.name)
@@ -450,24 +450,6 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     .await
     .unwrap();
     assert_eq!(class, "guarded");
-    assert!(
-        !sinex_store::privacy::projection::epoch(&mut ctx.read_conn)
-            .await
-            .unwrap()
-            .ready()
-    );
-    let pending = sqlx::query_scalar::<_, Value>("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'")
-        .fetch_one(&mut ctx.read_conn).await.unwrap_err();
-    assert_eq!(
-        pending
-            .as_database_error()
-            .and_then(|error| error.code())
-            .as_deref(),
-        Some("55000")
-    );
-    sinex_store::privacy::projection::ensure_current(&mut ctx.read_conn)
-        .await
-        .unwrap();
     let shown: Value = sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(shown, json!({"withheld":"guarded"}));
     ctx.close().await.unwrap();

@@ -30,9 +30,9 @@ description = "All Rust tests under nextest; each database test clones the schem
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 pool = "bulk"
 result = "exit"
-# A measured 524s cold build plus a 512s complete runtime exceeds 900s.
-# This outer budget preserves the original 120s per-test deadlines.
-timeout_seconds = 1800
+# A contended cold build exceeded 1800s before running tests. Allow the
+# build and full suite; individual nextest deadlines remain unchanged.
+timeout_seconds = 3600
 scratch = "tmpfs"
 cache = "none"
 unit_properties = ["MemoryHigh=8G"]
@@ -48,7 +48,6 @@ result = "exit"
 timeout_seconds = 3600
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.catalog]
@@ -59,7 +58,6 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
-cap = "cargo"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.focused]

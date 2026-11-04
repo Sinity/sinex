@@ -24,7 +24,7 @@ use sinex_model::Class;
 use sinex_model::event_types::telemetry::{HardwareState, ProcessKilled, ResourceSampled};
 use sinex_source_core::binding::{Binding, InputFormat, Settings};
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::{Path, PathBuf};
 
@@ -60,7 +60,9 @@ const SPECS: [SourceSpec; 13] = [
 const fn spec(parser: &'static str, event_types: &'static [&'static str]) -> SourceSpec {
     SourceSpec {
         name: "machine.telemetry",
-        driver: Driver::SqliteRows,
+        origin: Origin::Input(Shape::SqliteRows),
+        expect: Expectation::continuous_hours(1),
+        expires_after: None,
         // A sealed file repeats rows the active file's binding read.
         purpose: "resource figures and what the machine was doing: power, temperatures, \
                   memory, IO and pressure per service and process, and OOM kills",
@@ -258,9 +260,10 @@ fn tables(path: &Path) -> Option<Vec<String>> {
         .ok()
 }
 
-/// `--read machine-telemetry=PATH`: the collector's databases.
+/// `stage --parser machine-telemetry PATH`: the collector's databases.
 pub const FORMAT: InputFormat = InputFormat {
     name: "machine-telemetry",
+    accepts: &[],
     discovery: sinex_source_core::discovery::DiscoverySpec {
         owner: sinex_source_core::discovery::Owner::System,
         locations: &[
@@ -276,8 +279,6 @@ pub const FORMAT: InputFormat = InputFormat {
         capabilities: &[],
         credentials: &[],
         streams: &[],
-        requests: &[],
-        request_only: false,
     },
     discover: crate::discovery::discover_format,
     specs: || SPECS.iter().collect(),

@@ -189,14 +189,16 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     // Discovery must see the configured spool before its first planning turn.
     std::fs::create_dir_all(&telemetry_spool)
         .map_err(|error| format!("telemetry spool: {error}"))?;
-    sources.sources.insert(
-        sinex_sources::sources::telemetry::SPEC.name.to_owned(),
-        binding_runner::SourceConfig {
-            paths: vec![telemetry_spool.display().to_string()],
-            ..Default::default()
-        },
-    );
+    sources
+        .discovery
+        .inputs
+        .entry(sinex_sources::sources::telemetry::FORMAT.name.to_owned())
+        .or_default()
+        .push(telemetry_spool.clone());
     let configuration = sources.derivation_configuration();
+    // Fusion runs only the families with a written definition; an invalid
+    // declaration refuses to start, naming the family and the reason.
+    sinex_derivations::fusion::declaration::check().map_err(|refused| refused.to_string())?;
     let (keyed, per_event) = (
         crate::analysis::keyed_with(&configuration),
         derivation_runner::per_event_with(&configuration)?,
@@ -304,6 +306,8 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let reader_api = Api {
         source_config: Arc::new(sources.clone()),
         read_failures: read_failures.clone(),
+        running_stages: Default::default(),
+        stop: stop.clone(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
@@ -322,19 +326,18 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
             Vec::new()
         } else {
             sources
-                .sources
-                .get("library.scan")
+                .discovery
+                .input_roots
+                .get("library")
                 .into_iter()
-                .flat_map(|source| source.paths.iter().map(std::path::PathBuf::from))
                 .chain(
                     sources
                         .discovery
-                        .input_roots
-                        .get("library")
-                        .into_iter()
-                        .flatten()
-                        .cloned(),
+                        .inputs
+                        .get(sinex_sources::sources::library::FORMAT.name),
                 )
+                .flatten()
+                .cloned()
                 .collect()
         },
     };
@@ -349,27 +352,11 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         reader_api.source_config.signals.as_ref(),
     )?;
     if let Some(settings_identity) = public_context.settings_identity.clone() {
-        let (signals_api, signals_client, signals_subjects, signals_grants, c, s) = (
-            reader_api.clone(),
-            client.clone(),
-            subjects.clone(),
-            Arc::new(o.producer_grants.clone()),
-            commits.clone(),
-            stop.clone(),
-        );
+        let (signals_api, c, s) = (reader_api.clone(), commits.clone(), stop.clone());
         tasks.spawn(async move {
             (
                 "signals",
-                crate::signals::run(
-                    signals_api,
-                    signals_client,
-                    signals_subjects,
-                    signals_grants,
-                    settings_identity,
-                    c,
-                    s,
-                )
-                .await,
+                crate::signals::run(signals_api, settings_identity, c, s).await,
             )
         });
     }

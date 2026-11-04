@@ -1,4 +1,5 @@
 use super::*;
+use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Signal {
@@ -20,6 +21,9 @@ pub(super) struct Piece<'a> {
     pub scope: String,
     pub signal: Signal,
     pub event: &'a Event,
+    /// The stored payload, or a focus, play or rest record in its family's
+    /// common payload.
+    pub payload: Cow<'a, Value>,
     pub reason: Option<&'static str>,
 }
 
@@ -39,23 +43,46 @@ fn physical(event: &Event) -> bool {
 pub(super) fn pieces(inputs: &[Event]) -> Vec<Piece<'_>> {
     let mut pieces = Vec::new();
     for event in inputs {
-        let Some(start) = event.ts_orig.at else {
-            continue;
-        };
-        let Some((start, end)) = geometry(&event.event_type, &event.payload, start) else {
+        let Some(at) = event.ts_orig.at else {
             continue;
         };
         let payload = &event.payload;
-        let (signal, reason) = match event.event_type.as_str() {
+        let kind = event.event_type.as_str();
+        let family = [
+            (&FOCUS, Signal::Focus, None),
+            (&PLAYS, Signal::Playback, None),
+            (&REST, Signal::Absent, Some("sleep")),
+        ]
+        .into_iter()
+        .find(|(family, ..)| family.admits(kind, payload));
+        if let Some((family, signal, reason)) = family {
+            let Some(common) = family.read(event) else {
+                continue;
+            };
+            // An end not recorded yet leaves the record's instant.
+            let end = serde_json::from_value::<Timestamp>(common["ended_at"].clone())
+                .map_or(at, |end| end.max(at));
+            pieces.push(Piece {
+                start: at.unix_ns(),
+                end: end.unix_ns(),
+                scope: scope(payload, kind),
+                signal,
+                event,
+                payload: Cow::Owned(common),
+                reason,
+            });
+            continue;
+        }
+        let Some((start, end)) = geometry(kind, payload, at) else {
+            continue;
+        };
+        let (signal, reason) = match kind {
             "key.pressed" | "pointer.button" | "pointer.moved" | "pointer.scrolled"
                 if physical(event) =>
             {
                 (Signal::Physical, None)
             }
             "presence.span" | "presence.interval" => (Signal::Claim, None),
-            "focus.fused" => (Signal::Focus, None),
-            "play.fused" => (Signal::Playback, None),
-            "rest.fused" => (Signal::Absent, Some("sleep")),
             "state.interval" => match (payload["state_kind"].as_str(), payload["label"].as_str()) {
                 (Some("desktop.lock"), Some("locked")) => (Signal::Absent, Some("lock")),
                 (Some("desktop.display"), Some("off")) => (Signal::Absent, Some("display_off")),
@@ -78,13 +105,13 @@ pub(super) fn pieces(inputs: &[Event]) -> Vec<Piece<'_>> {
             "work.act" if payload["agency"] == "delegated" => (Signal::Delegated, None),
             _ => continue,
         };
-        let event_scope = scope(payload, &event.event_type);
         pieces.push(Piece {
             start,
             end,
-            scope: event_scope,
+            scope: scope(payload, kind),
             signal,
             event,
+            payload: Cow::Borrowed(payload),
             reason,
         });
     }

@@ -8,7 +8,7 @@ use sinex_model::{
     Class, EquivalenceKey, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordState, ReplaceRule, TimeQuality, Timestamp, TsOrig,
 };
-use sqlx::{Connection, PgConnection};
+use sqlx::PgConnection;
 use std::collections::HashSet;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -43,6 +43,9 @@ pub struct Nearest {
     /// One answer set per value of this payload field seen in the window.
     pub per: Option<&'static str>,
     pub count: i64,
+    /// With `per`: each value is a start-minted token, and its read stops at
+    /// the lifetime the window records holding it give it.
+    pub lifetime: Option<sinex_model::TokenLifetime>,
 }
 
 /// Live events of some kinds in a `ts_orig` window, plus nearest neighbours.
@@ -211,21 +214,21 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             let bounds = sqlx::query!(
                 r#"WITH RECURSIVE chain(id, start, finish) AS (
                      SELECT e.id AS "id!", e.ts_orig, coalesce((e.payload->>$3)::timestamptz, e.ts_orig)
-                     FROM core.derivation_events e WHERE e.ts_orig=$4 AND e.event_type=ANY($1)
+                     FROM core.events e WHERE e.ts_orig=$4 AND e.event_type=ANY($1)
                        AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                    WHERE k.event_type=e.event_type AND e.payload @> k.contains)
                        AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
                      UNION
                      SELECT n.id, n.ts_orig, coalesce((n.payload->>$3)::timestamptz, n.ts_orig)
                      FROM chain c CROSS JOIN LATERAL (
-                       (SELECT e.id, e.ts_orig, e.payload FROM core.derivation_events e
+                       (SELECT e.id, e.ts_orig, e.payload FROM core.events e
                         WHERE e.event_type=ANY($1) AND e.ts_orig<c.start
                           AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                       WHERE k.event_type=e.event_type AND e.payload @> k.contains)
                           AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
                         ORDER BY e.ts_orig DESC, e.id LIMIT 1)
                        UNION ALL
-                       (SELECT e.id, e.ts_orig, e.payload FROM core.derivation_events e
+                       (SELECT e.id, e.ts_orig, e.payload FROM core.events e
                         WHERE e.event_type=ANY($1) AND e.ts_orig>c.start
                           AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                       WHERE k.event_type=e.event_type AND e.payload @> k.contains)
@@ -250,7 +253,7 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             let (types, contains) = kind_arrays(kinds);
             let bounds = sqlx::query!(
                 r#"SELECT min(e.ts_orig) AS start, max(e.ts_orig) AS finish
-                   FROM core.derivation_events e WHERE e.event_type = ANY($1) AND e.ts_orig IS NOT NULL
+                   FROM core.events e WHERE e.event_type = ANY($1) AND e.ts_orig IS NOT NULL
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                  WHERE k.event_type = e.event_type AND e.payload @> k.contains)
                      AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"#,
@@ -294,7 +297,7 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
         } => {
             let (types, contains) = kind_arrays(kinds);
             let end = sqlx::query_scalar!(
-                r#"SELECT min((e.payload->>$3)::timestamptz) AS finish FROM core.derivation_events e
+                r#"SELECT min((e.payload->>$3)::timestamptz) AS finish FROM core.events e
                    WHERE e.event_type = ANY($1) AND (e.payload->>$3)::timestamptz > $4
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
                                  WHERE k.event_type = e.event_type AND e.payload @> k.contains)
@@ -336,7 +339,7 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM core.derivation_events e
+           FROM core.events e
            WHERE e.event_type = ANY($1) AND (e.ts_orig IS NOT NULL OR $8)
              AND ($3::timestamptz IS NULL OR e.ts_orig < $3)
              AND ($2::timestamptz IS NULL OR e.ts_orig >= $2 OR EXISTS (
@@ -402,13 +405,13 @@ async fn window_page(
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule, page.matched AS "matched!"
-           FROM core.derivation_events e JOIN (
+           FROM core.events e JOIN (
              SELECT p.id, p.matched FROM (
                SELECT q.id, count(*) OVER () AS matched,
                       (sum(q.size) OVER (ORDER BY q.ts_orig, q.commit_seq) - q.size)::bigint AS before
                FROM (
                  SELECT s.id, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
-                 FROM core.derivation_events s
+                 FROM core.events s
                  WHERE s.event_type = ANY($1) AND s.ts_orig IS NOT NULL
                    AND ($2::timestamptz IS NULL OR s.ts_orig >= $2)
                    AND ($3::timestamptz IS NULL OR s.ts_orig < $3)
@@ -517,14 +520,14 @@ impl ValueGroup {
                  e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
                  e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
                  (SELECT replace_rule FROM registry.event_types t WHERE t.name=e.event_type AND t.version=e.kind_version) AS replace_rule, page.value AS "value!", page.matched AS "matched!"
-               FROM core.derivation_events e JOIN (
+               FROM core.events e JOIN (
                  SELECT p.id, p.value, p.matched FROM (
                    SELECT q.id, q.value, count(*) OVER () AS matched,
                           (sum(q.size) OVER (ORDER BY q.value, q.ts_orig, q.commit_seq) - q.size)::bigint AS before
                    FROM (
                      SELECT s.id, v.value COLLATE "C" AS value, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
                      FROM unnest($1::text[]) v(value)
-                     JOIN core.derivation_events s ON s.payload->>$2 = v.value AND jsonb_typeof(s.payload->$2) = 'string'
+                     JOIN core.events s ON s.payload->>$2 = v.value AND jsonb_typeof(s.payload->$2) = 'string'
                      WHERE s.event_type = ANY($3) AND s.ts_orig >= $4 AND s.ts_orig < $5
                        AND ($6::text IS NULL OR (v.value COLLATE "C", s.ts_orig, s.commit_seq) > ($6 COLLATE "C", $7::timestamptz, $8::bigint))
                        AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
@@ -764,7 +767,7 @@ async fn nearest(
                      e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
                      e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-                   FROM core.derivation_events e
+                   FROM core.events e
                    WHERE e.event_type = ANY($1)
                      AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
@@ -785,19 +788,62 @@ async fn nearest(
             }
         }
         Some(per) => {
-            let mut values: Vec<String> = window_events
+            // Each value with how far its read may go: the far bound of the
+            // value's lifetime on this side, or none without a lifetime.
+            let mut reach: std::collections::BTreeMap<String, Option<i128>> =
+                std::collections::BTreeMap::new();
+            for c in window_events
                 .iter()
                 .filter(|c| n.kinds.iter().any(|k| k.event_type == c.event.event_type))
-                .filter_map(|c| match c.event.payload.get(per)? {
-                    Value::String(s) => Some(s.clone()),
-                    Value::Null => None,
-                    other => Some(other.to_string()),
-                })
-                .collect();
-            values.sort_unstable();
-            values.dedup();
-            if values.is_empty() {
+            {
+                let value = match c.event.payload.get(per) {
+                    Some(Value::String(s)) => s.clone(),
+                    None | Some(Value::Null) => continue,
+                    Some(other) => other.to_string(),
+                };
+                let far = match (n.lifetime, c.event.ts_orig.at) {
+                    (Some(lifetime), Some(t)) => {
+                        let (lo, hi) = lifetime.bounds(&value, t.unix_ns(), &c.event.payload);
+                        Some(if after { hi } else { lo })
+                    }
+                    _ => None,
+                };
+                let entry = reach.entry(value).or_insert(far);
+                *entry = match (*entry, far) {
+                    (Some(a), Some(b)) => Some(if after { a.max(b) } else { a.min(b) }),
+                    _ => None,
+                };
+            }
+            if reach.is_empty() {
                 return Ok(out);
+            }
+            // Each value's read is the range [from, until) on the
+            // `(event_type, ts_orig)` index: from the edge to the lifetime's
+            // end after the window, from the lifetime's start to the edge
+            // before it. Without a lifetime the range runs to the end of
+            // time on that side.
+            // Before and after every stored time, inside PostgreSQL's range.
+            let first = OffsetDateTime::UNIX_EPOCH - time::Duration::days(1_000_000);
+            let last = OffsetDateTime::UNIX_EPOCH + time::Duration::days(2_900_000);
+            let to_time = |ns: i128| {
+                OffsetDateTime::from_unix_timestamp_nanos(ns).unwrap_or(if ns < 0 {
+                    first
+                } else {
+                    last
+                })
+            };
+            let mut values = Vec::with_capacity(reach.len());
+            let mut from = Vec::with_capacity(reach.len());
+            let mut until = Vec::with_capacity(reach.len());
+            for (value, far) in reach {
+                values.push(value);
+                if after {
+                    from.push(edge);
+                    until.push(far.map_or(last, |ns| to_time(ns + 1)));
+                } else {
+                    from.push(far.map_or(first, to_time));
+                    until.push(edge);
+                }
             }
             let rows = sqlx::query!(
                 r#"SELECT x.id AS "id!", x.event_type AS "event_type!", x.source AS "source!",
@@ -807,9 +853,10 @@ async fn nearest(
                      x.record_state AS "record_state!", x.class AS "class!",
                      x.kind_version AS "kind_version!", x.validation AS "validation!", x.replace_rule,
                      x.commit_seq AS "commit_seq!"
-                   FROM unnest($5::text[]) AS v(val) CROSS JOIN LATERAL (
-                     SELECT e.*, (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule FROM core.derivation_events e
+                   FROM unnest($5::text[], $8::timestamptz[], $9::timestamptz[]) AS v(val, from_at, until_at) CROSS JOIN LATERAL (
+                     SELECT e.*, (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule FROM core.events e
                      WHERE e.event_type = ANY($1)
+                       AND e.ts_orig >= v.from_at AND e.ts_orig < v.until_at
                        AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
                        AND e.payload->>$6 = v.val
                        AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
@@ -824,6 +871,8 @@ async fn nearest(
                 &values,
                 per,
                 n.count,
+                &from,
+                &until,
             )
             .fetch_all(&mut *conn)
             .await?;
@@ -848,17 +897,17 @@ pub async fn after_seq(
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", page.seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM core.derivation_events e JOIN (
+           FROM core.events e JOIN (
              SELECT p.id, p.seq FROM (
                SELECT q.id, q.seq, (sum(q.size) OVER (ORDER BY q.seq) - q.size)::bigint AS before
                FROM (
                  SELECT s.id, s.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
-                 FROM core.derivation_events s
+                 FROM core.events s
                  WHERE s.commit_seq > $2 AND s.event_type = ANY($1)
                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
                  UNION ALL
                  SELECT c.event_id AS id, c.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
-                 FROM audit.archive_changes c JOIN core.derivation_events s ON s.id = c.event_id
+                 FROM audit.archive_changes c JOIN core.events s ON s.id = c.event_id
                  WHERE c.commit_seq > $2 AND NOT c.archived AND s.event_type = ANY($1)
                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
                  ORDER BY seq LIMIT $3
@@ -882,7 +931,7 @@ pub async fn after_seq(
 
 /// The live readings at these record locations, of any event type and output
 /// number.
-pub(crate) async fn live_originals_at(
+pub(crate) async fn live_at(
     conn: &mut PgConnection,
     locations: &[RecordLocation],
 ) -> Result<Vec<Event>> {
@@ -996,7 +1045,7 @@ pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> 
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM derivation.outputs o JOIN core.derivation_events e ON e.id = o.event_id
+           FROM derivation.outputs o JOIN core.events e ON e.id = o.event_id
            WHERE o.derivation = $1 AND o.key = $2
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
            ORDER BY e.ts_orig, e.commit_seq"#,
@@ -1023,7 +1072,7 @@ pub async fn children_outputs(
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM core.derivation_events e
+           FROM core.events e
            WHERE e.source=$1 AND $2=ANY(e.parents)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
            ORDER BY e.ts_orig,e.commit_seq"#, derivation,input.0)
@@ -1044,7 +1093,7 @@ pub async fn producer_versions(
     let rows = sqlx::query!(
         r#"WITH RECURSIVE selected(id) AS (
                SELECT unnest($1::uuid[])
-               UNION SELECT links.parent FROM core.event_children links JOIN selected s ON s.id=links.child
+               UNION SELECT links.parent FROM selected s CROSS JOIN LATERAL core.event_parents_of(s.id) links
            )
            SELECT e.source AS producer,m.name AS "manifest?",m.version AS "version?",
                   m.build AS "build?",material.parser AS "parser?",
@@ -1111,14 +1160,8 @@ pub struct StoredComparison {
 /// Keep a comparison. Comparisons are operations records, not events; they are
 /// written by the command that made them.
 pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> Result<i64> {
-    let mut tx = conn.begin().await?;
-    sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE")
-        .execute(&mut *tx)
-        .await?;
-    crate::privacy::projection::lock_epoch(&mut tx).await?;
-    crate::privacy::comparisons::require_scope(&mut tx, &c.context).await?;
     let (from, until) = c.range.unwrap_or((None, None));
-    let id=sqlx::query_scalar!(
+    Ok(sqlx::query_scalar!(
         r#"INSERT INTO derivation.comparisons
              (derivation, version, range_from, range_until, keys, unchanged, added, changed, removed, examples, context)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id"#,
@@ -1134,10 +1177,8 @@ pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> 
         c.examples,
         c.context,
     )
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(id)
+    .fetch_one(conn)
+    .await?)
 }
 
 /// Stored comparisons, newest first, optionally of one derivation.
@@ -1146,8 +1187,6 @@ pub async fn comparisons(
     derivation: Option<&str>,
     limit: i64,
 ) -> Result<Vec<StoredComparison>> {
-    let mut tx = conn.begin().await?;
-    crate::query::read_one_snapshot(&mut tx).await?;
     let rows = sqlx::query!(
         r#"SELECT id, derivation, version, range_from, range_until, made_at, keys, unchanged,
              added, changed, removed, examples, context
@@ -1157,12 +1196,8 @@ pub async fn comparisons(
         derivation,
         limit,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(conn)
     .await?;
-    for row in &rows {
-        crate::privacy::comparisons::require_scope(&mut tx, &row.context).await?;
-    }
-    tx.commit().await?;
     Ok(rows
         .into_iter()
         .map(|r| StoredComparison {

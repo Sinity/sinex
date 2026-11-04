@@ -1,7 +1,12 @@
 //! Hourly operator windows, cross-day sessions and elementary agency signals.
 //! Focus, commands, visits and copies describe context; they do not establish
 //! who generated it. Physical input requires recorded non-virtual provenance.
+//!
+//! Focus, plays, visits, copies and rest are read as each source recorded
+//! them ([`crate::observed`]); commands as fused commands plus the command
+//! records no fused command joins, so a command two shells saw counts once.
 use crate::derived_event::{derived, record_identity};
+use crate::observed::{FOCUS, PLAYS, REST};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::clock::IntervalEnd;
@@ -29,12 +34,18 @@ const INPUTS: &[&str] = &[
     "pointer.moved",
     "pointer.scrolled",
     "presence.span",
-    "focus.fused",
+    "window.span",
     "command.fused",
-    "visit.fused",
-    "clipboard.fused",
-    "play.fused",
-    "rest.fused",
+    "command.reported",
+    "command.executed",
+    "command.imported",
+    "browser.visit",
+    "browser.history_entry",
+    "link.followed",
+    "clipboard.copied",
+    "music.played",
+    "player.changed",
+    "health.record",
     "state.interval",
     "journal.entry",
     "work.act",
@@ -106,10 +117,13 @@ pub(crate) fn scope(payload: &Value, kind: &str) -> String {
 
 fn interval_end(kind: &str) -> Option<IntervalEnd> {
     match kind {
-        "command.fused" => Some(IntervalEnd::AfterNs("duration_ns")),
+        "command.fused" | "command.reported" | "command.executed" => {
+            Some(IntervalEnd::AfterNs("duration_ns"))
+        }
         "work.act" => Some(IntervalEnd::EndOrInstant("ended_at")),
-        "input.coverage" | "presence.span" | "presence.interval" | "focus.fused" | "play.fused"
-        | "rest.fused" | "state.interval" => Some(IntervalEnd::At("ended_at")),
+        "health.record" => Some(IntervalEnd::At("end")),
+        "input.coverage" | "presence.span" | "presence.interval" | "window.span"
+        | "music.played" | "state.interval" => Some(IntervalEnd::At("ended_at")),
         _ => None,
     }
 }
@@ -121,13 +135,21 @@ fn geometry(kind: &str, payload: &Value, start: Timestamp) -> Option<(i128, i128
     (end >= start).then_some((start.unix_ns(), end.unix_ns()))
 }
 
+/// The state intervals read: absence, and window focus.
+const STATES: &[&str] = &[
+    "desktop.lock",
+    "desktop.display",
+    "machine.suspend",
+    "desktop.focus",
+];
+
 fn relevant(kind: &str, payload: &Value) -> bool {
     match kind {
         "journal.entry" => payload["identifier"] == "systemd-sleep",
-        "state.interval" => matches!(
-            payload["state_kind"].as_str(),
-            Some("desktop.lock" | "desktop.display" | "machine.suspend")
-        ),
+        "state.interval" => payload["state_kind"]
+            .as_str()
+            .is_some_and(|state| STATES.contains(&state)),
+        "health.record" => REST.admits(kind, payload),
         _ => true,
     }
 }
@@ -137,10 +159,11 @@ fn kinds(types: &[&'static str]) -> Vec<crate::Kind> {
         .iter()
         .flat_map(|kind| match *kind {
             "journal.entry" => vec![crate::Kind::only(kind, &[("identifier", "systemd-sleep")])],
-            "state.interval" => ["desktop.lock", "desktop.display", "machine.suspend"]
+            "state.interval" => STATES
                 .iter()
                 .map(|state| crate::Kind::only(kind, &[("state_kind", state)]))
                 .collect(),
+            "health.record" => REST.kinds(),
             _ => vec![crate::Kind::all(kind)],
         })
         .collect()
@@ -228,9 +251,12 @@ fn counts<'a>(
         }
         *counts.records.entry(event.event_type.clone()).or_default() += 1;
         *counts.sources.entry(event.source.clone()).or_default() += 1;
-        if let Some(observers) = event.payload.get("observed_by").and_then(Value::as_array) {
-            let observers: std::collections::BTreeSet<_> =
-                observers.iter().filter_map(Value::as_str).collect();
+        // A fused record was observed by each of its members' sources.
+        if let Some(members) = event.payload.get("members").and_then(Value::as_array) {
+            let observers: std::collections::BTreeSet<_> = members
+                .iter()
+                .filter_map(|m| m.get("source").and_then(Value::as_str))
+                .collect();
             for observer in observers {
                 *counts.observers.entry(observer.into()).or_default() += 1;
             }

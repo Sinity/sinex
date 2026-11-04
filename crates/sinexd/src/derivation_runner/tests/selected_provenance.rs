@@ -29,7 +29,11 @@ async fn stored_product_versions_follow_exact_output_parents(db: devkit::pg::Tes
     let versions = computed.outputs[0].payload["producer_versions"]
         .as_array()
         .unwrap();
-    assert!(versions.iter().any(|row| row["producer"] == "terminal.zsh"));
+    assert!(
+        versions
+            .iter()
+            .any(|row| row["producer"] == "terminal.zsh-history")
+    );
     assert!(
         versions
             .iter()

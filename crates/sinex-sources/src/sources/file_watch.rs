@@ -20,7 +20,7 @@ use serde_json::{Map, Value, json};
 use sinex_model::event_types::machine::FileChanged;
 use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -29,7 +29,9 @@ use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.file-watch",
-    driver: Driver::LiveStream,
+    origin: Origin::Input(Shape::LiveStream),
+    expect: Expectation::continuous_days(1),
+    expires_after: None,
     purpose: "work episodes, project attribution and recall",
     // Paths name projects, people and documents.
     class: Class::Guarded,
@@ -316,11 +318,12 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// `--read file-watch=SPOOL`: changes under the directories in the
+/// `stage --parser file-watch SPOOL`: changes under the directories in the
 /// `roots` option (and not under `skip` names), captured into SPOOL.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "file-watch",
+        accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
             owner: sinex_source_core::discovery::Owner::Session,
             locations: &[],
@@ -331,8 +334,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
                 options: &[],
                 capabilities: &["watch"],
             }],
-            requests: &[],
-            request_only: false,
         },
         discover: crate::discovery::discover_format,
         specs: || vec![&SPEC],

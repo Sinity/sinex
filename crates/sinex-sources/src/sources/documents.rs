@@ -5,13 +5,15 @@ use sinex_model::event_types::documents::DocumentCaptured;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::binding::{Binding, InputFormat};
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
-use sinex_source_core::registry::{DeclaredSource, Driver, SourceSpec};
+use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.documents",
-    driver: Driver::DirSnapshot,
+    origin: Origin::Input(Shape::DirSnapshot),
+    expect: Expectation::cadence_hours(1),
+    expires_after: None,
     purpose: "configured document bytes for recall and text extraction",
     class: Class::Guarded,
     parser: "documents",
@@ -139,7 +141,7 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 use sinex_source_core::discovery::{
-    Availability, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location, Owner,
+    Availability, Cause, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location, Owner,
 };
 
 fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
@@ -176,7 +178,7 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
                 let mut options = match Options::from_settings(&binding.settings) {
                     Ok(options) => options,
                     Err(reason) => {
-                        input.availability = Availability::Unavailable;
+                        input.availability = Availability::Unavailable(Cause::Failed);
                         input.reason = Some(reason);
                         continue;
                     }
@@ -196,6 +198,7 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
 
 pub const FORMAT: InputFormat = InputFormat {
     name: "documents",
+    accepts: &[],
     discovery: DiscoverySpec {
         owner: Owner::System,
         locations: &[
@@ -210,8 +213,6 @@ pub const FORMAT: InputFormat = InputFormat {
         ],
         capabilities: &[],
         credentials: &[],
-        request_only: false,
-        requests: &[],
         streams: &[],
     },
     discover,

@@ -1,12 +1,11 @@
-//! Reading the library's current state from live events. Library records
-//! are ordinary events, so "current" is the live reading of each record's
-//! key; nothing is stored beside them. The statements are the store's
+//! Reading items, copies, renditions and views from live events. These
+//! records are ordinary events, so "current" is the live reading of each
+//! record's key; nothing is stored beside them. Curation records follow the
+//! authored rules instead ([`crate::curation`]). The statements are the store's
 //! generic payload reads (`sinex_store::payloads`); this module names the
 //! library's event types and fields.
 use serde::de::DeserializeOwned;
-use sinex_model::event_types::library::{
-    Assignment, Collection, Comparison, Entry, FileCopy, Item, Rating, Rendition, View,
-};
+use sinex_model::event_types::library::{FileCopy, Item, Rendition, View};
 use sinex_store::Connection as Conn;
 use sinex_store::payloads::{self, RecordStates};
 
@@ -163,77 +162,9 @@ pub async fn renditions(conn: &mut Conn, item: &str) -> Result<Vec<Rendition>> {
     about(conn, "library.rendition", &["item"], item).await
 }
 
-/// Live assignments to an item (any state).
-pub async fn assignments(conn: &mut Conn, item: &str) -> Result<Vec<Assignment>> {
-    about(conn, "library.assignment", &["target", "item"], item).await
-}
-
-/// Live ratings of an item (any state).
-pub async fn ratings(conn: &mut Conn, item: &str) -> Result<Vec<Rating>> {
-    about(conn, "library.rating", &["item"], item).await
-}
-
 /// Views of an item.
 pub async fn views(conn: &mut Conn, item: &str) -> Result<Vec<View>> {
     about(conn, "library.view", &["target", "item"], item).await
-}
-
-/// Collection entries for an item (any state).
-pub async fn entries_of(conn: &mut Conn, item: &str) -> Result<Vec<Entry>> {
-    about(conn, "library.entry", &["target", "item"], item).await
-}
-
-/// A live, present collection by name.
-pub async fn collection_named(conn: &mut Conn, name: &str) -> Result<Option<Collection>> {
-    let rows = payloads::live_where(
-        conn,
-        "library.collection",
-        &["name"],
-        &[name.to_owned()],
-        RecordStates::Present,
-    )
-    .await?;
-    Ok(decode("library.collection", rows)?.into_iter().next())
-}
-
-/// A collection's present entries, in order.
-pub async fn entries(conn: &mut Conn, collection: &str) -> Result<Vec<Entry>> {
-    let rows = payloads::live_where(
-        conn,
-        "library.entry",
-        &["collection"],
-        &[collection.to_owned()],
-        RecordStates::Present,
-    )
-    .await?;
-    let mut all: Vec<Entry> = decode("library.entry", rows)?;
-    all.sort_by(|a, b| {
-        a.position
-            .partial_cmp(&b.position)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    Ok(all)
-}
-
-/// Present collections, by name.
-pub async fn collections(conn: &mut Conn) -> Result<Vec<Collection>> {
-    let rows = payloads::live_all(conn, "library.collection", RecordStates::Present).await?;
-    let mut all: Vec<Collection> = decode("library.collection", rows)?;
-    all.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(all)
-}
-
-/// Present pairwise judgements on a scale.
-pub async fn comparisons(conn: &mut Conn, scale: &str) -> Result<Vec<Comparison>> {
-    let rows = payloads::live_where(
-        conn,
-        "library.comparison",
-        &["scale"],
-        &[scale.to_owned()],
-        RecordStates::Present,
-    )
-    .await?;
-    decode("library.comparison", rows)
 }
 
 #[cfg(test)]

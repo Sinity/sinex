@@ -205,13 +205,12 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
     );
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     conn.execute("SET ROLE sinex_reader").await.unwrap();
-    let stale = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.visible_search_text")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap_err();
     assert_eq!(
-        stale.as_database_error().unwrap().code().as_deref(),
-        Some("55000")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.visible_search_text")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        2
     );
     assert!(
         sqlx::query("SELECT text FROM core.search_text")
@@ -240,13 +239,15 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
         .execute(&mut writer)
         .await
         .unwrap();
-    // A later step's index already exists, so the upgrade fails after the
+    // A later step's mark already exists, so the upgrade fails after the
     // search step and every earlier statement.
-    conn.execute("CREATE INDEX events_feed ON core.events(id)")
+    conn.execute("CREATE TABLE sinex_schema.events_feed_pending ()")
         .await
         .unwrap();
     assert!(apply(&mut conn).await.is_err());
-    conn.execute("DROP INDEX core.events_feed").await.unwrap();
+    conn.execute("DROP TABLE sinex_schema.events_feed_pending")
+        .await
+        .unwrap();
     assert_eq!(catalog(&mut conn).await.unwrap(), before);
     assert_eq!(
         sqlx::query_scalar::<_, i32>("SELECT max(version) FROM sinex_schema.applied")
@@ -262,6 +263,80 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
             to: VERSION
         }
     );
+}
+
+/// Law admission/upgrade-keeps-event-storage: the upgrade's transaction
+/// rewrites no event chunk. It writes only the event rows whose output number
+/// is not the default.
+#[devkit::test]
+async fn upgrade_keeps_event_storage(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    search_version_two(&mut conn).await;
+    for (position, output_index) in [(1, 0), (2, 3), (3, 0), (4, i32::from(i16::MAX))] {
+        sqlx::query("WITH event AS (INSERT INTO core.events (id,event_type,source,run_id,material_id,anchor,output_index,ts_quality,commit_seq,payload,reading_order,record_hash) VALUES (uuidv7(),'command.imported','test',uuidv7(),uuidv7(),0,$2,'unknown',$1,'{}',1,decode(repeat('01',32),'hex')) RETURNING id) INSERT INTO core.search_text (event_id,text) SELECT id,'cargo test' FROM event")
+            .bind(i64::from(position))
+            .bind(i16::try_from(output_index).unwrap())
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    conn.execute("INSERT INTO core.search_text (event_id,text) VALUES (uuidv7(),'no reading')")
+        .await
+        .unwrap();
+    let storage = "SELECT array_agg(pg_relation_filenode(relation)::bigint ORDER BY relation::text) FROM show_chunks('core.events') relation";
+    let before: Vec<i64> = sqlx::query_scalar(storage)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert!(!before.is_empty());
+    apply(&mut conn).await.unwrap();
+    let after: Vec<i64> = sqlx::query_scalar(storage)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(after, before, "no event chunk is rewritten");
+    let written: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events, (SELECT xmin::text AS transaction FROM sinex_schema.applied WHERE version=$1) upgrade WHERE xmin::text=transaction",
+    )
+    .bind(VERSION)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(written, 2);
+    let ordinals: Vec<i64> =
+        sqlx::query_scalar("SELECT output_index FROM core.events ORDER BY commit_seq")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(ordinals, [0, 3, 0, i64::from(i16::MAX)]);
+}
+
+/// Decoding an encoded key returns it, and distinct keys encode distinctly,
+/// so the upgrade's key conversion needs no comparison against a copy.
+#[devkit::test]
+async fn equivalence_key_encoding_round_trips_and_keeps_keys_distinct(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let (changed, merged): (i64, i64) = sqlx::query_as(
+        r#"WITH digests AS (SELECT md5(i::text)||md5((i+1)::text) AS digest FROM generate_series(1,500) i),
+         keys(key) AS (
+           SELECT digest FROM digests UNION SELECT upper(digest) FROM digests
+           UNION SELECT 'hash:'||digest FROM digests UNION SELECT 'sealed:'||digest FROM digests
+           UNION SELECT 'hash:'||upper(digest) FROM digests UNION SELECT 'sealed:'||left(digest,63) FROM digests
+           UNION SELECT digest||chr(10) FROM digests UNION SELECT left(digest,63)||'g' FROM digests
+           UNION SELECT 'Hash:'||digest FROM digests UNION SELECT '01'||left(digest,62) FROM digests
+           UNION SELECT chr(1)||digest FROM digests UNION SELECT chr(3)||digest FROM digests
+           UNION SELECT 'zażółć 🦀 '||digest FROM digests UNION SELECT digest||' 字Ωж' FROM digests
+           UNION VALUES (''), ('zażółć 🦀'), ('03a7'), ('hash:'), ('sealed:'))
+         SELECT count(*) FILTER (WHERE core.decode_equivalence_key(core.encode_equivalence_key(key)) IS DISTINCT FROM key),
+                count(*) - count(DISTINCT core.encode_equivalence_key(key))
+         FROM keys"#,
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!((changed, merged), (0, 0));
 }
 
 mod online;
@@ -295,7 +370,7 @@ async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
 mod kinds;
 
 /// A synthetic downgrade leaves unused column slots; names and definitions remain the contract.
-async fn catalog(conn: &mut PgConnection) -> Result<Vec<String>, Error> {
+pub(crate) async fn catalog(conn: &mut PgConnection) -> Result<Vec<String>, Error> {
     Ok(super::catalog(conn)
         .await?
         .into_iter()

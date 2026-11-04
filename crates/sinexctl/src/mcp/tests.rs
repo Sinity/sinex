@@ -6,9 +6,19 @@ fn tools_come_from_the_command_table() {
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(names.contains(&"sinex_query"));
     assert!(names.contains(&"sinex_recall"));
-    for name in ["sinex_stage", "sinex_same", "sinex_distinct"] {
-        assert!(!names.contains(&name), "{name} is not implemented");
+    for name in ["sinex_same", "sinex_distinct"] {
+        assert!(names.contains(&name), "agents decide duplicates: {name}");
     }
+    for name in ["sinex_stage", "sinex_stage-list", "sinex_stage-show"] {
+        assert!(
+            names.contains(&name),
+            "agents stage and read stages: {name}"
+        );
+    }
+    let stage = tools.iter().find(|t| t.name == "sinex_stage").unwrap();
+    assert_eq!(stage.input_schema["required"], json!(["path"]));
+    assert_eq!(stage.input_schema["properties"]["path"]["type"], "array");
+    assert_eq!(stage.input_schema["properties"]["parser"]["type"], "array");
     assert!(!names.contains(&"sinex_mark"), "marks are the operator's");
     for name in [
         "sinex_context",
@@ -82,7 +92,7 @@ fn tool_effects_match_backend_command_access() {
         ("sinex_sql", true),
         ("sinex_archive", false),
         ("sinex_forecast-issue", false),
-        ("sinex_library-tag", false),
+        ("sinex_library-curate", false),
     ] {
         let tool = tools.iter().find(|tool| tool.name == name).unwrap();
         assert_eq!(

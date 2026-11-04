@@ -27,7 +27,7 @@ replaces their original bytes.
 
 A terminal record carries session and host, native sequence and code, original relative time and its precision, the resolved absolute time when the header supplies it, the exact data or a material byte range, and any supplied resize, exit or marker fields. Unknown codes keep their payload. A plain rendering is optional derived text.
 
-Commands are read through the command fusion family (Atuin and the shell's own history) and through the terminal records directly. Native event counts equal cast record counts.
+Commands are read through the command fusion family (the shell integration's reports, Atuin and the shells' own history) and through the terminal records directly. The shell integration mints one execution token per command; kitty records it on the command's start and end, and the report records the Atuin row started for it, so those observers are matched by identifier rather than by time. Native event counts equal cast record counts.
 
 ## Desktop state
 
@@ -107,7 +107,7 @@ Outlook conversion retains the native PST as an original material with the acqui
 
 **Gmail configuration.**
 
-Discovery reads the account file declared as `input:gmail`; `--read gmail=PATH` uses the same file. It names the expected account and credential files:
+Discovery reads the account file declared as `input:gmail`; `stage --parser gmail PATH` uses the same file. It names the expected account and credential files:
 
 ```json
 {
@@ -142,7 +142,7 @@ Family F06.
 - Identity is a supplied transaction ID where present, otherwise the source identity plus the complete block identity and a duplicate number; never the first amount or the description alone.
 - A directive the reader does not support is reported as unsupported with its bytes.
 
-The journal reader discovers `LEDGER_FILE`, `~/.hledger.journal` and configured finance roots, and accepts `--read hledger=PATH`. Include paths may be relative, absolute or home-relative, with `journal:` prefixes and globs. Each included file is an ordinary binding; missing files, cycles and unsupported targets are reported. Included files inherit the authored year at their include. Native timeclock and timedot imports stay written `journal.imported` records, not generated accounting transactions.
+The journal reader discovers `LEDGER_FILE`, `~/.hledger.journal` and configured finance roots, and accepts `stage --parser hledger PATH`. Include paths may be relative, absolute or home-relative, with `journal:` prefixes and globs. Each included file is an ordinary binding; missing files, cycles and unsupported targets are reported. Included files inherit the authored year at their include. Native timeclock and timedot imports stay written `journal.imported` records, not generated accounting transactions.
 
 Partial dates remain partial; a known year resolves a civil date without inventing an original instant. Quantities, commodity quoting, virtual accounts, posting status, prices, balance assertions, lot annotations and valuation expressions retain their written forms. Capture does not balance a transaction or execute its automatic rules. Without a supplied transaction ID, record identity includes the journal/member context, complete block digest and duplicate occurrence, including across scan parts. A changed inherited year causes an unchanged child to be read in that new context; a fully dated transaction does not change identity for an unused default year.
 
@@ -338,7 +338,7 @@ Family F16.
 - Segments are independently decodable and continuous; frames carry clock and discontinuity facts so transcripts align later.
 - Stream and node hotplug, graph rate changes and device failures are source events or gaps. All known devices are captured at startup, and streams are opened before publishing.
 
-**Imported speech.** JSON, Whisper, WebVTT, SRT and plain-text transcripts keep each cue or segment, exact decimal relative offsets, speaker, language, model, run, confidence and unknown fields, linked to the media material when known. External run IDs are never turned into Sinex parent IDs. New speech recognition, voice-activity detection and diarization are model work in [derivations](derivations.md), off while model-calling features are off, and never replace the audio.
+**Imported speech.** JSON, Whisper, WebVTT, SRT and plain-text transcripts keep each cue or segment, exact decimal relative offsets, speaker, language, model, run, confidence and unknown fields, linked to the media material when known. External run IDs are never turned into Sinex parent IDs. New speech recognition, voice-activity detection and diarization are model work in [derivations](derivations.md), off while model features are off, and never replace the audio.
 
 ## Operator records and source health
 
@@ -382,6 +382,7 @@ Each entry names the source, its family, the native format and capture mechanism
 | [shell](#shell-history-and-terminal-recordings) | `terminal.fish-history` | Native Fish history records. Append/rewrite reader. | command.imported | Escaped multiline command and path list. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.nushell-history` | Native history SQLite rows/schema. Committed row polling. | command.executed | Session ID, extra columns and mutable completion. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.text-history` | Explicit untimed text lines. Append/rewrite reader. | command.imported | Literal timestamp-looking command and equal repetitions. |
+| [shell](#shell-history-and-terminal-recordings) | `session.integrations` (shell) | One record per finished command from the shell integration Sinex ships (zsh, bash, fish), with its execution token and the Atuin row started for it. Session integration producer. | command.reported | Token joins its Atuin row by identifier; command line kept byte for byte. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.kitty-osc-live` | Native shell-integration socket records and OSC bytes. Session integration producer. | terminal.reported; command.executed derived | OSC 133 pairing, missing cwd and sequence restart. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.asciinema` | Asciicast v2/v3 header and each event. Automatic native recorder plus append reader. | terminal.session; terminal.output per native record | Count every native input/output/resize/marker/exit. |
 | [shell](#shell-history-and-terminal-recordings) | `terminal.kitty-scrollback` | ANSI buffers and native metadata. All-window buffer acquisition; snapshot reader. | scrollback.captured; scrollback.window | Alternate screen, buffer clear and window reuse. |

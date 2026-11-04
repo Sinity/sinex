@@ -25,7 +25,7 @@ discovery input; its generator and test are described in
 | [hosts.md](hosts.md) | capture from other hosts and devices: hosts, producer identity, placement, time across hosts, held data, a phone as a producer |
 | [streams.md](streams.md) | the base-layer streams and their spools |
 | [source-families.md](source-families.md) | every source family at full fidelity, and the catalog of sources |
-| [derivations.md](derivations.md) | the derivation model, fusion, intervals, documents and tags, model calling |
+| [derivations.md](derivations.md) | the derivation model, fusion, intervals, documents and tags, model features |
 | [higher-layer.md](higher-layer.md) | presence, agency, activity, attention, project attribution, episodes and the resume card, figures, descriptions, packs and narratives |
 | [evidence.md](evidence.md) | personal evidence: constructs and metrics, figure cells, studies, experiments, forecasts and track records, places, money, retiring Lynchpin |
 | [query.md](query.md) | the query surface: tables, clocks and units, joins, paging, saved queries, kept results, citation forms, read, trace, related |
