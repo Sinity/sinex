@@ -4,33 +4,38 @@
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
+        "command.reported",
         "command.executed",
-        "command.imported"
+        "command.imported",
+        "terminal.reported",
+        "curation.duplicate"
       ],
       "kind": "keyed",
       "name": "command.fusion",
       "outputs": [
-        "command.fused"
+        "command.fused",
+        "fusion.considered_pair"
       ]
     },
     {
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
-        "mail.message"
+        "mail.message",
+        "curation.duplicate"
       ],
       "kind": "keyed",
       "name": "mail.fusion",
       "outputs": [
-        "mail.fused"
+        "mail.fused",
+        "fusion.considered_pair"
       ]
     },
     {
       "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
-        "library.copy",
-        "library.preview"
+        "library.copy"
       ],
       "kind": "keyed",
       "name": "library.items",
@@ -44,8 +49,10 @@
       "history": "recompute",
       "inputs": [
         "command.fused",
+        "command.reported",
         "command.executed",
-        "command.imported"
+        "command.imported",
+        "terminal.reported"
       ],
       "kind": "keyed",
       "name": "shell.sessions",
@@ -118,6 +125,7 @@
         "presence.span",
         "window.span",
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
         "browser.visit",
@@ -163,6 +171,7 @@
         "presence.span",
         "window.span",
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
         "browser.visit",
@@ -239,8 +248,10 @@
       "history": "recompute",
       "inputs": [
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
+        "terminal.reported",
         "shell.session",
         "presence.interval",
         "state.interval",
@@ -372,8 +383,10 @@
       "inputs": [
         "operator.mark",
         "command.fused",
+        "command.reported",
         "command.executed",
         "command.imported",
+        "terminal.reported",
         "state.interval",
         "window.span",
         "shell.session",
@@ -430,6 +443,7 @@
         "forecast.resolved",
         "command.executed",
         "command.imported",
+        "command.reported",
         "transaction.posted",
         "journal.directive",
         "journal.imported",
@@ -512,6 +526,8 @@
         "agentctl.event",
         "command.fused",
         "mail.fused",
+        "fusion.considered_pair",
+        "curation.duplicate",
         "shell.session",
         "state.interval",
         "metric.figure",
@@ -572,14 +588,8 @@
         "document.text",
         "library.item",
         "library.rendition",
-        "library.preview",
-        "library.assignment",
-        "library.collection",
-        "library.entry",
-        "library.rating",
-        "library.comparison",
-        "library.view",
-        "library.dismissal"
+        "library.curation",
+        "library.view"
       ],
       "kind": "keyed",
       "name": "recall.products",
@@ -650,10 +660,12 @@
         "command.executed",
         "command.fused",
         "command.imported",
+        "command.reported",
         "config_drift.checked",
         "context.pack",
         "conversation.day",
         "conversation.message",
+        "curation.duplicate",
         "desktop.other",
         "device.changed",
         "device_traffic.sampled",
@@ -670,6 +682,7 @@
         "forecast.issued",
         "forecast.resolved",
         "frame.captured",
+        "fusion.considered_pair",
         "generation.activated",
         "git.commit",
         "git.ref_updated",
@@ -691,16 +704,10 @@
         "key.pressed",
         "key.released",
         "lake.observed",
-        "library.assignment",
-        "library.collection",
-        "library.comparison",
         "library.copy",
-        "library.dismissal",
-        "library.entry",
+        "library.curation",
         "library.filename_hints",
         "library.item",
-        "library.preview",
-        "library.rating",
         "library.rendition",
         "library.view",
         "link.followed",
@@ -5712,6 +5719,157 @@
       "key_rule": {
         "fields": [
           "host",
+          "execution"
+        ],
+        "rule": "fields"
+      },
+      "kind": {
+        "name": "command.reported",
+        "version": 2
+      },
+      "normalization": "rust",
+      "owned_blobs": [],
+      "payload_schema": {
+        "$defs": {
+          "GitIdentity": {
+            "description": "Repository facts observed beside a cwd, never resolved during derivation.",
+            "properties": {
+              "branch": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "common_dir": {
+                "type": "string"
+              },
+              "head": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "root_commits": {
+                "description": "Multiple unrelated roots can be reachable after an unrelated-history merge.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "common_dir",
+              "root_commits"
+            ],
+            "type": "object"
+          },
+          "Timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "One finished command execution, reported by the shell integration Sinex\nships (zsh, bash and fish hooks) through the session integration socket.\nThe integration mints the execution token when the command starts and\nhands it to every other observer it can reach: the terminal records it\n(kitty's `sinex_execution` user variable), and the Atuin row ID started\nfor the same execution is recorded beside it, so fusion matches these\nobservers by identifier instead of by time.",
+        "properties": {
+          "atuin_id": {
+            "description": "The Atuin history row started for this execution, when Atuin's hook\nran in the same shell.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "command": {
+            "description": "The command line as the shell received it.",
+            "type": "string"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_ns": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "execution": {
+            "description": "A UUIDv7 minted by the shell for this execution.",
+            "type": "string"
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "extra": {
+            "additionalProperties": true,
+            "description": "Fields the integration sent that this type does not name, kept by name.",
+            "type": "object"
+          },
+          "git_identity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GitIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Repository facts observed beside the cwd when the report was sent."
+          },
+          "host": {
+            "type": "string"
+          },
+          "session": {
+            "description": "The shell's process ID, which tells concurrent shells apart.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shell": {
+            "description": "`zsh`, `bash` or `fish`.",
+            "type": "string"
+          },
+          "started_at": {
+            "$ref": "#/$defs/Timestamp"
+          }
+        },
+        "required": [
+          "execution",
+          "shell",
+          "host",
+          "command",
+          "started_at"
+        ],
+        "title": "CommandReported",
+        "type": "object"
+      },
+      "removed_rule": {
+        "rule": "never"
+      },
+      "replace_rule": "suppress_repeat",
+      "search": "words_and_trigram",
+      "time_rule": {
+        "fields": [
+          "started_at"
+        ],
+        "quality": "intrinsic",
+        "rule": "first_present"
+      }
+    },
+    {
+      "declaring_producer": "sinex",
+      "field_hints": [],
+      "keep_known": [],
+      "key_rule": {
+        "fields": [
+          "host",
           "journal",
           "member",
           "member_duplicate",
@@ -7355,7 +7513,7 @@
       },
       "kind": {
         "name": "terminal.reported",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -7384,6 +7542,13 @@
           "event": {
             "description": "`cmd_start`, `cmd_end`, `focus`, `close`, `title`…",
             "type": "string"
+          },
+          "execution": {
+            "description": "The execution token Sinex's shell integration minted for the command\n(`cmd_start`, `cmd_end`), when the shell ran the integration.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "exit_status": {
             "format": "int64",
@@ -13963,22 +14128,178 @@
       },
       "kind": {
         "name": "command.fused",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
+          "Basis": {
+            "description": "What decided a fused record: an exact shared identifier, a matching rule\n(time window, unique fallback, absorption), or a duplicate decision.\nA record with several kinds of links records the weakest automatic one\n(`rule` before `identifier`), and `operator` when any duplicate decision decided it.",
+            "enum": [
+              "identifier",
+              "rule",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "Joined": {
+            "description": "How one member joined its fused record.",
+            "oneOf": [
+              {
+                "description": "The most preferred member, which the others joined.",
+                "properties": {
+                  "by": {
+                    "const": "lead",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "It shares an exact identifier in this namespace with a member.",
+                "properties": {
+                  "by": {
+                    "const": "identifier",
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "namespace"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The closest partner within the family's window.",
+                "properties": {
+                  "by": {
+                    "const": "window",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The only partner within the family's wider fallback window.",
+                "properties": {
+                  "by": {
+                    "const": "fallback",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A repeat inside a span led by a more preferred member.",
+                "properties": {
+                  "by": {
+                    "const": "absorb",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A `same` duplicate decision by this author.",
+                "properties": {
+                  "author": {
+                    "type": "string"
+                  },
+                  "by": {
+                    "const": "decision",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "author"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Member": {
+            "description": "One member of a fused record, cited by its record, not its reading.",
+            "properties": {
+              "event_type": {
+                "type": "string"
+              },
+              "joined": {
+                "$ref": "#/$defs/Joined"
+              },
+              "record": {
+                "description": "The member's stable record citation: `<type>:<native id>` when the\nsource has one, otherwise its record location.",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "record",
+              "source",
+              "event_type",
+              "joined"
+            ],
+            "type": "object"
+          },
           "Timestamp": {
             "format": "date-time",
             "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One command run, from Atuin and zsh history. zsh history holds about a\nthousand pairs of the same command in the same second on the operator's\nmachine, which is why the record, not the text and time, identifies it.",
+        "description": "One command run, from the shell integration's reports, Atuin and zsh\nhistory. zsh history holds many pairs of the same command in the same\nsecond, which is why the record, not the text and time, identifies it.",
         "properties": {
+          "ambiguous": {
+            "description": "How many candidates the weakest choice was made among; 1 when there\nwas no choice.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "basis": {
+            "$ref": "#/$defs/Basis"
+          },
           "command": {
             "type": "string"
+          },
+          "competitors": {
+            "description": "The record citations of the candidates not chosen.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "cwd": {
             "type": [
@@ -13993,6 +14314,13 @@
               "null"
             ]
           },
+          "execution": {
+            "description": "The execution token the shell integration minted for this run.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "exit_code": {
             "format": "int64",
             "type": [
@@ -14003,16 +14331,21 @@
           "host": {
             "type": "string"
           },
-          "observed_by": {
-            "description": "The sources that observed this command.",
+          "members": {
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/Member"
             },
             "type": "array"
           },
           "record": {
-            "description": "The preferred member's identity: `<type>:<native id>` when the source\nhas one (Atuin), otherwise its record location.",
+            "description": "The preferred member's record citation.",
             "type": "string"
+          },
+          "rule_version": {
+            "description": "The fusion family's version, which covers its declaration.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
           },
           "session": {
             "type": [
@@ -14029,7 +14362,11 @@
           "command",
           "host",
           "started_at",
-          "observed_by"
+          "members",
+          "basis",
+          "ambiguous",
+          "competitors",
+          "rule_version"
         ],
         "title": "CommandFused",
         "type": "object"
@@ -14059,25 +14396,176 @@
       },
       "kind": {
         "name": "mail.fused",
-        "version": 3
+        "version": 4
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
+          "Basis": {
+            "description": "What decided a fused record: an exact shared identifier, a matching rule\n(time window, unique fallback, absorption), or a duplicate decision.\nA record with several kinds of links records the weakest automatic one\n(`rule` before `identifier`), and `operator` when any duplicate decision decided it.",
+            "enum": [
+              "identifier",
+              "rule",
+              "operator"
+            ],
+            "type": "string"
+          },
+          "Joined": {
+            "description": "How one member joined its fused record.",
+            "oneOf": [
+              {
+                "description": "The most preferred member, which the others joined.",
+                "properties": {
+                  "by": {
+                    "const": "lead",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "It shares an exact identifier in this namespace with a member.",
+                "properties": {
+                  "by": {
+                    "const": "identifier",
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "namespace"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The closest partner within the family's window.",
+                "properties": {
+                  "by": {
+                    "const": "window",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "The only partner within the family's wider fallback window.",
+                "properties": {
+                  "by": {
+                    "const": "fallback",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A repeat inside a span led by a more preferred member.",
+                "properties": {
+                  "by": {
+                    "const": "absorb",
+                    "type": "string"
+                  },
+                  "distance_ns": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "by",
+                  "distance_ns"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "A `same` duplicate decision by this author.",
+                "properties": {
+                  "author": {
+                    "type": "string"
+                  },
+                  "by": {
+                    "const": "decision",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "by",
+                  "author"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Member": {
+            "description": "One member of a fused record, cited by its record, not its reading.",
+            "properties": {
+              "event_type": {
+                "type": "string"
+              },
+              "joined": {
+                "$ref": "#/$defs/Joined"
+              },
+              "record": {
+                "description": "The member's stable record citation: `<type>:<native id>` when the\nsource has one, otherwise its record location.",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "record",
+              "source",
+              "event_type",
+              "joined"
+            ],
+            "type": "object"
+          },
           "Timestamp": {
             "format": "date-time",
             "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One mail message stored by two or more mail sources of one account\n(Gmail, IMAP, Maildir, mbox, Outlook): its account and `Message-ID`\nidentify it, whatever dates its stores give it.",
+        "description": "One mail message stored by two or more mail sources of one account\n(Gmail, IMAP, Maildir, mbox, Outlook): its account and `Message-ID`\nidentify it.",
         "properties": {
           "account": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
+          },
+          "ambiguous": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "basis": {
+            "$ref": "#/$defs/Basis"
+          },
+          "competitors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "from": {
             "items": {
@@ -14091,24 +14579,29 @@
             },
             "type": "array"
           },
+          "members": {
+            "items": {
+              "$ref": "#/$defs/Member"
+            },
+            "type": "array"
+          },
           "message_id": {
             "type": [
               "string",
               "null"
             ]
           },
-          "observed_by": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "record": {
             "type": "string"
           },
+          "rule_version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "sent_at": {
             "$ref": "#/$defs/Timestamp",
-            "description": "The `Date` header."
+            "description": "The preferred member's `Date` header."
           },
           "subject": {
             "type": [
@@ -14124,11 +14617,16 @@
           }
         },
         "required": [
+          "account",
           "record",
           "from",
           "labels",
           "sent_at",
-          "observed_by"
+          "members",
+          "basis",
+          "ambiguous",
+          "competitors",
+          "rule_version"
         ],
         "title": "MailFused",
         "type": "object"
@@ -14141,6 +14639,307 @@
       "time_rule": {
         "fields": [
           "sent_at"
+        ],
+        "quality": "intrinsic",
+        "rule": "first_present"
+      }
+    },
+    {
+      "declaring_producer": "sinex",
+      "field_hints": [],
+      "keep_known": [],
+      "key_rule": {
+        "fields": [
+          "family",
+          "left",
+          "right"
+        ],
+        "rule": "fields"
+      },
+      "kind": {
+        "name": "fusion.considered_pair",
+        "version": 2
+      },
+      "normalization": "rust",
+      "owned_blobs": [],
+      "payload_schema": {
+        "$defs": {
+          "Decision": {
+            "description": "The decision on a pair.",
+            "enum": [
+              "same",
+              "distinct"
+            ],
+            "type": "string"
+          },
+          "PairState": {
+            "description": "The decision on a pair: none yet, the same occurrence, or two.",
+            "enum": [
+              "undecided",
+              "same",
+              "distinct"
+            ],
+            "type": "string"
+          },
+          "StandingDecision": {
+            "description": "One author's standing decision on a pair.",
+            "properties": {
+              "author": {
+                "type": "string"
+              },
+              "decision": {
+                "$ref": "#/$defs/Decision"
+              }
+            },
+            "required": [
+              "author",
+              "decision"
+            ],
+            "type": "object"
+          },
+          "Strategy": {
+            "description": "Which strategy proposed a considered pair.",
+            "oneOf": [
+              {
+                "enum": [
+                  "identifier",
+                  "window",
+                  "fallback"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "decision",
+                "description": "No strategy proposed it; a duplicate decision names the pair.",
+                "type": "string"
+              }
+            ]
+          },
+          "Timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "A pair of records a fusion pass had to choose about: one of several\ncandidates for the same partner, or a pair a duplicate decision names.\nWritten by the fusion pass with its fused records and queried as\n`duplicates`. The pair is cited by records, never readings.",
+        "properties": {
+          "at": {
+            "$ref": "#/$defs/Timestamp",
+            "description": "The earlier of the two starts."
+          },
+          "candidates": {
+            "description": "How many candidates the choice was among.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "chosen": {
+            "description": "Whether this pair is joined in a fused record.",
+            "type": "boolean"
+          },
+          "decided_by": {
+            "description": "Who made the governing decision.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "distance_ns": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "family": {
+            "type": "string"
+          },
+          "left": {
+            "description": "The lesser of the two record citations.",
+            "type": "string"
+          },
+          "left_source": {
+            "type": "string"
+          },
+          "other_decisions": {
+            "description": "Standing decisions that do not govern (an agent's, where the family\nrecords agent decisions without applying them).",
+            "items": {
+              "$ref": "#/$defs/StandingDecision"
+            },
+            "type": "array"
+          },
+          "right": {
+            "type": "string"
+          },
+          "right_source": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/$defs/PairState",
+            "description": "The governing decision."
+          },
+          "strategy": {
+            "$ref": "#/$defs/Strategy"
+          }
+        },
+        "required": [
+          "family",
+          "left",
+          "right",
+          "left_source",
+          "right_source",
+          "at",
+          "strategy",
+          "candidates",
+          "distance_ns",
+          "chosen",
+          "state",
+          "other_decisions"
+        ],
+        "title": "ConsideredPair",
+        "type": "object"
+      },
+      "removed_rule": {
+        "rule": "never"
+      },
+      "replace_rule": "replace_when_newer",
+      "search": "words_and_trigram",
+      "time_rule": {
+        "fields": [
+          "at"
+        ],
+        "quality": "intrinsic",
+        "rule": "first_present"
+      }
+    },
+    {
+      "declaring_producer": "sinex",
+      "field_hints": [],
+      "keep_known": [],
+      "key_rule": {
+        "fields": [
+          "rev"
+        ],
+        "rule": "fields"
+      },
+      "kind": {
+        "name": "curation.duplicate",
+        "version": 2
+      },
+      "normalization": "rust",
+      "owned_blobs": [],
+      "payload_schema": {
+        "$defs": {
+          "Decision": {
+            "description": "The decision on a pair.",
+            "enum": [
+              "same",
+              "distinct"
+            ],
+            "type": "string"
+          },
+          "Timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One revision of a duplicate decision, or a withdrawal of one.",
+        "properties": {
+          "at": {
+            "description": "The writer's clock in Unix milliseconds, for display; currency never\nreads it.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "author": {
+            "description": "Computed from the authenticated caller, never supplied.",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Decision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`None` for a withdrawal."
+          },
+          "family": {
+            "description": "The fusion family whose records the pair are, when it is one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "family_key": {
+            "description": "For a fusion family keyed by identity, the key that holds the pair."
+          },
+          "pair": {
+            "description": "The two record citations, sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pair_at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The earlier of the pair's own times, when they have times, so the\nderivation that reads the pair also reads the decision."
+          },
+          "rev": {
+            "description": "This revision's ID; equals `root` for the first revision.",
+            "type": "string"
+          },
+          "revises": {
+            "description": "The revisions this one revises, as `<root>@<rev>`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "root": {
+            "description": "The ID of the record's first revision.",
+            "type": "string"
+          },
+          "via": {
+            "description": "The channel the request arrived on. Every decision reaches the\ndaemon through its API, so this is `api`.",
+            "type": "string"
+          },
+          "withdraws": {
+            "description": "The revisions (`<root>@<rev>`) or records (`<root>`) this one\nwithdraws.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "root",
+          "rev",
+          "author",
+          "via",
+          "at",
+          "revises",
+          "withdraws",
+          "pair"
+        ],
+        "title": "Duplicate",
+        "type": "object"
+      },
+      "removed_rule": {
+        "rule": "never"
+      },
+      "replace_rule": "suppress_repeat",
+      "search": "words_and_trigram",
+      "time_rule": {
+        "fields": [
+          "pair_at"
         ],
         "quality": "intrinsic",
         "rule": "first_present"
@@ -24050,7 +24849,7 @@
       },
       "kind": {
         "name": "library.copy",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [
@@ -24233,7 +25032,7 @@
         "field": "vanished_at",
         "rule": "when_present"
       },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -24354,7 +25153,7 @@
       },
       "kind": {
         "name": "library.item",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -24366,7 +25165,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One revision of an item. The live reading is the current revision; the\noriginal renditions describe its revisions. New bytes at the same item key\nmake a new revision; equal bytes at an unrelated key are a different item.",
+        "description": "One revision of an item. The live reading is the current revision; the\noriginal renditions describe its revisions. New bytes at the same item key\nmake a new revision; equal bytes at an unrelated key are a different item.\nAn item is a derived reading of the scans, not a curation record: the\n`library.items` derivation recomputes it when its copies change, and the\nnewer reading replaces the live one.",
         "properties": {
           "at": {
             "$ref": "#/$defs/Timestamp"
@@ -24408,16 +25207,6 @@
           },
           "revision": {
             "type": "string"
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
@@ -24433,8 +25222,7 @@
         "type": "object"
       },
       "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
+        "rule": "never"
       },
       "replace_rule": "replace_when_newer",
       "search": "words_and_trigram",
@@ -24458,7 +25246,7 @@
       },
       "kind": {
         "name": "library.rendition",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
@@ -24479,7 +25267,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "Bytes standing for an item revision: its original, or something made\nfrom it. A preview never answers a request for the original.",
+        "description": "Bytes standing for an item revision: its original, read from the scans\nby the `library.items` derivation, or something made from it (a preview,\nwritten by a preview request citing the stored bytes). A preview never\nanswers a request for the original.",
         "properties": {
           "at": {
             "$ref": "#/$defs/Timestamp"
@@ -24525,7 +25313,7 @@
             "type": "string"
           },
           "part_index": {
-            "description": "The first visible scan part observing this revision.",
+            "description": "The first visible scan part observing this revision; for a rendition\nmade from another, that rendition's.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -24546,16 +25334,6 @@
               "integer",
               "null"
             ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
@@ -24573,10 +25351,9 @@
         "type": "object"
       },
       "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
+        "rule": "never"
       },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -24592,173 +25369,91 @@
       "keep_known": [],
       "key_rule": {
         "fields": [
-          "rendition"
+          "root",
+          "rev"
         ],
         "rule": "fields"
       },
       "kind": {
-        "name": "library.preview",
+        "name": "library.curation",
         "version": 2
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
-          "RenditionRole": {
-            "enum": [
-              "original",
-              "crop",
-              "preview",
-              "transcode"
-            ],
-            "type": "string"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A rendered preview submitted as evidence for a rendition.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "content": {
-            "type": "string"
-          },
-          "duration_ms": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "height": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "item": {
-            "type": "string"
-          },
-          "made_from": {
-            "description": "The rendition it was made from; `None` for an original.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "made_with": {
-            "additionalProperties": true,
-            "description": "How it was made: the tool and its settings.",
-            "type": "object"
-          },
-          "media_type": {
-            "type": "string"
-          },
-          "rendition": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "string"
-          },
-          "role": {
-            "$ref": "#/$defs/RenditionRole"
-          },
-          "width": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "rendition",
-          "item",
-          "revision",
-          "role",
-          "content",
-          "media_type",
-          "by",
-          "at"
-        ],
-        "title": "Preview",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "assignment"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.assignment",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Level": {
-            "description": "Who an assigned value comes from, highest first in the selection policy.",
+          "CurationKind": {
+            "description": "What a curation record states. The kind decides what `key` and `value`\nhold and which records count as the same statement (its uniqueness key).",
             "oneOf": [
               {
-                "const": "override",
-                "description": "The operator's own value; wins over everything, an empty one included.",
+                "const": "tag",
+                "description": "`key` is the tag. `value` is absent when the tag applies and `false`\nwhen the author rejects it (an imported or proposed tag that is wrong).",
                 "type": "string"
               },
               {
-                "const": "import",
-                "description": "Brought in from another application or site.",
+                "const": "property",
+                "description": "`key` is the property; `value` its value, `null` for an explicit empty.",
                 "type": "string"
               },
               {
-                "const": "proposal",
-                "description": "A model's suggestion.",
+                "const": "note",
+                "description": "`value` is the text.",
+                "type": "string"
+              },
+              {
+                "const": "rating",
+                "description": "`key` is the scale; `value` a number in its range or one of its choices.",
+                "type": "string"
+              },
+              {
+                "const": "comparison",
+                "description": "`key` is the scale; `value` holds `order`, the items best first with\nties as groups, each with its revision fixed, and `blind`.",
+                "type": "string"
+              },
+              {
+                "const": "entry",
+                "description": "One entry of a collection: `key` is the collection's root, `value`\nholds the entry's order key, and the target fixes the revision.",
+                "type": "string"
+              },
+              {
+                "const": "collection",
+                "description": "`key` is the collection's name.",
+                "type": "string"
+              },
+              {
+                "const": "scale",
+                "description": "`key` is the scale's name; `value` holds its question and its range\nor choices.",
+                "type": "string"
+              },
+              {
+                "const": "property_definition",
+                "description": "`key` is the property's name; `value` holds its value type\n(`text`, `number`, `boolean` or `choice`) and its choices.",
+                "type": "string"
+              },
+              {
+                "const": "tag_definition",
+                "description": "`key` is the tag; `value` holds its namespace and description.",
+                "type": "string"
+              },
+              {
+                "const": "tag_relation",
+                "description": "`key` is `alias` or `implies`; `value` is the two tags: an alias's in\nsorted order, an implication's as `[tag, implied]`.",
+                "type": "string"
+              },
+              {
+                "const": "dismissal",
+                "description": "A collection suggestion turned down: `key` is the collection's root,\n`value` the saved query's revision it was offered under, and the\ntarget the suggested item.",
+                "type": "string"
+              },
+              {
+                "const": "withdrawal",
+                "description": "Withdraws what `withdraws` names.",
                 "type": "string"
               }
             ]
           },
           "Target": {
-            "description": "What an assignment, entry or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
+            "description": "What a curation record or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
             "properties": {
               "item": {
                 "type": "string"
@@ -24792,459 +25487,129 @@
           "Timestamp": {
             "format": "date-time",
             "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One value given to one field of a target: a tag (`field = \"tag\"`), or a\nproperty. A property can be set to empty (`value = None`), which stops\nfallback to lower levels. Withdrawing an assignment is a newer reading of\nit with `withdrawn_at` set.",
-        "properties": {
-          "assignment": {
-            "type": "string"
           },
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "field": {
-            "description": "`tag`, or the property's name.",
-            "type": "string"
-          },
-          "level": {
-            "$ref": "#/$defs/Level"
-          },
-          "source_ref": {
-            "description": "Where an imported value came from: a sidecar file, a post URL.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target": {
-            "$ref": "#/$defs/Target"
-          },
-          "value": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "assignment",
-          "target",
-          "field",
-          "level",
-          "by",
-          "at"
-        ],
-        "title": "Assignment",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "collection"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.collection",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A collection: an ordered list of entries, optionally with a saved query that\noffers suggestions. A fixed selection is a collection without a query whose\nentries were added from a query's results.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "collection": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "saved_query": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "selected_from": {
-            "description": "The query the entries were selected from, for a fixed selection.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "collection",
-          "name",
-          "by",
-          "at"
-        ],
-        "title": "Collection",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "entry"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.entry",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Target": {
-            "description": "What an assignment, entry or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
-            "properties": {
-              "item": {
-                "type": "string"
-              },
-              "part": {
-                "description": "A selector inside the rendition: `t=12.5-40` (seconds, half-open) or\n`xywh=10,10,200,120` (pixels).",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "rendition": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "revision": {
-                "description": "Fixed revision; `None` follows the item.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "item"
-            ],
-            "type": "object"
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One entry in a collection. Each insertion is a new entry, so the same item\ncan appear twice; removing an entry withdraws it and keeps it inspectable.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "collection": {
-            "type": "string"
-          },
-          "entry": {
-            "type": "string"
-          },
-          "position": {
-            "description": "Sort position; an entry inserted between two takes a value between\ntheirs.",
-            "format": "double",
-            "type": "number"
-          },
-          "target": {
-            "$ref": "#/$defs/Target",
-            "description": "The item, with the revision fixed when it was added."
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "entry",
-          "collection",
-          "target",
-          "position",
-          "by",
-          "at"
-        ],
-        "title": "Entry",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "item",
-          "scale",
-          "by"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.rating",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Level": {
-            "description": "Who an assigned value comes from, highest first in the selection policy.",
+          "ValueOrigin": {
+            "description": "Where a curated value comes from. With the author it decides which value\nis shown: the operator's authored value, then an agent's, then imported\nvalues, then proposals.",
             "oneOf": [
               {
-                "const": "override",
-                "description": "The operator's own value; wins over everything, an empty one included.",
+                "const": "authored",
+                "description": "Written by its author through a library request.",
                 "type": "string"
               },
               {
-                "const": "import",
-                "description": "Brought in from another application or site.",
+                "const": "imported",
+                "description": "Brought in from another application's or site's records; `cites`\nnames them.",
                 "type": "string"
               },
               {
-                "const": "proposal",
-                "description": "A model's suggestion.",
+                "const": "proposed",
+                "description": "A method's suggestion; `cites` names the method and its version.",
                 "type": "string"
               }
             ]
-          },
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A rating on a named scale (`stars`, `favourite`), one per rater.",
+        "description": "One revision of an authored library record: a tag, a property value, a\nnote, a rating, a comparison, a collection entry, a collection, a scale or\na withdrawal. A revision never changes. Which revisions are current\nfollows from `revises` and `withdraws` alone (the descendant rule in the\nshared `authored` crate), never from time or from a newer reading.\n\n`author`, `via` and `at` come from the request's manifest, which the daemon\nfills from the authenticated caller; no request line supplies them.",
         "properties": {
           "at": {
             "$ref": "#/$defs/Timestamp"
           },
-          "by": {
+          "author": {
             "type": "string"
           },
-          "item": {
+          "cites": {
+            "description": "The imported records cited, or the proposing method and its version.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/CurationKind"
+          },
+          "origin": {
+            "$ref": "#/$defs/ValueOrigin"
+          },
+          "request": {
+            "description": "The request that wrote this revision, and the digest of its content,\nso a retried request is answered without writing again.",
             "type": "string"
           },
-          "level": {
-            "$ref": "#/$defs/Level"
-          },
-          "of": {
-            "description": "The top of the scale (5 stars, 1 for a like).",
-            "format": "double",
-            "type": "number"
-          },
-          "scale": {
+          "request_digest": {
             "type": "string"
           },
-          "value": {
-            "format": "double",
-            "type": "number"
+          "rev": {
+            "description": "This revision: `<request>` or `<request>.<n>`.",
+            "type": "string"
           },
-          "withdrawn_at": {
+          "revises": {
+            "description": "The revisions of the same record this one revises, as `<root>@<rev>`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "root": {
+            "description": "The record's identity: the ID of its first revision.",
+            "type": "string"
+          },
+          "slots": {
+            "description": "Hex digests of the uniqueness slots the record occupies.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "target": {
             "anyOf": [
               {
-                "$ref": "#/$defs/Timestamp"
+                "$ref": "#/$defs/Target"
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "value": true,
+          "via": {
+            "description": "The channel the request arrived on.",
+            "type": "string"
+          },
+          "withdraws": {
+            "description": "What this record withdraws: `<root>` (every revision) or `<root>@<rev>`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
-          "item",
-          "scale",
-          "value",
-          "of",
-          "level",
-          "by",
-          "at"
+          "root",
+          "rev",
+          "revises",
+          "withdraws",
+          "kind",
+          "origin",
+          "author",
+          "via",
+          "at",
+          "request",
+          "request_digest",
+          "slots"
         ],
-        "title": "Rating",
+        "title": "Curation",
         "type": "object"
       },
       "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
+        "rule": "never"
       },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "comparison"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.comparison",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "One pairwise judgement: `winner` is better than `loser` on `scale`. A\nranking is fitted from all of them.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "comparison": {
-            "type": "string"
-          },
-          "loser": {
-            "type": "string"
-          },
-          "scale": {
-            "type": "string"
-          },
-          "winner": {
-            "type": "string"
-          },
-          "withdrawn_at": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "comparison",
-          "scale",
-          "winner",
-          "loser",
-          "by",
-          "at"
-        ],
-        "title": "Comparison",
-        "type": "object"
-      },
-      "removed_rule": {
-        "field": "withdrawn_at",
-        "rule": "when_present"
-      },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
@@ -25266,34 +25631,14 @@
       },
       "kind": {
         "name": "library.view",
-        "version": 2
+        "version": 3
       },
       "normalization": "rust",
       "owned_blobs": [],
       "payload_schema": {
         "$defs": {
-          "Level": {
-            "description": "Who an assigned value comes from, highest first in the selection policy.",
-            "oneOf": [
-              {
-                "const": "override",
-                "description": "The operator's own value; wins over everything, an empty one included.",
-                "type": "string"
-              },
-              {
-                "const": "import",
-                "description": "Brought in from another application or site.",
-                "type": "string"
-              },
-              {
-                "const": "proposal",
-                "description": "A model's suggestion.",
-                "type": "string"
-              }
-            ]
-          },
           "Target": {
-            "description": "What an assignment, entry or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
+            "description": "What a curation record or view is about: an item (following its\nrevisions), one revision, one rendition, or a part of a rendition.",
             "properties": {
               "item": {
                 "type": "string"
@@ -25341,9 +25686,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "level": {
-            "$ref": "#/$defs/Level"
-          },
           "player": {
             "description": "The program it was handed to.",
             "type": "string"
@@ -25372,7 +25714,6 @@
           "player",
           "started_at",
           "count",
-          "level",
           "by"
         ],
         "title": "View",
@@ -25381,79 +25722,11 @@
       "removed_rule": {
         "rule": "never"
       },
-      "replace_rule": "replace_when_newer",
+      "replace_rule": "suppress_repeat",
       "search": "words_and_trigram",
       "time_rule": {
         "fields": [
           "started_at"
-        ],
-        "quality": "intrinsic",
-        "rule": "first_present"
-      }
-    },
-    {
-      "declaring_producer": "sinex",
-      "field_hints": [],
-      "keep_known": [],
-      "key_rule": {
-        "fields": [
-          "collection",
-          "item",
-          "query"
-        ],
-        "rule": "fields"
-      },
-      "kind": {
-        "name": "library.dismissal",
-        "version": 2
-      },
-      "normalization": "rust",
-      "owned_blobs": [],
-      "payload_schema": {
-        "$defs": {
-          "Timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "A collection suggestion the operator dismissed; remembered for that\ncollection and query revision.",
-        "properties": {
-          "at": {
-            "$ref": "#/$defs/Timestamp"
-          },
-          "by": {
-            "type": "string"
-          },
-          "collection": {
-            "type": "string"
-          },
-          "item": {
-            "type": "string"
-          },
-          "query": {
-            "description": "The saved query's text when the suggestion was seen.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "collection",
-          "item",
-          "query",
-          "by",
-          "at"
-        ],
-        "title": "Dismissal",
-        "type": "object"
-      },
-      "removed_rule": {
-        "rule": "never"
-      },
-      "replace_rule": "replace_when_newer",
-      "search": "words_and_trigram",
-      "time_rule": {
-        "fields": [
-          "at"
         ],
         "quality": "intrinsic",
         "rule": "first_present"
@@ -29038,7 +29311,8 @@
       "eventTypes": [
         "editor.reported",
         "terminal.reported",
-        "scrollback.captured"
+        "scrollback.captured",
+        "command.reported"
       ],
       "expect": {
         "everySeconds": null,
@@ -29174,14 +29448,9 @@
         }
       ],
       "eventTypes": [
-        "library.preview",
-        "library.assignment",
-        "library.collection",
-        "library.entry",
-        "library.rating",
-        "library.comparison",
-        "library.view",
-        "library.dismissal"
+        "library.rendition",
+        "library.curation",
+        "library.view"
       ],
       "expect": {
         "everySeconds": null,
@@ -29257,6 +29526,37 @@
       ],
       "name": "forecast.request",
       "purpose": "submitted probability forecasts",
+      "shapes": []
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [],
+            "owner": "system",
+            "streams": []
+          },
+          "format": "duplicate"
+        }
+      ],
+      "eventTypes": [
+        "curation.duplicate"
+      ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "on_demand",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
+      "formats": [
+        "duplicate"
+      ],
+      "name": "duplicate.request",
+      "purpose": "decisions on whether two records are one occurrence",
       "shapes": []
     },
     {
