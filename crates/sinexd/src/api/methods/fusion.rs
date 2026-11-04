@@ -295,7 +295,7 @@ impl Api {
         Ok(json!({
             "event": id,
             "citation": format!("sinex:record/{material}/0"),
-            "family": family.name,
+            "family": record.family,
             "pair": record.pair,
             "root": record.root,
             "rev": record.rev,

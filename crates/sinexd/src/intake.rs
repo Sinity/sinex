@@ -100,7 +100,7 @@ impl Intake<'_> {
             acquired,
             Value::Null,
             &mut Totals::default(),
-            |batch, check| async move {
+            |batch, check, _| async move {
                 self.writer
                     .submit_curation(self.priority, batch, check)
                     .await
