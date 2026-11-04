@@ -80,31 +80,24 @@ async fn setup_indexed_inputs(
     let clock = i64::try_from(now.unix_ns() / 1_000_000).unwrap() - 1000;
     let checkpoint = sinex_store::signals::Checkpoint {
         settings_identity: provider.settings_identity.clone().unwrap(),
-        evaluator: ::signals::Evaluator::new(
-            clock,
-            vec![],
-            ::signals::Policy { private: vec![] },
-            &::signals::DayCalendar::new(day),
-        )
-        .unwrap(),
-        host_policy: ::signals::HostPolicy::new(
+        evaluator: ::signals::Evaluator::new(clock, vec![], &::signals::DayCalendar::new(day))
+            .unwrap(),
+        host: ::signals::HostPolicy::new(
+            config.host_settings(),
             ::signals::InterruptBudget {
                 per_hour: 2,
                 handoffs: vec![],
             },
-            None,
         ),
         notifications: Default::default(),
-        forwarded: Default::default(),
-        outbox: Default::default(),
-        rule_events: Default::default(),
         rules: Default::default(),
-        match_basis: Default::default(),
-        current_inputs: Default::default(),
         rows: Default::default(),
-        attempts: Default::default(),
+        inputs: Default::default(),
+        open: Default::default(),
+        outbox: Default::default(),
+        forwarded: Default::default(),
+        reports_seq: 0,
         observed_seq: 0,
-        passive_count: 0,
     };
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     sinex_store::signals::save(&mut conn, "test-host", None, &checkpoint)

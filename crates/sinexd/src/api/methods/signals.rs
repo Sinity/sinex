@@ -97,6 +97,7 @@ impl Api {
                     },
                     via: "api".into(),
                     live: answer.live,
+                    shipped: ::signals::Shipped::default(),
                 }
             }
             ("enable" | "disable" | "remove", None) => {

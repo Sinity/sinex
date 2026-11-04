@@ -1,17 +1,19 @@
-//! Effects use deployment-owned destinations after the unknown attempt commits.
+//! The outlets a handed-off delivery uses: desktop notifications through the
+//! shared deliverer, and value targets and action commands named in
+//! deployment configuration. Each attempt is recorded unknown before it runs.
 use super::*;
+use ::signals::DeliveryOutcome;
 use ::signals::notifications::{Notice, NotificationConfig, RouteCommand};
 use config::{Command, ValueTarget};
-use signal_delivery::{
-    AttemptContext, CancellationToken, Deliverer, NotificationRequest, NotificationUpdate,
-};
+use signal_delivery::{Deliverer, NotificationRequest, NotificationUpdate};
 use std::time::Duration;
 
+/// Start the host's one desktop deliverer with its persisted state. Committed
+/// notices reach it through the returned channel; every state change comes
+/// back as an update the caller persists before the deliverer continues.
 pub(super) async fn notifications(
     api: &Api,
     config: &Config,
-    condition: signal_delivery::PolicyCheck,
-    cancellation: CancellationToken,
 ) -> Result<
     (
         mpsc::UnboundedSender<NotificationRequest>,
@@ -26,25 +28,18 @@ pub(super) async fn notifications(
         .map_err(error)?
         .map_or_else(Default::default, |saved| saved.checkpoint.notifications);
     let notifications = config.notifications.as_ref();
-    let connection = match notifications {
-        Some(notification) if notification.route != ::signals::notifications::Route::Command => {
-            match &notification.bus_address {
-                Some(address) => zbus::connection::Builder::address(address.as_str())
-                    .map_err(error)?
-                    .build()
-                    .await
-                    .ok(),
-                None => zbus::Connection::session().await.ok(),
-            }
-        }
-        _ => None,
+    let connection = match notifications.map(|notifications| &notifications.bus_address) {
+        Some(Some(address)) => zbus::connection::Builder::address(address.as_str())
+            .map_err(error)?
+            .build()
+            .await
+            .ok(),
+        Some(None) => zbus::Connection::session().await.ok(),
+        None => None,
     };
     let configuration = NotificationConfig {
-        route: notifications.map_or(::signals::notifications::Route::Command, |notification| {
-            notification.route
-        }),
-        command: notifications
-            .and_then(|notification| notification.command.as_ref())
+        away_command: notifications
+            .and_then(|notifications| notifications.away_command.as_ref())
             .map(|command| RouteCommand {
                 program: command.program.clone(),
                 arguments: command.arguments.clone(),
@@ -55,118 +50,80 @@ pub(super) async fn notifications(
     let (requests, receive) = mpsc::unbounded_channel();
     let (updates, changed) = mpsc::unbounded_channel();
     let worker = tokio::spawn(async move {
-        signal_delivery::run(
-            deliverer,
-            receive,
-            updates,
-            condition,
-            Arc::new(|| millis(Timestamp::now()).expect("host delivery clock fits milliseconds")),
-            cancellation,
-            None,
-        )
-        .await
-        .map_err(error)
+        signal_delivery::run(deliverer, receive, updates)
+            .await
+            .map_err(error)
     });
     Ok((requests, changed, worker))
 }
 
-pub(super) fn notice(pending: &PendingDelivery, passive_count: u64) -> Notice {
-    let delivery = &pending.delivery;
-    let reference = delivery
+/// The desktop notice for one delivery the route function decided to show
+/// or send away.
+/// What a delivery is about: its first matched row's reference, else its
+/// rule's citation.
+pub(super) fn reference(delivery: &::signals::Delivery) -> String {
+    delivery
+        .fired
         .basis
         .first()
         .map(|row| row.reference.clone())
-        .unwrap_or_else(|| {
-            format!(
-                "sinex:key/sinex.signals/signal.rule/{}",
-                delivery.trigger.rule.id
-            )
-        });
-    let mut notice = pending.notice.clone().unwrap_or_else(|| Notice {
-        delivery_id: delivery.id.clone(),
-        product: "sinex".into(),
-        icon: "dialog-information".into(),
-        rule: delivery.trigger.rule.id.clone(),
-        occurrence: delivery.trigger.occurrence.id.clone(),
-        summary: pending
-            .rule
-            .as_ref()
-            .map_or_else(|| "Sinex signal".into(), |rule| rule.rule.name.clone()),
-        body: serde_json::to_string(&delivery.basis).unwrap_or_default(),
-        reference: reference.clone(),
-        command_hint: format!("sinexctl show {reference}"),
-        interrupt: false,
-        current: pending
-            .rule
-            .as_ref()
-            .is_some_and(::signals::ActiveRule::current),
-        data_loss: false,
-        budget_passive_count: None,
-    });
-    notice.interrupt = delivery.channel == ::signals::Channel::Interrupt;
-    notice.data_loss = false;
-    notice.budget_passive_count = (delivery.downgrade
-        == Some(::signals::Downgrade::InterruptBudgetSpent))
-    .then_some(passive_count);
-    notice
+        .filter(|reference| !reference.is_empty())
+        .unwrap_or_else(|| evaluate::rule_reference(&delivery.fired.rule_name))
 }
 
-pub(super) fn freeze_notice(pending: &mut PendingDelivery) {
-    if pending.notice.is_none() {
-        pending.notice = Some(notice(pending, 0));
-    }
-}
-
-pub(super) async fn effect(
-    config: &Config,
-    pending: &PendingDelivery,
-    attempt: &AttemptContext,
-) -> ::signals::DeliveryOutcome {
-    use ::signals::DeliveryOutcome;
-    if let Err(interrupted) = attempt.check() {
-        return DeliveryOutcome::NotSent(interrupted.reason().into());
-    }
-    let delivery = &pending.delivery;
-    let Some(rule) = &pending.rule else {
-        return DeliveryOutcome::NotSent("no_local_rule_outlet".into());
+pub(super) fn notice(delivery: &::signals::Delivery, showing: u32) -> Notice {
+    let fired = &delivery.fired;
+    let reference = reference(delivery);
+    let what = match (&fired.change, fired.value) {
+        (Some(change), _) => format!("{} joined, {} left", change.joined.len(), change.left.len()),
+        (None, Some(value)) => format!("{value}"),
+        (None, None) if fired.basis.len() == 1 => "new match".into(),
+        (None, None) => format!("{} matches", fired.basis.len()),
     };
-    let reference = delivery
-        .basis
-        .first()
-        .map(|row| row.reference.clone())
-        .unwrap_or_else(|| notice(pending, 0).reference);
-    match delivery.channel {
-        ::signals::Channel::Action => match rule
-            .rule
-            .command
-            .as_ref()
-            .and_then(|name| config.actions.get(name))
-        {
-            Some(command) => command_effect(command, &reference, attempt).await,
+    Notice {
+        delivery_id: fired.id.clone(),
+        product: fired.trigger.rule.product.clone(),
+        icon: "dialog-information".into(),
+        desktop_entry: None,
+        rule: fired.rule_name.clone(),
+        occurrence: fired.trigger.occurrence.id.clone(),
+        summary: format!("{} · {what}", fired.rule_name),
+        body: delivery.why(),
+        lines: Vec::new(),
+        command_hint: format!("sinexctl show {reference}"),
+        reference,
+        current: fired.current,
+        transient: false,
+        critical: fired.shipped.urgency == ::signals::Urgency::Critical,
+        outlets: ::signals::notifications::Outlets::of(&delivery.decision),
+        actions: Vec::new(),
+        showing,
+    }
+}
+
+/// Run one value or action outlet. A failure before anything could have been
+/// sent is `not_sent`; a failure after it may have acted is `unknown`.
+pub(super) async fn effect(config: &Config, pending: &Pending) -> DeliveryOutcome {
+    let deadline = Duration::from_millis(config.outlet_timeout_ms);
+    match pending {
+        Pending::Action { command, reference } => match config.actions.get(command) {
+            Some(command) => command_effect(command, reference, deadline).await,
             None => DeliveryOutcome::NotSent("action_command_not_configured".into()),
         },
-        ::signals::Channel::Value => match rule
-            .rule
-            .target
-            .as_ref()
-            .and_then(|name| config.values.get(name))
-        {
-            Some(target) => value_effect(target, delivery, attempt).await,
+        Pending::Value { target, delivery } => match config.values.get(target) {
+            Some(target) => match serde_json::to_vec(delivery) {
+                Ok(bytes) => value_effect(target, bytes, deadline).await,
+                Err(_) => DeliveryOutcome::NotSent("value_encode".into()),
+            },
             None => DeliveryOutcome::NotSent("value_target_not_configured".into()),
         },
-        _ => DeliveryOutcome::NotSent("not_an_effect_channel".into()),
+        Pending::Notice { .. } | Pending::Clear => {
+            DeliveryOutcome::NotSent("not_an_effect_outlet".into())
+        }
     }
 }
 
-async fn command_effect(
-    command: &Command,
-    reference: &str,
-    attempt: &AttemptContext,
-) -> ::signals::DeliveryOutcome {
-    use ::signals::DeliveryOutcome;
-    if let Err(interrupted) = attempt.check() {
-        return DeliveryOutcome::NotSent(interrupted.reason().into());
-    }
+async fn command_effect(command: &Command, reference: &str, deadline: Duration) -> DeliveryOutcome {
     let mut process = tokio::process::Command::new(&command.program);
     process
         .args(&command.arguments)
@@ -178,11 +135,11 @@ async fn command_effect(
     let Ok(mut child) = process.spawn() else {
         return DeliveryOutcome::NotSent("action_spawn".into());
     };
-    match attempt.run(child.wait()).await {
+    match tokio::time::timeout(deadline, child.wait()).await {
         Ok(Ok(status)) if status.success() => DeliveryOutcome::Delivered,
         Ok(Ok(_)) => DeliveryOutcome::NotSent("action_exit".into()),
-        // A spawned process may already have acted. Cancellation never converts
-        // that phase into a claim that no physical effect was possible.
+        // A spawned process may already have acted; stopping it never turns
+        // that into a claim that nothing happened.
         Ok(Err(_)) | Err(_) => {
             let _ = child.start_kill();
             let _ = child.wait().await;
@@ -191,41 +148,17 @@ async fn command_effect(
     }
 }
 
-// Observe submitted private staging work before dropping its cleanup owner.
-// After interruption, this acknowledgement grants no right to publish it.
-async fn stage<F: std::future::Future>(
-    attempt: &AttemptContext,
-    work: F,
-) -> Result<F::Output, (signal_delivery::Interrupted, bool)> {
-    let mut work = std::pin::pin!(work);
-    let mut submitted = false;
-    let result = attempt
-        .run(std::future::poll_fn(|context| {
-            submitted = true;
-            std::future::Future::poll(work.as_mut(), context)
-        }))
-        .await;
-    match result {
-        Ok(result) => Ok(result),
-        Err(interrupted) => {
-            if submitted {
-                let _ = work.await;
-            }
-            Err((interrupted, submitted))
-        }
+async fn value_effect(target: &ValueTarget, bytes: Vec<u8>, deadline: Duration) -> DeliveryOutcome {
+    match target {
+        ValueTarget::File { path } => file_value(path, &bytes).await,
+        ValueTarget::Loopback { url } => http_value(url, bytes, deadline).await,
     }
 }
 
-async fn file_value(
-    path: &std::path::Path,
-    bytes: &[u8],
-    attempt: &AttemptContext,
-) -> ::signals::DeliveryOutcome {
-    use ::signals::DeliveryOutcome;
+/// Written beside the target and renamed over it, so a reader sees the old
+/// value or the new one, never a partial file.
+async fn file_value(path: &std::path::Path, bytes: &[u8]) -> DeliveryOutcome {
     use tokio::io::AsyncWriteExt;
-    if let Err(interrupted) = attempt.check() {
-        return DeliveryOutcome::NotSent(interrupted.reason().into());
-    }
     let Some(directory) = path.parent() else {
         return DeliveryOutcome::NotSent("value_file_parent".into());
     };
@@ -234,121 +167,59 @@ async fn file_value(
     ) else {
         return DeliveryOutcome::NotSent("value_stage_path".into());
     };
-    let mut file = match stage(
-        attempt,
-        tokio::fs::OpenOptions::new()
+    let written = async {
+        let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(&staged),
-    )
-    .await
-    {
-        Ok(Ok(file)) => file,
-        Ok(Err(_)) => return DeliveryOutcome::NotSent("value_stage_create".into()),
-        Err((interrupted, _)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
-    };
-    let mut remaining = bytes;
-    while !remaining.is_empty() {
-        match stage(attempt, file.write(remaining)).await {
-            Ok(Ok(0)) | Ok(Err(_)) => return DeliveryOutcome::NotSent("value_stage_write".into()),
-            Ok(Ok(written)) => remaining = &remaining[written..],
-            Err((interrupted, _)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
-        }
+            .open(&staged)
+            .await?;
+        file.write_all(bytes).await?;
+        file.sync_all().await
     }
-    match stage(attempt, file.sync_all()).await {
-        Ok(Ok(())) => {}
-        Ok(Err(_)) => return DeliveryOutcome::NotSent("value_stage_sync".into()),
-        Err((interrupted, _)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
+    .await;
+    if written.is_err() {
+        return DeliveryOutcome::NotSent("value_stage_write".into());
     }
-    drop(file);
-    if let Err(interrupted) = attempt.check() {
-        return DeliveryOutcome::NotSent(interrupted.reason().into());
+    if tokio::fs::rename(&staged, path).await.is_err() {
+        return DeliveryOutcome::NotSent("value_rename".into());
     }
-    // The rename can publish after it has been submitted to the filesystem.
-    // Always observe its result, retaining Unknown if the attempt expired.
-    match stage(attempt, tokio::fs::rename(&staged, path)).await {
-        Ok(Ok(())) => {}
-        Err((interrupted, false)) => return DeliveryOutcome::NotSent(interrupted.reason().into()),
-        Ok(Err(_)) | Err((_, true)) => return DeliveryOutcome::Unknown,
-    }
-    match stage(attempt, async {
-        let directory = tokio::fs::File::open(directory).await?;
-        directory.sync_all().await
-    })
-    .await
-    {
-        Ok(Ok(())) => DeliveryOutcome::Delivered,
-        Ok(Err(_)) | Err(_) => DeliveryOutcome::Unknown,
+    // The rename has published the value; only its durability is unconfirmed
+    // if the directory cannot be synced.
+    match async { tokio::fs::File::open(directory).await?.sync_all().await }.await {
+        Ok(()) => DeliveryOutcome::Delivered,
+        Err(_) => DeliveryOutcome::Unknown,
     }
 }
 
-async fn http_value(
-    url: &str,
-    bytes: Vec<u8>,
-    attempt: &AttemptContext,
-) -> ::signals::DeliveryOutcome {
-    use ::signals::DeliveryOutcome;
-    if let Err(interrupted) = attempt.check() {
-        return DeliveryOutcome::NotSent(interrupted.reason().into());
-    }
-    let client = match reqwest::Client::builder()
+async fn http_value(url: &str, bytes: Vec<u8>, deadline: Duration) -> DeliveryOutcome {
+    let Ok(client) = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
         .build()
-    {
-        Ok(client) => client,
-        Err(_) => return DeliveryOutcome::NotSent("value_http_client".into()),
+    else {
+        return DeliveryOutcome::NotSent("value_http_client".into());
     };
-    let mut submitted = false;
-    let response = attempt
-        .run(async {
-            submitted = true;
-            client
-                .post(url)
-                .header("content-type", "application/json")
-                .body(bytes)
-                .send()
-                .await
-        })
-        .await;
-    let response = match response {
-        Ok(Ok(response)) => response,
-        // Connection/TLS failures precede an HTTP request. Error text and URLs
-        // remain private, including configured query strings.
+    let response = tokio::time::timeout(
+        deadline,
+        client
+            .post(url)
+            .header("content-type", "application/json")
+            .body(bytes)
+            .send(),
+    )
+    .await;
+    match response {
+        // A value target acknowledges the POST through its status. Error text
+        // and URLs stay private, including configured query strings.
+        Ok(Ok(response)) if response.status().is_success() => DeliveryOutcome::Delivered,
+        Ok(Ok(_)) => DeliveryOutcome::NotSent("value_http_status".into()),
+        // Connection and TLS failures precede the request.
         Ok(Err(error)) if error.is_connect() || error.is_builder() => {
-            return DeliveryOutcome::NotSent("value_http_connect".into());
+            DeliveryOutcome::NotSent("value_http_connect".into())
         }
-        Err(interrupted) if !submitted => {
-            return DeliveryOutcome::NotSent(interrupted.reason().into());
-        }
-        Ok(Err(_)) | Err(_) => return DeliveryOutcome::Unknown,
-    };
-    // A value target acknowledges the POST through its status, not a response
-    // body. An unrelated streaming body cannot revoke that definitive result.
-    if response.status().is_success() {
-        DeliveryOutcome::Delivered
-    } else {
-        DeliveryOutcome::NotSent("value_http_status".into())
-    }
-}
-
-async fn value_effect(
-    target: &ValueTarget,
-    delivery: &::signals::Delivery,
-    attempt: &AttemptContext,
-) -> ::signals::DeliveryOutcome {
-    use ::signals::DeliveryOutcome;
-    if let Err(interrupted) = attempt.check() {
-        return DeliveryOutcome::NotSent(interrupted.reason().into());
-    }
-    let Ok(bytes) = serde_json::to_vec(delivery) else {
-        return DeliveryOutcome::NotSent("value_encode".into());
-    };
-    match target {
-        ValueTarget::File { path } => file_value(path, &bytes, attempt).await,
-        ValueTarget::Loopback { url } => http_value(url, bytes, attempt).await,
+        Ok(Err(_)) | Err(_) => DeliveryOutcome::Unknown,
     }
 }
 

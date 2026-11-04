@@ -58,47 +58,6 @@ pub struct PublicInterruptBudget {
     pub window_ms: i64,
 }
 
-/// A purpose-specific permission cached before the one compiled local outage alert.
-/// Its lease does not change the lifetime of ordinary temporal settings.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfflineEmergency {
-    pub producer: String,
-    pub host: String,
-    pub settings_identity: String,
-    pub rule: crate::signals::ShippedRule,
-    pub route: OfflineEmergencyRoute,
-    pub issued_at: Timestamp,
-    pub expires_at: Timestamp,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OfflineEmergencyRoute {
-    Desktop,
-}
-
-impl OfflineEmergency {
-    /// The host calls this with its trusted actual Invocation time, before the
-    /// effect. A replay or evaluation clock cannot authorize an offline effect.
-    pub fn permits(
-        &self,
-        producer: &str,
-        host: &str,
-        settings: &str,
-        invoked_at: Timestamp,
-    ) -> bool {
-        self.producer == producer
-            && self.host == host
-            && self.settings_identity == settings
-            && self.rule == crate::signals::emergency_rule()
-            && self.route == OfflineEmergencyRoute::Desktop
-            && self.issued_at <= invoked_at
-            && invoked_at < self.expires_at
-            && self.issued_at < self.expires_at
-    }
-}
-
 /// One observed committed policy revision, with no private configuration or keys.
 /// Clients resolve the supplied named zone explicitly at their operation boundary.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -113,8 +72,6 @@ pub enum PublicContext {
         interrupt_budget: PublicInterruptBudget,
         observed_at: Timestamp,
         coverage: CoverageStatus,
-        #[serde(default)]
-        offline_emergency: Option<OfflineEmergency>,
     },
     Pending {
         reason: String,

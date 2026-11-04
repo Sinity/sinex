@@ -193,7 +193,7 @@ in
     signals = mkOption {
       type = types.nullOr types.attrs;
       default = null;
-      description = "Shared host signal policy and deployment-owned outlets. The daemon validates interrupt_budget_per_hour, quiet_hours, private, notifications, values, actions and outlet_timeout_ms as one configuration.";
+      description = "The host deliverer's signal policy and deployment-owned outlets. The daemon validates interrupt_budget_per_hour, quiet_hours, notifications (bus_address, away_command), values, actions and outlet_timeout_ms as one configuration.";
     };
 
     nats = {
@@ -224,10 +224,7 @@ in
           options.canonicalKinds = mkOption { type = types.listOf types.attrs; default = []; description = "Exact owner-installed canonical kind declarations allowed without a native SourceRef."; };
           options.writeKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Kind prefixes this credential may write for its configured family."; };
           options.writeClasses = mkOption { type = types.listOf (types.enum [ "open" "guarded" "sealed" ]); default = []; description = "Classes this credential may offer for admission."; };
-          options.emergencySinexBlockedHost = mkOption { type = types.nullOr types.str; default = null; description = "Host for which this canonical producer may import its compiled Sinex-blocked emergency completion with owner-issued context proof."; };
-          options.emergencyLeaseSeconds = mkOption { type = types.nullOr (types.ints.between 1 3600); default = null; description = "Explicit bounded offline permission for the compiled desktop Sinex-blocked alert. Requires its emergency host grant; ordinary cached settings keep their separate lifetime."; };
-          options.authorAttestation = mkOption { type = types.nullOr types.attrs; default = null; description = "Explicit family author attestation: operator permission and exact shipped rule ID/revision/fingerprint allowlist. Canonical write authority alone grants neither."; };
-          options.forwardSignals = mkOption { type = types.bool; default = false; description = "Allow this canonical family publisher to forward shared signal intents and owned outlet receipts."; };
+          options.forwardSignals = mkOption { type = types.bool; default = false; description = "Allow this canonical family publisher to forward its evaluator reports to this host's signal deliverer."; };
           options.canonicalKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Canonical summary prefixes assigned exclusively to this credential within its family; at most one credential per family may have this role."; };
           options.readKindPrefixes = mkOption {
             type = types.listOf types.str; default = [];
@@ -471,9 +468,6 @@ in
           classes = producer.writeClasses or [];
           canonical_prefixes = producer.canonicalKindPrefixes or [];
           forward_signals = producer.forwardSignals or false;
-          author_attestation = producer.authorAttestation or null;
-          emergency_sinex_blocked_host = producer.emergencySinexBlockedHost or null;
-          emergency_lease_seconds = producer.emergencyLeaseSeconds or null;
         };
       }) producers);
       environment.etc."sinex/sources.json".text = builtins.toJSON {

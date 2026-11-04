@@ -87,13 +87,6 @@ fn timestamp(s: &str) -> Result<sinex_model::Timestamp, String> {
         .map_err(|e| format!("{s}: not an RFC 3339 time: {e}"))
 }
 
-fn not_built(reason: impl Into<String>) -> Reply {
-    Reply::Refused {
-        reason: reason.into(),
-        not_built: true,
-    }
-}
-
 /// A result carrying captured text, with the data notice first.
 fn data(result: Value) -> Reply {
     let mut out = json!({ "notice": DATA_NOTICE });
@@ -782,13 +775,6 @@ impl Api {
         )
         .await
         .map_err(|error| error.to_string())?;
-        let evaluation_rows = sinex_store::signals::rule_rows(
-            &mut conn,
-            sinex_model::event_types::signal::EvaluationRecorded::EVENT_TYPE,
-            row.commit_seq,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
         // Ambiguity per fusion family: pairs awaiting a decision, decided
         // pairs, and fused records chosen among several candidates.
         let fusion_families: Vec<(String, String)> = sinex_derivations::fusion::families()
@@ -802,7 +788,7 @@ impl Api {
         )
         .await
         .map_err(|error| error.to_string())?;
-        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>(),"evaluations":evaluation_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"evaluation":payload})).collect::<Vec<_>>()});
+        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>()});
         drop(conn);
         let sources = match self
             .query(

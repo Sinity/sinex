@@ -154,15 +154,9 @@ pub fn declarations() -> &'static [crate::KindDeclaration] {
 /// Every bundled payload validator. Outside kinds are stored declarations.
 pub const ALL: &[RegisteredEventType] = &[
     info::<signal::RuleWritten>(),
-    info::<signal::CheckpointRecorded>(),
-    info::<signal::EvaluationRecorded>(),
-    info::<signal::IntentRecorded>(),
-    info::<signal::EmergencyCompleted>(),
     info::<signal::DeliveryRecorded>(),
-    info::<signal::HandoffRecorded>(),
-    info::<signal::ReceivedRecorded>(),
-    info::<signal::ReceiptRecorded>(),
-    info::<signal::DesktopReceiptRecorded>(),
+    info::<signal::OutcomeRecorded>(),
+    info::<signal::ReportReceived>(),
     info::<analysis::AnalysisRequest>(),
     info::<analysis::AnalysisPanel>(),
     info::<analysis::RecipeAnswer>(),

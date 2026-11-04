@@ -68,6 +68,7 @@ query-language = { git = "https://github.com/Sinity/polylogue-sinex-common", bra
 signals = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 ranking = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 signal-delivery = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
+references = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", features = ["pg", "nats"] }
 async-nats = "0.47"

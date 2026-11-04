@@ -60,6 +60,31 @@ impl ReadMark {
             tombstoned,
         })
     }
+
+    /// Whether every reading selected under this mark is still live.
+    pub async fn holds(&self, conn: &mut PgConnection, readings: &[Uuid]) -> Result<bool> {
+        Ok(not_live(conn, readings).await?.is_empty())
+    }
+}
+
+/// The readings among `ids` that are no longer live.
+async fn not_live(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+) -> Result<std::collections::HashSet<Uuid>> {
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    Ok(sqlx::query_scalar!(
+        r#"SELECT p.id AS "id!" FROM unnest($1::uuid[]) AS p(id)
+           WHERE NOT EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = p.id)
+             AND NOT EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = p.id)"#,
+        ids,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect())
 }
 
 /// One key of a [`DerivedScope::Keys`] batch.
@@ -351,16 +376,7 @@ pub(super) async fn without_superseded_inputs(
     }
     parents.sort_unstable();
     parents.dedup();
-    let superseded: std::collections::HashSet<Uuid> = sqlx::query_scalar!(
-        r#"SELECT p.id AS "id!" FROM unnest($1::uuid[]) AS p(id)
-           WHERE NOT EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = p.id)
-             AND NOT EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = p.id)"#,
-        &parents,
-    )
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .collect();
+    let superseded = not_live(conn, &parents).await?;
     if superseded.is_empty() {
         return Ok(None);
     }

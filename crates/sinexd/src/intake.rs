@@ -2,7 +2,7 @@
 use crate::stage::Totals;
 use crate::writer::{AdmissionCheck, Priority, StageCheckpoint, WriterHandle};
 use serde_json::Value;
-use sinex_model::{Class, EventPayload, MaterialId, RecordOutcome, RunId};
+use sinex_model::{Class, MaterialId, RecordOutcome, RunId};
 use sinex_source_core::{Limits, Source, drivers};
 use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
@@ -65,24 +65,10 @@ impl Intake<'_> {
                 let checkpoint = checkpoint.take();
                 async move {
                     check()?;
-                    let mut checkpoint =
+                    let checkpoint =
                         checkpoint.ok_or("signal transition spans multiple admission batches")?;
-                    for decision in &mut checkpoint.decisions {
-                        let id = decision.payload["delivery_id"].as_str();
-                        let handoff = batch
-                            .events()
-                            .find(|event| {
-                                event.event_type
-                                    == sinex_model::event_types::signal::HandoffRecorded::EVENT_TYPE
-                                    && event.payload["delivery_id"].as_str() == id
-                            })
-                            .ok_or("signal decision lacks its physical handoff record")?;
-                        if let sinex_model::Origin::Derived { parents } = &mut decision.origin {
-                            parents.push(handoff.id);
-                        }
-                    }
                     self.writer
-                        .submit_signals(batch, checkpoint)
+                        .submit_signals(Some(batch), checkpoint)
                         .await
                         .map_err(|error| error.to_string())
                 }

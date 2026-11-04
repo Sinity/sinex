@@ -10,9 +10,6 @@ fn grant(family: &str, publisher: bool) -> crate::ingress::fetch::Grants {
         classes: vec![Class::Open, Class::Guarded],
         write: Some(crate::ingress::authority::WriteGrant {
             forward_signals: false,
-            author_attestation: None,
-            emergency_sinex_blocked_host: None,
-            emergency_lease_seconds: None,
             family: family.into(),
             host: Some("attested-host".into()),
             source_prefixes: vec![family.into()],

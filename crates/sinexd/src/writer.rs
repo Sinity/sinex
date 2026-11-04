@@ -8,7 +8,6 @@
 //! back) in one transaction, and one batch of a lifecycle operation at a time
 //! (punching the extents of bytes a tombstone freed after commit), so live
 //! batches are admitted between an operation's batches.
-mod signal_batches;
 
 use serde_json::Value;
 use sinex_model::{Batch, OperationId};
@@ -60,7 +59,7 @@ pub(crate) struct ReplaySequence {
 
 enum WriterJob {
     Admit(Batch),
-    Signals(Batch, Box<sinex_store::signals::Commit>),
+    Signals(Option<Batch>, Box<sinex_store::signals::Commit>),
     Checked(Batch, AdmissionCheck),
     Curation(Batch, AdmissionCheck),
     Source(Batch, AdmissionCheck, Option<StageCheckpoint>),
@@ -97,7 +96,6 @@ pub(crate) struct StageCheckpoint {
 #[derive(Clone, Copy)]
 enum Saved<'a> {
     Nothing,
-    Signals(&'a sinex_store::signals::Commit),
     Stage(&'a StageCheckpoint),
     Curation,
 }
@@ -220,11 +218,12 @@ impl WriterHandle {
         }
     }
 
-    /// Signal events and their evaluator/host/notification checkpoint are one
-    /// transaction. Effects run only after this method acknowledges it.
+    /// Signal events and their evaluator, host policy and notification
+    /// checkpoint are one transaction. Effects run only after this method
+    /// acknowledges it. `batch` holds outcome and report records, when any.
     pub(crate) async fn submit_signals(
         &self,
-        batch: Batch,
+        batch: Option<Batch>,
         checkpoint: sinex_store::signals::Commit,
     ) -> Result<Outcome, WriteError> {
         match self
@@ -443,7 +442,7 @@ pub(crate) async fn run_notifying(
         let queue_time = job.queued_at.elapsed();
         let offered = match &job.work {
             WriterJob::Admit(batch)
-            | WriterJob::Signals(batch, _)
+            | WriterJob::Signals(Some(batch), _)
             | WriterJob::Checked(batch, _)
             | WriterJob::Curation(batch, _)
             | WriterJob::Source(batch, _, _) => Some(batch.event_count()),
@@ -461,14 +460,12 @@ pub(crate) async fn run_notifying(
             )
             .await
             .map(Done::Admitted),
-            WriterJob::Signals(batch, checkpoint) => admit_with_checkpoint(
+            WriterJob::Signals(batch, checkpoint) => admit_signals(
                 &mut connection,
-                &batch,
+                batch.as_ref(),
                 keys.as_ref(),
                 store,
-                &|| Ok(()),
-                false,
-                Saved::Signals(&checkpoint),
+                &checkpoint,
             )
             .await
             .map(Done::Admitted),
@@ -616,13 +613,9 @@ async fn admit_with_checkpoint(
     record_refusals: bool,
     saved: Saved<'_>,
 ) -> Result<Outcome, WriteError> {
-    let checkpoint = match saved {
-        Saved::Signals(checkpoint) => Some(checkpoint),
-        Saved::Nothing | Saved::Stage(_) | Saved::Curation => None,
-    };
     let stage = match saved {
         Saved::Stage(stage) => Some(stage),
-        Saved::Nothing | Saved::Signals(_) | Saved::Curation => None,
+        Saved::Nothing | Saved::Curation => None,
     };
     let curation = matches!(saved, Saved::Curation);
     let unavailable = |e: &dyn std::fmt::Display| WriteError::Unavailable(e.to_string());
@@ -660,155 +653,11 @@ async fn admit_with_checkpoint(
             )));
         }
     }
-    if let Some(expected) = checkpoint.and_then(|checkpoint| checkpoint.observed_seq) {
-        let current = sinex_store::query::current_seq(&mut tx)
-            .await
-            .map_err(store_error)?;
-        if current != expected {
-            tx.rollback().await.map_err(store_error)?;
-            return Err(WriteError::Refused(
-                "signal evaluation input snapshot changed; evaluate again".into(),
-            ));
-        }
-    }
-    let mut evaluations = Outcome::default();
-    if let Some(checkpoint) = checkpoint.filter(|checkpoint| !checkpoint.evaluations.is_empty()) {
-        let read = checkpoint.read_mark.ok_or_else(|| {
-            WriteError::Refused("signal query products lack their input read mark".into())
-        })?;
-        let scopes = checkpoint
-            .evaluations
-            .iter()
-            .map(|event| sinex_store::ComputedKey {
-                key: event.payload["rule"].clone(),
-                dirty_seq: checkpoint.observed_seq.unwrap_or(0),
-                waiting: false,
-                refresh_at: None,
-            })
-            .collect();
-        let product = Batch {
-            run: batch.run,
-            kind: sinex_model::BatchKind::Derived {
-                derivation: "sinex.signals".into(),
-                scope: sinex_store::DerivedScope::Keys { keys: scopes, read }.to_value(),
-            },
-            records: checkpoint
-                .evaluations
-                .iter()
-                .cloned()
-                .map(|event| sinex_model::RecordOutcome::Events {
-                    location: None,
-                    events: vec![event],
-                })
-                .collect(),
-            archive: vec![],
-        };
-        match tx.admit(&product, keys).await {
-            Ok(outcome) if outcome.superseded_input == 0 => evaluations = outcome,
-            Ok(_) => {
-                tx.rollback().await.map_err(store_error)?;
-                return Err(WriteError::Refused(
-                    "signal query inputs stopped being available".into(),
-                ));
-            }
-            Err(error) => {
-                tx.rollback().await.map_err(store_error)?;
-                return Err(store_error(error));
-            }
-        }
-    }
-    match signal_batches::admit(&mut tx, batch, keys).await {
+    match tx.admit(batch, keys).await {
         Ok(mut outcome) => {
-            outcome += evaluations;
-            if let Some(checkpoint) =
-                checkpoint.filter(|checkpoint| !checkpoint.decisions.is_empty())
-            {
-                for staged in &checkpoint.decisions {
-                    let mut event = staged.clone();
-                    if let sinex_model::Origin::Derived { parents } = &mut event.origin {
-                        for parent in parents.iter_mut() {
-                            if let Some(acquisition) =
-                                batch.events().find(|candidate| candidate.id == *parent)
-                            {
-                                *parent =
-                                    sinex_store::signals::live_reading(&mut tx, batch, acquisition)
-                                        .await
-                                        .map_err(store_error)?
-                                        .ok_or_else(|| {
-                                            WriteError::Refused(
-                                                "signal physical handoff is unavailable".into(),
-                                            )
-                                        })?;
-                            }
-                        }
-                        parents.sort_unstable();
-                        parents.dedup();
-                    }
-                    let id = event.payload["delivery_id"].as_str().ok_or_else(|| {
-                        WriteError::Refused("signal decision lacks identity".into())
-                    })?;
-                    let read = *checkpoint.decision_marks.get(id).ok_or_else(|| {
-                        WriteError::Refused("signal decision lacks its frozen input mark".into())
-                    })?;
-                    let scope = sinex_store::DerivedScope::Keys {
-                        keys: vec![sinex_store::ComputedKey {
-                            key: event.payload["delivery_id"].clone(),
-                            dirty_seq: checkpoint.observed_seq.unwrap_or(0),
-                            waiting: false,
-                            refresh_at: None,
-                        }],
-                        read,
-                    };
-                    let decisions = Batch {
-                        run: batch.run,
-                        kind: sinex_model::BatchKind::Derived {
-                            derivation: "sinex.signals.decisions".into(),
-                            scope: scope.to_value(),
-                        },
-                        records: vec![sinex_model::RecordOutcome::Events {
-                            location: None,
-                            events: vec![event.clone()],
-                        }],
-                        archive: vec![],
-                    };
-                    match tx.admit(&decisions, keys).await {
-                        Ok(admitted) if admitted.superseded_input == 0 => outcome += admitted,
-                        Ok(_) => {
-                            tx.rollback().await.map_err(store_error)?;
-                            return Err(WriteError::Refused(
-                                "signal decision inputs stopped being available".into(),
-                            ));
-                        }
-                        Err(error) => {
-                            tx.rollback().await.map_err(store_error)?;
-                            return Err(store_error(error));
-                        }
-                    }
-                }
-            }
-
             if let Err(error) = check() {
                 tx.rollback().await.map_err(store_error)?;
                 return Err(WriteError::Refused(error));
-            }
-            if let Some(checkpoint) = checkpoint {
-                let mut state = checkpoint.checkpoint.clone();
-                if checkpoint.observed_seq.is_some() {
-                    state.observed_seq = sinex_store::query::current_seq(&mut tx)
-                        .await
-                        .map_err(store_error)?;
-                }
-                if let Err(error) = sinex_store::signals::save(
-                    &mut tx,
-                    &checkpoint.host,
-                    checkpoint.expected_revision,
-                    &state,
-                )
-                .await
-                {
-                    tx.rollback().await.map_err(store_error)?;
-                    return Err(store_error(error));
-                }
             }
             if let Some(stage) = stage
                 && let Err(error) = save_stage(tx.connection(), batch, stage, &outcome).await
@@ -861,6 +710,116 @@ async fn refresh_read_models(tx: &mut PgConnection, since: i64) -> Result<(), Wr
         .await
         .map(drop)
         .map_err(|error| WriteError::Unavailable(format!("library shown values: {error}")))
+}
+
+/// One signal step in one transaction: its outcome and report records, the
+/// deliveries it handed off, and the checkpoint that produced them, saved
+/// only if no other step committed since it was loaded.
+async fn admit_signals(
+    connection: &mut AdmissionContext,
+    batch: Option<&Batch>,
+    keys: &dyn DirtyKeys,
+    store: Option<&Blobs>,
+    commit: &sinex_store::signals::Commit,
+) -> Result<Outcome, WriteError> {
+    for name in batch.into_iter().flat_map(Batch::stored_bytes) {
+        let present = match store {
+            Some(store) => store
+                .contains(name)
+                .map_err(|e| WriteError::Unavailable(e.to_string()))?,
+            None => false,
+        };
+        if !present {
+            return Err(WriteError::Unavailable(format!(
+                "the content store does not hold {name}; store the bytes again and resubmit"
+            )));
+        }
+    }
+    let mut tx = connection
+        .begin()
+        .await
+        .map_err(|error| store_error(error.into()))?;
+    let result = signal_step(&mut tx, batch, keys, commit).await;
+    match result {
+        Ok(outcome) => {
+            tx.commit()
+                .await
+                .map_err(|error| store_error(error.into()))?;
+            Ok(outcome)
+        }
+        Err(error) => {
+            tx.rollback()
+                .await
+                .map_err(|error| store_error(error.into()))?;
+            Err(error)
+        }
+    }
+}
+
+/// The writes of one signal step inside its open transaction. A named
+/// function rather than an async block keeps the writer future `Send`.
+async fn signal_step(
+    tx: &mut sinex_store::AdmissionTransaction<'_>,
+    batch: Option<&Batch>,
+    keys: &dyn DirtyKeys,
+    commit: &sinex_store::signals::Commit,
+) -> Result<Outcome, WriteError> {
+    let mut outcome = Outcome::default();
+    if let Some(expected) = commit.observed_seq
+        && sinex_store::query::current_seq(tx)
+            .await
+            .map_err(store_error)?
+            != expected
+    {
+        return Err(WriteError::Refused(
+            "signal evaluation input snapshot changed; evaluate again".into(),
+        ));
+    }
+    if let Some(batch) = batch {
+        outcome += tx.admit(batch, keys).await.map_err(store_error)?;
+    }
+    if let Some(handed) = &commit.deliveries {
+        for (event, read) in &handed.events {
+            let delivery = Batch {
+                run: handed.run,
+                kind: sinex_model::BatchKind::Derived {
+                    derivation: crate::signals::DELIVERIES.into(),
+                    scope: sinex_store::DerivedScope::Keys {
+                        keys: vec![sinex_store::ComputedKey {
+                            key: event.payload["delivery_id"].clone(),
+                            dirty_seq: commit.observed_seq.unwrap_or(0),
+                            waiting: false,
+                            refresh_at: None,
+                        }],
+                        read: *read,
+                    }
+                    .to_value(),
+                },
+                records: vec![sinex_model::RecordOutcome::Events {
+                    location: None,
+                    events: vec![event.clone()],
+                }],
+                archive: vec![],
+            };
+            let admitted = tx.admit(&delivery, keys).await.map_err(store_error)?;
+            if admitted.superseded_input != 0 {
+                return Err(WriteError::Refused(
+                    "signal delivery inputs stopped being available".into(),
+                ));
+            }
+            outcome += admitted;
+        }
+    }
+    let mut state = commit.checkpoint.clone();
+    if commit.observed_seq.is_some() {
+        state.observed_seq = sinex_store::query::current_seq(tx)
+            .await
+            .map_err(store_error)?;
+    }
+    sinex_store::signals::save(tx, &commit.host, commit.expected_revision, &state)
+        .await
+        .map_err(store_error)?;
+    Ok(outcome)
 }
 
 fn content_error(error: &sinex_store::Error) -> bool {
@@ -1003,11 +962,7 @@ async fn replay_sequence(
         {
             frame.receipt_number = receipt_number;
         }
-        outcomes.push(
-            signal_batches::admit(&mut tx, &batch, keys)
-                .await
-                .map_err(store_error)?,
-        );
+        outcomes.push(tx.admit(&batch, keys).await.map_err(store_error)?);
     }
     let admitted: Vec<uuid::Uuid> = outcomes
         .iter()

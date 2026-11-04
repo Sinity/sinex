@@ -8,8 +8,8 @@ pub mod cli;
 mod commands;
 pub mod context;
 pub use context::{
-    CoverageProof, CoverageRequest, CoverageStatus, DeliveredCompletion, OfflineEmergency,
-    OfflineEmergencyRoute, PublicContext, PublicContextRequest, PublicInterruptBudget,
+    CoverageProof, CoverageRequest, CoverageStatus, DeliveredCompletion, PublicContext,
+    PublicContextRequest, PublicInterruptBudget,
 };
 pub mod nats;
 mod projection;
@@ -21,19 +21,18 @@ pub use replay::{
     FullProjectionComplete, InputReference, InputReplayReply, ReplayBasisStatus,
     ReplayContinuation, ReplayQuery, ReplayReply,
 };
-pub mod signals;
 pub mod stage_report;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
     Acknowledgment, Archived, Confirmed, ConfirmedConsumer, ConfirmedConsumerReply, ConfirmedEvent,
     DeclarationHash, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
-    FetchRefusalKind, ForwardedSignal, Ingress, Lifecycle, MaterialFrame, Materials, MaterialsPage,
+    FetchRefusalKind, Ingress, Lifecycle, MaterialFrame, Materials, MaterialsPage,
     PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello, ProducerMaterial,
     ProducerReplay, ProducerWelcome, ReceiptHint, RecordedContinuation,
     RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders, RecordedMaterialBinding,
     RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery,
-    ReplaySelection, Restored, SignalCondition, SignalConditionReply, Subjects,
+    ReplaySelection, Restored, Subjects,
 };
 pub use request::{Reply, Request};
 pub use sinex_model::SourceRef;

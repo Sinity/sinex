@@ -867,31 +867,12 @@ fn frame_source(frame: Option<&Ingress>) -> Option<String> {
 
 fn frame_event_types(frame: Option<&Ingress>) -> Vec<String> {
     let mut names = match frame {
-        Some(Ingress::Signals {
-            signals,
-            receipts,
-            emergency,
-            ..
-        }) => {
-            let mut names = Vec::new();
-            if !signals.is_empty() {
-                names.push("signal.intent".into());
+        Some(Ingress::Signals { reports, .. }) => {
+            if reports.is_empty() {
+                Vec::new()
+            } else {
+                vec![<sinex_model::event_types::signal::ReportReceived as sinex_model::EventPayload>::EVENT_TYPE.into()]
             }
-            if !receipts.is_empty() {
-                names.push("signal.receipt".into());
-            }
-            if !emergency.is_empty() {
-                names.extend(
-                    [
-                        "signal.emergency",
-                        "signal.delivery",
-                        "signal.desktop_receipt",
-                    ]
-                    .into_iter()
-                    .map(str::to_owned),
-                );
-            }
-            names
         }
         Some(Ingress::Events { events, .. }) => events
             .iter()

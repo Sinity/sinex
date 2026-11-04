@@ -7,9 +7,6 @@ fn capability(publisher: bool) -> fetch::Grants {
         classes: vec![Class::Open],
         write: Some(WriteGrant {
             forward_signals: false,
-            author_attestation: None,
-            emergency_sinex_blocked_host: None,
-            emergency_lease_seconds: None,
             family: "example".into(),
             host: None,
             source_prefixes: vec![],
@@ -72,33 +69,4 @@ fn signal_forwarding_requires_the_existing_unique_canonical_role() {
     let mut capture = capability(false);
     capture.write.as_mut().unwrap().forward_signals = true;
     assert!(validate(&fetch::ProducerGrants::from([("capture".into(), capture)])).is_err());
-}
-
-#[devkit::test]
-fn emergency_capability_binds_the_authenticated_producer_host() {
-    let mut configured = capability(true);
-    let grant = configured.write.as_mut().unwrap();
-    grant.forward_signals = true;
-    grant.emergency_sinex_blocked_host = Some("fixture".into());
-    assert!(
-        validate(&fetch::ProducerGrants::from([(
-            "canonical".into(),
-            configured.clone()
-        )]))
-        .is_err()
-    );
-    configured.write.as_mut().unwrap().host = Some("another-host".into());
-    assert!(
-        validate(&fetch::ProducerGrants::from([(
-            "canonical".into(),
-            configured.clone()
-        )]))
-        .is_err()
-    );
-    configured.write.as_mut().unwrap().host = Some("fixture".into());
-    validate(&fetch::ProducerGrants::from([(
-        "canonical".into(),
-        configured,
-    )]))
-    .unwrap();
 }

@@ -40,14 +40,7 @@ fn producer_permissions_name_only_its_own_subjects() {
             "_INBOX.phone.>"
         ]
     );
-    assert_eq!(
-        subscribe,
-        [
-            "sinex.ack.phone",
-            "sinex.signal_condition.phone",
-            "_INBOX.phone.>"
-        ]
-    );
+    assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.phone.>"]);
     let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")], &[]);
     assert!(
         config.contains(r#"user: "phone", password: "p\"w""#),
@@ -194,27 +187,7 @@ fn confirmed_consumer_permissions_are_exact_and_never_allow_admin_or_raw_reads()
         || subject.contains("DELETE")
         || subject.contains("MSG.GET")
         || subject.contains("sinex-other")));
-    assert_eq!(
-        subscribe,
-        vec![
-            "sinex.ack.replica",
-            "sinex.signal_condition.replica",
-            "_INBOX.replica.>"
-        ]
-    );
-}
-
-#[devkit::test]
-fn condition_callbacks_are_scoped_to_the_authenticated_producer_only() {
-    let subjects = Subjects::sinex();
-    let (publish, subscribe) = subjects.producer_permissions("first", None);
-    assert!(subscribe.contains(&subjects.signal_condition("first")));
-    assert!(!subscribe.contains(&subjects.signal_condition("second")));
-    assert!(
-        !publish
-            .iter()
-            .any(|subject| subject.starts_with("sinex.signal_condition."))
-    );
+    assert_eq!(subscribe, vec!["sinex.ack.replica", "_INBOX.replica.>"]);
 }
 
 #[devkit::test]

@@ -1,5 +1,5 @@
-//! Isolated real-daemon signal effects use public commands and retained attempts.
-#[allow(dead_code)]
+//! Isolated real-daemon signal deliveries and their outlets, through the
+//! public commands.
 use crate::support::daemon;
 use futures::FutureExt;
 use serde_json::{Value, json};
@@ -51,49 +51,13 @@ async fn wait_scalar(conn: &mut PgConnection, sql: &str, minimum: i64) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
-async fn retain_receipt_state(conn: &mut PgConnection, root: &Path, phase: &'static str) -> String {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let mut report = json!({"phase":phase,
-        "observed_at_ms":i64::try_from(sinex_model::Timestamp::now().unix_ns()/1_000_000).unwrap(),
-        "readings":{"state":"unavailable","reason":"capture_not_completed"},
-        "checkpoint":{"state":"unavailable","reason":"capture_not_completed"},
-        "policy":{"state":"unavailable","reason":"capture_not_completed"}});
-    report["database_capture"] = match tokio::time::timeout(
-        Duration::from_secs(4),
-        forwarded::capture_signal_snapshot(conn, &mut report),
+/// Rules the host deliverer has adopted, from its committed checkpoint.
+const ADOPTED: &str = "SELECT coalesce(max((SELECT count(*) FROM jsonb_object_keys(state->'rules'))),0) FROM core.signal_checkpoints";
+/// Outlet attempts with a result, for deliveries on one channel.
+fn attempts(channel: &str, result: &str) -> String {
+    format!(
+        "SELECT count(*) FROM core.events o JOIN core.events d ON d.event_type='signal.delivery' AND d.payload->>'delivery_id'=o.payload->>'delivery_id' WHERE o.event_type='signal.outcome' AND o.payload->'outcome'->>'outcome'='attempt' AND o.payload->'outcome'->'result'->>'outcome'='{result}' AND d.payload->'delivery'->'fired'->>'channel'='{channel}'"
     )
-    .await
-    {
-        Ok(Ok(())) => json!({"state":"available"}),
-        Ok(Err(_)) => json!({"state":"unavailable","reason":"snapshot_failed"}),
-        Err(_) => json!({"state":"unavailable","reason":"snapshot_timeout"}),
-    };
-    let root = root.to_owned();
-    let capture =
-        tokio::task::spawn_blocking(move || forwarded::retain_signal_failure(&report, &root));
-    match tokio::time::timeout_at(deadline, capture).await {
-        Ok(Ok(Ok(path))) => path.display().to_string(),
-        Ok(Ok(Err(error))) => format!("unavailable: {error}"),
-        Ok(Err(_)) => "unavailable: diagnostic file task failed".into(),
-        Err(_) => "unavailable: diagnostic file capture timed out (TEST_DURABLE_TMPDIR may contain partial evidence)".into(),
-    }
-}
-async fn wait_receipts(conn: &mut PgConnection, root: &Path, sql: &str, minimum: i64) {
-    let result = std::panic::AssertUnwindSafe(wait_scalar(conn, sql, minimum))
-        .catch_unwind()
-        .await;
-    resume_receipt_failure(conn, root, result).await;
-}
-async fn resume_receipt_failure(
-    conn: &mut PgConnection,
-    root: &Path,
-    result: Result<(), Box<dyn std::any::Any + Send>>,
-) {
-    if let Err(original) = result {
-        let artifact = retain_receipt_state(conn, root, "receipt_wait_failed").await;
-        eprintln!("private signal diagnostic artifact: {artifact}");
-        std::panic::resume_unwind(original);
-    }
 }
 fn start(
     database: &str,
@@ -138,6 +102,10 @@ fn rule(name: &str, deliver: &str) -> Value {
     json!({"name":name,"query":"events where event_type = operator.mark","fires":"on_new","for":0,"min_change":1,"deliver":deliver,"target":if deliver=="value"{Some("recorded")}else{None},"command":if deliver=="action"{Some("controlled")}else{None},"interrupt":false,"quiet_hours":null,"rate_limit":null,"scope":null,"enabled":true})
 }
 
+/// law: signal-effect-unknown-before-it-runs
+/// An action is recorded unknown and committed before its command starts; an
+/// unknown attempt is never run again after a restart, and the writer is never
+/// held while a command runs.
 #[devkit::test]
 async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_restart() {
     let db = devkit::pg::test_database().unwrap();
@@ -162,7 +130,7 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     );
     let mut config: Value =
         serde_json::from_slice(&std::fs::read(root.join("sources.json")).unwrap()).unwrap();
-    config["signals"] = json!({"interrupt_budget_per_hour":1,"quiet_hours":null,"private":[],"notifications":null,"values":{"recorded":{"kind":"file","path":value}},"actions":{"controlled":{"program":script,"arguments":[action_log,entered,release]}},"outlet_timeout_ms":10000});
+    config["signals"] = json!({"interrupt_budget_per_hour":1,"quiet_hours":null,"notifications":null,"values":{"recorded":{"kind":"file","path":value}},"actions":{"controlled":{"program":script,"arguments":[action_log,entered,release]}},"outlet_timeout_ms":10000});
     std::fs::write(
         root.join("sources.json"),
         serde_json::to_vec(&config).unwrap(),
@@ -187,13 +155,8 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
             json!({"method":"signal","action":"add","name":name,"rule":rule(name,deliver).to_string()}),
         );
     }
-    // A positive empty baseline proves the new-rule baseline precedes the input.
-    wait_scalar(
-        &mut conn,
-        "SELECT count(*) FROM core.events WHERE event_type='signal.evaluation'",
-        2,
-    )
-    .await;
+    // Both rules are adopted, with their empty baseline, before the input.
+    wait_scalar(&mut conn, ADOPTED, 2).await;
     let first = ok(
         &socket,
         json!({"method":"mark","text":"synthetic first occurrence"}),
@@ -204,7 +167,10 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
         assert!(Instant::now() < deadline, "{}", process.log());
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    let unknown:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='action' AND payload->'receipt'->'outcome'->>'outcome'='unknown'").fetch_one(&mut conn).await.unwrap();
+    let unknown: i64 = sqlx::query_scalar(&attempts("action", "unknown"))
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
     assert_eq!(
         unknown, 1,
         "unknown is committed before the controlled child starts"
@@ -231,7 +197,7 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     ready(&mut process, &socket).await;
     // The second, genuinely unseen occurrence executes; the unknown first
     // attempt remains terminal instead of being retried on process restart.
-    wait_receipts(&mut conn,root,"SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='action' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",1).await;
+    wait_scalar(&mut conn, &attempts("action", "delivered"), 1).await;
     let lines = std::fs::read_to_string(&action_log).unwrap();
     assert_eq!(
         lines.lines().count(),
@@ -240,13 +206,16 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     );
     let refs = lines.lines().collect::<std::collections::BTreeSet<_>>();
     assert_eq!(refs.len(), 2, "unknown occurrence was not executed twice");
-    // Action and value outlets finish independently. The action receipt does
+    // Action and value outlets finish independently. The action outcome does
     // not establish that either value handoff has reached its file yet.
-    wait_receipts(&mut conn,root,"SELECT count(*) FROM core.events WHERE event_type='signal.receipt' AND payload->>'route'='value' AND payload->'receipt'->'outcome'->>'outcome'='delivered'",2).await;
+    wait_scalar(&mut conn, &attempts("value", "delivered"), 2).await;
+    // The value target receives the whole delivery (common signals: a value
+    // delivery is written to its configured target).
     let value: Value = serde_json::from_slice(&std::fs::read(&value).unwrap()).unwrap();
-    assert_eq!(value["channel"], "value");
+    assert_eq!(value["fired"]["channel"], "value");
+    assert_eq!(value["decision"]["decision"], "run");
     assert!(
-        value["basis"][0]["reference"]
+        value["fired"]["basis"][0]["reference"]
             .as_str()
             .unwrap()
             .starts_with("sinex:ev/")
@@ -259,23 +228,22 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
         answer["total"], 4,
         "only two rules times two source occurrences: {answer}"
     );
-    let owned:i64=sqlx::query_scalar("SELECT count(*) FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN core.runs r ON r.id=e.run_id JOIN core.manifests manifest ON manifest.id=r.manifest_id WHERE e.event_type IN ('signal.rule','signal.handoff','signal.receipt','signal.checkpoint') AND manifest.build <> ''").fetch_one(&mut conn).await.unwrap();
-    assert!(
-        owned >= 10,
-        "ordinary source material and real run provenance survive restart"
-    );
+    // Rules and outcomes are ordinary request records with real run
+    // provenance: two rules, and per value delivery an unknown and a
+    // delivered attempt, per action an unknown, and one delivered.
+    let owned:i64=sqlx::query_scalar("SELECT count(*) FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN core.runs r ON r.id=e.run_id JOIN core.manifests manifest ON manifest.id=r.manifest_id WHERE e.event_type IN ('signal.rule','signal.outcome') AND manifest.build <> ''").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(owned, 2 + 2 * 2 + 2 + 1);
     let copied_sources:i64=sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='signal.delivery' AND material_id IS NOT NULL").fetch_one(&mut conn).await.unwrap();
     assert_eq!(
         copied_sources, 0,
-        "full decisions cite their input parents, never an independent source copy"
+        "deliveries cite their parents, never an independent source copy"
     );
-    let linked:i64=sqlx::query_scalar("SELECT count(*) FROM core.events decision WHERE decision.event_type='signal.delivery' AND decision.parents && ARRAY(SELECT handoff.id FROM core.events handoff WHERE handoff.event_type='signal.handoff')").fetch_one(&mut conn).await.unwrap();
-    assert_eq!(linked, 4);
-    let artifact = retain_receipt_state(&mut conn, root, "completed").await;
-    eprintln!("private signal success diagnostic artifact: {artifact}");
+    // Each delivery cites its rule and the mark it matched.
+    let cited:i64=sqlx::query_scalar("SELECT count(*) FROM core.events d WHERE d.event_type='signal.delivery' AND d.parents && ARRAY(SELECT id FROM core.events WHERE event_type='signal.rule') AND d.parents && ARRAY(SELECT id FROM core.events WHERE event_type='operator.mark')").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(cited, 4);
     process.stop().await;
 }
 
+mod conflicts;
 mod desktop;
-
 mod forwarded;

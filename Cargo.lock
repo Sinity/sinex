@@ -1043,7 +1043,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8aa70b7fad0c875eea1e350ed0861786ae154dfb"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "clap",
@@ -1061,7 +1061,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8aa70b7fad0c875eea1e350ed0861786ae154dfb"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2303,7 +2303,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8aa70b7fad0c875eea1e350ed0861786ae154dfb"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -3562,7 +3562,7 @@ dependencies = [
 [[package]]
 name = "query-language"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8aa70b7fad0c875eea1e350ed0861786ae154dfb"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "jiff",
@@ -3790,6 +3790,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "references"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]
@@ -4395,13 +4405,12 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "signal-delivery"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8aa70b7fad0c875eea1e350ed0861786ae154dfb"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "futures-util",
  "serde_json",
  "signals",
  "tokio",
- "tokio-util",
  "zbus",
 ]
 
@@ -4428,7 +4437,7 @@ dependencies = [
 [[package]]
 name = "signals"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8aa70b7fad0c875eea1e350ed0861786ae154dfb"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#e38c522db0c1fb21ee0d8c0e3fa0a7f60ceda4da"
 dependencies = [
  "blake3",
  "jiff",
@@ -4567,6 +4576,7 @@ dependencies = [
  "jiff",
  "proptest",
  "query-language",
+ "references",
  "schemars",
  "serde",
  "serde_json",
@@ -5321,7 +5331,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",

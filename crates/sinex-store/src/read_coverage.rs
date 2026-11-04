@@ -13,16 +13,6 @@ pub(crate) async fn validate_parents(
     parents::validate(conn, frame, events).await
 }
 
-/// Revalidate explicitly cited retained inputs under the writer's lock.
-/// The new private acquisition fact is not an external input certificate.
-pub async fn validate_inputs(
-    conn: &mut PgConnection,
-    frame: &sinex_model::IngressFrame,
-    ids: &[sinex_model::EventId],
-) -> Result<()> {
-    parents::inputs(conn, frame, ids).await
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorityError {
     #[error("{0}")]
@@ -135,14 +125,8 @@ pub async fn validate(conn: &mut PgConnection, frame: &sinex_model::IngressFrame
     let Some(expected) = &frame.coverage else {
         return Ok(false);
     };
-    // Reading the private key remains an operational dependency. Only a
-    // semantically unusable optional stamp loses certification, not DB errors.
     let key = crate::owner_protocol::key(conn).await?;
-    let claims: Claims = match crate::owner_protocol::open(&key, DOMAIN, &expected.stamp) {
-        Ok(claims) => claims,
-        Err(Error::Invalid(_)) if !expected.required => return Ok(false),
-        Err(error) => return Err(error),
-    };
+    let claims: Claims = crate::owner_protocol::open(&key, DOMAIN, &expected.stamp)?;
     if claims.replay_root.is_none()
         || claims.purpose != "write"
         || claims.producer != frame.producer
@@ -154,21 +138,13 @@ pub async fn validate(conn: &mut PgConnection, frame: &sinex_model::IngressFrame
         || claims.host != expected.host
         || claims.settings_identity != expected.settings_identity
     {
-        return if expected.required {
-            Err(Error::Invalid("coverage_frame_authority_changed".into()))
-        } else {
-            Ok(false)
-        };
+        return Err(Error::Invalid("coverage_frame_authority_changed".into()));
     }
     sqlx::query("SELECT host FROM core.signal_checkpoints WHERE host=$1 FOR SHARE")
         .bind(&claims.host)
         .execute(&mut *conn)
         .await?;
-    match current(conn, &claims).await {
-        Ok(()) => {}
-        Err(AuthorityError::Invalidated(_)) if !expected.required => return Ok(false),
-        Err(error) => return Err(error.into()),
-    }
+    current(conn, &claims).await?;
     Ok(true)
 }
 

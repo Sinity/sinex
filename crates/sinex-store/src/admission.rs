@@ -180,47 +180,6 @@ pub(crate) async fn admit(
         BatchKind::Ingress(frame) => crate::read_coverage::validate(conn, frame).await?,
         _ => false,
     };
-    // Only a newly validated owner proof can certify copied external evidence.
-    // Native replay keeps this original mark.
-    let marked_batch;
-    let batch = if let (true, BatchKind::Ingress(frame)) = (validated, &batch.kind)
-        && frame
-            .material
-            .as_ref()
-            .and_then(|progress| progress.material.as_ref())
-            .is_some_and(|material| {
-                material.manifest.media_type.as_deref() == Some("application/x-sinex-signals-frame")
-            }) {
-        let read = ReadMark::now(conn).await?;
-        let coverage = frame.coverage.as_ref().expect("validated coverage").clone();
-        marked_batch = {
-            let mut marked = batch.clone();
-            if let BatchKind::Ingress(frame) = &mut marked.kind
-                && let Some(material) = frame
-                    .material
-                    .as_mut()
-                    .and_then(|progress| progress.material.as_mut())
-            {
-                material.manifest.details.insert(
-                    "signal_read_mark".into(),
-                    serde_json::to_value(read)
-                        .map_err(|error| crate::Error::Invalid(error.to_string()))?,
-                );
-                material.manifest.details.insert(
-                    "signal_position".into(),
-                    serde_json::json!(coverage.position),
-                );
-                material.manifest.details.insert(
-                    "signal_settings_identity".into(),
-                    Value::String(coverage.settings_identity.clone()),
-                );
-            }
-            marked
-        };
-        &marked_batch
-    } else {
-        batch
-    };
 
     let provenance = register::provenance(conn, batch, frame_number).await?;
     let mut outcome = Outcome::default();

@@ -65,12 +65,11 @@ async fn unchanged_settings_accept_newer_real_revisions_but_reject_changed_ident
     assert!(current(&mut conn, &claims).await.is_err());
 }
 
-fn covered_frame(claims: &Claims, stamp: String, required: bool) -> sinex_model::IngressFrame {
+fn covered_frame(claims: &Claims, stamp: String) -> sinex_model::IngressFrame {
     sinex_model::IngressFrame {
         content_hash: None,
         receipt_number: None,
         coverage: Some(sinex_model::OwnerCoverage {
-            required,
             stamp,
             position: claims.position,
             scope: claims.scope.clone(),
@@ -96,45 +95,36 @@ fn covered_frame(claims: &Claims, stamp: String, required: bool) -> sinex_model:
     }
 }
 
+/// A coverage stamp certifies a frame only with its exact outer claims and
+/// the owner's current settings; anything else is refused, and a missing or
+/// malformed signing key is an error, never a silent loss of certification.
 #[devkit::test]
-async fn optional_emergency_stamp_loses_certification_without_relaxing_required_proofs(
+async fn coverage_stamp_requires_its_exact_claims_and_current_settings(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     sqlx::query("INSERT INTO core.signal_checkpoints(host,revision,state) VALUES('host',7,'{\"settings_identity\":\"settings\"}')").execute(&mut conn).await.unwrap();
     let claims = claims();
     let stamp = sign(&mut conn, &claims).await.unwrap();
-    let mandatory = covered_frame(&claims, stamp.clone(), true);
-    let optional = covered_frame(&claims, stamp, false);
-    assert!(validate(&mut conn, &mandatory).await.unwrap());
-    assert!(validate(&mut conn, &optional).await.unwrap());
-    let mut forged = mandatory.clone();
+    let covered = covered_frame(&claims, stamp);
+    assert!(validate(&mut conn, &covered).await.unwrap());
+    let mut forged = covered.clone();
     forged.coverage.as_mut().unwrap().position += 1;
     assert!(
         validate(&mut conn, &forged).await.is_err(),
         "a valid stamp does not authenticate a changed outer position"
     );
-    forged.coverage.as_mut().unwrap().required = false;
-    assert!(!validate(&mut conn, &forged).await.unwrap());
-    sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"changed\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
-    assert!(validate(&mut conn, &mandatory).await.is_err());
-    assert!(!validate(&mut conn, &optional).await.unwrap());
-    let malformed = covered_frame(&claims, "bad-stamp".into(), false);
-    assert!(!validate(&mut conn, &malformed).await.unwrap());
-    let malformed = covered_frame(&claims, "bad-stamp".into(), true);
+    let malformed = covered_frame(&claims, "bad-stamp".into());
     assert!(validate(&mut conn, &malformed).await.is_err());
     let mut unavailable = conn.begin().await.unwrap();
     sqlx::query("DELETE FROM core.owner_protocol_key")
         .execute(&mut *unavailable)
         .await
         .unwrap();
-    assert!(
-        matches!(
-            validate(&mut unavailable, &optional).await,
-            Err(Error::Database(sqlx::Error::RowNotFound))
-        ),
-        "optional certification cannot turn missing owner signing authority into a semantic refusal"
-    );
+    assert!(matches!(
+        validate(&mut unavailable, &covered).await,
+        Err(Error::Database(sqlx::Error::RowNotFound))
+    ));
     unavailable.rollback().await.unwrap();
     let mut corrupt = conn.begin().await.unwrap();
     sqlx::query(
@@ -147,9 +137,8 @@ async fn optional_emergency_stamp_loses_certification_without_relaxing_required_
         .execute(&mut *corrupt)
         .await
         .unwrap();
-    assert!(
-        validate(&mut corrupt, &optional).await.is_err(),
-        "optional proof validation cannot drop certification silently when private signing authority is malformed"
-    );
+    assert!(validate(&mut corrupt, &covered).await.is_err());
     corrupt.rollback().await.unwrap();
+    sqlx::query("UPDATE core.signal_checkpoints SET state='{\"settings_identity\":\"changed\"}' WHERE host='host'").execute(&mut conn).await.unwrap();
+    assert!(validate(&mut conn, &covered).await.is_err());
 }

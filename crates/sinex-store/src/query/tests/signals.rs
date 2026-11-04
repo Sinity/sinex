@@ -151,12 +151,10 @@ async fn signal_observations_do_not_feed_standing_event_queries(db: devkit::pg::
         .await
         .unwrap();
     world(&mut conn).await;
-    let payload = sinex_model::event_types::signal::CheckpointRecorded {
-        host: "fixture".into(),
-        revision: 1,
-        settings_identity: "public-policy".into(),
-        read_as: 0,
-        written_at: Timestamp::from_unix_secs(BASE).unwrap(),
+    let payload = sinex_model::event_types::signal::OutcomeRecorded {
+        delivery_id: "fixture".into(),
+        outcome: ::signals::Outcome::Shown,
+        recorded_at: Timestamp::from_unix_secs(BASE).unwrap(),
     };
     let event = Event::build(
         &payload,
@@ -218,11 +216,17 @@ async fn admit_signal_fixture(conn: &mut crate::AdmissionContext, event: Event) 
     tx.commit().await.unwrap();
     result
 }
+fn fired(reports: Vec<::signals::Report>) -> usize {
+    reports
+        .iter()
+        .filter(|report| matches!(report, ::signals::Report::Fired(_)))
+        .count()
+}
 fn observation(identity: String, reference: String, at: i64) -> ::signals::Row {
     ::signals::Row {
         occurrence: ::signals::Occurrence {
             id: identity,
-            episode: "record".into(),
+            period: "record".into(),
         },
         reference,
         observed: at,
@@ -264,11 +268,10 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
         author: ::signals::Author::Agent("fixture".into()),
         via: "fixture".into(),
         live: false,
+        shipped: Default::default(),
     };
     let at = 1_800_000_000_000;
-    let mut evaluator =
-        ::signals::Evaluator::new(at - 1, vec![active.clone()], Default::default(), &calendar)
-            .unwrap();
+    let mut evaluator = ::signals::Evaluator::new(at - 1, vec![active.clone()], &calendar).unwrap();
     evaluator
         .observe(::signals::Evaluation {
             rule: active.version.clone(),
@@ -282,14 +285,7 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
             value: None,
         })
         .unwrap();
-    assert_eq!(
-        evaluator
-            .advance_in_mode(at, &calendar, ::signals::EvaluationMode::Forward)
-            .unwrap()
-            .intents
-            .len(),
-        1
-    );
+    assert_eq!(fired(evaluator.reports(at, &calendar).unwrap()), 1);
     let mut reread = Event::build(
         &CommandFused {
             record: format!("command.executed:{}", ids[0].1),
@@ -348,13 +344,7 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
             value: None,
         })
         .unwrap();
-    assert!(
-        evaluator
-            .advance_in_mode(at + 1, &calendar, ::signals::EvaluationMode::Forward)
-            .unwrap()
-            .intents
-            .is_empty()
-    );
+    assert_eq!(fired(evaluator.reports(at + 1, &calendar).unwrap()), 0);
     crate::privacy::add_rule(
         &mut conn,
         &crate::privacy::NewRule {

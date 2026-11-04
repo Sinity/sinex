@@ -15,14 +15,9 @@ pub(crate) struct WriteGrant {
     pub source_declarations: Vec<sinex_model::SourceDeclaration>,
     #[serde(default)]
     pub canonical_kinds: Vec<sinex_model::KindDeclaration>,
+    /// The family may forward its evaluator reports to this host's deliverer.
     #[serde(default)]
     pub forward_signals: bool,
-    #[serde(default)]
-    pub author_attestation: Option<sinex_protocol::signals::AuthorAttestation>,
-    #[serde(default)]
-    pub emergency_sinex_blocked_host: Option<String>,
-    #[serde(default)]
-    pub emergency_lease_seconds: Option<u32>,
     pub kind_prefixes: Vec<String>,
     pub classes: Vec<Class>,
     #[serde(default)]
@@ -104,56 +99,15 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
         {
             return Err(format!("invalid write family capability for {identity}"));
         }
-        if write
-            .emergency_sinex_blocked_host
-            .as_ref()
-            .is_some_and(|host| {
-                host.is_empty()
-                    || !write.forward_signals
-                    || write.host.as_deref() != Some(host.as_str())
-            })
-        {
+        if write.forward_signals && write.family == "sinex" {
             return Err(format!(
-                "emergency completion requires its configured producer host and canonical signal forwarding for {identity}"
-            ));
-        }
-        if write
-            .emergency_lease_seconds
-            .is_some_and(|seconds| seconds == 0 || seconds > 3600)
-            || write.emergency_lease_seconds.is_some()
-                && write.emergency_sinex_blocked_host.is_none()
-        {
-            return Err(format!(
-                "offline emergency lease requires an explicit host and a duration of 1..=3600 seconds for {identity}"
+                "signal forwarding cannot use the sinex family, this host's own product, for {identity}"
             ));
         }
         if write.forward_signals && write.canonical_prefixes.is_empty() {
             return Err(format!(
                 "signal forwarding requires the canonical family namespace for {identity}"
             ));
-        }
-        if let Some(attestation) = &write.author_attestation {
-            if !write.forward_signals || write.canonical_prefixes.is_empty() {
-                return Err(format!(
-                    "author attestation requires canonical signal forwarding for {identity}"
-                ));
-            }
-            let mut seen = std::collections::BTreeSet::new();
-            for rule in &attestation.shipped {
-                if rule.id.strip_prefix("shipped:").is_none_or(str::is_empty)
-                    || rule.revision == 0
-                    || rule.fingerprint.len() != 64
-                    || !rule
-                        .fingerprint
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    || !seen.insert((&rule.id, rule.revision))
-                {
-                    return Err(format!(
-                        "invalid or conflicting shipped rule attestation for {identity}"
-                    ));
-                }
-            }
         }
         if write
             .host
