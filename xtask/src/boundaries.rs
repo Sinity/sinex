@@ -205,56 +205,7 @@ fn validate(metadata: Metadata) -> Result<(), String> {
             }
         }
     }
-    // Follow actual resolved normal/build edges to catch an I/O wrapper in a pure contract.
-    // Development helpers are checked at their declared boundary, not as contract runtime.
-    let nodes: HashMap<_, _> = metadata
-        .resolve
-        .nodes
-        .iter()
-        .map(|n| (n.id.as_str(), n))
-        .collect();
-    for (package, forbidden) in members.iter().filter_map(|package| {
-        RUNTIME_RULES
-            .iter()
-            .find(|(name, _)| *name == package.name)
-            .map(|(_, forbidden)| (package, forbidden))
-    }) {
-        let mut pending = vec![package.id.as_str()];
-        let mut seen = HashSet::new();
-        while let Some(id) = pending.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            let node = nodes
-                .get(id)
-                .ok_or_else(|| format!("missing resolved node: {id}"))?;
-            for edge in &node.deps {
-                if edge
-                    .dep_kinds
-                    .iter()
-                    .all(|k| k.kind.as_deref() == Some("dev"))
-                {
-                    continue;
-                }
-                let dependency = packages
-                    .get(edge.pkg.as_str())
-                    .ok_or_else(|| format!("missing resolved package: {}", edge.pkg))?;
-                let dependent = packages
-                    .get(id)
-                    .ok_or_else(|| format!("missing resolved package: {id}"))?;
-                if !activated(dependent, node, &dependency.name) {
-                    continue;
-                }
-                if forbidden.forbids(&dependency.name) {
-                    return Err(format!(
-                        "forbidden transitive dependency: {} -> {}",
-                        package.name, dependency.name
-                    ));
-                }
-                pending.push(edge.pkg.as_str());
-            }
-        }
-    }
+
     Ok(())
 }
 
@@ -395,7 +346,57 @@ fn graph(root: &Path) -> Result<(), String> {
     // only another platform uses (`log` under wasm32) is not built here.
     let host = host_triple()?;
     let metadata = metadata(root, &["--all-features".into()], &host)?;
-    validate(metadata)
+    validate(metadata)?;
+    for (package, rule) in RUNTIME_RULES {
+        runtime_dependencies(root, package, *rule, &host)?;
+    }
+    Ok(())
+}
+
+/// Cargo selects features for this package's production graph. Workspace-wide
+/// metadata unifies development features, including generators used elsewhere.
+fn runtime_dependencies(
+    root: &Path,
+    package: &str,
+    rule: RuntimeRule,
+    host: &str,
+) -> Result<(), String> {
+    let output = devkit::cargo_command()
+        .args([
+            "tree",
+            "--locked",
+            "-p",
+            package,
+            "--all-features",
+            "--target",
+            host,
+            "--edges",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+        ])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("cargo tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    for name in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+    {
+        if rule.forbids(name) {
+            return Err(format!(
+                "forbidden transitive dependency: {package} -> {name}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn metadata(root: &Path, features: &[String], host: &str) -> Result<Metadata, String> {
