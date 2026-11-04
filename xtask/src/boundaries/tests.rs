@@ -185,26 +185,54 @@ fn transport_owns_io_but_cannot_return_through_a_pure_protocol_edge() {
     }
 }
 
+fn wrapped_dependency(package: &str, dependency: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!("[workspace]\nresolver='2'\nmembers=['{package}','wrapper','{dependency}']\n"),
+    )
+    .unwrap();
+    for name in [package, "wrapper", dependency] {
+        std::fs::create_dir_all(root.join(name).join("src")).unwrap();
+        std::fs::write(root.join(name).join("src/lib.rs"), "").unwrap();
+        let edge = if name == package {
+            Some("wrapper")
+        } else if name == "wrapper" {
+            Some(dependency)
+        } else {
+            None
+        };
+        let mut manifest = format!("[package]\nname='{name}'\nversion='0.1.0'\nedition='2024'\n");
+        if let Some(edge) = edge {
+            manifest.push_str(&format!("[dependencies]\n{edge}={{path='../{edge}'}}\n"));
+        }
+        std::fs::write(root.join(name).join("Cargo.toml"), manifest).unwrap();
+    }
+    let output = devkit::cargo_command()
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    dir
+}
+
 #[devkit::test]
 fn a_pure_wrapper_cannot_hide_transport_io() {
-    let mut graph = metadata(&[
-        (
-            "sinex-protocol",
-            vec![dep("wrapper", None)],
-            vec!["wrapper"],
-        ),
-        ("sinex-transport", vec![], vec![]),
-    ]);
-    graph
-        .resolve
-        .nodes
-        .iter_mut()
-        .find(|n| n.id == "wrapper")
-        .unwrap()
-        .deps[0]
-        .pkg = "sinex-transport".into();
+    let dir = wrapped_dependency("sinex-protocol", "sinex-transport");
     assert_eq!(
-        validate(graph).unwrap_err(),
+        runtime_dependencies(
+            dir.path(),
+            "sinex-protocol",
+            RuntimeRule::NoIo,
+            &host_triple().unwrap()
+        )
+        .unwrap_err(),
         "forbidden transitive dependency: sinex-protocol -> sinex-transport"
     );
 }
@@ -228,16 +256,15 @@ fn quoted_catalog_names_are_found_in_store_text() {
 
 #[devkit::test]
 fn cli_cannot_acquire_database_work_through_a_wrapper() {
-    let mut graph = metadata(&[("sinexctl", vec![dep("wrapper", None)], vec!["wrapper"])]);
-    let wrapper = graph
-        .resolve
-        .nodes
-        .iter_mut()
-        .find(|node| node.id == "wrapper")
-        .unwrap();
-    wrapper.deps[0].pkg = "sqlx".into();
+    let dir = wrapped_dependency("sinexctl", "sqlx");
     assert_eq!(
-        validate(graph).unwrap_err(),
+        runtime_dependencies(
+            dir.path(),
+            "sinexctl",
+            RuntimeRule::NoDatabase,
+            &host_triple().unwrap()
+        )
+        .unwrap_err(),
         "forbidden transitive dependency: sinexctl -> sqlx"
     );
 }
