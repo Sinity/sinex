@@ -83,6 +83,11 @@ Time from other hosts carries clock evidence (clock identity, measured offset an
 
 ## Identity
 
+A field key uses the fields the kind declares. The material and its input locate
+the bytes; their assigned IDs never salt that key. The same source record read
+from another export therefore compares with its existing live reading.
+
+
 ### Two identities and one key
 
 - **Reading identity** is the event ID. Replay makes a new one.

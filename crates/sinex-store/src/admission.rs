@@ -35,7 +35,6 @@ mod write;
 pub(crate) use archive::{archive_at, position, remove_live, restore_at};
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
 pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty};
-pub use register::native_key;
 pub(crate) use register::observed;
 
 /// What a keyed derivation's key function sees of an admitted or archived event.
@@ -239,7 +238,7 @@ pub(crate) async fn admit(
     outcome.timings.insert("replay_archive", started.elapsed());
     let mut events: Vec<Event> = batch.events().cloned().collect();
     let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
-    register::native_keys(conn, batch, &mut events).await?;
+    register::native_inputs(conn, batch, &events).await?;
     let started = std::time::Instant::now();
     apply_privacy(conn, cache, batch, &mut events).await?;
     orders::assign(conn, batch, &mut events).await?;

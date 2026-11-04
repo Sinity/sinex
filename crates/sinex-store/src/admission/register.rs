@@ -417,12 +417,13 @@ impl Outcome {
     }
 }
 
-/// A native field key names one immutable input copy. Neither a declared host
-/// nor a caller-selected input UUID can join another copy's reading history.
-pub(crate) async fn native_keys(
+/// Native keyed readings cite materials and inputs registered by the owner.
+/// Their field keys remain the keys the kind declares, independent of which
+/// captured copy supplied the reading.
+pub(crate) async fn native_inputs(
     conn: &mut PgConnection,
     batch: &Batch,
-    events: &mut [Event],
+    events: &[Event],
 ) -> Result<()> {
     let native = match &batch.kind {
         BatchKind::Source(progress) => progress.source.as_ref(),
@@ -442,51 +443,18 @@ pub(crate) async fn native_keys(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let rows: Vec<(Uuid, Uuid)> =
-        sqlx::query_as("SELECT id,input_id FROM raw.materials WHERE id=ANY($1)")
-            .bind(&ids)
-            .fetch_all(conn)
-            .await?;
-    let inputs = rows
-        .into_iter()
-        .collect::<std::collections::HashMap<_, _>>();
-    for event in events {
-        if let Origin::Record { location, .. } = &event.origin
-            && let Some(key) = &mut event.equivalence_key
-        {
-            let input = inputs.get(&location.material.0).ok_or_else(|| {
-                Error::Invalid("native reading has no owner-registered immutable input".into())
-            })?;
-            key.0 = scoped_native_key(input, &key.0)?;
-        }
+    let registered: BTreeSet<Uuid> = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM raw.materials WHERE id=ANY($1) AND input_id IS NOT NULL",
+    )
+    .bind(&ids)
+    .fetch_all(conn)
+    .await?
+    .into_iter()
+    .collect();
+    if ids.iter().any(|id| !registered.contains(id)) {
+        return Err(Error::Invalid(
+            "native reading has no owner-registered immutable input".into(),
+        ));
     }
     Ok(())
-}
-
-fn scoped_native_key(input: &Uuid, key: &str) -> Result<String> {
-    let encoded =
-        serde_json::to_vec(&(input, key)).map_err(|error| Error::Invalid(error.to_string()))?;
-    Ok(blake3::derive_key("sinex.native_input_key.v1", &encoded)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
-}
-
-/// Resolve the native field key using this material's owner-registered input.
-/// The input scope is never supplied by a producer or inferred from payload text.
-pub async fn native_key(
-    conn: &mut PgConnection,
-    material: sinex_model::MaterialId,
-    key: &sinex_model::EquivalenceKey,
-) -> Result<sinex_model::EquivalenceKey> {
-    let input: Uuid = sqlx::query_scalar("SELECT input_id FROM raw.materials WHERE id=$1")
-        .bind(material.0)
-        .fetch_optional(conn)
-        .await?
-        .ok_or_else(|| {
-            Error::Invalid("native reading has no owner-registered immutable input".into())
-        })?;
-    Ok(sinex_model::EquivalenceKey(scoped_native_key(
-        &input, &key.0,
-    )?))
 }
