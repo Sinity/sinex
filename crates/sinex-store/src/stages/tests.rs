@@ -32,46 +32,78 @@ async fn a_stage_is_logged_from_begin_to_end(db: devkit::pg::TestDatabase) {
     let mut conn = connect(&db).await;
     let operation = OperationId::new();
     let scope = json!({"items": [{"path": "/synthetic/export.zip"}]});
-    begin(
-        &mut conn,
-        operation,
-        "operator",
-        &scope,
-        &json!({"files": []}),
-    )
-    .await
-    .unwrap();
+    let inventory = Inventory {
+        files: vec![sinex_model::stage::File {
+            path: "/synthetic/export.zip".into(),
+            container: Some(sinex_model::stage::Container::Zip),
+            size: Some(5),
+            reading: sinex_model::stage::FileReading::Unparsed { candidates: vec![] },
+            members: vec![],
+            products: Default::default(),
+            material: None,
+        }],
+    };
+    begin(&mut conn, operation, "operator", &scope, &inventory)
+        .await
+        .unwrap();
     let running = list(&mut conn, true).await.unwrap();
     assert_eq!(running.len(), 1);
     assert_eq!(running[0].operation, operation);
     assert_eq!(running[0].result, None);
+    assert_eq!(running[0].counts, None);
     assert_eq!(running[0].scope, scope);
-
-    progress(
-        &mut conn,
-        operation,
-        &json!({"files": [{"path": "/synthetic/export.zip"}]}),
-    )
-    .await
-    .unwrap();
+    let committed = Checkpoint {
+        accounting: sinex_model::Accounting::default(),
+    };
+    checkpoint(&mut conn, operation, "synthetic", &committed)
+        .await
+        .unwrap();
+    progress(&mut conn, operation, &inventory).await.unwrap();
+    let saved = show(&mut conn, operation).await.unwrap().unwrap();
+    assert_eq!(saved.inventory.checkpoints["synthetic"], committed);
+    let counts = Counts {
+        files: 1,
+        stored_without_parser: 0,
+        accounting: sinex_model::Accounting::default(),
+    };
+    let failures = vec!["synthetic source failed".to_owned()];
     end(
         &mut conn,
         operation,
-        OperationResult::Ok,
-        &json!({"new": 3}),
-        &json!({"files": ["done"]}),
-        &json!([]),
+        OperationResult::StoppedEarly,
+        &counts,
+        &inventory,
+        &failures,
     )
     .await
     .unwrap();
     assert!(list(&mut conn, true).await.unwrap().is_empty());
     let shown = show(&mut conn, operation).await.unwrap().unwrap();
-    assert_eq!(shown.result, Some(OperationResult::Ok));
-    assert_eq!(shown.counts, json!({"new": 3}));
-    assert_eq!(shown.inventory, json!({"files": ["done"]}));
+    assert_eq!(shown.result, Some(OperationResult::StoppedEarly));
+    assert_eq!(shown.counts, Some(counts.clone()));
+    assert_eq!(shown.inventory.inventory, inventory);
+    assert_eq!(shown.inventory.checkpoints["synthetic"], committed);
+    assert_eq!(shown.failures, failures);
+    let report: sinex_model::stage::Report =
+        serde_json::from_value(serde_json::to_value(&shown).unwrap()).unwrap();
+    assert_eq!(report.failures, failures);
+    assert_eq!(report.counts, Some(counts.clone()));
     assert!(shown.end_seq.is_some());
-    // An ended stage takes no more progress.
-    assert!(progress(&mut conn, operation, &json!({})).await.is_err());
+    assert!(progress(&mut conn, operation, &inventory).await.is_err());
+    reopen(&mut conn, operation).await.unwrap();
+    end(
+        &mut conn,
+        operation,
+        OperationResult::Ok,
+        &counts,
+        &inventory,
+        &[],
+    )
+    .await
+    .unwrap();
+    let ended = show(&mut conn, operation).await.unwrap().unwrap();
+    assert!(ended.inventory.checkpoints.is_empty());
+    assert!(ended.failures.is_empty());
     assert!(show(&mut conn, OperationId::new()).await.unwrap().is_none());
 }
 

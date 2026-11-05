@@ -406,8 +406,15 @@ async fn main() -> ExitCode {
             } => return fail(NOT_BUILT, format!("not built yet: {reason}")),
             Reply::Refused { reason, .. } => return fail(REFUSED, reason),
             Reply::StoppedEarly { reason, result } => {
-                // What moved before the refusal.
-                print_json(&result);
+                if !json && name == "stage" {
+                    let report = match serde_json::from_value(result) {
+                        Ok(report) => report,
+                        Err(e) => return fail(REFUSED, format!("invalid stage report: {e}")),
+                    };
+                    print!("{}", sinex_protocol::stage_report::render(&report));
+                } else {
+                    print_json(&result);
+                }
                 return fail(STOPPED_EARLY, reason);
             }
         };
@@ -419,10 +426,18 @@ async fn main() -> ExitCode {
             if json {
                 print_json(&result);
             } else if matches!(name.as_str(), "stage" | "stage-show") {
-                print!("{}", sinex_protocol::stage_report::render(&result));
+                let report = match serde_json::from_value(result) {
+                    Ok(report) => report,
+                    Err(e) => return fail(REFUSED, format!("invalid stage report: {e}")),
+                };
+                print!("{}", sinex_protocol::stage_report::render(&report));
             } else if name == "stage-list" {
-                for stage in result["stages"].as_array().into_iter().flatten() {
-                    print!("{}", sinex_protocol::stage_report::render(stage));
+                let reports: sinex_model::stage::Reports = match serde_json::from_value(result) {
+                    Ok(reports) => reports,
+                    Err(e) => return fail(REFUSED, format!("invalid stage list: {e}")),
+                };
+                for report in &reports.stages {
+                    print!("{}", sinex_protocol::stage_report::render(report));
                 }
             } else if name == "sql" {
                 let rows = result["rows"].as_array().cloned().unwrap_or_default();

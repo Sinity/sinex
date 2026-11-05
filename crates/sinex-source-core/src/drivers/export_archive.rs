@@ -94,16 +94,7 @@ impl Framing {
     }
 }
 
-/// The container a file is, from its first bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Container {
-    Stateless,
-    Gzip,
-    Zip,
-    Tar,
-    TarGzip,
-}
+use sinex_model::stage::Container;
 
 #[derive(Clone)]
 pub struct ExportArchive {

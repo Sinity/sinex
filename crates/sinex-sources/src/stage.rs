@@ -12,8 +12,8 @@
 //! archive. Nothing is guessed from a file name. Candidates are always format
 //! names, the names `--parser` takes.
 use serde::{Deserialize, Serialize};
+use sinex_model::stage::{Container, Disposition, FileReading, InventoryMember};
 use sinex_source_core::binding::{Binding, InputFormat, Reading, Settings};
-use sinex_source_core::drivers::export_archive::Container;
 use sinex_source_core::shared_pass::{ListedMember, members};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -49,42 +49,6 @@ pub struct StagedFile {
     /// The bindings that read the file, by format.
     #[serde(skip)]
     pub bindings: Vec<(&'static InputFormat, Binding)>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "as", rename_all = "snake_case")]
-pub enum FileReading {
-    /// Read by these formats' bindings.
-    Parsed { formats: Vec<String> },
-    /// Stored as received with no parser. `candidates` names the formats that
-    /// recognised it, or would each read a member of it, when more than one
-    /// did.
-    Unparsed { candidates: Vec<String> },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct InventoryMember {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
-    #[serde(flatten)]
-    pub disposition: Disposition,
-}
-
-/// What became of one member. Every member is in exactly one of these.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "disposition", rename_all = "snake_case")]
-pub enum Disposition {
-    /// Read by these sources' bindings.
-    Read { sources: Vec<String> },
-    /// The binding meant to read it failed; its bytes stay stored.
-    Failed {
-        sources: Vec<String>,
-        reason: String,
-    },
-    /// Kept in the stored original and read by nothing. `candidates` names
-    /// the formats whose sources would each read it, when several would.
-    StoredNotInterpreted { candidates: Vec<String> },
 }
 
 impl StagePlan {

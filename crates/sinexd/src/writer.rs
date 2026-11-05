@@ -107,11 +107,11 @@ pub(crate) enum StageWrite {
         operation: OperationId,
         actor: String,
         scope: Value,
-        inventory: Value,
+        inventory: sinex_model::stage::Inventory,
     },
     Progress {
         operation: OperationId,
-        inventory: Value,
+        inventory: sinex_model::stage::Inventory,
     },
     /// A stage that stopped early is being resumed: it has no result again.
     Reopen {
@@ -120,9 +120,9 @@ pub(crate) enum StageWrite {
     End {
         operation: OperationId,
         result: sinex_model::lifecycle::OperationResult,
-        counts: Value,
-        inventory: Value,
-        refusals: Value,
+        counts: sinex_model::stage::Counts,
+        inventory: sinex_model::stage::Inventory,
+        refusals: Vec<String>,
     },
     Unparsed(Box<sinex_store::stages::Unparsed>),
 }
@@ -1035,7 +1035,7 @@ async fn save_stage(
         conn,
         stage.operation,
         &progress.binding,
-        &serde_json::json!({ "accounting": accounting }),
+        &sinex_model::stage::Checkpoint { accounting },
     )
     .await
 }

@@ -397,7 +397,7 @@ impl Api {
         caller: &Caller,
         operation: OperationId,
         request: crate::stage::Request,
-        saved: Option<Value>,
+        saved: Option<sinex_model::stage::SavedProgress>,
         follow: bool,
     ) -> Reply {
         let Some(writer) = self.writer.clone() else {
@@ -465,11 +465,13 @@ impl Api {
             }
         });
         if !follow && let Ok(started) = started.await {
-            return Reply::Ok { result: started };
+            return Reply::Ok {
+                result: serde_json::to_value(started).expect("stage report serializes"),
+            };
         }
         match task.await {
             Ok(Ok(outcome)) if outcome.failures.is_empty() => Reply::Ok {
-                result: outcome.report,
+                result: serde_json::to_value(outcome).expect("stage report serializes"),
             },
             Ok(Ok(outcome)) => Reply::StoppedEarly {
                 reason: format!(
@@ -478,7 +480,7 @@ impl Api {
                     outcome.operation.0,
                     outcome.failures.join("; ")
                 ),
-                result: outcome.report,
+                result: serde_json::to_value(outcome).expect("stage report serializes"),
             },
             Ok(Err(e)) => refused(e),
             Err(e) => refused(e.to_string()),

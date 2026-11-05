@@ -18,10 +18,14 @@ use crate::material_access::{Access, Sink};
 use crate::writer::{self, StageWrite, WriterHandle};
 use serde_json::{Value, json};
 use sinex_model::lifecycle::OperationResult;
+use sinex_model::stage::{
+    Counts, File, FileReading, Inventory, Product, ProductState, Report, SavedProgress,
+    SourceTotals,
+};
 use sinex_model::{Accounting, Class, InputRef, Manifest, MaterialId, OperationId, RunId};
 use sinex_source_core::{Binding, MaterialSink, Settings, Source, drivers};
 use sinex_sources::sources;
-use sinex_sources::stage::{FileReading, Item, StagePlan};
+use sinex_sources::stage::{Item, StagePlan};
 use sinex_store::{Blobs, bindings, positions};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, BTreeSet};
@@ -197,25 +201,6 @@ impl Request {
     }
 }
 
-/// How far one product of one staged file has been read.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ProductState {
-    #[default]
-    Queued,
-    Read,
-    Failed,
-}
-
-/// One product (a source) of one staged file, as reading goes.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-struct Product {
-    state: ProductState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-    accounting: Accounting,
-}
-
 /// A stage's progress: the plan, each file's products, the material a file
 /// with no parser was stored as, and what each binding's committed batches
 /// accounted for before the stage was interrupted.
@@ -252,35 +237,23 @@ impl Progress {
     /// checkpoint. A file whose products all read is not read again; a
     /// product read in part continues from its bindings' committed cursors,
     /// starting from the accounting committed with them.
-    fn resumed(plan: StagePlan, saved: &Value) -> Result<Self, String> {
+    fn resumed(plan: StagePlan, saved: &SavedProgress) -> Self {
         let mut progress = Self::new(plan);
-        if let Some(checkpoints) = saved["checkpoints"].as_object() {
-            for (binding, checkpoint) in checkpoints {
-                let accounting: Accounting =
-                    serde_json::from_value(checkpoint["accounting"].clone())
-                        .map_err(|e| format!("saved stage checkpoint of {binding}: {e}"))?;
-                progress.checkpoints.insert(binding.clone(), accounting);
-            }
-        }
-        let saved_files = saved["files"].as_array().cloned().unwrap_or_default();
+        progress.checkpoints = saved
+            .checkpoints
+            .iter()
+            .map(|(binding, checkpoint)| (binding.clone(), checkpoint.accounting.clone()))
+            .collect();
         for (index, file) in progress.plan.files.iter().enumerate() {
-            let Some(before) = saved_files.iter().find(|f| f["path"] == json!(file.path)) else {
+            let Some(before) = saved.inventory.files.iter().find(|f| f.path == file.path) else {
                 continue;
             };
-            if let Some(material) = before.get("material").filter(|m| !m.is_null()) {
-                progress.stored[index] = Some(
-                    serde_json::from_value(material.clone())
-                        .map_err(|e| format!("saved stage progress: {e}"))?,
-                );
-            }
-            let products: BTreeMap<String, Product> =
-                serde_json::from_value(before["products"].clone())
-                    .map_err(|e| format!("saved stage progress: {e}"))?;
-            for (source, product) in products {
+            progress.stored[index] = before.material;
+            for (source, product) in &before.products {
                 if product.state == ProductState::Read
-                    && let Some(current) = progress.products[index].get_mut(&source)
+                    && let Some(current) = progress.products[index].get_mut(source)
                 {
-                    *current = product;
+                    *current = product.clone();
                 }
             }
         }
@@ -295,7 +268,7 @@ impl Progress {
                 }
             }
         }
-        Ok(progress)
+        progress
     }
 
     /// Whether every product of file `index` has been read.
@@ -306,23 +279,25 @@ impl Progress {
     }
 
     /// The inventory as the operations log and `stage-show` hold it.
-    fn inventory(&self) -> Value {
-        let files: Vec<Value> = self
-            .plan
-            .files
-            .iter()
-            .zip(&self.products)
-            .zip(&self.stored)
-            .map(|((file, products), stored)| {
-                let mut value = serde_json::to_value(file).expect("staged files serialize");
-                value["products"] = json!(products);
-                if let Some(material) = stored {
-                    value["material"] = json!(material);
-                }
-                value
-            })
-            .collect();
-        json!({ "files": files })
+    fn inventory(&self) -> Inventory {
+        Inventory {
+            files: self
+                .plan
+                .files
+                .iter()
+                .zip(&self.products)
+                .zip(&self.stored)
+                .map(|((file, products), stored)| File {
+                    path: file.path.clone(),
+                    container: file.container,
+                    size: file.size,
+                    reading: file.reading.clone(),
+                    members: file.members.clone(),
+                    products: products.clone(),
+                    material: *stored,
+                })
+                .collect(),
+        }
     }
 
     /// The whole stage's accounting.
@@ -333,15 +308,6 @@ impl Progress {
         }
         total
     }
-}
-
-/// How a stage ended, for its caller.
-pub(crate) struct Outcome {
-    pub operation: OperationId,
-    /// The operation, its inventory, its accounting and the totals per
-    /// source.
-    pub report: Value,
-    pub failures: Vec<String>,
 }
 
 /// What a stage reads and writes through.
@@ -365,8 +331,8 @@ impl Staging<'_> {
         actor: &str,
         request: &Request,
         plan: StagePlan,
-        begun: tokio::sync::oneshot::Sender<Value>,
-    ) -> Result<Outcome, String> {
+        begun: tokio::sync::oneshot::Sender<Report>,
+    ) -> Result<Report, String> {
         let progress = Progress::new(plan);
         self.writer
             .stage(StageWrite::Begin {
@@ -387,10 +353,10 @@ impl Staging<'_> {
         operation: OperationId,
         request: &Request,
         plan: StagePlan,
-        saved: &Value,
-        begun: tokio::sync::oneshot::Sender<Value>,
-    ) -> Result<Outcome, String> {
-        let progress = Progress::resumed(plan, saved)?;
+        saved: &SavedProgress,
+        begun: tokio::sync::oneshot::Sender<Report>,
+    ) -> Result<Report, String> {
+        let progress = Progress::resumed(plan, saved);
         self.writer
             .stage(StageWrite::Reopen { operation })
             .await
@@ -403,14 +369,17 @@ impl Staging<'_> {
         operation: OperationId,
         request: &Request,
         mut progress: Progress,
-        begun: tokio::sync::oneshot::Sender<Value>,
-    ) -> Result<Outcome, String> {
+        begun: tokio::sync::oneshot::Sender<Report>,
+    ) -> Result<Report, String> {
         // The caller may have stopped waiting; the stage reads on.
-        let _ = begun.send(json!({
-            "operation": operation,
-            "result": Value::Null,
-            "inventory": progress.inventory(),
-        }));
+        let _ = begun.send(Report {
+            operation,
+            result: None,
+            inventory: progress.inventory(),
+            counts: None,
+            sources: BTreeMap::new(),
+            failures: Vec::new(),
+        });
         let mut failures = Vec::new();
         let mut per_source: Vec<(String, Totals)> = Vec::new();
         // One run per source, parser version and host for the whole stage.
@@ -501,11 +470,11 @@ impl Staging<'_> {
             OperationResult::StoppedEarly
         };
         let total = progress.total();
-        let counts = json!({
-            "files": progress.plan.files.len(),
-            "stored_without_parser": progress.stored.iter().flatten().count(),
-            "accounting": total,
-        });
+        let counts = Counts {
+            files: progress.plan.files.len(),
+            stored_without_parser: progress.stored.iter().flatten().count(),
+            accounting: total,
+        };
         let inventory = progress.inventory();
         self.writer
             .stage(StageWrite::End {
@@ -513,24 +482,20 @@ impl Staging<'_> {
                 result,
                 counts: counts.clone(),
                 inventory: inventory.clone(),
-                refusals: json!(failures),
+                refusals: failures.clone(),
             })
             .await
             .map_err(|e| e.to_string())?;
-        let sources: serde_json::Map<String, Value> = per_source
+        let sources: BTreeMap<String, SourceTotals> = per_source
             .iter()
-            .map(|(s, t)| (s.clone(), t.to_json()))
+            .map(|(s, t)| (s.clone(), t.report()))
             .collect();
-        Ok(Outcome {
+        Ok(Report {
             operation,
-            report: json!({
-                "operation": operation,
-                "result": result,
-                "inventory": inventory,
-                "counts": counts,
-                "sources": sources,
-                "failures": failures,
-            }),
+            result: Some(result),
+            inventory,
+            counts: Some(counts),
+            sources,
             failures,
         })
     }
@@ -638,7 +603,7 @@ pub(crate) async fn local(
     store: &std::path::Path,
     request: Request,
     time_settings: sinex_model::time_settings::TimeSettings,
-) -> Result<Outcome, String> {
+) -> Result<Report, String> {
     let mut ctx =
         crate::reader_context::ReaderContext::open(database, store, time_settings).await?;
     let planned = request.clone();
@@ -871,28 +836,31 @@ impl Totals {
         self.pass_decoded_bytes += work.decoded_bytes;
         self.pass_record_bytes += work.record_bytes_stored;
     }
-    pub(crate) fn to_json(&self) -> serde_json::Value {
+    pub(crate) fn to_json(&self) -> Value {
+        serde_json::to_value(self.report()).expect("source totals serialize")
+    }
+    fn report(&self) -> SourceTotals {
         let per_s = |n: u64, d: Duration| n as f64 / d.as_secs_f64().max(1e-9);
-        serde_json::json!({
-            "polls": self.polls,
-            "files_stored": self.files_stored,
-            "pass_decoded_bytes": self.pass_decoded_bytes,
-            "pass_record_bytes": self.pass_record_bytes,
-            "materials": self.materials,
-            "material_bytes": self.material_bytes,
-            "batches": self.batches,
-            "accounting": self.accounting,
-            "dirty_keys": self.dirty_keys,
-            "wall_s": self.wall.as_secs_f64(),
-            "admission_s": self.admit_time.as_secs_f64(),
-            "poll_s": self.poll_time.as_secs_f64(),
-            "parse_s": self.parse_time.as_secs_f64(),
-            "queue_s": self.queue_time.as_secs_f64(),
-            "service_s": self.service_time.as_secs_f64(),
-            "admission_readings_per_s": per_s(self.accounting.readings, self.admit_time),
-            "readings_per_s": per_s(self.accounting.readings, self.wall),
-            "mb_per_s": self.material_bytes as f64 / 1e6 / self.wall.as_secs_f64().max(1e-9),
-        })
+        SourceTotals {
+            polls: self.polls,
+            files_stored: self.files_stored,
+            pass_decoded_bytes: self.pass_decoded_bytes,
+            pass_record_bytes: self.pass_record_bytes,
+            materials: self.materials,
+            material_bytes: self.material_bytes,
+            batches: self.batches,
+            accounting: self.accounting.clone(),
+            dirty_keys: self.dirty_keys,
+            wall_s: self.wall.as_secs_f64(),
+            admission_s: self.admit_time.as_secs_f64(),
+            poll_s: self.poll_time.as_secs_f64(),
+            parse_s: self.parse_time.as_secs_f64(),
+            queue_s: self.queue_time.as_secs_f64(),
+            service_s: self.service_time.as_secs_f64(),
+            admission_readings_per_s: per_s(self.accounting.readings, self.admit_time),
+            readings_per_s: per_s(self.accounting.readings, self.wall),
+            mb_per_s: self.material_bytes as f64 / 1e6 / self.wall.as_secs_f64().max(1e-9),
+        }
     }
 
     pub(crate) fn add(&mut self, o: Totals) {
