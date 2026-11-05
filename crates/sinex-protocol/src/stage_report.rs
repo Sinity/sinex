@@ -1,7 +1,8 @@
 //! The typed stage report as text, shared by the CLI and daemon output.
+pub use sinex_model::stage::{Report, Reports};
 use sinex_model::{
     lifecycle::OperationResult,
-    stage::{Disposition, FileReading, ProductState, Report},
+    stage::{Disposition, FileReading, ProductState},
 };
 
 pub fn render(report: &Report) -> String {

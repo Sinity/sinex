@@ -7,7 +7,6 @@ pub(crate) mod records;
 
 #[cfg(feature = "archives")]
 use super::DriverError;
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "archives")]
 use sinex_model::InputRef;
 use std::path::PathBuf;

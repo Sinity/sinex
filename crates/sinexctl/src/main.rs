@@ -432,10 +432,11 @@ async fn main() -> ExitCode {
                 };
                 print!("{}", sinex_protocol::stage_report::render(&report));
             } else if name == "stage-list" {
-                let reports: sinex_model::stage::Reports = match serde_json::from_value(result) {
-                    Ok(reports) => reports,
-                    Err(e) => return fail(REFUSED, format!("invalid stage list: {e}")),
-                };
+                let reports: sinex_protocol::stage_report::Reports =
+                    match serde_json::from_value(result) {
+                        Ok(reports) => reports,
+                        Err(e) => return fail(REFUSED, format!("invalid stage list: {e}")),
+                    };
                 for report in &reports.stages {
                     print!("{}", sinex_protocol::stage_report::render(report));
                 }
