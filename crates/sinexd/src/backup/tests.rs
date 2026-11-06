@@ -397,17 +397,35 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
     drop(next);
     drop(sink);
     context.close().await.unwrap();
-    // This database and every filesystem path in this test are disposable
-    // fixtures. The restore uses only the paired immutable artifact.
+    // Restore into an empty database, as in the native restore procedure.
+    // pg_restore --clean cannot drop constraints on existing hypertables.
+    // The slot remains owned by this fixture throughout replacement.
+    let mut admin_url = reqwest::Url::parse(&url).unwrap();
+    admin_url.set_path("/postgres");
+    let mut admin = PgConnection::connect(admin_url.as_str()).await.unwrap();
+    let name = format!("\"{}\"", db.name.replace('"', "\"\""));
+    sqlx::query(&format!("DROP DATABASE {name}"))
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    sqlx::query(&format!("CREATE DATABASE {name} TEMPLATE template0"))
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    admin.close().await.unwrap();
+    let mut restored = PgConnection::connect(&url).await.unwrap();
+    let owner: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(&mut restored)
+        .await
+        .unwrap();
+    sinex_schema::prepare(&mut restored, &owner).await.unwrap();
+    sqlx::query("SELECT timescaledb_pre_restore()")
+        .execute(&mut restored)
+        .await
+        .unwrap();
     let status = pg_command("pg_restore", &url)
         .unwrap()
-        .args([
-            "--no-password",
-            "--clean",
-            "--if-exists",
-            "--no-owner",
-            "--exit-on-error",
-        ])
+        .args(["--no-password", "--no-owner", "--exit-on-error"])
         .arg(artifact.join("main/sinex.dump"))
         .status()
         .await
@@ -421,6 +439,11 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
         .await
         .unwrap();
     assert!(status.success());
+    sqlx::query("SELECT timescaledb_post_restore()")
+        .execute(&mut restored)
+        .await
+        .unwrap();
+    restored.close().await.unwrap();
     std::fs::remove_dir_all(&spool).unwrap();
     capture_tree(
         &artifact.join("main/local-sources/spool/0"),
