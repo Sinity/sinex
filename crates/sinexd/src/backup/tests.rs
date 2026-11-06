@@ -422,10 +422,16 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
         .unwrap();
     assert!(status.success());
     std::fs::remove_dir_all(&spool).unwrap();
-    capture_tree(&artifact.join("main/local-sources/spool/0"), &spool).unwrap();
+    capture_tree(
+        &artifact.join("main/local-sources/spool/0"),
+        &spool,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
     capture_tree(
         &artifact.join("main/segments"),
         &restored_store.join("segments"),
+        &std::sync::atomic::AtomicBool::new(false),
     )
     .unwrap();
     let mut context = ReaderContext::open(&url, &restored_store, settings)

@@ -26,9 +26,9 @@ async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
         Subjects::sinex(),
         "capture".into(),
         publication.clone(),
-        Arc::new(move |_cancel| {
+        Arc::new(move |cancel| {
             let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
-            let files = capture_tree(captured_source.path(), directory.path())?;
+            let files = capture_tree(captured_source.path(), directory.path(), &cancel)?;
             Ok(Captured { directory, files })
         }),
     )
@@ -124,7 +124,7 @@ fn captured_native_bytes_survive_source_deletion_and_reject_symlinks() {
     let source = tempfile::tempdir().unwrap();
     let output = tempfile::tempdir().unwrap();
     std::fs::write(source.path().join("raw"), b"retained-source-bytes").unwrap();
-    let files = capture_tree(source.path(), output.path()).unwrap();
+    let files = capture_tree(source.path(), output.path(), &AtomicBool::new(false)).unwrap();
     std::fs::remove_file(source.path().join("raw")).unwrap();
     assert_eq!(
         std::fs::read(output.path().join("raw")).unwrap(),
@@ -134,8 +134,91 @@ fn captured_native_bytes_survive_source_deletion_and_reject_symlinks() {
         directory: output,
         files,
     };
-    validate(&captured).unwrap();
+    validate(&captured, &AtomicBool::new(false)).unwrap();
     std::os::unix::fs::symlink("missing", source.path().join("link")).unwrap();
     let refused = tempfile::tempdir().unwrap();
-    assert!(capture_tree(source.path(), refused.path()).is_err());
+    assert!(capture_tree(source.path(), refused.path(), &AtomicBool::new(false)).is_err());
+}
+
+#[devkit::test]
+fn cancellation_stops_a_native_copy_at_a_transfer_unit_without_a_finished_identity() {
+    struct CancellingReader<'a> {
+        bytes: std::io::Cursor<Vec<u8>>,
+        flag: &'a AtomicBool,
+    }
+    impl Read for CancellingReader<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let bytes = self.bytes.read(buffer)?;
+            self.flag.store(true, Ordering::Release);
+            Ok(bytes)
+        }
+    }
+    let flag = AtomicBool::new(false);
+    let mut input = CancellingReader {
+        bytes: std::io::Cursor::new(vec![7; 128 * 1024]),
+        flag: &flag,
+    };
+    let mut output = Vec::new();
+    let error = copy_prefix(&mut input, &mut output, 128 * 1024, &flag).unwrap_err();
+    assert!(error.contains("cancelled"));
+    assert_eq!(output, vec![7; 64 * 1024]);
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    std::fs::write(source.path().join("raw"), b"owned bytes").unwrap();
+    assert!(
+        capture_tree(source.path(), destination.path(), &flag)
+            .unwrap_err()
+            .contains("cancelled")
+    );
+    assert!(!destination.path().join("raw").exists());
+}
+
+#[devkit::test]
+async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash() {
+    use sinex_protocol::replies::ReplyFrame;
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let mut incoming = client.subscribe("backup.wait").await.unwrap();
+    let mut observed = client.subscribe("_SINEX_BACKUP.capture.>").await.unwrap();
+    client.flush().await.unwrap();
+    let (finish, finished) = tokio::sync::oneshot::channel();
+    let owner = client.clone();
+    let server = tokio::spawn(async move {
+        let message = incoming.next().await.unwrap();
+        crate::replies::respond_json_wait(
+            &owner,
+            message.reply.unwrap().to_string(),
+            async move {
+                finished.await.unwrap();
+                Some(serde_json::json!({"native_generation":"sealed"}))
+            },
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+    });
+    let observer = tokio::spawn(async move {
+        while let Some(message) = observed.next().await {
+            if matches!(
+                serde_json::from_slice::<ReplyFrame>(&message.payload),
+                Ok(ReplyFrame::Waiting { .. })
+            ) {
+                finish.send(()).unwrap();
+                return;
+            }
+        }
+        panic!("native sealing never advertised its wait");
+    });
+    let value: serde_json::Value = crate::replies::request_inbox(
+        &client,
+        "backup.wait",
+        "_SINEX_BACKUP.capture".into(),
+        b"{}".to_vec(),
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(value, serde_json::json!({"native_generation":"sealed"}));
+    observer.await.unwrap();
+    server.await.unwrap();
 }

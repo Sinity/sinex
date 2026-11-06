@@ -163,7 +163,11 @@ pub(crate) async fn local_sources(
         let destination = output.join("main/local-sources");
         let mut files = tokio::task::spawn_blocking(move || {
             let captured = sinex_sources::live::capture_backup(&bindings, &cancelled)?;
-            sinex_transport::backup::capture_tree(captured.directory.path(), &destination)
+            sinex_transport::backup::capture_tree(
+                captured.directory.path(),
+                &destination,
+                &cancelled,
+            )
         })
         .await
         .map_err(|e| e.to_string())??;

@@ -144,7 +144,7 @@ pub(super) fn capture(
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     let mut add = |source: &Path, relative: &str| -> Result<(), String> {
-        let mut copied = capture_tree(source, &directory.path().join(relative))?;
+        let mut copied = capture_tree(source, &directory.path().join(relative), cancelled)?;
         for file in &mut copied {
             file.path = format!("{relative}/{}", file.path);
         }
@@ -173,6 +173,9 @@ pub(super) fn capture(
             for (stem, path) in sinex_source_core::drivers::media::complete(&binding.input)
                 .map_err(|e| e.to_string())?
             {
+                if cancelled.load(Ordering::Acquire) {
+                    return Err("producer capture cancelled while pinning media".into());
+                }
                 std::fs::hard_link(
                     &path,
                     pinned
@@ -188,6 +191,9 @@ pub(super) fn capture(
             }
         } else {
             for entry in std::fs::read_dir(&binding.input).map_err(|e| e.to_string())? {
+                if cancelled.load(Ordering::Acquire) {
+                    return Err("producer capture cancelled while pinning source".into());
+                }
                 let entry = entry.map_err(|e| e.to_string())?;
                 let name = entry.file_name();
                 if name == "resume-cursor"

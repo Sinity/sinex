@@ -94,7 +94,7 @@ impl Participant {
                             if let Some(current) = &cut {
                                 if current.token != token { return Err("another backup cut is active".into()); }
                             } else {
-                                let guard = tokio::time::timeout(IDLE, publication.0.clone().write_owned()).await.map_err(|_|"publication has not settled")?;
+                                let guard = publication.0.clone().write_owned().await;
                                 cut = Some(Cut { token: token.clone(), _guard: guard, captured: None });
                             }
                             Ok(Reply::Frozen { token, incarnation: incarnation.clone() })
@@ -110,8 +110,8 @@ impl Participant {
                                 impl Drop for Cancel {fn drop(&mut self){self.0.store(true,Ordering::Release);}}
                                 let _cancel = Cancel(cancelled.clone());
                                 let captured = tokio::task::spawn_blocking(move || {
-                                    let captured = callback(cancelled)?;
-                                    validate(&captured)?;
+                                    let captured = callback(cancelled.clone())?;
+                                    validate(&captured,&cancelled)?;
                                     Ok::<_,String>(captured)
                                 }).await.map_err(|e|e.to_string())??;
                                 current.captured = Some((boundary.clone(), captured));
@@ -157,7 +157,7 @@ fn relative(path: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn validate(captured: &Captured) -> Result<(), String> {
+fn validate(captured: &Captured, cancelled: &AtomicBool) -> Result<(), String> {
     let mut names = std::collections::HashSet::new();
     for file in &captured.files {
         relative(&file.path)?;
@@ -173,48 +173,97 @@ fn validate(captured: &Captured) -> Result<(), String> {
             return Err("captured file is a symlink".into());
         }
         let mut input = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        let mut hash = blake3::Hasher::new();
-        let bytes = std::io::copy(&mut input, &mut hash).map_err(|e| e.to_string())?;
-        if bytes != file.bytes || hash.finalize().to_hex().as_str() != file.blake3 {
+        if input.metadata().map_err(|e| e.to_string())?.len() != file.bytes {
+            return Err("captured file length differs".into());
+        }
+        let hash = copy_prefix(&mut input, &mut std::io::sink(), file.bytes, cancelled)?;
+        if hash != file.blake3 {
             return Err("captured file identity differs".into());
         }
     }
     Ok(())
 }
 
+fn cancelled(flag: &AtomicBool) -> Result<(), String> {
+    if flag.load(Ordering::Acquire) {
+        Err("producer capture cancelled".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn copy_prefix(
+    input: &mut impl Read,
+    output: &mut impl Write,
+    length: u64,
+    flag: &AtomicBool,
+) -> Result<String, String> {
+    let mut remaining = length;
+    let mut hash = blake3::Hasher::new();
+    let mut buffer = [0; 64 * 1024];
+    cancelled(flag)?;
+    while remaining != 0 {
+        cancelled(flag)?;
+        let bytes =
+            usize::try_from(remaining.min(buffer.len() as u64)).map_err(|e| e.to_string())?;
+        input
+            .read_exact(&mut buffer[..bytes])
+            .map_err(|e| format!("short or unreadable captured prefix: {e}"))?;
+        output
+            .write_all(&buffer[..bytes])
+            .map_err(|e| e.to_string())?;
+        hash.update(&buffer[..bytes]);
+        remaining -= bytes as u64;
+    }
+    cancelled(flag)?;
+    Ok(hash.finalize().to_hex().to_string())
+}
+
 /// Copy each open file's bounded prefix; appending acquisition may continue.
 /// The owner prevents replacement, deletion and checkpoint advance until this returns.
-pub fn capture_tree(source: &Path, destination: &Path) -> Result<Vec<File>, String> {
+/// Run on a blocking worker so cancellation and protocol flow keep progressing.
+pub fn capture_tree(
+    source: &Path,
+    destination: &Path,
+    flag: &AtomicBool,
+) -> Result<Vec<File>, String> {
     fn copy(
         source: &Path,
         destination: &Path,
         base: &Path,
         files: &mut Vec<File>,
+        flag: &AtomicBool,
     ) -> Result<(), String> {
+        cancelled(flag)?;
         std::fs::create_dir_all(destination).map_err(|e| e.to_string())?;
         for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
+            cancelled(flag)?;
             let entry = entry.map_err(|e| e.to_string())?;
             let kind = entry.file_type().map_err(|e| e.to_string())?;
             let output = destination.join(entry.file_name());
             if kind.is_dir() {
-                copy(&entry.path(), &output, base, files)?;
+                copy(&entry.path(), &output, base, files, flag)?;
             } else if kind.is_file() {
-                let input = std::fs::File::open(entry.path()).map_err(|e| e.to_string())?;
-                let length = input.metadata().map_err(|e| e.to_string())?.len();
+                let mut input = std::fs::File::open(entry.path()).map_err(|e| e.to_string())?;
+                let bytes = input.metadata().map_err(|e| e.to_string())?.len();
                 let mut output_file = std::fs::OpenOptions::new()
                     .create_new(true)
                     .write(true)
                     .open(&output)
                     .map_err(|e| e.to_string())?;
-                let bytes = std::io::copy(&mut input.take(length), &mut output_file)
-                    .map_err(|e| e.to_string())?;
-                if bytes != length {
-                    return Err("producer prefix shortened during capture".into());
-                }
+                let hash = match copy_prefix(&mut input, &mut output_file, bytes, flag) {
+                    Ok(hash) => hash,
+                    Err(error) => {
+                        drop(output_file);
+                        if let Err(cleanup) = std::fs::remove_file(&output) {
+                            return Err(format!(
+                                "{error}; incomplete captured file cleanup: {cleanup}"
+                            ));
+                        }
+                        return Err(error);
+                    }
+                };
                 output_file.sync_all().map_err(|e| e.to_string())?;
-                let mut input = std::fs::File::open(&output).map_err(|e| e.to_string())?;
-                let mut hash = blake3::Hasher::new();
-                std::io::copy(&mut input, &mut hash).map_err(|e| e.to_string())?;
                 let path = output
                     .strip_prefix(base)
                     .map_err(|e| e.to_string())?
@@ -224,18 +273,19 @@ pub fn capture_tree(source: &Path, destination: &Path) -> Result<Vec<File>, Stri
                 files.push(File {
                     path,
                     bytes,
-                    blake3: hash.finalize().to_hex().to_string(),
+                    blake3: hash,
                 });
             } else {
                 return Err("producer custody contains a non-regular file".into());
             }
         }
+        cancelled(flag)?;
         std::fs::File::open(destination)
             .and_then(|f| f.sync_all())
             .map_err(|e| e.to_string())
     }
     let mut files = Vec::new();
-    copy(source, destination, destination, &mut files)?;
+    copy(source, destination, destination, &mut files, flag)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
 }
