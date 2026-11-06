@@ -2,9 +2,35 @@ use super::*;
 use crate::NoDerivations;
 use serde_json::json;
 use sinex_model::{
-    Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
+    Batch, BatchKind, Class, DbCheck, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId, Timestamp,
 };
+
+// Model a registry retained from the bundled format-2 owner. Producer ingress
+// cannot install Rust-normalized bundled kinds or claim reserved namespaces.
+async fn retain_bundled_kind(conn: &mut PgConnection, declaration: &KindDeclaration) {
+    let prefix = declaration.kind.name.split_once('.').unwrap().0;
+    let owner: String =
+        sqlx::query_scalar("SELECT declaring_producer FROM registry.kind_prefixes WHERE prefix=$1")
+            .bind(prefix)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(owner, declaration.declaring_producer);
+    assert_eq!(owner, "sinex");
+    sqlx::query("INSERT INTO registry.event_types (name, version, declaring_producer, payload_schema, normalization, key_rule, replace_rule, time_rule, field_hints, removed_rule, keep_known, owned_blobs, search, definition_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (name,version) DO NOTHING")
+        .bind(&declaration.kind.name).bind(declaration.kind.database_version().unwrap())
+        .bind(&declaration.declaring_producer).bind(&declaration.payload_schema)
+        .bind(declaration.normalization.as_db()).bind(json!(declaration.key_rule))
+        .bind(declaration.replace_rule.map(|rule| rule.as_db())).bind(json!(declaration.time_rule))
+        .bind(json!(declaration.field_hints)).bind(json!(declaration.removed_rule))
+        .bind(&declaration.keep_known).bind(json!(declaration.owned_blobs))
+        .bind(declaration.search.as_db()).bind(declaration.definition_hash())
+        .execute(&mut *conn).await.unwrap();
+    check_kind(conn, &declaration.kind, declaration)
+        .await
+        .unwrap();
+}
 
 async fn original_saved(
     conn: &mut crate::AdmissionContext,
@@ -17,9 +43,7 @@ async fn original_saved(
         version: 2,
     };
     let declaration = sinex_model::query::historical::original_declaration(&reference).unwrap();
-    sinex_schema::kinds::register(conn, "sinex", &[declaration])
-        .await
-        .unwrap();
+    retain_bundled_kind(conn, &declaration).await;
     let written_at = Timestamp::from_unix_secs(1_789_372_800).unwrap();
     let original = json!({"name":name,"query":"events count","parameters":[],"by":"synthetic","written_at":written_at});
     let bytes = serde_json::to_vec(&original).unwrap();
@@ -153,13 +177,11 @@ async fn original_request(
         name: "analysis.request".into(),
         version: 2,
     };
-    sinex_schema::kinds::register(
+    retain_bundled_kind(
         conn,
-        "sinex",
-        &[sinex_model::query::historical::original_declaration(&reference).unwrap()],
+        &sinex_model::query::historical::original_declaration(&reference).unwrap(),
     )
-    .await
-    .unwrap();
+    .await;
     let at = Timestamp::from_unix_secs(1_789_372_800).unwrap();
     let selection = json!({"query":"recall yesterday","now":at,"read_as":null,"zone":"UTC","day_start":"00:00:00","grants":[],"selected":{"kind":"window","from":"2026-09-13T00:00:00Z","to":"2026-09-14T00:00:00Z","_fingerprint":"request-inputs","_query":"original native question"},"declarations":[]});
     let original = json!({"selection":selection,"request":"retained-request","operation":"recall","recipe":null,"from":"2026-09-13","to":"2026-09-13","metrics":[],"min_observed_fraction":null,"zone":"UTC","day_start":"00:00:00","grants":[],"started_at":at,"ended_at":at,"by":"synthetic","requested_at":at});
@@ -333,9 +355,7 @@ async fn retained_contract_checks_include_exact_schema_names_and_source_fingerpr
             .get("QuerySelection")
             .is_some()
     );
-    sinex_schema::kinds::register(&mut conn, "sinex", std::slice::from_ref(&original))
-        .await
-        .unwrap();
+    retain_bundled_kind(&mut conn, &original).await;
     check_kind(&mut conn, &reference, &original).await.unwrap();
     let mut renamed = original.clone();
     renamed.payload_schema.as_mut().unwrap()["title"] = json!("DifferentSaved");

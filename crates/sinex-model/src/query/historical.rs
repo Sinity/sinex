@@ -44,29 +44,117 @@ pub fn validate_original_payload(kind: &crate::KindRef, payload: &Value) -> Resu
 
 pub const GRAMMAR_REVISION: &str = "8c22e127bb1f5c10d8c1740de4c4f0bfe53ffdb7";
 
-fn historical_catalog(ctx: &Context) -> Result<Value, QueryError> {
-    let mut catalog = super::syntax::catalog(ctx);
-    for unit in &mut catalog.units {
-        let alias = super::Alias::from_name(&unit.name);
-        let table = super::Table::from_name(&unit.name).or(alias.map(|_| super::Table::Events));
-        if let Some(table) = table {
-            unit.fields.retain(|field| {
-                field.name.starts_with("payload.")
-                    || table.field(&field.name).is_some()
-                    || alias.is_some_and(|alias| alias.field(&field.name).is_some())
-            });
+fn historical_catalog(ctx: &Context) -> historical_query_format_v1::catalog::Catalog {
+    use super::{FieldType, QueryCatalog, Table};
+    use historical_query_format_v1::catalog::{Catalog, Field, FieldKind, ReferenceSyntax, Unit};
+
+    // Format 1's field vocabulary is part of its source format. Rebuild it
+    // from the original physical fields, rather than serializing the evolving
+    // current catalog (Exact, generated fields and functions did not exist).
+    fn field_kind(ty: FieldType) -> FieldKind {
+        match ty {
+            FieldType::Integer => FieldKind::Integer,
+            FieldType::Number => FieldKind::Number,
+            FieldType::Bool => FieldKind::Bool,
+            FieldType::Time => FieldKind::Time,
+            FieldType::Id => FieldKind::Reference,
+            FieldType::IdList => FieldKind::List(Box::new(FieldKind::Reference)),
+            FieldType::Path => FieldKind::Subtree,
+            FieldType::TextList => FieldKind::List(Box::new(FieldKind::Text)),
+            FieldType::PathList => FieldKind::List(Box::new(FieldKind::Subtree)),
+            FieldType::Json => FieldKind::Json,
+            FieldType::Text | FieldType::Enum(_) => FieldKind::Text,
         }
     }
-    serde_json::to_value(catalog).map_err(error)
+    let declarations = ctx
+        .catalog
+        .clone()
+        .unwrap_or_else(|| QueryCatalog::new(crate::event_types::declarations().iter().cloned()));
+    let fields = |table: Table, extra: &[super::Field]| {
+        let mut fields = table
+            .fields()
+            .iter()
+            .chain(extra)
+            .map(|field| Field {
+                name: field.name.into(),
+                kind: field_kind(field.ty),
+                values: match field.ty {
+                    FieldType::Enum(values) => values.iter().map(|value| (*value).into()).collect(),
+                    _ => vec![],
+                },
+                help: field.phrase.into(),
+                ..Field::default()
+            })
+            .collect::<Vec<_>>();
+        if table.is_events() {
+            fields.extend(declarations.fields.values().map(|field| Field {
+                name: format!("payload.{}", field.path.join(".")),
+                kind: FieldKind::Json,
+                ..Field::default()
+            }));
+        }
+        fields
+    };
+    let mut units = Table::ALL
+        .into_iter()
+        .map(|table| Unit {
+            name: table.name().into(),
+            fields: fields(table, &[]),
+            main_time: Some(table.main_time().into()),
+            identity: vec![
+                if table == Table::Sources {
+                    "binding"
+                } else {
+                    "id"
+                }
+                .into(),
+            ],
+            default_order: vec![table.main_time().into()],
+            help: table.phrase().into(),
+            ..Unit::default()
+        })
+        .collect::<Vec<_>>();
+    units.extend(super::ALIASES.iter().map(|alias| Unit {
+        name: alias.name.into(),
+        fields: fields(Table::Events, alias.fields),
+        main_time: Some("when".into()),
+        identity: vec!["id".into()],
+        default_order: vec!["when".into()],
+        help: alias.phrase.into(),
+        ..Unit::default()
+    }));
+    Catalog {
+        default_unit: "events".into(),
+        recall_last_unit: Some("shell-sessions".into()),
+        units,
+        commands: [
+            "recall",
+            "panel",
+            "compute",
+            "brief",
+            "context",
+            "related",
+            "follow",
+            "trace",
+            "descendants",
+            "parents",
+            "walk",
+            "duplicates",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        references: vec![ReferenceSyntax {
+            prefix: "sinex:".into(),
+            marker: Some("/".into()),
+        }],
+        unpiped_stages: true,
+        ..Catalog::default()
+    }
 }
 
 pub fn parse_format_one(text: &str, ctx: &Context) -> Result<old::Query, QueryError> {
-    let mut catalog = historical_catalog(ctx)?;
-    catalog["recall_last_unit"] = json!("shell-sessions");
-    catalog["unpiped_stages"] = json!(true);
-    catalog["extensions"] = json!([]);
-    catalog["source_outputs"] = json!([]);
-    historical_query_format_v1::parse::parse(text, &serde_json::from_value(catalog).map_err(error)?)
+    historical_query_format_v1::parse::parse(text, &historical_catalog(ctx))
         .map_err(|e| QueryError::at(e.position, e.message))
 }
 
@@ -100,15 +188,9 @@ fn decode_with_identity_for_source(
     ctx: &Context,
 ) -> Result<(old::Query, Value), QueryError> {
     let parsed = parse_format_one(text, ctx)?;
-    let mut catalog = historical_catalog(ctx)?;
-    catalog["recall_last_unit"] = json!("shell-sessions");
-    catalog["extensions"] = json!([]);
-    catalog["source_outputs"] = json!([]);
-    let identity = historical_query_format_v1::identity::normal_form(
-        &parsed,
-        &serde_json::from_value(catalog).map_err(error)?,
-    )
-    .map_err(|error| QueryError::new(error.to_string()))?;
+    let identity =
+        historical_query_format_v1::identity::normal_form(&parsed, &historical_catalog(ctx))
+            .map_err(|error| QueryError::new(error.to_string()))?;
     Ok((parsed, identity))
 }
 
@@ -987,4 +1069,35 @@ fn glob_condition(operand: Value, value: Value, negative: bool) -> Value {
     } else {
         json!({"kind":"compare","left":operand,"op":if negative {"ne"}else{"eq"},"right":{"kind":"value","value":value}})
     }
+}
+
+#[test]
+fn historical_catalog_preserves_its_frozen_vocabulary() {
+    use historical_query_format_v1::catalog::FieldKind;
+    let catalog = historical_catalog(&Context::utc(jiff::Timestamp::UNIX_EPOCH));
+    assert_eq!(
+        catalog.field("events", "source").unwrap().kind,
+        FieldKind::Text
+    );
+    assert_eq!(
+        catalog.field("events", "text").unwrap().kind,
+        FieldKind::Text
+    );
+    assert_eq!(
+        catalog.field("events", "id").unwrap().kind,
+        FieldKind::Reference
+    );
+    assert!(catalog.field("events", "snippet").is_none());
+    assert!(catalog.field("events", "start").is_none());
+    assert!(catalog.field("sources", "id").is_none());
+    assert!(catalog.extensions.is_empty());
+    assert!(catalog.source_outputs.is_empty());
+    assert!(catalog.commands.iter().any(|word| word == "recall"));
+    assert!(
+        parse_format_one(
+            "events where glob(source, 'x*') = true",
+            &Context::utc(jiff::Timestamp::UNIX_EPOCH)
+        )
+        .is_err()
+    );
 }
