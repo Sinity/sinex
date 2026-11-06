@@ -80,7 +80,7 @@ async fn saved_queries_bind_parameters_and_replace_definitions_through_admission
 ) {
     let w = world(db).await;
     admit(&w, &["synthetic first", "synthetic second"], 0).await;
-    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where event_type = command.executed AND payload.cwd = $directory count","parameter":["directory:text"]})).await;
+    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where event_type = command.executed AND payload.cwd = $directory | count","parameter":["directory:text"]})).await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
     let (_, answer) = call(
         &w,
@@ -104,7 +104,7 @@ async fn saved_queries_bind_parameters_and_replace_definitions_through_admission
     )
     .await;
     assert_eq!(answer["outcome"], "refused");
-    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where source = $source count","parameter":["source:text"]})).await;
+    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where source = $source | count","parameter":["source:text"]})).await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
     let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(answer["result"]["queries"].as_array().unwrap().len(), 1);
@@ -147,8 +147,8 @@ async fn context_windows_count_back_from_the_end_and_timeline_uses_the_same_quer
             "synthetic within"
         );
     }
-    let (_,a) = call(&w,Some(READ),json!({"method":"timeline","query":"where source = terminal.atuin since 2026-09-14T08:01:00Z"})).await;
-    let (_,b) = call(&w,Some(READ),json!({"method":"query","query":"events where source = terminal.atuin since 2026-09-14T08:01:00Z"})).await;
+    let (_,a) = call(&w,Some(READ),json!({"method":"timeline","query":"where source = terminal.atuin AND when >= 2026-09-14T08:01:00Z"})).await;
+    let (_,b) = call(&w,Some(READ),json!({"method":"query","query":"events where source = terminal.atuin AND when >= 2026-09-14T08:01:00Z"})).await;
     assert_eq!(a["result"]["rows"], b["result"]["rows"]);
     assert_eq!(a["result"]["total"], 2);
     let (_,completion) = call(&w,Some(READ),json!({"method":"query-complete","query":"events where event_type = command.executed AND payload.dur"})).await;
@@ -235,7 +235,7 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
         0,
     )
     .await;
-    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory fields id","parameter":["directory:text"]})).await;
+    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | fields id","parameter":["directory:text"]})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
     let (_, page) = call(
         &w,
@@ -246,7 +246,7 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
     assert_eq!(page["outcome"], "ok", "{page}");
     let cursor = page["result"]["page"]["cursor"].clone();
     assert!(cursor.is_string());
-    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory sort when desc fields id","parameter":["directory:text"]})).await;
+    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | sort when desc | fields id","parameter":["directory:text"]})).await;
     assert_eq!(changed["outcome"], "ok", "{changed}");
     let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
     assert_eq!(continued["outcome"], "refused", "{continued}");
@@ -291,8 +291,8 @@ async fn recall_digest_obeys_row_filters_and_limits(db: devkit::pg::TestDatabase
     admit_events(&w, vec![first, other, last]).await;
     for (suffix, count, command) in [
         ("", 2, "synthetic last"),
-        (" sort when limit 1 fields id", 1, "synthetic first"),
-        (" count", 2, "synthetic last"),
+        (" | sort when | limit 1 | fields id", 1, "synthetic first"),
+        (" | count", 2, "synthetic last"),
     ] {
         let query = format!(
             "recall sinex:window/2026-09-14T08:00:00Z/2026-09-14T08:03:00Z where source = terminal.atuin{suffix}"
@@ -319,9 +319,9 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
     let record = sinex_model::Event::build(
         &sinex_model::event_types::query::Saved {
             name: "clash".into(),
-            query: "events count".into(),
+            query: "events | count".into(),
             template: sinex_model::query::native::parse(
-                "events count",
+                "events | count",
                 &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
             )
             .unwrap()
@@ -345,15 +345,15 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
     .unwrap();
     admit_events(&w, vec![first, record]).await;
     for (name, query, parameters) in [
-        ("clash", "events count", vec![]),
+        ("clash", "events | count", vec![]),
         (
             "usable",
-            "events where event_type = command.executed count",
+            "events where event_type = command.executed | count",
             vec![],
         ),
         (
             "by-source",
-            "events where source = $source count",
+            "events where source = $source | count",
             vec!["source:text"],
         ),
         (
@@ -371,7 +371,7 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         assert_eq!(answer["outcome"], "ok", "{answer}");
     }
     for query in [
-        "events where event_type = command.executed count",
+        "events where event_type = command.executed | count",
         "query:usable",
         " QUERY : usable ",
         "QUERY:usable",
@@ -442,8 +442,8 @@ async fn saving_parameterized_questions_refuses_invalid_fields_and_stages(
     let w = world(db).await;
     for query in [
         "events where missing = $source",
-        "events where source = $source fields missing",
-        "events where source = $source group by source count where missing > 0",
+        "events where source = $source | fields missing",
+        "events where source = $source | group by source | count | where missing > 0",
     ] {
         let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid", "query":query, "parameter":["source:text"]})).await;
         assert_eq!(answer["outcome"], "refused", "{answer}");
@@ -455,7 +455,7 @@ async fn saving_parameterized_questions_refuses_invalid_fields_and_stages(
 #[devkit::test]
 async fn nested_saved_query_literals_are_validated_before_admission(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (_, saved) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"by-class", "query":"events where class = $class count", "parameter":["class:text"]})).await;
+    let (_, saved) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"by-class", "query":"events where class = $class | count", "parameter":["class:text"]})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
     let (_, invalid) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid-literal", "query":"query:by-class(class=unknown)"})).await;
     assert_eq!(invalid["outcome"], "refused", "{invalid}");

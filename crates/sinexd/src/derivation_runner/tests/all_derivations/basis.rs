@@ -63,7 +63,7 @@ pub(super) async fn validate(w: &World) {
             })
             .collect();
         let question = format!(
-            "events where ({}) AND NOT when:unknown as of seq {position} fields id, payload",
+            "events where ({}) AND NOT when:unknown | as of seq {position} | fields id, payload",
             branches.join(" OR "),
         );
         let ctx = Context::new(

@@ -75,7 +75,7 @@ async fn supplied_vectors_derive_rank_and_recompute_with_exact_source_parents(
         .unwrap();
     let context = sinex_model::query::Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
     let question = format!(
-        "events where event_type = operator_log.entry AND similar:sinex:ev/{reference} fields id"
+        "events where event_type = operator_log.entry AND similar:sinex:ev/{reference} | fields id"
     );
     let answer = sinex_store::query::run(
         &mut conn,
