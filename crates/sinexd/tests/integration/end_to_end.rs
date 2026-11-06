@@ -1478,7 +1478,7 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
 /// The live commands and their times (Unix seconds), through the public
 /// query.
 fn zsh_facts(t: &Target) -> Vec<(i64, String)> {
-    let answer = t.query("events where source = terminal.zsh-history sort when");
+    let answer = t.query("events where source = terminal.zsh-history | sort by when");
     answer["rows"]
         .as_array()
         .unwrap_or_else(|| panic!("{answer}"))
@@ -1983,7 +1983,7 @@ sed '1d' "$3" > "$2/Inbox/mbox"
     let answer = target.query("events where event_type = mail.message");
     assert_eq!(answer["total"], 2, "{answer}");
     let facts_query =
-        "events where event_type = mail.message fields payload.subject sort payload.subject";
+        "events where event_type = mail.message | fields payload.subject | sort by payload.subject";
     let facts = target.query(facts_query);
     let mut conn = target.connect().await;
     let blobs = sinex_store::Blobs::open(&target.store).unwrap();
@@ -2058,7 +2058,7 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
     };
     stage();
     let query =
-        "events where event_type = capture.gap AND payload.reason = sequence fields payload";
+        "events where event_type = capture.gap AND payload.reason = sequence | fields payload";
     let first = target.query(query);
     assert_eq!(first["total"], 1, "{first}");
     assert_eq!(

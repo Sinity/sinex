@@ -57,7 +57,7 @@ async fn an_external_history_survives_a_stopped_admission_and_remains_queryable(
     query.args([
         "--page",
         "10",
-        "events where source = terminal.atuin-history and state = present fields event_type",
+        "events where source = terminal.atuin-history and state = present | fields event_type",
     ]);
     let answer: serde_json::Value = serde_json::from_str(&finish(&mut query)).unwrap();
     assert_eq!(answer["total"].as_u64(), Some(expected.len() as u64));
@@ -70,7 +70,7 @@ async fn an_external_history_survives_a_stopped_admission_and_remains_queryable(
 
     let native_id = expected.first_key_value().unwrap().0;
     let question = format!(
-        "events where source = terminal.atuin-history and state = present and payload.native_id = {} fields payload.native_id",
+        "events where source = terminal.atuin-history and state = present and payload.native_id = {} | fields payload.native_id",
         serde_json::to_string(native_id).unwrap(),
     );
     let mut query = target.sinexd(&["admin", "query"]);
