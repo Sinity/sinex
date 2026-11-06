@@ -451,6 +451,7 @@ pub(super) fn operand_type(value: &Operand) -> Result<FieldType, QueryError> {
         Operand::TimeFn(_, _) => FieldType::Text,
         Operand::Literal { kind, .. } | Operand::Arithmetic { kind, .. } => physical_kind(kind),
         Operand::CaseEqual { value, .. } => operand_type(value)?,
+        Operand::Glob { .. } => FieldType::Bool,
         Operand::Named { operand, .. } => operand_type(operand)?,
     })
 }
@@ -506,6 +507,22 @@ fn operand(
                 .ok_or_else(|| {
                     QueryError::new("arithmetic operands have incompatible physical dimensions")
                 })?;
+            Ok(())
+        }
+        Operand::Glob { left, right } => {
+            for value in [left, right] {
+                operand(value, kinds, ctx)?;
+                if !matches!(
+                    operand_type(value)?,
+                    FieldType::Text
+                        | FieldType::Path
+                        | FieldType::Id
+                        | FieldType::Enum(_)
+                        | FieldType::Json
+                ) {
+                    return Err(QueryError::new("glob requires text values"));
+                }
+            }
             Ok(())
         }
         Operand::CaseEqual { left, right, value } => {
@@ -975,7 +992,7 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
                     out.insert(name.to_owned());
                 }
             }
-            Operand::Arithmetic { left, right, .. } => {
+            Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
                 operand(left, out);
                 operand(right, out);
             }
@@ -1040,6 +1057,11 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
                     }
                 }
             }
+            Stage::GroupFirst { keys, .. } => {
+                for key in keys {
+                    operand(key, &mut names);
+                }
+            }
             Stage::Fields(values) => {
                 for value in values {
                     operand(value, &mut names);
@@ -1097,7 +1119,7 @@ fn seed_operand(value: &mut Operand, schema: &PhysicalSchema) {
                 column.bind(*ty);
             }
         }
-        Operand::Arithmetic { left, right, .. } => {
+        Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
             seed_operand(left, schema);
             seed_operand(right, schema);
         }
@@ -1192,7 +1214,7 @@ fn clear_query_bindings(query: &mut Query) {
     fn operand(value: &mut Operand) {
         match value {
             Operand::Field(value) | Operand::TimeFn(_, value) => field(value),
-            Operand::Arithmetic { left, right, .. } => {
+            Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
                 operand(left);
                 operand(right);
             }
@@ -1253,6 +1275,11 @@ fn clear_query_bindings(query: &mut Query) {
         match stage {
             Stage::Where(value) => expression(value),
             Stage::Join(value) => join(value),
+            Stage::GroupFirst { keys, .. } => {
+                for key in keys {
+                    operand(key);
+                }
+            }
             Stage::Fields(values) => {
                 for value in values {
                     operand(value);
@@ -1378,6 +1405,12 @@ fn check_schema(
                 expose_join(&mut schema, join)?;
                 if matches!(join.on, JoinOn::Order { .. }) {
                     schema.insert("match.distance".into(), FieldType::Number);
+                }
+            }
+            Stage::GroupFirst { keys, .. } => {
+                for key in keys {
+                    seed_operand(key, &schema);
+                    operand(key, &kinds, ctx)?;
                 }
             }
             Stage::Fields(fs) => {

@@ -150,6 +150,10 @@ pub enum Operand {
         kind: query_language::catalog::FieldKind,
     },
     Length(Box<Operand>),
+    Glob {
+        left: Box<Operand>,
+        right: Box<Operand>,
+    },
     CaseEqual {
         left: Box<Operand>,
         right: Box<Operand>,
@@ -174,6 +178,7 @@ impl Operand {
                 ..
             } => format!("({} {} {})", left.name(), operator.symbol(), right.name()),
             Operand::Length(value) => format!("len({})", value.name()),
+            Operand::Glob { left, right } => format!("glob({}, {})", left.name(), right.name()),
             Operand::CaseEqual { left, right, value } => format!(
                 "case_eq({}, {}, {})",
                 left.name(),
@@ -197,6 +202,7 @@ impl Operand {
             Self::TimeFn(_, _) => K::Text,
             Self::Literal { kind, .. } | Self::Arithmetic { kind, .. } => kind.clone(),
             Self::CaseEqual { value, .. } => value.kind(),
+            Self::Glob { .. } => K::Bool,
             Self::Named { operand, .. } => operand.kind(),
         }
     }
@@ -223,6 +229,7 @@ impl Operand {
             } => format!("{}_{}_{}", left.column(), operator.word(), right.column()),
             Operand::Length(_) => "len".into(),
             Operand::CaseEqual { .. } => "case_eq".into(),
+            Operand::Glob { .. } => "glob".into(),
             Operand::Named { name, .. } => name.clone(),
         }
     }
@@ -401,6 +408,11 @@ pub enum Stage {
     Join(Join),
     AsOf(AsOf),
     Group(Group),
+    /// Select original rows by their order within each key group.
+    GroupFirst {
+        keys: Vec<Operand>,
+        count: u64,
+    },
     Sort(Vec<SortKey>),
     Limit(u64),
     Fields(Vec<Operand>),
@@ -456,6 +468,9 @@ pub enum TimePoint {
     When,
     Start,
     End,
+    MatchWhen,
+    MatchStart,
+    MatchEnd,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

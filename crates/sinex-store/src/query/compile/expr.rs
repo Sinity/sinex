@@ -149,6 +149,37 @@ impl Compiler<'_> {
                 }
                 Ok((sql, Kind::Typed(ty)))
             }
+            Operand::Glob { left, right } => {
+                let (mut text, text_kind) = self.operand(cols, left)?;
+                let (mut pattern, pattern_kind) = self.operand(cols, right)?;
+                if text_kind == Kind::Typed(FieldType::Json) {
+                    text = Self::typed_json(text, FieldType::Text);
+                }
+                if pattern_kind == Kind::Typed(FieldType::Json) {
+                    pattern = Self::typed_json(pattern, FieldType::Text);
+                }
+                let mut out = SqlFragment::text("(");
+                out.append(text)
+                    .push("::text LIKE replace(replace(replace(replace(")
+                    .append(pattern)
+                    .push("::text, ");
+                for (index, (from, to)) in [("\\", "\\\\"), ("%", "\\%"), ("_", "\\_"), ("*", "%")]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if index > 0 {
+                        out.push(", ");
+                    }
+                    out.param(V::String(Some(from.into())))
+                        .push(", ")
+                        .param(V::String(Some(to.into())))
+                        .push(")");
+                }
+                out.push(" ESCAPE ")
+                    .param(V::String(Some("\\".into())))
+                    .push(")");
+                Ok((out, Kind::Typed(FieldType::Bool)))
+            }
             Operand::Length(value) => {
                 let (sql, kind) = self.operand(cols, value)?;
                 let mut out = SqlFragment::text(match kind {

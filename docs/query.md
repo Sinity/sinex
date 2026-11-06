@@ -9,7 +9,9 @@ expressions, sealed cursors and the shared query laws belong to the common
 crate; how the CLI, MCP and HTTP carry a query is in [interfaces](interfaces.md); what a
 record and a citation identify is in [events](events.md#identity).
 
-Relation transforms use explicit pipes: `commands since:7d | group by cwd | agg sum(duration) as elapsed | sort by elapsed desc`. `F:VALUE` uses the field's declared natural match, while `F = VALUE` is exact comparison. Use `F:known` and `F:unknown` for presence tests, and `(A | B)` for a set of values.
+Relation transforms use explicit pipes: `commands since:7d | group by cwd | agg sum(duration) as elapsed | sort by elapsed desc`. `F:VALUE` uses the field's declared natural match, while `F = VALUE` is exact comparison. Use `F:known` and `F:unknown` for presence tests, and `(A | B)` for a set of values. `glob(text, pattern)` performs case-sensitive whole-text matching with `*` as its only wildcard; `%`, `_` and backslash are literal. For example, `events where glob(source, "terminal.*") = true` selects that source family, while `source = "terminal.*"` names that exact source.
+
+`| group by F | first N` selects the first N original rows in each group, preserving the incoming order and each row's identity and provenance. It keeps the original row fields for later filters and projections.
 
 `recall`, `trace`, `parents` and `descendants` are Sinex operations. Their adapters carry ordinary shared relation bodies and transforms in a typed template; they are not source variants of the shared query language. For example, `recall yesterday | fields when, text` uses a recall operation and a shared projection.
 

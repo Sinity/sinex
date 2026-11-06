@@ -263,10 +263,12 @@ async fn follow(
             table: Table::Events,
             ..
         }
-    ) && !bound
-        .stages
-        .iter()
-        .any(|s| matches!(s, Stage::Group(_) | Stage::Limit(_) | Stage::AsOf(_)));
+    ) && !bound.stages.iter().any(|s| {
+        matches!(
+            s,
+            Stage::Group(_) | Stage::GroupFirst { .. } | Stage::Limit(_) | Stage::AsOf(_)
+        )
+    });
     if !follows_rows {
         return (
             StatusCode::BAD_REQUEST,

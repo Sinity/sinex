@@ -204,3 +204,93 @@ async fn an_order_predicate_publishes_its_nearest_match_to_later_stages(
     assert_eq!(column(&answer, "match.command"), [json!("bbbb")]);
     assert_eq!(answer.rows[0]["match.distance"].as_f64(), Some(60.0));
 }
+
+#[devkit::test]
+async fn glob_preserves_case_and_literal_sql_metacharacters_with_dynamic_patterns(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_commands(
+        &mut conn,
+        &[("A%_\\中", "A*中"), ("a%_\\中", "A*中"), ("Axyz中", "A*中")],
+    )
+    .await;
+    let answer = ask(
+        &mut conn,
+        "commands where glob(command, cwd) = true | fields command | sort command",
+    )
+    .await;
+    assert_eq!(
+        column(&answer, "command"),
+        [json!("A%_\\中"), json!("Axyz中")]
+    );
+    let literal = ask(
+        &mut conn,
+        r#"commands where glob(command, "*%_\\中") = true | fields command | sort command"#,
+    )
+    .await;
+    assert_eq!(
+        column(&literal, "command"),
+        [json!("A%_\\中"), json!("a%_\\中")]
+    );
+    let missing = ask(
+        &mut conn,
+        "commands | fields glob(command, unknown) as matched",
+    )
+    .await;
+    assert!(missing.rows.iter().all(|row| row["matched"].is_null()));
+    assert_eq!(
+        ask(&mut conn, r#"events where source = "terminal.*""#)
+            .await
+            .total,
+        0
+    );
+    assert_eq!(
+        ask(
+            &mut conn,
+            r#"events where glob(source, "terminal.*") = true"#
+        )
+        .await
+        .total,
+        3
+    );
+}
+
+#[devkit::test]
+async fn first_in_each_group_keeps_original_rows_order_and_page_identity(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = fixture(&db).await;
+    let text = "commands | sort command desc | group by cwd | first 1 | fields id, command, cwd";
+    let first = ask_page(
+        &mut conn,
+        text,
+        Page {
+            size: Some(1),
+            cursor: None,
+        },
+    )
+    .await;
+    assert_eq!(first.total, 2);
+    assert_eq!(first.rows[0]["command"], json!("cc"));
+    let second = ask_page(
+        &mut conn,
+        text,
+        Page {
+            size: Some(1),
+            cursor: first.page.cursor,
+        },
+    )
+    .await;
+    assert_eq!(second.rows[0]["command"], json!("bbbb"));
+    assert_ne!(first.rows[0]["id"], second.rows[0]["id"]);
+    assert!(second.page.cursor.is_none());
+    let after_limit = ask(
+        &mut conn,
+        "commands | limit 2 | sort command desc | group by cwd | first 1 | fields command",
+    )
+    .await;
+    assert_eq!(column(&after_limit, "command"), [json!("bbbb"), json!("a")]);
+}

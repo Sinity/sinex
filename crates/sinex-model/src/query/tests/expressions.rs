@@ -139,3 +139,30 @@ fn saved_authored_evidence_does_not_replace_the_executable_template() {
         matches!(bound.filter, Some(Expr::Compare { rhs: Value::Text(ref value), .. }) if value == "synthetic")
     );
 }
+
+#[devkit::test]
+fn glob_has_boolean_type_and_accepts_row_dependent_patterns() {
+    let query = q("commands | fields glob(command, cwd) as matched | where matched = true");
+    let Stage::Fields(columns) = &query.stages[0] else {
+        panic!("projection")
+    };
+    assert!(matches!(columns[0].unnamed(), Operand::Glob { .. }));
+    assert_eq!(columns[0].field_type().unwrap(), FieldType::Bool);
+    assert!(
+        err("commands | fields glob(exit_code, cwd)")
+            .message
+            .contains("text")
+    );
+}
+
+#[devkit::test]
+fn first_in_a_group_keeps_original_fields_and_physical_types() {
+    let query = q("commands | sort command desc | group by cwd | first 1 | fields command, id");
+    assert!(
+        matches!(&query.stages[1], Stage::GroupFirst { keys, count:1 } if keys[0].column() == "cwd")
+    );
+    let Stage::Fields(columns) = &query.stages[2] else {
+        panic!("projection")
+    };
+    assert_eq!(columns[1].field_type().unwrap(), FieldType::Id);
+}

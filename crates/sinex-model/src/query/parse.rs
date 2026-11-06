@@ -269,6 +269,14 @@ impl Binder<'_> {
                         return Err(QueryError::at(at, "len takes one value"));
                     };
                     Operand::Length(Box::new(argument.clone()))
+                } else if name == "glob" {
+                    let [left, right] = arguments.as_slice() else {
+                        return Err(QueryError::at(at, "glob takes two text values"));
+                    };
+                    Operand::Glob {
+                        left: Box::new(left.clone()),
+                        right: Box::new(right.clone()),
+                    }
                 } else if name == "case_eq" {
                     let [left, right, value] = arguments.as_slice() else {
                         return Err(QueryError::at(at, "case_eq takes three values"));
@@ -809,6 +817,9 @@ impl Binder<'_> {
                 syntax::TimePoint::When => TimePoint::When,
                 syntax::TimePoint::Start => TimePoint::Start,
                 syntax::TimePoint::End => TimePoint::End,
+                syntax::TimePoint::MatchWhen => TimePoint::MatchWhen,
+                syntax::TimePoint::MatchStart => TimePoint::MatchStart,
+                syntax::TimePoint::MatchEnd => TimePoint::MatchEnd,
             },
         })
     }
@@ -964,6 +975,20 @@ impl Binder<'_> {
                         return Err(QueryError::at(at, "limit takes a positive integer"));
                     }
                     stages.push(Stage::Limit(count));
+                }
+                S::First { count } => {
+                    if matches!(stages.last(), Some(Stage::Group(group)) if group.aggregates.is_empty() && group.fill.is_none())
+                    {
+                        let Some(Stage::Group(group)) = stages.pop() else {
+                            unreachable!()
+                        };
+                        stages.push(Stage::GroupFirst {
+                            keys: group.keys,
+                            count,
+                        });
+                    } else {
+                        stages.push(Stage::Limit(count));
+                    }
                 }
                 S::Fields { columns } => stages.push(Stage::Fields(
                     columns

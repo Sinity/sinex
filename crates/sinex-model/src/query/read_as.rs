@@ -27,6 +27,12 @@ pub fn read_as(q: &Query) -> String {
                 as_of = true;
                 out.push_str(&format!("as Sinex knew them at commit {s}"));
             }
+            Stage::GroupFirst { keys, count } => {
+                out.push_str(&format!(
+                    "the first {count} in each group by {}",
+                    keys.iter().map(operand).collect::<Vec<_>>().join(", ")
+                ));
+            }
             Stage::Group(g) => {
                 if g.fill.is_some() {
                     out.push_str("including empty time buckets with their coverage, ");
@@ -223,6 +229,11 @@ fn operand(o: &Operand) -> String {
             operand(right)
         ),
         Operand::Length(inner) => format!("the length of {}", operand(inner)),
+        Operand::Glob { left, right } => format!(
+            "{} matches the case-sensitive pattern {}",
+            operand(left),
+            operand(right)
+        ),
         Operand::CaseEqual { left, right, value } => format!(
             "{} when {} is {}",
             operand(value),
@@ -322,6 +333,9 @@ fn join(j: &Join) -> String {
     let anchor = match point {
         TimePoint::When | TimePoint::Start => "at their start",
         TimePoint::End => "at their end",
+        TimePoint::MatchWhen => "at the matched occurrence",
+        TimePoint::MatchStart => "at the matched span start",
+        TimePoint::MatchEnd => "at the matched span end",
     };
     let window = within
         .map(|seconds| format!(" within {seconds}s"))

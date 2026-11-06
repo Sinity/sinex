@@ -191,7 +191,7 @@ fn expr_fields(e: &Expr, out: &mut Vec<FieldRef>) {
 fn operand_fields(o: &Operand, out: &mut Vec<FieldRef>) {
     match o {
         Operand::Field(f) | Operand::TimeFn(_, f) => out.push(f.clone()),
-        Operand::Arithmetic { left, right, .. } => {
+        Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
             operand_fields(left, out);
             operand_fields(right, out);
         }
@@ -357,6 +357,11 @@ impl<'c> Compiler<'c> {
                         if let SortBy::Operand(o) = &k.key {
                             operand_fields(o, &mut needed);
                         }
+                    }
+                }
+                Stage::GroupFirst { keys, .. } => {
+                    for key in keys {
+                        operand_fields(key, &mut needed);
                     }
                 }
                 Stage::Group(g) => {
@@ -527,13 +532,23 @@ impl<'c> Compiler<'c> {
                     }
                     for witness in witnesses {
                         let mut select = vec![SqlFragment::text(format!("{r}.*"))];
-                        for (name, value) in witness.columns {
+                        for (visible, (name, value)) in witness
+                            .columns
+                            .into_iter()
+                            .map(|column| (true, column))
+                            .chain(
+                                witness
+                                    .hidden_columns
+                                    .into_iter()
+                                    .map(|column| (false, column)),
+                            )
+                        {
                             let physical = self.alias("c");
                             select.push(SqlFragment::text(format!(
                                 "{value} AS {}",
                                 quote(&physical)
                             )));
-                            if !columns.contains(&name) {
+                            if visible && !columns.contains(&name) {
                                 columns.push(name.clone());
                             }
                             renamed.insert(name, physical);
@@ -619,6 +634,57 @@ impl<'c> Compiler<'c> {
                         )?;
                     }
                     limit = Some(*n);
+                }
+                Stage::GroupFirst { keys, count } => {
+                    rel = self.wrap(
+                        rel,
+                        &r,
+                        &cols,
+                        sort.clone(),
+                        limit.take(),
+                        is_grouped,
+                        ranked,
+                        &group_order,
+                    )?;
+                    let order =
+                        self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
+                    let partition = keys
+                        .iter()
+                        .map(|key| self.operand(&cols, key).map(|(sql, _)| sql))
+                        .collect::<Result<Vec<_>>>()?;
+                    let rank = self.alias("group_rank");
+                    let next_ordinal = self.alias("o");
+                    let selected = self.alias("selected");
+                    let mut ranked_rows =
+                        SqlFragment::text(format!("SELECT {r}.*, row_number() OVER ("));
+                    if !partition.is_empty() {
+                        ranked_rows
+                            .push("PARTITION BY ")
+                            .append(SqlFragment::join(partition, ", "))
+                            .push(" ");
+                    }
+                    ranked_rows
+                        .push("ORDER BY ")
+                        .append(order.clone())
+                        .push(format!(
+                            ") AS {}, row_number() OVER (ORDER BY ",
+                            quote(&rank)
+                        ))
+                        .append(order)
+                        .push(format!(") AS {} FROM (", quote(&next_ordinal)))
+                        .append(rel)
+                        .push(format!(") {r}"));
+                    let mut survivors = SqlFragment::text("SELECT * FROM (");
+                    survivors
+                        .append(ranked_rows)
+                        .push(format!(
+                            ") {selected} WHERE {selected}.{} <= ",
+                            quote(&rank)
+                        ))
+                        .param(V::BigInt(Some(i64::try_from(*count).unwrap_or(i64::MAX))));
+                    rel = survivors;
+                    ordinal = Some(next_ordinal);
+                    sort = None;
                 }
                 Stage::Group(g) => {
                     rel = self.wrap(

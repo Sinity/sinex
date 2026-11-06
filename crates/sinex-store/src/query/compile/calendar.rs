@@ -37,7 +37,7 @@ pub(crate) fn setting(ctx: &Context) -> String {
 fn calendar_operands(operand: &Operand, out: &mut Vec<(TimeFn, FieldRef)>) {
     match operand {
         Operand::TimeFn(func, field) if *func != TimeFn::Hour => out.push((*func, field.clone())),
-        Operand::Arithmetic { left, right, .. } => {
+        Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
             calendar_operands(left, out);
             calendar_operands(right, out);
         }
@@ -93,6 +93,11 @@ fn stage_operands(stage: &Stage) -> Vec<(TimeFn, FieldRef)> {
     let mut out = Vec::new();
     match stage {
         Stage::Where(e) => expression_operands(e, &mut out),
+        Stage::GroupFirst { keys, .. } => {
+            for key in keys {
+                calendar_operands(key, &mut out);
+            }
+        }
         Stage::Group(g) => {
             for key in &g.keys {
                 calendar_operands(key, &mut out);
