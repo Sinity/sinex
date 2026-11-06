@@ -24,7 +24,7 @@ fn stopped(stop: &watch::Receiver<bool>) -> Result<(), String> {
     }
 }
 
-/// The caller creates one new private directory before issuing a fresh hold.
+/// Create the private artifact roots before any producer can populate them.
 /// A partial attempt remains there, with its hold, and cannot be silently reused.
 pub(crate) fn create(path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
@@ -33,7 +33,14 @@ pub(crate) fn create(path: &Path) -> Result<(), String> {
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(path)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    for directory in ["main", "keys"] {
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(path.join(directory))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn record<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String> {
@@ -256,6 +263,7 @@ pub(crate) async fn local_sources(
     }
 }
 
+/// Populate the private artifact roots established by `create`.
 pub(crate) async fn prepare(
     mut snapshot: Snapshot,
     store: &Path,
@@ -289,13 +297,6 @@ pub(crate) async fn prepare(
         producer_custody,
         files: Vec::new(),
     };
-    for directory in ["main", "keys"] {
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(output.join(directory))
-            .map_err(|e| e.to_string())?;
-    }
     // This record survives failures and identifies the hold without claiming a complete artifact.
     record_boundary(output, &manifest.boundary)?;
     File::open(output)

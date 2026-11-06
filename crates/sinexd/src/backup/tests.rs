@@ -1,5 +1,31 @@
 use super::*;
 use sqlx::{Connection, PgConnection};
+use std::os::unix::fs::PermissionsExt;
+
+fn assert_private_roots(artifact: &Path) {
+    for directory in [
+        artifact.to_owned(),
+        artifact.join("main"),
+        artifact.join("keys"),
+    ] {
+        assert_eq!(
+            std::fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "artifact root must be private: {}",
+            directory.display(),
+        );
+    }
+}
+
+#[test]
+fn artifact_roots_are_private_before_producers_write() {
+    let output = tempfile::tempdir().unwrap();
+    let artifact = output.path().join("artifact");
+    create(&artifact).unwrap();
+    assert_private_roots(&artifact);
+    assert!(!artifact.join("main/local-sources").exists());
+    assert!(create(&artifact).is_err());
+}
 
 async fn key(conn: &mut PgConnection, name: &str, bytes: &[u8]) {
     sqlx::query("INSERT INTO privacy.data_keys(material_id,key_ref,class,wrapped_key) VALUES($1,$2,'sealed',$3)")
@@ -76,6 +102,7 @@ async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
     )
     .await
     .unwrap();
+    assert_private_roots(&artifact);
     assert_eq!(manifest.boundary.id, hold);
     assert_eq!(
         manifest.producer_custody,
@@ -348,8 +375,14 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
         .await
         .unwrap();
     create(&artifact).unwrap();
+    assert_private_roots(&artifact);
     let local = local_sources(Ok(vec![binding.clone()]), &artifact).await;
     assert_eq!(local.unavailable, None);
+    assert!(
+        !local.files.is_empty(),
+        "native source bytes must be acquired"
+    );
+    assert_private_roots(&artifact);
     drop(frozen);
     drop(capture);
     let mut next = SpoolWriter::open(&spool, Rotation::default()).unwrap();
@@ -394,6 +427,7 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
         manifest.producer_custody,
         sinex_model::backup::ProducerCustody::Complete
     );
+    assert_private_roots(&artifact);
     drop(next);
     drop(sink);
     context.close().await.unwrap();
