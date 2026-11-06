@@ -170,7 +170,7 @@ fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
     }
     let mut enumeration = saved;
     enumeration.query = "events where class = $value".into();
-    enumeration.template = native::parse(&enumeration.query, &ctx()).unwrap();
+    enumeration.template = native::parse(&enumeration.query, &ctx()).unwrap().into();
     enumeration.validate(&ctx()).unwrap();
     let definitions = BTreeMap::from([("typed".into(), enumeration)]);
     assert!(bind_saved("query:typed(value=open)", &ctx(), &definitions).is_ok());
@@ -509,7 +509,7 @@ fn saved_literal_arguments_are_checked_without_placeholder_values() {
     .unwrap();
     assert!(saved.validate_with(&ctx(), &definitions).is_err());
     saved.query = "query:base(value=guarded)".into();
-    saved.template = native::parse(&saved.query, &ctx()).unwrap();
+    saved.template = native::parse(&saved.query, &ctx()).unwrap().into();
     saved.validate_with(&ctx(), &definitions).unwrap();
 }
 
