@@ -108,6 +108,26 @@ pub fn complete(text: &str) -> Vec<Completion> {
                         }
                     }
                     C::Compare {
+                        left: O::Function { name, arguments },
+                        op: Op::Eq,
+                        right:
+                            O::Value {
+                                value: V::Scalar { text, .. },
+                            },
+                    } if name == "glob" && text == "true" => {
+                        if let [
+                            O::Field { name },
+                            O::Value {
+                                value: V::Scalar { text: pattern, .. },
+                            },
+                        ] = arguments.as_slice()
+                        {
+                            if name == "event_type" {
+                                out.extend(pattern_kinds(pattern, None));
+                            }
+                        }
+                    }
+                    C::Compare {
                         left: O::Field { name },
                         op: Op::Eq,
                         right: O::Value { value },
@@ -123,12 +143,8 @@ pub fn complete(text: &str) -> Vec<Completion> {
                                     }
                                 }
                                 V::Scalar { text, .. } => {
-                                    let v = if text.contains('*') {
-                                        Value::Glob(text.clone())
-                                    } else {
-                                        Value::Text(text.clone())
-                                    };
-                                    if let Some(selected) = selected_value(&v, None) {
+                                    let v = Value::Text(text.clone());
+                                    if let Some(selected) = selected_value(&v) {
                                         out.extend(selected);
                                     }
                                 }
@@ -196,54 +212,31 @@ pub fn complete(text: &str) -> Vec<Completion> {
         .collect()
 }
 
-fn glob_matches(pattern: &str, text: &str) -> bool {
-    let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
-    let (mut p, mut t, mut star, mut retry) = (0, 0, None, 0);
-    while t < text.len() {
-        if p < pattern.len() && pattern[p] == text[t] {
-            p += 1;
-            t += 1;
-        } else if p < pattern.len() && pattern[p] == b'*' {
-            star = Some(p);
-            p += 1;
-            retry = t;
-        } else if let Some(last) = star {
-            p = last + 1;
-            retry += 1;
-            t = retry;
-        } else {
-            return false;
-        }
-    }
-    while p < pattern.len() && pattern[p] == b'*' {
-        p += 1;
-    }
-    p == pattern.len()
+fn pattern_kinds(pattern: &str, ctx: Option<&Context>) -> BTreeSet<String> {
+    let names = match ctx.and_then(|ctx| ctx.catalog.as_ref()) {
+        Some(catalog) => catalog
+            .declarations
+            .iter()
+            .map(|(kind, _)| kind.name.clone())
+            .collect::<BTreeSet<_>>(),
+        None => crate::event_types::ALL
+            .iter()
+            .map(|kind| kind.event_type.to_owned())
+            .collect(),
+    };
+    names
+        .into_iter()
+        .filter(|name| query_language::glob::matches(name, pattern))
+        .collect()
 }
 
-fn selected_value(value: &Value, ctx: Option<&Context>) -> Option<BTreeSet<String>> {
+fn selected_value(value: &Value) -> Option<BTreeSet<String>> {
     match value {
         Value::Text(s) => Some(BTreeSet::from([s.clone()])),
-        Value::Glob(pattern) => Some(
-            match ctx.and_then(|ctx| ctx.catalog.as_ref()) {
-                Some(catalog) => catalog
-                    .declarations
-                    .iter()
-                    .map(|(kind, _)| kind.name.clone())
-                    .collect::<BTreeSet<_>>(),
-                None => crate::event_types::ALL
-                    .iter()
-                    .map(|kind| kind.event_type.to_owned())
-                    .collect(),
-            }
-            .into_iter()
-            .filter(|name| glob_matches(pattern, name))
-            .collect(),
-        ),
         Value::List(values) => {
             let mut out = BTreeSet::new();
             for value in values {
-                out.extend(selected_value(value, ctx)?);
+                out.extend(selected_value(value)?);
             }
             Some(out)
         }
@@ -254,10 +247,24 @@ fn selected_value(value: &Value, ctx: Option<&Context>) -> Option<BTreeSet<Strin
 fn selected(e: &Expr, ctx: &Context) -> Option<BTreeSet<String>> {
     match e {
         Expr::Compare {
+            lhs: Operand::Glob { left, right },
+            op: Op::Eq,
+            rhs: Value::Bool(true),
+        } => match (&**left, &**right) {
+            (
+                Operand::Field(FieldRef::Field(field)),
+                Operand::Literal {
+                    value: Value::Text(pattern),
+                    ..
+                },
+            ) if field.name == "event_type" => Some(pattern_kinds(pattern, Some(ctx))),
+            _ => None,
+        },
+        Expr::Compare {
             lhs: Operand::Field(FieldRef::Field(f)),
             op: Op::Eq,
             rhs,
-        } if f.name == "event_type" => selected_value(rhs, Some(ctx)),
+        } if f.name == "event_type" => selected_value(rhs),
         Expr::And(a, b) => match (selected(a, ctx), selected(b, ctx)) {
             (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
             (a, b) => a.or(b),
@@ -452,7 +459,7 @@ pub(super) fn operand_type(value: &Operand) -> Result<FieldType, QueryError> {
         Operand::TimeFn(TimeFn::Hour | TimeFn::Year, _) | Operand::Length(_) => FieldType::Integer,
         Operand::TimeFn(_, _) => FieldType::Text,
         Operand::Literal { kind, .. } | Operand::Arithmetic { kind, .. } => physical_kind(kind),
-        Operand::CaseEqual { value, .. } => operand_type(value)?,
+        Operand::CaseEqual { value, .. } | Operand::Absolute(value) => operand_type(value)?,
         Operand::Glob { .. } => FieldType::Bool,
         Operand::Named { operand, .. } => operand_type(operand)?,
     })
@@ -481,6 +488,19 @@ fn operand(
         }
         Operand::Literal { .. } => Ok(()),
         Operand::Named { operand: inner, .. } => operand(inner, kinds, ctx),
+        Operand::Absolute(inner) => {
+            operand(inner, kinds, ctx)?;
+            if !matches!(
+                inner.kind(),
+                query_language::catalog::FieldKind::Integer
+                    | query_language::catalog::FieldKind::Number
+                    | query_language::catalog::FieldKind::Money
+                    | query_language::catalog::FieldKind::Duration
+            ) {
+                return Err(QueryError::new("abs requires a number, money or duration"));
+            }
+            Ok(())
+        }
         Operand::Length(inner) => {
             operand(inner, kinds, ctx)?;
             if !matches!(
@@ -533,19 +553,14 @@ fn operand(
             operand(value, kinds, ctx)?;
             let expected = operand_type(left)?;
             if let Operand::Literal { value, kind } = &mut **right {
-                validate_value(value, expected, false, ctx)?;
+                validate_value(value, expected, ctx)?;
                 *kind = super::syntax::field_kind(expected);
             }
             Ok(())
         }
     }
 }
-fn validate_value(
-    v: &mut Value,
-    ty: FieldType,
-    identifier_pattern: bool,
-    ctx: &Context,
-) -> Result<(), QueryError> {
+fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
     if let Value::Operand(value) = v {
         let actual = operand_type(value)?;
         if actual == ty
@@ -571,14 +586,9 @@ fn validate_value(
     if matches!(v, Value::Number(number) if !number.is_finite()) {
         return Err(QueryError::new("a numeric value must be finite"));
     }
-    if matches!(v, Value::Glob(_)) && !identifier_pattern {
-        return Err(QueryError::new(
-            "wildcards require a registered source or event_type field",
-        ));
-    }
     if let Value::List(values) = v {
         for value in values {
-            validate_value(value, ty, identifier_pattern, ctx)?;
+            validate_value(value, ty, ctx)?;
         }
         return Ok(());
     }
@@ -639,7 +649,7 @@ fn validate_value(
             | (FieldType::Bool, Value::Bool(_))
             | (FieldType::Id | FieldType::IdList, Value::Id(_))
     );
-    if valid || (identifier_pattern && matches!(v, Value::Glob(_))) {
+    if valid {
         Ok(())
     } else {
         Err(QueryError::new(format!(
@@ -648,24 +658,6 @@ fn validate_value(
         )))
     }
 }
-fn identifier_origin(info: &FieldInfo) -> bool {
-    match &info.origin {
-        Origin::Catalog { field, .. } => matches!(field.as_str(), "source" | "event_type"),
-        Origin::Group { input, .. } => identifier_origin(input),
-        Origin::Aggregate {
-            rule: TypeRule::Input(index),
-            inputs,
-            ..
-        }
-        | Origin::Function {
-            rule: TypeRule::Input(index),
-            arguments: inputs,
-            ..
-        } => inputs.get(*index).is_some_and(identifier_origin),
-        _ => false,
-    }
-}
-
 fn normalize_output_literal(
     value: &mut Value,
     info: &FieldInfo,
@@ -856,7 +848,10 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 operand(value, kinds, ctx)?;
             }
             if let Operand::Field(
-                FieldRef::TypedPayload { .. } | FieldRef::TypedGroup(_) | FieldRef::Field(_),
+                FieldRef::Native(_)
+                | FieldRef::TypedPayload { .. }
+                | FieldRef::TypedGroup(_)
+                | FieldRef::Field(_),
             ) = lhs
             {
                 let ty = output_type(match lhs {
@@ -882,16 +877,10 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 {
                     return Err(QueryError::new("this payload field cannot be ordered"));
                 }
-                let identifier_pattern = matches!(op, Op::Eq | Op::Ne)
-                    && matches!(lhs, Operand::Field(FieldRef::TypedGroup(column)) if identifier_origin(column.info()));
                 if let Operand::Field(FieldRef::TypedGroup(column)) = lhs {
                     normalize_output_literal(rhs, column.info(), ctx)?;
                 }
-                // Explicit historical predicates may carry a native pattern;
-                // current Exact literals retain their literal asterisks.
-                let identifier_pattern = identifier_pattern
-                    || matches!(lhs, Operand::Field(FieldRef::Field(field)) if matches!(field.name, "source" | "event_type") && matches!(op, Op::Eq | Op::Ne));
-                validate_value(rhs, ty, identifier_pattern, ctx)?;
+                validate_value(rhs, ty, ctx)?;
                 if let Operand::Field(FieldRef::TypedPayload { path, .. }) = lhs {
                     let available = definitions(ctx);
                     let definitions: Vec<_> = available
@@ -1014,7 +1003,9 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
                 operand(right, out);
                 operand(value, out);
             }
-            Operand::Length(value) | Operand::Named { operand: value, .. } => operand(value, out),
+            Operand::Absolute(value)
+            | Operand::Length(value)
+            | Operand::Named { operand: value, .. } => operand(value, out),
             Operand::Literal {
                 value: Value::Operand(value),
                 ..
@@ -1146,9 +1137,9 @@ fn seed_operand(value: &mut Operand, schema: &PhysicalSchema) {
             seed_operand(right, schema);
             seed_operand(value, schema);
         }
-        Operand::Length(value) | Operand::Named { operand: value, .. } => {
-            seed_operand(value, schema)
-        }
+        Operand::Absolute(value)
+        | Operand::Length(value)
+        | Operand::Named { operand: value, .. } => seed_operand(value, schema),
         Operand::Literal {
             value: Value::Operand(value),
             ..
@@ -1241,7 +1232,9 @@ fn clear_query_bindings(query: &mut Query) {
                 operand(right);
                 operand(value);
             }
-            Operand::Length(value) | Operand::Named { operand: value, .. } => operand(value),
+            Operand::Absolute(value)
+            | Operand::Length(value)
+            | Operand::Named { operand: value, .. } => operand(value),
             Operand::Literal {
                 value: Value::Operand(value),
                 ..

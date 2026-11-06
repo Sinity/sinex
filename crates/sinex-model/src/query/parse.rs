@@ -266,7 +266,12 @@ impl Binder<'_> {
                         self.operand_at(argument, scope, at, argument_path.as_ref())
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                if name == "len" {
+                if name == "abs" {
+                    let [argument] = arguments.as_slice() else {
+                        return Err(QueryError::at(at, "abs takes one numeric value"));
+                    };
+                    Operand::Absolute(Box::new(argument.clone()))
+                } else if name == "len" {
                     let [argument] = arguments.as_slice() else {
                         return Err(QueryError::at(at, "len takes one value"));
                     };

@@ -209,7 +209,11 @@ async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatab
     )
     .await;
     assert_eq!(a.total, 10);
-    let a = ask(&mut conn, "events where source = terminal.*").await;
+    let a = ask(
+        &mut conn,
+        "events where glob(source, \"terminal.*\") = true",
+    )
+    .await;
     assert_eq!(a.total, 5);
 }
 

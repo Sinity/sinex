@@ -159,8 +159,6 @@ fn expr(e: &Expr) -> String {
                 Op::Eq => {
                     if matches!(rhs, Value::List(_)) {
                         "is one of"
-                    } else if matches!(rhs, Value::Glob(_)) {
-                        "matches"
                     } else {
                         "is"
                     }
@@ -229,6 +227,7 @@ fn operand(o: &Operand) -> String {
             operand(right)
         ),
         Operand::Length(inner) => format!("the length of {}", operand(inner)),
+        Operand::Absolute(inner) => format!("the magnitude of {}", operand(inner)),
         Operand::Glob { left, right } => format!(
             "{} matches the case-sensitive pattern {}",
             operand(left),
@@ -289,7 +288,6 @@ fn value(v: &Value) -> String {
     match v {
         Value::Unknown => "unknown".into(),
         Value::Text(s) | Value::PlaceholderText(s) => format!("\"{s}\""),
-        Value::Glob(s) => format!("\"{s}\""),
         Value::Integer(i) => i.to_string(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),

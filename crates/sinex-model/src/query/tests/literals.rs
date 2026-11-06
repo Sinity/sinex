@@ -215,7 +215,7 @@ fn grouped_repeated_and_saved_outputs_use_their_entering_column_types() {
     let query = q("events | group by source | count | where source = \"terminal.*\"");
     assert_eq!(
         values(&query, "source"),
-        [&Value::Glob("terminal.*".into())]
+        [&Value::Text("terminal.*".into())]
     );
     let query = q("commands | group by cwd | agg min(command) | where min_command = 001");
     assert_eq!(values(&query, "min_command"), [&Value::Text("001".into())]);
@@ -254,8 +254,9 @@ fn promoted_and_grouped_boolean_time_columns_keep_their_actual_types() {
 }
 
 #[devkit::test]
-fn quoted_identifier_patterns_offer_the_same_declared_payload_completions() {
-    let completions = complete("events where event_type = \"command.*\" AND payload.dur");
+fn explicit_identifier_patterns_offer_declared_payload_completions() {
+    let completions =
+        complete("events where glob(event_type, \"command.*\") = true AND payload.dur");
     assert!(
         completions
             .iter()

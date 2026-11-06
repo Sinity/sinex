@@ -197,6 +197,12 @@ impl Compiler<'_> {
                     .push(")");
                 Ok((out, Kind::Typed(FieldType::Bool)))
             }
+            Operand::Absolute(value) => {
+                let (sql, kind) = self.operand(cols, value)?;
+                let mut out = SqlFragment::text("abs((");
+                out.append(sql).push(")::numeric)");
+                Ok((out, kind))
+            }
             Operand::Length(value) => {
                 let (sql, kind) = self.operand(cols, value)?;
                 let mut out = SqlFragment::text(match kind {
@@ -542,13 +548,6 @@ impl Compiler<'_> {
         };
         let mut out = SqlFragment::text("(");
         match (op, v, kind) {
-            (Op::Eq | Op::Ne, Value::Glob(g), _) => {
-                let pattern = like_escape(g).replace('*', "%");
-                out.append(l)
-                    .push(if op == Op::Eq { " LIKE " } else { " NOT LIKE " })
-                    .param(V::String(Some(pattern)))
-                    .push(" ESCAPE '\\'");
-            }
             (Op::Contains, Value::Text(s), _) => {
                 out.append(l)
                     .push(" ILIKE ")

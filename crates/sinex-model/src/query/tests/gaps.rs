@@ -27,7 +27,7 @@ fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
     );
     assert_eq!(completions[0].field_type, "integer");
     for text in [
-        "events where event_type = command.* AND payload.dur",
+        "events where glob(event_type, \"command.*\") = true AND payload.dur",
         "events where event_type = (command.executed |command.fused) AND payload.dur",
     ] {
         assert!(

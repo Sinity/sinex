@@ -207,3 +207,16 @@ fn generated_reading_fields_have_real_types_and_old_grammar_stays_frozen() {
         matches!(current.stages.last(),Some(Stage::Fields(columns)) if columns.iter().any(|column|column.column()=="snippet"))
     );
 }
+
+#[devkit::test]
+fn absolute_values_preserve_numeric_dimensions_and_refuse_affine_time() {
+    let query = q("events | fields abs(seen - when) as latency | where latency > 1s");
+    let Stage::Fields(columns) = &query.stages[0] else {
+        panic!("projection")
+    };
+    assert_eq!(
+        columns[0].kind(),
+        query_language::catalog::FieldKind::Duration
+    );
+    assert!(err("events | fields abs(when)").message.contains("abs"));
+}

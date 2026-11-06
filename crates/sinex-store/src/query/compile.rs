@@ -128,7 +128,7 @@ fn time_value(t: jiff::Timestamp) -> Result<V> {
 
 fn value_param(v: &Value) -> Result<V> {
     Ok(match v {
-        Value::Text(s) | Value::Glob(s) => V::String(Some(s.clone())),
+        Value::Text(s) => V::String(Some(s.clone())),
         Value::Integer(i) => V::BigInt(Some(*i)),
         Value::Number(n) => V::Double(Some(*n)),
         Value::Bool(b) => V::Bool(Some(*b)),
@@ -200,9 +200,9 @@ fn operand_fields(o: &Operand, out: &mut Vec<FieldRef>) {
             operand_fields(right, out);
             operand_fields(value, out);
         }
-        Operand::Length(value) | Operand::Named { operand: value, .. } => {
-            operand_fields(value, out)
-        }
+        Operand::Absolute(value)
+        | Operand::Length(value)
+        | Operand::Named { operand: value, .. } => operand_fields(value, out),
         Operand::Literal {
             value: Value::Operand(value),
             ..

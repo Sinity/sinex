@@ -325,3 +325,19 @@ async fn generated_snippets_and_actual_span_bounds_remain_projectable(
             .all(|row| row["start"].is_string() && row["end"].is_string())
     );
 }
+
+#[devkit::test]
+async fn absolute_numeric_values_keep_unknown_rows_and_integer_magnitude(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = fixture(&db).await;
+    let answer = ask(
+        &mut conn,
+        "commands | fields command, abs(exit_code - 1) as magnitude | sort command",
+    )
+    .await;
+    assert_eq!(
+        column(&answer, "magnitude"),
+        [json!(1), json!(0), serde_json::Value::Null]
+    );
+}
