@@ -177,6 +177,7 @@ fn convert_relation(
             old::StageKind::Group { .. } | old::StageKind::Aggregate { .. }
         )
     });
+    let source_fields = source_identifiers(&query.source, ctx);
     let mut relation = if let Some(mut base) = base {
         if let old::Source::Saved {
             condition: Some(condition),
@@ -184,6 +185,7 @@ fn convert_relation(
         } = &query.source
         {
             let mut wire = serde_json::to_value(condition).map_err(error)?;
+            promote_globs(&mut wire, &identifier_fields(&base, ctx)?);
             evolve(&mut wire)?;
             base.transforms.push(ast::Transform {
                 span: current(condition.span)?,
@@ -207,6 +209,7 @@ fn convert_relation(
             stages: vec![],
         })
         .map_err(error)?;
+        promote_globs(&mut wire, &source_fields);
         evolve(&mut wire)?;
         serde_json::from_value(wire).map_err(error)?
     };
@@ -341,6 +344,7 @@ fn convert_relation(
                 })
                 .map_err(error)?;
                 expand_nested(&mut wire, ctx, saved, seen, expanded, validating)?;
+                promote_globs(&mut wire, &identifier_fields(&relation, ctx)?);
                 evolve(&mut wire)?;
                 relation
                     .transforms
@@ -478,7 +482,9 @@ fn expand_nested(
 }
 
 fn simple_relation(query: old::Query) -> Result<ast::Query, QueryError> {
+    let fields = BTreeSet::from(["source".to_owned(), "event_type".to_owned()]);
     let mut wire = serde_json::to_value(query).map_err(error)?;
+    promote_globs(&mut wire, &fields);
     evolve(&mut wire)?;
     serde_json::from_value(wire).map_err(error)
 }
@@ -625,36 +631,7 @@ fn evolve(value: &mut Value) -> Result<(), QueryError> {
                         fields.insert("output".into(), json!("unknown"));
                     }
                 }
-                Some("match")
-                    if matches!(
-                        fields.get("field").and_then(Value::as_str),
-                        Some("source" | "event_type")
-                    ) =>
-                {
-                    let operand = json!({"kind":"field","name":fields["field"]});
-                    let input = fields.get("value").cloned().unwrap_or(Value::Null);
-                    if contains_glob(&input) {
-                        *value = glob_condition(operand, input, false);
-                        return Ok(());
-                    }
-                }
                 Some("compare") => {
-                    let identifier = fields
-                        .get("operand")
-                        .and_then(|operand| operand.get("name"))
-                        .and_then(Value::as_str);
-                    let op = fields.get("op").and_then(Value::as_str);
-                    if matches!(identifier, Some("source" | "event_type"))
-                        && matches!(op, Some("eq" | "ne"))
-                        && fields.get("value").is_some_and(contains_glob)
-                    {
-                        *value = glob_condition(
-                            fields["operand"].clone(),
-                            fields["value"].clone(),
-                            op == Some("ne"),
-                        );
-                        return Ok(());
-                    }
                     if let Some(operand) = fields.remove("operand") {
                         fields.insert("left".into(), operand);
                     }
@@ -768,6 +745,109 @@ fn evolve(value: &mut Value) -> Result<(), QueryError> {
 
 #[cfg(test)]
 mod tests;
+
+fn source_identifiers(source: &old::Source, ctx: &Context) -> BTreeSet<String> {
+    let old::Source::Unit { unit, .. } = source else {
+        return BTreeSet::new();
+    };
+    super::syntax::catalog(ctx)
+        .units
+        .into_iter()
+        .find(|declared| declared.name == *unit)
+        .map(|unit| {
+            unit.fields
+                .into_iter()
+                .filter(|field| matches!(field.name.as_str(), "source" | "event_type"))
+                .map(|field| field.name)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+fn identifier_fields(query: &ast::Query, ctx: &Context) -> Result<BTreeSet<String>, QueryError> {
+    use query_language::scope::{FieldInfo, Origin, TypeRule};
+    fn identifier(info: &FieldInfo) -> bool {
+        match &info.origin {
+            Origin::Catalog { field, .. } => matches!(field.as_str(), "source" | "event_type"),
+            Origin::Group { input, .. } | Origin::Matched { input } => identifier(input),
+            Origin::Function {
+                arguments,
+                rule: TypeRule::Input(index),
+                ..
+            } => arguments.get(*index).is_some_and(identifier),
+            Origin::Aggregate {
+                inputs,
+                rule: TypeRule::Input(index),
+                ..
+            } => inputs.get(*index).is_some_and(identifier),
+            _ => false,
+        }
+    }
+    let bound = query_language::bind::bind(query, &super::syntax::catalog(ctx))
+        .map_err(super::syntax::error)?;
+    let scope = bound
+        .typing()
+        .query(&Default::default())
+        .ok_or_else(|| QueryError::new("historical relation has no bound output"))?;
+    Ok(scope
+        .transforms
+        .last()
+        .map_or(&scope.source, |stage| &stage.after)
+        .fields
+        .iter()
+        .filter(|field| identifier(field))
+        .map(|field| field.field.name.clone())
+        .collect())
+}
+fn promote_globs(value: &mut Value, fields: &BTreeSet<String>) {
+    if value.get("source").is_some() && value.get("transforms").is_some() {
+        return;
+    }
+    let kind = value.get("kind").and_then(Value::as_str);
+    if kind == Some("compare") {
+        let identifier = value
+            .get("operand")
+            .and_then(|operand| operand.get("name"))
+            .and_then(Value::as_str);
+        let op = value.get("op").and_then(Value::as_str);
+        if identifier.is_some_and(|name| fields.contains(name))
+            && matches!(op, Some("eq" | "ne"))
+            && value.get("value").is_some_and(contains_glob)
+        {
+            *value = glob_condition(
+                value["operand"].clone(),
+                value["value"].clone(),
+                op == Some("ne"),
+            );
+            return;
+        }
+    } else if kind == Some("match")
+        && value
+            .get("field")
+            .and_then(Value::as_str)
+            .is_some_and(|name| fields.contains(name))
+        && value.get("value").is_some_and(contains_glob)
+    {
+        *value = glob_condition(
+            json!({"kind":"field","name":value["field"]}),
+            value["value"].clone(),
+            false,
+        );
+        return;
+    }
+    match value {
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                promote_globs(value, fields);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                promote_globs(value, fields);
+            }
+        }
+        _ => {}
+    }
+}
 
 fn contains_glob(value: &Value) -> bool {
     match value.get("kind").and_then(Value::as_str) {

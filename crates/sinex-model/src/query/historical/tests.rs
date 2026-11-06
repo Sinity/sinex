@@ -126,3 +126,17 @@ fn a_historical_source_proof_checks_the_decoded_body_as_well_as_text() {
             .is_err()
     );
 }
+
+#[devkit::test]
+fn historical_identifier_patterns_follow_input_lineage_through_grouped_columns() {
+    let ctx = context();
+    let template = decode_format_one(
+        "events group by host min(source) where min_source = terminal.* fields min_source",
+        &ctx,
+    )
+    .unwrap();
+    let wire = serde_json::to_value(template).unwrap();
+    let condition = &wire["relation"]["transforms"][2]["kind"]["condition"]["kind"];
+    assert_eq!(condition["left"]["name"], "glob");
+    assert_eq!(condition["left"]["arguments"][0]["name"], "min_source");
+}
