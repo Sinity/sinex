@@ -472,10 +472,10 @@ pub struct Join {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JoinOn {
-    /// Current shared order joins pair every matching row. The anchor is outer.
+    /// Current pair and semijoin predicates share the declared time anchors.
     Order {
         relation: JoinKind,
-        within_secs: Option<f64>,
+        within_secs: Option<String>,
         at: TimePoint,
     },
     Key {

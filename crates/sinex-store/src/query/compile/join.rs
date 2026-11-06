@@ -129,7 +129,7 @@ impl Compiler<'_> {
                 at,
             } => (
                 *relation,
-                *within_secs,
+                within_secs.as_deref(),
                 *at,
                 self.join_point(outer, *at)?,
                 Self::inner_point(*at, i),
@@ -232,7 +232,8 @@ impl Compiler<'_> {
                 .push(" - ")
                 .append(outer_point)
                 .push("))) <= ")
-                .param(V::Double(Some(seconds)));
+                .param(V::String(Some(seconds.into())))
+                .push("::numeric");
             conditions.push(window);
         }
         Ok(SqlFragment::join(conditions, " AND "))

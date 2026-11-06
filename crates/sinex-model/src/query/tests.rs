@@ -315,9 +315,9 @@ fn joins_take_an_inner_relation_and_expose_its_matched_schema() {
         join.on,
         JoinOn::Order {
             relation: JoinKind::Near,
-            within_secs: Some(300.0),
+            within_secs: Some(ref seconds),
             at: TimePoint::When
-        }
+        } if seconds=="300"
     ));
     assert_eq!(join.inner.source.alias().unwrap().name, "commands");
     let query = q("commands | join during (intervals where state = present)");

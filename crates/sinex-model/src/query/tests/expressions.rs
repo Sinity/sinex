@@ -254,3 +254,16 @@ fn absolute_payload_values_narrow_before_physical_numeric_validation() {
             .contains("abs")
     );
 }
+
+#[devkit::test]
+fn order_distance_keeps_exact_decimal_bounds_and_accepts_zero() {
+    for (text, expected) in [
+        ("0s", "0"),
+        ("1000000000.000000001s", "1000000000.000000001"),
+    ] {
+        let query = q(&format!("events where near (events) within {text}"));
+        assert!(
+            matches!(query.filter,Some(Expr::Order(ref join)) if matches!(&join.on,JoinOn::Order {within_secs:Some(seconds),..} if seconds==expected))
+        );
+    }
+}

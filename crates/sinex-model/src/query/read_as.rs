@@ -326,7 +326,7 @@ fn join(j: &Join) -> String {
             relation,
             within_secs,
             at,
-        } => (*relation, *within_secs, *at),
+        } => (*relation, within_secs.as_deref(), *at),
     };
     let anchor = match point {
         TimePoint::When => "at their occurrence",

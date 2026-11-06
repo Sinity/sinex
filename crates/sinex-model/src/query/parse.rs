@@ -170,10 +170,10 @@ impl Binder<'_> {
             .text()
             .ok_or_else(|| QueryError::at(at, "expected one scalar value"))
     }
-    fn seconds(&self, value: &syntax::Value, at: usize) -> Result<f64, QueryError> {
-        time::duration(self.scalar(value, at)?)
-            .filter(|s| *s > 0.0)
-            .ok_or_else(|| QueryError::at(at, "expected a positive duration"))
+    fn seconds(&self, value: &syntax::Value, at: usize) -> Result<String, QueryError> {
+        time::duration_decimal(self.scalar(value, at)?)
+            .filter(|seconds| !seconds.starts_with('-'))
+            .ok_or_else(|| QueryError::at(at, "expected a non-negative duration"))
     }
     fn operand(
         &self,
