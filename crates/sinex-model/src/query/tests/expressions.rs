@@ -230,3 +230,14 @@ fn explicit_witness_keys_bind_the_candidate_relation_and_metadata() {
         matches!(query.filter,Some(Expr::Order(ref join)) if join.pick.len()==3 && matches!(&join.pick[0].key,SortBy::Operand(Operand::Absolute(_))))
     );
 }
+
+#[devkit::test]
+fn sources_and_gaps_expose_their_existing_raw_identity_as_text() {
+    for text in ["sources | fields id", "gaps | fields id"] {
+        let query = q(text);
+        let Stage::Fields(columns) = &query.stages[0] else {
+            panic!("projection")
+        };
+        assert_eq!(columns[0].field_type().unwrap(), FieldType::Text);
+    }
+}

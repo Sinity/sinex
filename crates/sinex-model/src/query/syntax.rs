@@ -68,6 +68,15 @@ pub fn catalog(ctx: &Context) -> Catalog {
                 });
             }
         }
+        if matches!(table, Table::Sources | Table::Gaps)
+            && !fields.iter().any(|field| field.name == "id")
+        {
+            fields.push(Field {
+                name: "id".into(),
+                kind: FieldKind::Exact,
+                ..Field::default()
+            });
+        }
         fields
     };
     let mut units = Table::ALL

@@ -380,3 +380,15 @@ async fn during_can_select_the_earliest_actual_span_without_changing_outer_grain
         [json!("early"), json!("early")]
     );
 }
+
+#[devkit::test]
+async fn source_identity_projection_is_the_existing_binding_key(db: devkit::pg::TestDatabase) {
+    let mut conn = fixture(&db).await;
+    let answer = ask(
+        &mut conn,
+        "sources where events > 0 | fields id, binding | sort binding",
+    )
+    .await;
+    assert!(!answer.rows.is_empty());
+    assert!(answer.rows.iter().all(|row| row["id"] == row["binding"]));
+}

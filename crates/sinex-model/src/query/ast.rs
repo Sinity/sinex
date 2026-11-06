@@ -260,6 +260,7 @@ pub enum FieldRef {
 /// Product-owned values generated from the source relation's reading context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeField {
+    Identity,
     Snippet,
     SpanStart,
     SpanEnd,
@@ -267,6 +268,7 @@ pub enum NativeField {
 impl NativeField {
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
+            "id" => Self::Identity,
             "snippet" => Self::Snippet,
             "start" => Self::SpanStart,
             "end" => Self::SpanEnd,
@@ -275,6 +277,7 @@ impl NativeField {
     }
     pub fn name(self) -> &'static str {
         match self {
+            Self::Identity => "id",
             Self::Snippet => "snippet",
             Self::SpanStart => "start",
             Self::SpanEnd => "end",
@@ -282,7 +285,7 @@ impl NativeField {
     }
     pub fn field_type(self) -> super::FieldType {
         match self {
-            Self::Snippet => super::FieldType::Text,
+            Self::Identity | Self::Snippet => super::FieldType::Text,
             _ => super::FieldType::Time,
         }
     }
