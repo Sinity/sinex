@@ -85,6 +85,7 @@ impl Binder<'_> {
                 .and_then(|alias| alias.field(field))
                 .or_else(|| table.field(field))
                 .map(FieldRef::Field)
+                .or_else(|| NativeField::from_name(field).map(FieldRef::Native))
                 .ok_or_else(|| {
                     QueryError::at(
                         at,
@@ -114,6 +115,7 @@ impl Binder<'_> {
     ) -> Result<(), QueryError> {
         match field {
             FieldRef::Field(f) if f.ty == FieldType::Time => Ok(()),
+            FieldRef::Native(field) if field.field_type() == FieldType::Time => Ok(()),
             FieldRef::TypedGroup(column)
                 if scope.field(column.name()).is_some_and(|field| {
                     matches!(
@@ -387,7 +389,8 @@ impl Binder<'_> {
             // The typed pass knows the selected payload kinds and output columns.
             // Keep the scalar spelling until that declaration chooses its type.
             Operand::Field(
-                FieldRef::Group(_)
+                FieldRef::Native(_)
+                | FieldRef::Group(_)
                 | FieldRef::TypedGroup(_)
                 | FieldRef::Payload(_)
                 | FieldRef::TypedPayload { .. },

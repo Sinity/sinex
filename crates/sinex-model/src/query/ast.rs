@@ -193,6 +193,7 @@ impl Operand {
     pub fn kind(&self) -> query_language::catalog::FieldKind {
         use query_language::catalog::FieldKind as K;
         match self {
+            Self::Field(FieldRef::Native(field)) => super::syntax::field_kind(field.field_type()),
             Self::Field(FieldRef::Field(field)) => super::syntax::field_kind(field.ty),
             Self::Field(FieldRef::TypedPayload { ty, .. }) => super::syntax::field_kind(*ty),
             Self::Field(FieldRef::TypedGroup(column)) => column.info().field.kind.clone(),
@@ -237,6 +238,7 @@ impl Operand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FieldRef {
+    Native(NativeField),
     Field(&'static Field),
     /// `payload.a.b`: a path into the payload.
     Payload(Vec<String>),
@@ -249,6 +251,37 @@ pub enum FieldRef {
     Group(String),
     /// A shared-bound output column whose physical type is refreshed by binding.
     TypedGroup(BoundColumn),
+}
+
+/// Product-owned values generated from the source relation's reading context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeField {
+    Snippet,
+    SpanStart,
+    SpanEnd,
+}
+impl NativeField {
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "snippet" => Self::Snippet,
+            "start" => Self::SpanStart,
+            "end" => Self::SpanEnd,
+            _ => return None,
+        })
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Snippet => "snippet",
+            Self::SpanStart => "start",
+            Self::SpanEnd => "end",
+        }
+    }
+    pub fn field_type(self) -> super::FieldType {
+        match self {
+            Self::Snippet => super::FieldType::Text,
+            _ => super::FieldType::Time,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -322,6 +355,7 @@ impl BoundColumn {
 impl FieldRef {
     pub fn name(&self) -> String {
         match self {
+            FieldRef::Native(field) => field.name().into(),
             FieldRef::Field(f) => f.name.to_string(),
             FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } => {
                 format!("payload.{}", path.join("."))

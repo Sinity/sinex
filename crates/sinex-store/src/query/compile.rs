@@ -9,8 +9,8 @@ use crate::{Error, Result};
 use sea_query::Value as V;
 use sinex_model::query::text::{like_escape, regex_escape};
 use sinex_model::query::{
-    AggFn, Alias, Context, Expr, FieldRef, FieldType, Join, JoinKind, JoinOn, Op, Operand,
-    OrderingOp, Query, SortBy, Source, Stage, Table, TimeFn, TimePoint, Value, Words,
+    AggFn, Alias, Context, Expr, FieldRef, FieldType, Join, JoinKind, JoinOn, NativeField, Op,
+    Operand, OrderingOp, Query, SortBy, Source, Stage, Table, TimeFn, TimePoint, Value, Words,
 };
 use std::collections::BTreeMap;
 
@@ -377,7 +377,17 @@ impl<'c> Compiler<'c> {
                 _ => {}
             }
         }
-        needed.retain(|f| !matches!(f, FieldRef::Group(_) | FieldRef::TypedGroup(_)));
+        let snippet_requested = needed
+            .iter()
+            .any(|field| matches!(field, FieldRef::Native(NativeField::Snippet)));
+        needed.retain(|f| {
+            !matches!(
+                f,
+                FieldRef::Group(_)
+                    | FieldRef::TypedGroup(_)
+                    | FieldRef::Native(NativeField::Snippet)
+            )
+        });
         let mut seen = std::collections::HashSet::new();
         needed.retain(|f| seen.insert(column_name(f)));
 
@@ -439,11 +449,17 @@ impl<'c> Compiler<'c> {
             };
             r.push(" AS \"_rank\"");
             select.push(r);
-            let mut s = self.snippet(&base, &words);
+        }
+        if ranked || snippet_requested {
+            let mut snippet = if ranked {
+                self.snippet(&base, &words)
+            } else {
+                SqlFragment::text("NULL::text")
+            };
             let physical = self.alias("c");
             renamed.insert("snippet".into(), physical.clone());
-            s.push(format!(" AS {}", quote(&physical)));
-            select.push(s);
+            snippet.push(format!(" AS {}", quote(&physical)));
+            select.push(snippet);
         }
         let mut rel = SqlFragment::text("SELECT ");
         rel.append(SqlFragment::join(select, ", "))

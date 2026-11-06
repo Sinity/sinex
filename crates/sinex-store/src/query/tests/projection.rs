@@ -294,3 +294,34 @@ async fn first_in_each_group_keeps_original_rows_order_and_page_identity(
     .await;
     assert_eq!(column(&after_limit, "command"), [json!("bbbb"), json!("a")]);
 }
+
+#[devkit::test]
+async fn generated_snippets_and_actual_span_bounds_remain_projectable(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    world(&mut conn).await;
+    let answer = ask(&mut conn, "events where text:workspace | fields snippet").await;
+    assert!(!answer.rows.is_empty());
+    assert!(answer.rows.iter().all(|row| {
+        row["snippet"]
+            .as_str()
+            .is_some_and(|text| text.contains("workspace"))
+    }));
+    let no_search = ask(&mut conn, "commands | fields snippet").await;
+    assert!(no_search.rows.iter().all(|row| row["snippet"].is_null()));
+    let spans = ask(
+        &mut conn,
+        "events where event_type = command.fused | fields start, end",
+    )
+    .await;
+    assert_eq!(spans.total, 5);
+    assert!(
+        spans
+            .rows
+            .iter()
+            .all(|row| row["start"].is_string() && row["end"].is_string())
+    );
+}

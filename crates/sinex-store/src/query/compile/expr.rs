@@ -6,6 +6,23 @@ impl Compiler<'_> {
     /// The SQL of a field, and what kind of value it is.
     pub(super) fn field(&self, cols: &Cols, f: &FieldRef) -> Result<(SqlFragment, Kind)> {
         match (cols, f) {
+            (Cols::Base { .. }, FieldRef::Native(field)) => {
+                let (start, end, _, known) = self.span_metadata(cols)?;
+                let value = match field {
+                    NativeField::SpanStart => start,
+                    NativeField::SpanEnd => end,
+                    NativeField::Snippet => {
+                        return Err(invalid("snippet is generated with its search relation"));
+                    }
+                };
+                let mut sql = SqlFragment::text("CASE WHEN ");
+                sql.append(known).push(" THEN ").append(value).push(" END");
+                Ok((sql, Kind::Typed(field.field_type())))
+            }
+            (Cols::Named { .. }, FieldRef::Native(field)) => Ok((
+                SqlFragment::text(Self::named(cols, field.name())),
+                Kind::Typed(field.field_type()),
+            )),
             (Cols::Base { table, alias, .. }, FieldRef::Field(field)) => {
                 let sql = alias
                     .filter(|a| a.field(field.name).is_some())

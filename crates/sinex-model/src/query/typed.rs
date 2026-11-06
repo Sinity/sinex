@@ -391,6 +391,7 @@ fn physical_type(
                 .and_then(|alias| alias.field(field))
                 .or_else(|| table.field(field))
                 .map(|field| field.ty)
+                .or_else(|| NativeField::from_name(field).map(NativeField::field_type))
                 .ok_or_else(|| {
                     QueryError::new(format!(
                         "bound field {unit}.{field} has no physical adapter"
@@ -433,6 +434,7 @@ fn physical_type(
 
 fn output_type(field: &FieldRef) -> Result<FieldType, QueryError> {
     match field {
+        FieldRef::Native(field) => Ok(field.field_type()),
         FieldRef::Field(field) => Ok(field.ty),
         FieldRef::TypedPayload { ty, .. } => Ok(*ty),
         FieldRef::TypedGroup(column) => column

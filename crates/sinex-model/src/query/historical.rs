@@ -8,8 +8,27 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const GRAMMAR_REVISION: &str = "8c22e127bb1f5c10d8c1740de4c4f0bfe53ffdb7";
 
+fn historical_catalog(ctx: &Context) -> Result<Value, QueryError> {
+    let mut catalog = super::syntax::catalog(ctx);
+    catalog.functions.retain(|function| {
+        historical_query_format_v1::catalog::FUNCTIONS.contains(&function.name.as_str())
+    });
+    for unit in &mut catalog.units {
+        let alias = super::Alias::from_name(&unit.name);
+        let table = super::Table::from_name(&unit.name).or(alias.map(|_| super::Table::Events));
+        if let Some(table) = table {
+            unit.fields.retain(|field| {
+                field.name.starts_with("payload.")
+                    || table.field(&field.name).is_some()
+                    || alias.is_some_and(|alias| alias.field(&field.name).is_some())
+            });
+        }
+    }
+    serde_json::to_value(catalog).map_err(error)
+}
+
 pub fn parse_format_one(text: &str, ctx: &Context) -> Result<old::Query, QueryError> {
-    let mut catalog = serde_json::to_value(super::syntax::catalog(ctx)).map_err(error)?;
+    let mut catalog = historical_catalog(ctx)?;
     catalog["recall_last_unit"] = json!("shell-sessions");
     catalog["unpiped_stages"] = json!(true);
     catalog["extensions"] = json!([]);
@@ -48,7 +67,7 @@ fn decode_with_identity_for_source(
     ctx: &Context,
 ) -> Result<(old::Query, Value), QueryError> {
     let parsed = parse_format_one(text, ctx)?;
-    let mut catalog = serde_json::to_value(super::syntax::catalog(ctx)).map_err(error)?;
+    let mut catalog = historical_catalog(ctx)?;
     catalog["recall_last_unit"] = json!("shell-sessions");
     catalog["extensions"] = json!([]);
     catalog["source_outputs"] = json!([]);
@@ -352,7 +371,7 @@ fn convert_relation(
             }
         }
     }
-    let fields = if let Some(fields) = explicit {
+    let mut fields = if let Some(fields) = explicit {
         Some(fields)
     } else if !grouped && inherited_output.is_some() {
         let mut fields = inherited_output.unwrap();
@@ -381,6 +400,17 @@ fn convert_relation(
     } else {
         None
     };
+    if let Some(fields) = &mut fields {
+        let template = native::Template::query(relation.clone());
+        let executable = if validating {
+            template.validate(ctx)?
+        } else {
+            template.bind(ctx)?
+        };
+        if executable.ranked && !fields.iter().any(|name| name == "snippet") {
+            fields.push("snippet".into());
+        }
+    }
     if let Some(fields) = fields {
         relation.transforms.push(ast::Transform {
             span: Default::default(),

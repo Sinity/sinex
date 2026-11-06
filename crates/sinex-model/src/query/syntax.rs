@@ -49,6 +49,25 @@ pub fn catalog(ctx: &Context) -> Catalog {
         if table.is_events() {
             fields.extend(payload());
         }
+        for name in if table.is_events() {
+            &["snippet", "start", "end"][..]
+        } else if table == Table::Runs {
+            &["start", "end"][..]
+        } else {
+            &[][..]
+        } {
+            if !fields.iter().any(|field| field.name == *name) {
+                fields.push(Field {
+                    name: (*name).into(),
+                    kind: if *name == "snippet" {
+                        FieldKind::Text
+                    } else {
+                        FieldKind::Time
+                    },
+                    ..Field::default()
+                });
+            }
+        }
         fields
     };
     let mut units = Table::ALL

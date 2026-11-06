@@ -181,3 +181,29 @@ fn each_join_checks_only_the_matched_columns_it_produces() {
         "events | join (commands) on id = id | fields id, match.command as first_command | join (events where event_type = operator.mark) on id = id | fields first_command, match.payload.text",
     );
 }
+
+#[devkit::test]
+fn generated_reading_fields_have_real_types_and_old_grammar_stays_frozen() {
+    let query = q("events | fields start, end, snippet");
+    let Stage::Fields(columns) = &query.stages[0] else {
+        panic!("projection")
+    };
+    assert_eq!(columns[0].field_type().unwrap(), FieldType::Time);
+    assert_eq!(columns[2].field_type().unwrap(), FieldType::Text);
+    for text in [
+        "events fields snippet",
+        "events fields start",
+        "events where glob(source, \"*\") = true",
+    ] {
+        assert!(
+            historical::parse_format_one(text, &ctx()).is_err(),
+            "{text}"
+        );
+    }
+    let template =
+        historical::decode_format_one("events text:workspace fields id", &ctx()).unwrap();
+    let current = template.bind(&ctx()).unwrap();
+    assert!(
+        matches!(current.stages.last(),Some(Stage::Fields(columns)) if columns.iter().any(|column|column.column()=="snippet"))
+    );
+}

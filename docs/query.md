@@ -107,6 +107,8 @@ each source's records are rows of their own, so counts across sources are per so
 
 Use `similar:sinex:ev/<embedding-id>` with a stored `text.embedding` reference. It ranks the filtered event relation in that exact vector space and retains rows without a vector at unknown rank. It is a positive ranking directive in the root AND conditions; OR, NOT and conflicting references are explicit refusals. The reference obeys grants and the selected read position. This supplied-vector path enables no model provider.
 
+Event relations also expose `start` and `end` for actual declared spans; a point event has unknown span bounds, and an ongoing span has an unknown end. `snippet` is the generated search excerpt, available to explicit projections; it is unknown when the relation has no ranked search.
+
 ### Typed payload fields
 
 Payload paths come from the kind registry, including nested objects, optional fields and
