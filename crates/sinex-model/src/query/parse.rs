@@ -726,6 +726,7 @@ impl Binder<'_> {
                 within,
                 at: point,
                 scope: order_scope,
+                pick,
             } => {
                 let on = self.order_on(
                     *relation,
@@ -736,8 +737,36 @@ impl Binder<'_> {
                 )?;
                 let inner_path = path.field("kind").field("query");
                 let inner_scope = self.output_scope(&inner_path)?;
+                let pick = match pick {
+                    syntax::WitnessChoice::Nearest => Vec::new(),
+                    syntax::WitnessChoice::FirstBy { keys } => keys
+                        .iter()
+                        .enumerate()
+                        .map(|(index, key)| {
+                            Ok(SortKey {
+                                key: SortBy::Operand(
+                                    self.operand_at(
+                                        &key.expression,
+                                        &inner_scope,
+                                        at,
+                                        Some(
+                                            &path
+                                                .field("kind")
+                                                .field("pick")
+                                                .field("keys")
+                                                .index(index)
+                                                .field("expression"),
+                                        ),
+                                    )?,
+                                ),
+                                descending: key.descending,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, QueryError>>()?,
+                };
                 Expr::Order(Box::new(Join {
                     on,
+                    pick,
                     columns: self.inner_columns(&inner_scope, at)?,
                     required: vec![],
                     inner: Box::new(self.query((**query).clone(), &inner_path)?),
@@ -1027,6 +1056,7 @@ impl Binder<'_> {
                     };
                     stages.push(Stage::Join(Join {
                         on,
+                        pick: vec![],
                         columns: self.inner_columns(&inner_scope, at)?,
                         required: vec![],
                         inner: Box::new(self.query(*query, &inner_path)?),

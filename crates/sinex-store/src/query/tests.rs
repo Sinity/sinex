@@ -22,6 +22,14 @@ pub(crate) async fn admit_commands(
     conn: &mut crate::AdmissionContext,
     commands: &[(&str, &str)],
 ) -> Vec<(Uuid, Uuid)> {
+    admit_commands_with_duration(conn, commands, 2_000_000_000).await
+}
+
+async fn admit_commands_with_duration(
+    conn: &mut crate::AdmissionContext,
+    commands: &[(&str, &str)],
+    duration_ns: i64,
+) -> Vec<(Uuid, Uuid)> {
     let mut events = Vec::new();
     let mut ids = Vec::new();
     // Source record coordinates remain distinct across fixture acquisitions.
@@ -37,7 +45,7 @@ pub(crate) async fn admit_commands(
                 session: "s".into(),
                 hostname: "kestrel".into(),
                 started_at,
-                duration_ns: Some(2_000_000_000),
+                duration_ns: Some(duration_ns),
                 exit_code,
                 deleted_at: None,
                 author: None,
@@ -66,7 +74,7 @@ pub(crate) async fn admit_commands(
                 started_at,
                 cwd: Some(cwd.to_string()),
                 session: Some("s".into()),
-                duration_ns: Some(2_000_000_000),
+                duration_ns: Some(duration_ns),
                 exit_code,
                 execution: None,
                 members: vec![sinex_model::event_types::fused::Member {

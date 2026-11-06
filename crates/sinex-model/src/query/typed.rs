@@ -751,6 +751,47 @@ fn check_join(
             }));
         }
     }
+    fn candidate_fields(value: &Operand, out: &mut BTreeSet<String>) {
+        match value {
+            Operand::Field(field) | Operand::TimeFn(_, field) => {
+                let name = field.name();
+                if !matches!(
+                    name.as_str(),
+                    "match.id" | "match.coarse" | "match.distance"
+                ) {
+                    out.insert(name);
+                }
+            }
+            Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
+                candidate_fields(left, out);
+                candidate_fields(right, out);
+            }
+            Operand::CaseEqual { left, right, value } => {
+                candidate_fields(left, out);
+                candidate_fields(right, out);
+                candidate_fields(value, out);
+            }
+            Operand::Absolute(value)
+            | Operand::Length(value)
+            | Operand::Named { operand: value, .. } => candidate_fields(value, out),
+            Operand::Literal {
+                value: Value::Operand(value),
+                ..
+            } => candidate_fields(value, out),
+            _ => {}
+        }
+    }
+    let mut pick_fields = BTreeSet::new();
+    for key in &join.pick {
+        if let SortBy::Operand(value) = &key.key {
+            candidate_fields(value, &mut pick_fields);
+        }
+    }
+    for name in pick_fields {
+        if !join.required.contains(&name) {
+            join.required.push(name);
+        }
+    }
     let inner_schema = check_schema(&mut join.inner, ctx, &join.required)?;
     fn implicit_column(
         column: &mut Operand,
@@ -814,6 +855,21 @@ fn check_join(
             ctx,
             join.required.contains(&name),
         )?;
+    }
+    let mut candidates = inner_schema.clone();
+    for column in &join.columns {
+        candidates
+            .entry(column.column())
+            .or_insert(operand_type(column)?);
+    }
+    candidates.insert("match.id".into(), FieldType::Id);
+    candidates.insert("match.distance".into(), FieldType::Number);
+    candidates.insert("match.coarse".into(), FieldType::Bool);
+    for key in &mut join.pick {
+        if let SortBy::Operand(value) = &mut key.key {
+            seed_operand(value, &candidates);
+            operand(value, &inner_kinds, ctx)?;
+        }
     }
     if let JoinOn::Key { left, right } = &mut join.on {
         field(left, kinds, ctx)?;
@@ -1244,6 +1300,11 @@ fn clear_query_bindings(query: &mut Query) {
     }
     fn join(value: &mut Join) {
         clear_query_bindings(&mut value.inner);
+        for key in &mut value.pick {
+            if let SortBy::Operand(value) = &mut key.key {
+                operand(value);
+            }
+        }
         for value in &mut value.columns {
             operand(value);
         }

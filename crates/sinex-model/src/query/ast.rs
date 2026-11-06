@@ -458,6 +458,8 @@ pub enum Stage {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Join {
     pub on: JoinOn,
+    /// Empty selects the language's nearest witness; explicit keys select first.
+    pub pick: Vec<SortKey>,
     pub inner: Box<Query>,
     /// Every visible column of the bound inner relation, with physical lineage.
     pub columns: Vec<Operand>,

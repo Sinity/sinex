@@ -329,7 +329,8 @@ fn join(j: &Join) -> String {
         } => (*relation, *within_secs, *at),
     };
     let anchor = match point {
-        TimePoint::When | TimePoint::Start => "at their start",
+        TimePoint::When => "at their occurrence",
+        TimePoint::Start => "at their span start",
         TimePoint::End => "at their end",
         TimePoint::MatchWhen => "at the matched occurrence",
         TimePoint::MatchStart => "at the matched span start",
@@ -338,7 +339,35 @@ fn join(j: &Join) -> String {
     let window = within
         .map(|seconds| format!(" within {seconds}s"))
         .unwrap_or_default();
-    format!("paired {} [{inner}]{window}, {anchor}", relation.name())
+    let choice = if j.pick.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", choosing first by {}",
+            j.pick
+                .iter()
+                .map(|key| {
+                    let expression = match &key.key {
+                        SortBy::Rank => "relevance".into(),
+                        SortBy::Operand(value) => operand(value),
+                    };
+                    format!(
+                        "{expression} {}",
+                        if key.descending {
+                            "descending"
+                        } else {
+                            "ascending"
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "paired {} [{inner}]{window}, {anchor}{choice}",
+        relation.name()
+    )
 }
 
 fn time(t: &Timestamp) -> String {

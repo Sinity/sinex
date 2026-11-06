@@ -220,3 +220,13 @@ fn absolute_values_preserve_numeric_dimensions_and_refuse_affine_time() {
     );
     assert!(err("events | fields abs(when)").message.contains("abs"));
 }
+
+#[devkit::test]
+fn explicit_witness_keys_bind_the_candidate_relation_and_metadata() {
+    let query = q(
+        "commands where near (commands) within 1m pick first by abs(match.distance), when, match.id | fields command",
+    );
+    assert!(
+        matches!(query.filter,Some(Expr::Order(ref join)) if join.pick.len()==3 && matches!(&join.pick[0].key,SortBy::Operand(Operand::Absolute(_))))
+    );
+}

@@ -341,3 +341,42 @@ async fn absolute_numeric_values_keep_unknown_rows_and_integer_magnitude(
         [json!(1), json!(0), serde_json::Value::Null]
     );
 }
+
+#[devkit::test]
+async fn explicit_witness_order_preserves_outer_order_identity_and_near_ties(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = fixture(&db).await;
+    let chosen=ask(&mut conn,"commands where near (commands) within 5m pick first by when desc | fields command, match.command").await;
+    assert_eq!(
+        column(&chosen, "command"),
+        [json!("a"), json!("bbbb"), json!("cc")]
+    );
+    assert_eq!(
+        column(&chosen, "match.command"),
+        [json!("cc"), json!("cc"), json!("cc")]
+    );
+    let tied=ask(&mut conn,"commands where command = bbbb AND near (commands where command != bbbb) within 1m pick first by abs(match.distance), when, match.id | fields match.command").await;
+    assert_eq!(column(&tied, "match.command"), [json!("a")]);
+}
+
+#[devkit::test]
+async fn during_can_select_the_earliest_actual_span_without_changing_outer_grain(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_commands_with_duration(
+        &mut conn,
+        &[("early", "/one"), ("later", "/one")],
+        120_000_000_000,
+    )
+    .await;
+    let chosen=ask(&mut conn,"commands where during (commands) at match.start pick first by start, match.id | fields command, match.command").await;
+    assert_eq!(chosen.total, 2);
+    assert_eq!(
+        column(&chosen, "match.command"),
+        [json!("early"), json!("early")]
+    );
+}

@@ -362,18 +362,21 @@ impl Compiler<'_> {
             .push(") AS \"_ordinal\" FROM (")
             .append(inner.answer.clone())
             .push(") inner_order");
+        if let Some(distance) = &distance {
+            let mut candidates = SqlFragment::text(format!("SELECT {i}.*, "));
+            candidates
+                .append(distance.clone())
+                .push(format!(" AS \"_distance\", false AS \"_coarse\" FROM ("))
+                .append(relation)
+                .push(format!(") {i}"));
+            relation = candidates;
+        }
         let mut lateral = SqlFragment::text(if nearest {
             "LEFT JOIN LATERAL (SELECT "
         } else {
             "JOIN LATERAL (SELECT "
         });
         lateral.push(format!("{i}.*"));
-        if let Some(distance) = &distance {
-            lateral
-                .push(", ")
-                .append(distance.clone())
-                .push(" AS \"_distance\"");
-        }
         lateral
             .push(" FROM (")
             .append(relation)
@@ -381,8 +384,45 @@ impl Compiler<'_> {
             .append(condition);
         if nearest {
             lateral.push(" ORDER BY ");
-            if let Some(distance) = &distance {
-                lateral.push("abs(").append(distance.clone()).push("), ");
+            if join.pick.is_empty() {
+                if distance.is_some() {
+                    lateral.push(format!("abs({i}.\"_distance\"), "));
+                }
+            } else {
+                let mut renamed = inner
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| (name.clone(), format!("_value{index}")))
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                for (logical, physical) in [
+                    ("match.id", "_id"),
+                    ("match.distance", "_distance"),
+                    ("match.coarse", "_coarse"),
+                ] {
+                    renamed.insert(logical.into(), physical.into());
+                }
+                let candidate = Cols::Named {
+                    r: i.clone(),
+                    table: join.inner.source.table(),
+                    grouped: false,
+                    renamed,
+                    ordinal: None,
+                };
+                for key in &join.pick {
+                    let SortBy::Operand(operand) = &key.key else {
+                        return Err(invalid(
+                            "witness choice needs explicit candidate expressions",
+                        ));
+                    };
+                    lateral
+                        .append(self.operand(&candidate, operand)?.0)
+                        .push(if key.descending {
+                            " DESC NULLS LAST, "
+                        } else {
+                            " ASC NULLS LAST, "
+                        });
+                }
             }
             lateral.push(format!("{i}.\"_id\" LIMIT 1"));
         }
