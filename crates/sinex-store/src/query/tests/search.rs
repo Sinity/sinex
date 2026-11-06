@@ -30,7 +30,7 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
     }
     let rows = ask(
         &mut conn,
-        "cargo | fields event_type,text | sort by event_type",
+        "cargo | fields event_type,text,snippet | sort by event_type",
     )
     .await;
     assert_eq!(rows.total, 3);

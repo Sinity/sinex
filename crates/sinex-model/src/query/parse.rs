@@ -1087,10 +1087,12 @@ impl Binder<'_> {
                 });
             }
         }
-        let ranked = filter.as_ref().is_some_and(has_words)
+        let ranked = filter
+            .as_ref()
+            .is_some_and(|e| !e.positive_words().is_empty())
             || stages
                 .iter()
-                .any(|s| matches!(s,Stage::Where(e) if has_words(e)));
+                .any(|s| matches!(s,Stage::Where(e) if !e.positive_words().is_empty()));
         let mut q = Query {
             source,
             filter,
@@ -1101,14 +1103,6 @@ impl Binder<'_> {
         Ok(q)
     }
 }
-fn has_words(e: &Expr) -> bool {
-    match e {
-        Expr::Words(_) => true,
-        Expr::And(a, b) | Expr::Or(a, b) => has_words(a) || has_words(b),
-        _ => false,
-    }
-}
-
 pub(super) fn time_fn_value(
     ctx: &Context,
     func: TimeFn,

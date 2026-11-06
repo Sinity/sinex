@@ -295,8 +295,25 @@ fn replace_parameters(
                     fields.get("op").and_then(serde_json::Value::as_str),
                     Some("lt" | "le")
                 );
+            let overlap = fields.get("kind").and_then(serde_json::Value::as_str)
+                == Some("extension")
+                && fields.get("name").and_then(serde_json::Value::as_str) == Some("overlaps");
             for (name, v) in fields {
-                replace_parameters(v, args, used, validating, upper || name == "to")?;
+                if overlap && name == "arguments" {
+                    if let serde_json::Value::Array(arguments) = v {
+                        for (index, argument) in arguments.iter_mut().enumerate() {
+                            replace_parameters(
+                                argument,
+                                args,
+                                used,
+                                validating,
+                                upper || index == 1,
+                            )?;
+                        }
+                    }
+                } else {
+                    replace_parameters(v, args, used, validating, upper || name == "to")?;
+                }
             }
         }
         _ => {}
@@ -323,6 +340,15 @@ pub fn resolve_template(
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
 ) -> Result<native::Template, QueryError> {
+    with_resolved(input, ctx, saved, Ok)
+}
+
+fn with_resolved<T>(
+    input: native::Template,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+    finish: impl FnOnce(native::Template) -> Result<T, QueryError>,
+) -> Result<T, QueryError> {
     let mut expanded_definition = false;
     let result = expand(
         input,
@@ -331,7 +357,8 @@ pub fn resolve_template(
         &mut BTreeSet::new(),
         &mut expanded_definition,
         false,
-    );
+    )
+    .and_then(finish);
     result.map_err(|mut error| {
         // Definition spans belong to the stored question, not its invocation.
         if expanded_definition {
@@ -345,7 +372,9 @@ pub fn bind_saved(
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
 ) -> Result<Query, QueryError> {
-    template_saved(text, ctx, saved)?.bind(ctx)
+    with_resolved(native::parse(text, ctx)?, ctx, saved, |template| {
+        template.bind(ctx)
+    })
 }
 
 fn expand_definition(

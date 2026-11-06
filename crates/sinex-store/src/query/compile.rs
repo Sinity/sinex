@@ -153,18 +153,6 @@ fn op_sql(op: Op) -> &'static str {
     }
 }
 
-/// Positive full-text words: never words under `not`.
-fn positive_words(e: &Expr, out: &mut Vec<String>) {
-    match e {
-        Expr::Words(w) => out.extend(w.words.iter().cloned()),
-        Expr::And(a, b) | Expr::Or(a, b) => {
-            positive_words(a, out);
-            positive_words(b, out);
-        }
-        _ => {}
-    }
-}
-
 /// Every row field an expression names (not inside joins).
 fn expr_fields(e: &Expr, out: &mut Vec<FieldRef>) {
     match e {
@@ -319,11 +307,19 @@ impl<'c> Compiler<'c> {
         // Words, for ranking and snippets.
         let mut words = Vec::new();
         if let Some(f) = &q.filter {
-            positive_words(f, &mut words);
+            words.extend(
+                f.positive_words()
+                    .into_iter()
+                    .flat_map(|w| w.words.iter().cloned()),
+            );
         }
         for s in &q.stages {
             if let Stage::Where(e) = s {
-                positive_words(e, &mut words);
+                words.extend(
+                    e.positive_words()
+                        .into_iter()
+                        .flat_map(|w| w.words.iter().cloned()),
+                );
             }
         }
 

@@ -662,6 +662,19 @@ impl Query {
     }
 }
 impl Expr {
+    /// Search terms in this relation, excluding negated predicates and inner queries.
+    pub fn positive_words(&self) -> Vec<&Words> {
+        match self {
+            Self::Words(words) | Self::FieldWords { words, .. } => vec![words],
+            Self::And(left, right) | Self::Or(left, right) => {
+                let mut words = left.positive_words();
+                words.extend(right.positive_words());
+                words
+            }
+            _ => Vec::new(),
+        }
+    }
+
     fn positive_order_count(&self) -> usize {
         match self {
             Self::Order(_) => 1,
