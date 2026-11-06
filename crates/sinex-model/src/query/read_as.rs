@@ -228,6 +228,7 @@ fn operand(o: &Operand) -> String {
         ),
         Operand::Length(inner) => format!("the length of {}", operand(inner)),
         Operand::Absolute(inner) => format!("the magnitude of {}", operand(inner)),
+        Operand::Text(inner) => format!("the text of {}", operand(inner)),
         Operand::Glob { left, right } => format!(
             "{} matches the case-sensitive pattern {}",
             operand(left),

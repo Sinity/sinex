@@ -685,6 +685,15 @@ fn render_page(compiled: Compiled, read: &ReadPage) -> Result<Rendered> {
         columns: compiled.columns,
     })
 }
+fn expression_error(error: sqlx::Error) -> Error {
+    if let sqlx::Error::Database(database) = &error {
+        if database.code().as_deref() == Some("22023") {
+            return Error::Invalid(database.message().into());
+        }
+    }
+    Error::from(error)
+}
+
 async fn page_of(
     tx: &mut PgConnection,
     rendered: Rendered,
@@ -695,18 +704,18 @@ async fn page_of(
     recall: Option<Json>,
 ) -> Result<Answer> {
     let total = match (rendered.total, &read.prior) {
-        (Some((sql, values)), _) => {
-            sql::bind_scalar(sqlx::query_scalar::<_, i64>(&sql), values)
-                .fetch_one(&mut *tx)
-                .await?
-        }
+        (Some((sql, values)), _) => sql::bind_scalar(sqlx::query_scalar::<_, i64>(&sql), values)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(expression_error)?,
         (None, Some(cursor)) => cursor.total,
         _ => unreachable!("first page counts the result"),
     };
     let (sql, values) = rendered.rows;
     let mut selected: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql), values)
         .fetch_all(&mut *tx)
-        .await?;
+        .await
+        .map_err(expression_error)?;
     let more = selected.len() as u64 > read.size;
     if more {
         selected.pop();

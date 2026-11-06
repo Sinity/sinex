@@ -151,6 +151,7 @@ pub enum Operand {
     },
     Length(Box<Operand>),
     Absolute(Box<Operand>),
+    Text(Box<Operand>),
     Glob {
         left: Box<Operand>,
         right: Box<Operand>,
@@ -180,6 +181,7 @@ impl Operand {
             } => format!("({} {} {})", left.name(), operator.symbol(), right.name()),
             Operand::Length(value) => format!("len({})", value.name()),
             Operand::Absolute(value) => format!("abs({})", value.name()),
+            Operand::Text(value) => format!("text({})", value.name()),
             Operand::Glob { left, right } => format!("glob({}, {})", left.name(), right.name()),
             Operand::CaseEqual { left, right, value } => format!(
                 "case_eq({}, {}, {})",
@@ -206,6 +208,7 @@ impl Operand {
             Self::Literal { kind, .. } | Self::Arithmetic { kind, .. } => kind.clone(),
             Self::CaseEqual { value, .. } => value.kind(),
             Self::Absolute(value) => value.kind(),
+            Self::Text(_) => K::Text,
             Self::Glob { .. } => K::Bool,
             Self::Named { operand, .. } => operand.kind(),
         }
@@ -233,6 +236,7 @@ impl Operand {
             } => format!("{}_{}_{}", left.column(), operator.word(), right.column()),
             Operand::Length(_) => "len".into(),
             Operand::Absolute(_) => "abs".into(),
+            Operand::Text(_) => "text".into(),
             Operand::CaseEqual { .. } => "case_eq".into(),
             Operand::Glob { .. } => "glob".into(),
             Operand::Named { name, .. } => name.clone(),

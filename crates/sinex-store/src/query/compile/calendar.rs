@@ -46,7 +46,8 @@ fn calendar_operands(operand: &Operand, out: &mut Vec<(TimeFn, FieldRef)>) {
             calendar_operands(right, out);
             calendar_operands(value, out);
         }
-        Operand::Absolute(value)
+        Operand::Text(value)
+        | Operand::Absolute(value)
         | Operand::Length(value)
         | Operand::Named { operand: value, .. } => calendar_operands(value, out),
         Operand::Literal {

@@ -267,3 +267,24 @@ fn order_distance_keeps_exact_decimal_bounds_and_accepts_zero() {
         );
     }
 }
+
+#[devkit::test]
+fn text_cast_clears_entity_typing_without_stringifying_other_scalars() {
+    let query = q("events | fields text(id) as raw | where raw ~ 001");
+    let Stage::Fields(columns) = &query.stages[0] else {
+        panic!("projection")
+    };
+    assert_eq!(columns[0].field_type().unwrap(), FieldType::Text);
+    for text in [
+        "events | fields text(when)",
+        "commands | fields text(exit_code)",
+        "events | fields text(123)",
+    ] {
+        assert!(err(text).message.contains("text"), "{text}");
+    }
+    let query = q("events | fields text(unknown) as raw");
+    let Stage::Fields(columns) = &query.stages[0] else {
+        panic!("projection")
+    };
+    assert_eq!(columns[0].field_type().unwrap(), FieldType::Text);
+}

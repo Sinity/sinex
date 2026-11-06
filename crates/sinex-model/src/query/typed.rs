@@ -472,6 +472,7 @@ pub(super) fn operand_type(value: &Operand) -> Result<FieldType, QueryError> {
         }
         Operand::CaseEqual { value, .. } | Operand::Absolute(value) => operand_type(value)?,
         Operand::Glob { .. } => FieldType::Bool,
+        Operand::Text(_) => FieldType::Text,
         Operand::Named { operand, .. } => operand_type(operand)?,
     })
 }
@@ -499,6 +500,20 @@ fn operand(
         }
         Operand::Literal { .. } => Ok(()),
         Operand::Named { operand: inner, .. } => operand(inner, kinds, ctx),
+        Operand::Text(inner) => {
+            operand(inner, kinds, ctx)?;
+            if !matches!(
+                operand_type(inner)?,
+                FieldType::Text
+                    | FieldType::Path
+                    | FieldType::Id
+                    | FieldType::Enum(_)
+                    | FieldType::Json
+            ) {
+                return Err(QueryError::new("text requires text or an identifier"));
+            }
+            Ok(())
+        }
         Operand::Absolute(inner) => {
             operand(inner, kinds, ctx)?;
             if !matches!(
@@ -783,7 +798,8 @@ fn check_join(
                 candidate_fields(right, out);
                 candidate_fields(value, out);
             }
-            Operand::Absolute(value)
+            Operand::Text(value)
+            | Operand::Absolute(value)
             | Operand::Length(value)
             | Operand::Named { operand: value, .. } => candidate_fields(value, out),
             Operand::Literal {
@@ -1071,7 +1087,8 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
                 operand(right, out);
                 operand(value, out);
             }
-            Operand::Absolute(value)
+            Operand::Text(value)
+            | Operand::Absolute(value)
             | Operand::Length(value)
             | Operand::Named { operand: value, .. } => operand(value, out),
             Operand::Literal {
@@ -1221,7 +1238,8 @@ fn seed_operand(value: &mut Operand, schema: &PhysicalSchema) {
             seed_operand(right, schema);
             seed_operand(value, schema);
         }
-        Operand::Absolute(value)
+        Operand::Text(value)
+        | Operand::Absolute(value)
         | Operand::Length(value)
         | Operand::Named { operand: value, .. } => seed_operand(value, schema),
         Operand::Literal {
@@ -1304,7 +1322,8 @@ fn clear_query_bindings(query: &mut Query) {
                 operand(right);
                 operand(value);
             }
-            Operand::Absolute(value)
+            Operand::Text(value)
+            | Operand::Absolute(value)
             | Operand::Length(value)
             | Operand::Named { operand: value, .. } => operand(value),
             Operand::Literal {

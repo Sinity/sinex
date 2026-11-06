@@ -200,7 +200,8 @@ fn operand_fields(o: &Operand, out: &mut Vec<FieldRef>) {
             operand_fields(right, out);
             operand_fields(value, out);
         }
-        Operand::Absolute(value)
+        Operand::Text(value)
+        | Operand::Absolute(value)
         | Operand::Length(value)
         | Operand::Named { operand: value, .. } => operand_fields(value, out),
         Operand::Literal {

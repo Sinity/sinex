@@ -201,6 +201,21 @@ impl Compiler<'_> {
                     .push(")");
                 Ok((out, Kind::Typed(FieldType::Bool)))
             }
+            Operand::Text(value) => {
+                let (value, kind) = self.operand(cols, value)?;
+                let mut out = SqlFragment::text(if kind == Kind::Typed(FieldType::Json) {
+                    "core.query_text("
+                } else {
+                    "("
+                });
+                out.append(value)
+                    .push(if kind == Kind::Typed(FieldType::Json) {
+                        ")"
+                    } else {
+                        ")::text"
+                    });
+                Ok((out, Kind::Typed(FieldType::Text)))
+            }
             Operand::Absolute(value) => {
                 if matches!(
                     &**value,

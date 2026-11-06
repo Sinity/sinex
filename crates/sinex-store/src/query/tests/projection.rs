@@ -461,3 +461,35 @@ async fn filter_operands_read_the_input_witness_before_exposing_a_new_one(
             .all(|row| row["match.command"] == json!("a"))
     );
 }
+
+#[devkit::test]
+async fn text_cast_preserves_identity_strings_and_refuses_json_arrays(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = fixture(&db).await;
+    let answer = ask(
+        &mut conn,
+        "commands | fields id, text(id) as raw, text(unknown) as missing",
+    )
+    .await;
+    assert!(
+        answer
+            .rows
+            .iter()
+            .all(|row| row["id"] == row["raw"] && row["missing"].is_null())
+    );
+    let error = run(
+        &mut conn,
+        "commands | fields text(payload.members)",
+        None,
+        &ctx(),
+        &Page::default(),
+    )
+    .await
+    .err()
+    .expect("array is not text");
+    assert!(
+        matches!(error,Error::Invalid(ref message) if message.contains("text() requires a string")),
+        "{error}"
+    );
+}

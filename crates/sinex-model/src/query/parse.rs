@@ -266,7 +266,12 @@ impl Binder<'_> {
                         self.operand_at(argument, scope, at, argument_path.as_ref())
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                if name == "abs" {
+                if name == "text" {
+                    let [argument] = arguments.as_slice() else {
+                        return Err(QueryError::at(at, "text takes one value"));
+                    };
+                    Operand::Text(Box::new(argument.clone()))
+                } else if name == "abs" {
                     let [argument] = arguments.as_slice() else {
                         return Err(QueryError::at(at, "abs takes one numeric value"));
                     };

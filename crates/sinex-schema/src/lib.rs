@@ -205,6 +205,10 @@ fn visibility_functions() -> Vec<String> {
  IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN NULL; END IF;
  RETURN value::timestamptz;
  EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN RETURN NULL; END $$".to_string(),
+        "CREATE OR REPLACE FUNCTION core.query_text(value jsonb) RETURNS text LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$ BEGIN
+ IF value='null'::jsonb THEN RETURN NULL; END IF;
+ IF jsonb_typeof(value)<>'string' THEN RAISE EXCEPTION 'text() requires a string' USING ERRCODE='22023'; END IF;
+ RETURN value #>> '{}'; END $$".to_string(),
         "CREATE OR REPLACE FUNCTION core.class_visible(class text) RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT class = 'open'
       OR class = ANY (string_to_array(coalesce(current_setting('sinex.grants', true), ''), ','))
