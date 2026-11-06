@@ -124,10 +124,10 @@ local overrides and plain commands.
 | `nix flake check` | the locked package plus Nix checks, including the VM tests |
 | `nix build` | the packages |
 
-`cargo xtask test` always builds the workspace's test binaries from one
-feature resolution, so focused and full runs reuse each other's builds;
-`-p <crate>` becomes a nextest package filter. `cargo xtask compile -p
-<crate>` limits a compile check to the selected packages. Every xtask run is recorded in devkit's history database.
+`cargo xtask test` defaults to the full workspace. Cargo package and target
+flags bound compilation; nextest filters select execution within those
+targets. [Development](docs/development.md) describes focused selection.
+Every xtask run is recorded in devkit's history database.
 Fuzzing runs as tests: bounded corpus replay inside `test`, longer runs as a
 test profile over the same harness. The designed `cargo xtask docs` (renders
 [docs/reference/](docs/reference/README.md)) and `laws` (lists each law key
