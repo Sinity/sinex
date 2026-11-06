@@ -177,6 +177,31 @@ pub(crate) async fn compile_with_stats(
 }
 
 impl Compiler<'_> {
+    /// A projected calendar label retains its shared bucket boundary.
+    pub(super) fn time_bucket_label(
+        &self,
+        func: TimeFn,
+        value: SqlFragment,
+    ) -> Result<SqlFragment> {
+        let (label, boundary) = match func {
+            TimeFn::Day => ("day", "from_ns"),
+            TimeFn::Week => ("week", "week_from_ns"),
+            TimeFn::Month => ("month", "month_from_ns"),
+            _ => return Err(invalid("this calendar label does not yield a time bucket")),
+        };
+        let setting = self
+            .calendar
+            .as_ref()
+            .ok_or_else(|| invalid("logical-day SQL requires shared boundary preparation"))?;
+        let mut out = SqlFragment::text(format!(
+            "(SELECT to_timestamp(trunc(d.{boundary}/1000000000)::double precision) + (mod(d.{boundary},1000000000)/1000)::bigint * interval '1 microsecond' FROM pg_temp.sinex_query_days d WHERE d.setting="
+        ));
+        out.param(V::String(Some(setting.clone())))
+            .push(format!(" AND d.{label}="))
+            .append(value)
+            .push(" ORDER BY d.from_ns LIMIT 1)");
+        Ok(out)
+    }
     /// Calendar arithmetic uses the instant at the shared bucket boundary.
     pub(super) fn time_bucket(&self, func: TimeFn, t: SqlFragment) -> Result<SqlFragment> {
         let column = match func {
@@ -332,13 +357,22 @@ impl Preparation<'_> {
             .push(Stage::Fields(vec![Operand::Field(field.clone())]));
         let (sql, params) = {
             let compiled = Compiler::with_calendar(self.ctx, self.seq).compile(&selected)?;
-            let field = compiled.output_column(&field.name())?;
-            let mut input = SqlFragment::text(format!(
-                "SELECT DISTINCT (extract(epoch from {field})*1000000000)::numeric::text FROM ("
-            ));
+            let mut value = SqlFragment::text(compiled.output_column(&field.name())?);
+            if let FieldRef::TypedGroup(column) = field
+                && let Some(func @ (TimeFn::Day | TimeFn::Week | TimeFn::Month)) =
+                    column.time_function()
+            {
+                value =
+                    Compiler::with_calendar(self.ctx, self.seq).time_bucket_label(func, value)?;
+            }
+            let mut input = SqlFragment::text("SELECT DISTINCT (extract(epoch from ");
             input
+                .append(value.clone())
+                .push(")*1000000000)::numeric::text FROM (")
                 .append(compiled.answer)
-                .push(format!(") q WHERE {field} IS NOT NULL"));
+                .push(") q WHERE ")
+                .append(value)
+                .push(" IS NOT NULL");
             self.cursor += 1;
             let mut statement = SqlFragment::text(format!(
                 "DECLARE sinex_day_inputs_{} NO SCROLL CURSOR FOR ",
