@@ -219,3 +219,41 @@ fn historical_temporal_offsets_shadow_byte_offsets_once_across_repeated_stages()
             .all(|column| column.field_type().unwrap() == super::super::FieldType::Number)
     );
 }
+
+#[devkit::test]
+fn historical_temporal_carriers_keep_referenced_payload_paths_and_native_default_output() {
+    let ctx = context();
+    let default = decode_format_one("events near (sources) within 5m", &ctx).unwrap();
+    let bound = default.bind(&ctx).unwrap();
+    let super::super::Stage::Fields(columns) = bound.stages.last().unwrap() else {
+        panic!("historical default display")
+    };
+    let mut expected = super::super::Table::Events
+        .default_fields()
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    expected.extend(["near".into(), "offset".into()]);
+    assert_eq!(
+        columns
+            .iter()
+            .map(|column| column.column())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    let narrowed = decode_format_one(
+        "commands near (sources) within 5m where payload.command ~ cargo fields payload.command, offset",
+        &ctx,
+    ).unwrap().bind(&ctx).unwrap();
+    let super::super::Stage::Fields(columns) = narrowed.stages.last().unwrap() else {
+        panic!("historical payload display")
+    };
+    assert_eq!(
+        columns[0].field_type().unwrap(),
+        super::super::FieldType::Text
+    );
+    assert_eq!(
+        columns[1].field_type().unwrap(),
+        super::super::FieldType::Number
+    );
+}

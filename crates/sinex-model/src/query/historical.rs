@@ -318,6 +318,7 @@ fn convert_relation(
             old::StageKind::Group { .. } | old::StageKind::Aggregate { .. }
         )
     });
+    let payload_dependencies = referenced_payload_fields(&query)?;
     let source_fields = source_identifiers(&query.source, ctx);
     let mut relation = if let Some(mut base) = base {
         if let old::Source::Saved {
@@ -378,7 +379,21 @@ fn convert_relation(
                         "historical temporal relation contains a native command",
                     ));
                 }
-                let outer_fields = available_fields(&relation, ctx)?;
+                let mut outer_fields = available_fields(&relation, ctx)?;
+                let materialized = relation.transforms.iter().any(|transform| {
+                    matches!(
+                        transform.kind,
+                        ast::TransformKind::Fields { .. } | ast::TransformKind::Aggregate { .. }
+                    )
+                });
+                if !materialized {
+                    // A source catalog includes queryable JSON paths, not
+                    // independent emitted columns. Carry the payload object
+                    // and only paths this outer question actually references.
+                    outer_fields.retain(|name| {
+                        !name.starts_with("payload.") || payload_dependencies.contains(name)
+                    });
+                }
                 let suffix = if temporal == 0 {
                     String::new()
                 } else {
@@ -642,6 +657,56 @@ fn default_output(query: &ast::Query, ctx: &Context) -> Result<Vec<String>, Quer
     if let Some(alias) = alias {
         fields.extend(alias.fields.iter().map(|field| field.name.to_owned()));
     }
+    Ok(fields)
+}
+
+fn referenced_payload_fields(query: &old::Query) -> Result<BTreeSet<String>, QueryError> {
+    fn visit(value: &Value, fields: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(object) => {
+                // These predicates introduce another row domain. Its fields
+                // are not dependencies of the outer temporal carrier.
+                if matches!(
+                    object.get("kind").and_then(Value::as_str),
+                    Some("exists" | "count" | "sequence" | "scope")
+                ) {
+                    return;
+                }
+                if object.get("kind").and_then(Value::as_str) == Some("field") {
+                    if let Some(name) = object.get("name").and_then(Value::as_str) {
+                        if name.starts_with("payload.") {
+                            fields.insert(name.into());
+                        }
+                    }
+                }
+                if let Some(name) = object.get("field").and_then(Value::as_str) {
+                    if name.starts_with("payload.") {
+                        fields.insert(name.into());
+                    }
+                }
+                if let Some(names) = object.get("fields").and_then(Value::as_array) {
+                    for name in names.iter().filter_map(Value::as_str) {
+                        if name.starts_with("payload.") {
+                            fields.insert(name.into());
+                        }
+                    }
+                }
+                for (name, value) in object {
+                    if name != "query" && name != "attach" {
+                        visit(value, fields);
+                    }
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    visit(value, fields);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut fields = BTreeSet::new();
+    visit(&serde_json::to_value(query).map_err(error)?, &mut fields);
     Ok(fields)
 }
 
