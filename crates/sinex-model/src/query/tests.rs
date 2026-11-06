@@ -13,6 +13,18 @@ fn q(text: &str) -> Query {
     bind(text, &ctx()).unwrap_or_else(|e| panic!("{text}: {}", e.render(text)))
 }
 
+fn native_q(text: &str) -> Query {
+    native::parse(text, &ctx())
+        .and_then(|template| template.bind(&ctx()))
+        .unwrap_or_else(|e| panic!("{text}: {e}"))
+}
+
+fn native_err(text: &str) -> QueryError {
+    native::parse(text, &ctx())
+        .and_then(|template| template.bind(&ctx()))
+        .expect_err(text)
+}
+
 fn err(text: &str) -> QueryError {
     bind(text, &ctx()).expect_err(text)
 }
@@ -77,13 +89,14 @@ fn a_command_word_is_never_a_search() {
 
 #[devkit::test]
 fn a_misspelled_table_is_refused_with_a_suggestion() {
-    let e = err("comands since 7d");
+    let e = err("comands since:7d");
     assert!(e.message.contains("commands"), "{e}");
 }
 
 #[devkit::test]
 fn table_with_filter_and_clauses() {
-    let query = q("commands where exit_code != 0 AND cwd ^ /src/tide sort when desc limit 20");
+    let query =
+        q("commands where exit_code != 0 AND cwd ^ /src/tide | sort by when desc | limit 20");
     assert_eq!(query.source.alias().unwrap().name, "commands");
     let Some(Expr::And(a, b)) = &query.filter else {
         panic!()
@@ -166,12 +179,12 @@ fn every_written_archive_reason_can_be_asked_for() {
 #[devkit::test]
 fn times_resolve_once_against_the_context() {
     // since 7d is [now - 7d, ...).
-    let query = q("events since 7d");
-    let Some(Stage::Where(Expr::Compare {
+    let query = q("events since:7d");
+    let Some(Expr::Compare {
         rhs: Value::Time(t),
         op: Op::Ge,
         ..
-    })) = query.stages.first()
+    }) = query.filter.as_ref()
     else {
         panic!("{query:?}")
     };
@@ -250,7 +263,7 @@ fn payload_paths_use_their_schema_types() {
 #[devkit::test]
 fn lists_and_exists() {
     let query =
-        q("events where event_type = [command.executed, command.imported] AND NOT material exists");
+        q("events where event_type = (command.executed |command.imported) AND NOT material:known");
     let Some(Expr::And(a, b)) = query.filter else {
         panic!()
     };
@@ -277,8 +290,8 @@ fn time_functions_and_differences() {
     let terms = terms(&filter);
     assert_eq!(terms.len(), 3);
     assert!(terms.iter().any(|term| matches!(term,
-        Expr::TimeDiff { a: FieldRef::Field(a), b: FieldRef::Field(b), op: Op::Gt, seconds }
-        if a.name == "seen" && b.name == "when" && *seconds == 86_400.0
+        Expr::Compare { lhs: Operand::Arithmetic { operator: query_language::ast::Arithmetic::Subtract, left, right, .. }, op: Op::Gt, rhs: Value::Number(seconds) }
+        if matches!(&**left, Operand::Field(FieldRef::Field(a)) if a.name == "seen") && matches!(&**right, Operand::Field(FieldRef::Field(b)) if b.name == "when") && *seconds == 86_400.0
     )));
     assert!(terms.iter().any(|term| matches!(term,
         Expr::Compare { lhs: Operand::TimeFn(TimeFn::Hour, FieldRef::Field(field)), op: Op::Ge, rhs: Value::Integer(1) }
@@ -291,75 +304,93 @@ fn time_functions_and_differences() {
 }
 
 #[devkit::test]
-fn joins_take_an_inner_query() {
+fn joins_take_an_inner_relation_and_expose_its_matched_schema() {
     let query = q(
-        r#"events where source != terminal.* near (commands where command ~ "cargo test") within 5m"#,
+        r#"events where source != terminal.* | join near (commands where command ~ "cargo test") within 5m"#,
     );
-    let Some(Stage::Join(j)) = query.stages.first() else {
-        panic!()
+    let Some(Stage::Join(join)) = query.stages.first() else {
+        panic!("pair join")
     };
-    assert_eq!(j.kind, JoinKind::Near);
-    assert_eq!(j.within_secs, Some(300.0));
-    assert_eq!(j.inner.source.alias().unwrap().name, "commands");
-    let query = q("commands during (intervals where state = present)");
-    assert!(matches!(query.stages.first(), Some(Stage::Join(j)) if j.kind == JoinKind::During));
-    assert!(err("events near (commands) ").message.contains("within"));
-    // The columns a join adds can be shown and sorted on.
-    let query = q("events near (commands) within 5m fields when, near, offset sort offset");
+    assert!(matches!(
+        join.on,
+        JoinOn::Order {
+            relation: JoinKind::Near,
+            within_secs: Some(300.0),
+            at: TimePoint::When
+        }
+    ));
+    assert_eq!(join.inner.source.alias().unwrap().name, "commands");
+    let query = q("commands | join during (intervals where state = present)");
     assert!(
-        matches!(&query.stages[1], Stage::Fields(f) if matches!(&f[1], FieldRef::TypedGroup(column) if column.name() == "near" && column.field_type() == Some(FieldType::Id)))
+        matches!(query.stages.first(), Some(Stage::Join(join)) if matches!(join.on, JoinOn::Order { relation: JoinKind::During, .. }))
     );
-    // The n-th join's columns carry `_n`.
-    let query = q("events near (commands) within 5m during (commands) fields near, during_2");
-    assert!(matches!(&query.stages[2], Stage::Fields(f) if f.len() == 2));
-    let query =
-        q("events near (commands) within 5m after (commands) within 1m fields near_2, offset_2");
+    // An omitted distance is unbounded, rather than an implicit nearest match.
+    let query = q("events | join near (commands)");
     assert!(
-        matches!(&query.stages[2], Stage::Fields(f) if matches!(&f[0], FieldRef::TypedGroup(column) if column.name() == "near_2" && column.field_type() == Some(FieldType::Id)))
+        matches!(query.stages.first(), Some(Stage::Join(join)) if matches!(join.on, JoinOn::Order { within_secs: None, .. }))
+    );
+    let query = q(
+        "events | join near (commands | fields id, exit_code) within 5m | fields when, match.id, match.exit_code | sort by match.exit_code",
+    );
+    let Stage::Fields(columns) = &query.stages[1] else {
+        panic!("projection")
+    };
+    assert_eq!(
+        columns.iter().map(Operand::column).collect::<Vec<_>>(),
+        ["when", "match.id", "match.exit_code"]
+    );
+    assert!(
+        matches!(columns[1].unnamed(), Operand::Field(FieldRef::TypedGroup(column)) if column.field_type() == Some(FieldType::Id))
+    );
+    assert!(
+        err("events | join near (commands | fields command) | fields match.id")
+            .message
+            .contains("match.id")
     );
 }
 
 #[devkit::test]
 fn grouping_makes_a_relation_of_groups() {
-    let query = q("commands group by cwd count where count > 1 sort count desc limit 5");
+    let query =
+        q("commands | group by cwd | count | where count > 1 | sort by count desc | limit 5");
     assert!(matches!(&query.stages[0], Stage::Group(g) if g.keys.len() == 1));
     assert!(
         matches!(&query.stages[1], Stage::Where(Expr::Compare { lhs: Operand::Field(FieldRef::TypedGroup(c)), .. }) if c.name() == "count" && c.field_type() == Some(FieldType::Integer))
     );
     // After grouping, row fields are gone.
     assert!(
-        err("commands group by cwd where exit_code = 0")
+        err("commands | group by cwd | where exit_code = 0")
             .message
             .contains("grouped")
     );
-    let query = q("commands group by day(when) sum(duration)");
+    let query = q("commands | group by day(when) | agg sum(duration)");
     assert!(
         matches!(&query.stages[0], Stage::Group(g) if g.aggregates[0].column() == "sum_duration")
     );
     assert!(
-        err("commands group by cwd fill")
+        err("commands | group by cwd | fill")
             .message
             .contains("time-bucket")
     );
-    let query = q("commands count");
+    let query = q("commands | count");
     assert!(matches!(&query.stages[0], Stage::Group(g) if g.keys.is_empty()));
 }
 
 #[devkit::test]
 fn as_of_takes_a_time_or_a_commit_position() {
-    let query = q("commands where when > 2026-02-01 as of 2026-03-01");
+    let query = q("commands where when > 2026-02-01 | as of 2026-03-01");
     assert!(matches!(
         query.stages.last(),
         Some(Stage::AsOf(AsOf::Time(_)))
     ));
-    let query = q("events as of seq 42");
+    let query = q("events | as of seq 42");
     assert_eq!(query.stages.last(), Some(&Stage::AsOf(AsOf::Seq(42))));
 }
 
 #[devkit::test]
 fn walks_and_references() {
     let id = "0190a0b0-0000-7000-8000-000000000001";
-    let query = q(&format!("trace sinex:ev/{id}"));
+    let query = native_q(&format!("trace sinex:ev/{id}"));
     assert!(matches!(
         query.source,
         Source::Walk {
@@ -367,7 +398,7 @@ fn walks_and_references() {
             reference: Reference::Event(_)
         }
     ));
-    let query = q(&format!("descendants {id}"));
+    let query = native_q(&format!("descendants {id}"));
     assert!(matches!(
         query.source,
         Source::Walk {
@@ -412,28 +443,28 @@ fn key_citations_escape_the_grammar_and_parse_back() {
 
 #[devkit::test]
 fn recall_windows() {
-    let query = q("recall 2026-03-02 14:05 ±20m");
+    let query = native_q("recall 2026-03-02 14:05 ±20m");
     let Source::Recall { from, to } = query.source else {
         panic!()
     };
     assert_eq!(from, ts("2026-03-02T12:45:00Z"));
     assert_eq!(to, ts("2026-03-02T13:25:00Z"));
-    let query = q("recall yesterday");
+    let query = native_q("recall yesterday");
     let Source::Recall { from, .. } = query.source else {
         panic!()
     };
     assert_eq!(from, ts("2026-09-13T02:00:00Z"));
-    let query = q("recall");
+    let query = native_q("recall");
     let Source::Recall { from, to } = query.source else {
         panic!()
     };
     assert_eq!(to.duration_since(from).as_secs(), 3600);
     assert!(matches!(
-        q("recall last").source,
+        native_q("recall last").source,
         Source::RecallLast { filter: None }
     ));
     assert!(matches!(
-        q("recall mark").source,
+        native_q("recall mark").source,
         Source::RecallMark { number: 1, .. }
     ));
 }
@@ -448,7 +479,9 @@ fn reserved_words_must_be_quoted_to_search() {
 
 #[devkit::test]
 fn reads_back_as_a_sentence() {
-    let s = read_as(&q("commands where exit_code != 0 sort when desc limit 5"));
+    let s = read_as(&q(
+        "commands where exit_code != 0 | sort by when desc | limit 5",
+    ));
     assert_eq!(
         s,
         "commands, each once however many shells saw it where exit code is not 0, sorted by time it happened descending, the first 5, as currently recorded"
@@ -526,7 +559,7 @@ fn record_citations_preserve_wide_unsigned_output_ordinals() {
 
 #[devkit::test]
 fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
-    let until = q("events until 2026-09-14");
+    let until = q("events until:2026-09-14");
     let before = q("events where when < 2026-09-14");
     let get = |q: Query| match q.filter.or_else(|| {
         q.stages.into_iter().find_map(|s| {
@@ -547,7 +580,7 @@ fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
     assert_eq!(get(until), ts("2026-09-15T02:00:00Z"));
     assert_eq!(get(before), ts("2026-09-14T02:00:00Z"));
     assert_eq!(
-        get(q("events until 2026-09-14T10:00:00Z")),
+        get(q("events until:2026-09-14T10:00:00Z")),
         ts("2026-09-14T10:00:00Z")
     );
 }
@@ -577,12 +610,12 @@ fn shared_similarity_directives_cannot_change_filter_membership() {
 
 #[devkit::test]
 fn shared_repeated_groups_bind_aggregates_to_their_incoming_relation() {
-    let query = q("events group by source count group by count sum(count)");
+    let query = q("events | group by source | count | group by count | agg sum(count)");
     let Stage::Group(group) = &query.stages[1] else {
         panic!("second group")
     };
     assert!(
-        matches!(&group.aggregates[0].field,Some(FieldRef::TypedGroup(column)) if column.name()=="count" && column.field_type()==Some(FieldType::Integer))
+        matches!(&group.aggregates[0].argument,Some(Operand::Field(FieldRef::TypedGroup(column))) if column.name()=="count" && column.field_type()==Some(FieldType::Integer))
     );
 }
 
@@ -693,3 +726,5 @@ fn curation_fields_bind_without_shadowing_core_fields() {
             .contains("origin")
     );
 }
+
+mod expressions;
