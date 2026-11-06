@@ -88,7 +88,8 @@ self: {
         machine.wait_until_succeeds("test -e /run/backup-artifact-ready")
         run = machine.succeed("cat /run/sinex-backup/active").strip()
         manifest = json.loads(machine.succeed(f"cat {run}/manifest.json"))
-        assert manifest["boundary"]["producer_custody"] == "incomplete"
+        assert manifest["producer_custody"] == "complete"
+        assert manifest["required_producers"] == ["@daemon"]
         # Independently read exactly the original protected prefix. A growing
         # live segment's later bytes are not part of this cut.
         prefix = next(f["bytes"] for f in manifest["files"] if f["path"] == "main/segments/current.hb")
@@ -103,7 +104,9 @@ self: {
         machine.succeed("systemctl start --wait sinex-backup.service")
         pair = json.loads(machine.succeed("cat /run/sinex-backup/complete.json"))
         assert pair["hold"] == manifest["boundary"]["id"]
-        assert pair["producer_custody"] == "incomplete"
+        assert pair["producer_custody"] == manifest["producer_custody"]
+        assert pair["required_producers"] == manifest["required_producers"]
+        assert pair["producer_cuts"] == manifest["producer_cuts"]
         assert pair["main"]["name"] == pair["keys"]["name"]
         assert pair["main"]["id"] and pair["keys"]["id"]
         machine.succeed(f"test ! -d {run}/main; test ! -d {run}/keys")

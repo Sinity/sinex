@@ -156,6 +156,7 @@ struct Job {
 /// Where producers hand batches to the writer.
 #[derive(Clone)]
 pub(crate) struct WriterHandle {
+    source_publication: sinex_transport::backup::Publication,
     derivations: Arc<tokio::sync::Mutex<()>>,
     signals: Arc<tokio::sync::Mutex<()>>,
     curation: Arc<tokio::sync::Mutex<()>>,
@@ -169,6 +170,10 @@ pub(crate) struct WriterHandle {
 pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 impl WriterHandle {
+    pub(crate) fn source_publication(&self) -> sinex_transport::backup::Publication {
+        self.source_publication.clone()
+    }
+
     pub(crate) async fn lock_signals(&self) -> tokio::sync::OwnedMutexGuard<()> {
         self.signals.clone().lock_owned().await
     }
@@ -444,6 +449,7 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
     let (bulk, bulk_rx) = mpsc::channel(DEPTH);
     (
         WriterHandle {
+            source_publication: Default::default(),
             derivations: Arc::new(tokio::sync::Mutex::new(())),
             signals: Arc::new(tokio::sync::Mutex::new(())),
             curation: Arc::new(tokio::sync::Mutex::new(())),

@@ -169,6 +169,7 @@ async fn world_with_config(
         .unwrap();
     let (stop, stopped) = watch::channel(false);
     let api = Api {
+        backup_producers: None,
         source_config: Arc::new(source_config),
         read_failures: Default::default(),
         running_stages: Default::default(),

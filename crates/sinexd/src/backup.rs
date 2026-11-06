@@ -43,6 +43,26 @@ fn record<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String> {
     out.sync_all().map_err(|e| e.to_string())
 }
 
+pub(crate) fn record_boundary(
+    output: &Path,
+    boundary: &sinex_model::backup::Hold,
+) -> Result<(), String> {
+    let path = output.join("boundary.json");
+    if path.exists() {
+        let found: sinex_model::backup::Hold =
+            serde_json::from_reader(File::open(path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        if &found != boundary {
+            return Err("output belongs to a different backup boundary".into());
+        }
+    } else {
+        record(&path, boundary)?;
+    }
+    File::open(output)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| e.to_string())
+}
+
 async fn dump(
     snapshot: &Snapshot,
     output: &Path,
@@ -126,28 +146,91 @@ fn segment_path(name: &str) -> Result<&Path, String> {
     Ok(path)
 }
 
+pub(crate) async fn local_sources(
+    bindings: Result<Vec<sinex_source_core::Binding>, String>,
+    output: &Path,
+) -> sinex_model::backup::ProducerCut {
+    let result = async {
+        let bindings = bindings?;
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Cancel {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+        let _cancel = Cancel(cancelled.clone());
+        let destination = output.join("main/local-sources");
+        let mut files = tokio::task::spawn_blocking(move || {
+            let captured = sinex_sources::live::capture_backup(&bindings, &cancelled)?;
+            sinex_transport::backup::capture_tree(captured.directory.path(), &destination)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        for file in &mut files {
+            file.path = format!("main/local-sources/{}", file.path);
+        }
+        Ok::<_, String>(files)
+    }
+    .await;
+    match result {
+        Ok(files) => sinex_model::backup::ProducerCut {
+            producer: "@daemon".into(),
+            incarnation: None,
+            files,
+            unavailable: None,
+        },
+        Err(reason) => sinex_model::backup::ProducerCut {
+            producer: "@daemon".into(),
+            incarnation: None,
+            files: Vec::new(),
+            unavailable: Some(reason),
+        },
+    }
+}
+
 pub(crate) async fn prepare(
     mut snapshot: Snapshot,
     store: &Path,
     output: &Path,
     stop: watch::Receiver<bool>,
     source_revision: String,
+    producer_cuts: Vec<sinex_model::backup::ProducerCut>,
+    required_producers: Option<Vec<String>>,
 ) -> Result<Manifest, String> {
+    let producer_custody = if required_producers.as_ref().is_some_and(|required| {
+        required.len() == producer_cuts.len()
+            && required.iter().all(|producer| {
+                producer_cuts
+                    .iter()
+                    .filter(|cut| &cut.producer == producer && cut.unavailable.is_none())
+                    .count()
+                    == 1
+            })
+    }) {
+        sinex_model::backup::ProducerCustody::Complete
+    } else {
+        sinex_model::backup::ProducerCustody::Incomplete
+    };
     let mut manifest = Manifest {
         format: 1,
         boundary: snapshot.hold.clone(),
         database: snapshot.database.clone(),
         source_revision,
+        producer_cuts,
+        required_producers,
+        producer_custody,
         files: Vec::new(),
     };
     for directory in ["main", "keys"] {
         std::fs::DirBuilder::new()
             .mode(0o700)
+            .recursive(true)
             .create(output.join(directory))
             .map_err(|e| e.to_string())?;
     }
     // This record survives failures and identifies the hold without claiming a complete artifact.
-    record(&output.join("boundary.json"), &manifest.boundary)?;
+    record_boundary(output, &manifest.boundary)?;
     File::open(output)
         .and_then(|f| f.sync_all())
         .map_err(|e| e.to_string())?;
@@ -216,6 +299,9 @@ pub(crate) async fn prepare(
     .await
     .map_err(|e| e.to_string())??;
     manifest.files.extend(dumps);
+    for cut in &manifest.producer_cuts {
+        manifest.files.extend(cut.files.iter().cloned());
+    }
     stopped(&stop)?;
     // Both pg_dump calls imported the same still-live snapshot of this database.
     snapshot.close().await.map_err(|e| e.to_string())?;

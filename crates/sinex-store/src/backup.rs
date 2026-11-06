@@ -1,6 +1,6 @@
 //! Durable holds and their immutable operation boundary. Call mutations through the writer.
 use crate::{Error, Result};
-use sinex_model::backup::{Hold, ProducerCustody, Segment};
+use sinex_model::backup::{Hold, Segment};
 use sinex_model::{OperationId, Timestamp};
 use sqlx::{Connection, PgConnection};
 
@@ -21,7 +21,6 @@ pub async fn get(conn: &mut PgConnection, id: OperationId) -> Result<Option<Hold
             commit_position: row.commit_position,
             blob_changes: row.blob_changes,
             schema_version: row.schema_version,
-            producer_custody: ProducerCustody::Incomplete,
         })
     })
     .transpose()
@@ -40,7 +39,7 @@ pub async fn hold(conn: &mut PgConnection, id: OperationId, actor: &str) -> Resu
     }
     let mut tx = conn.begin().await?;
     let position = crate::commit_log::allocate_position(&mut tx).await?;
-    let scope = serde_json::json!({"scope":"core","producer_custody":"incomplete"});
+    let scope = serde_json::json!({"scope":"core"});
     sqlx::query!("INSERT INTO core.operations(id,kind,actor,scope,start_seq,end_seq,result) VALUES($1,'backup_hold',$2,$3,$4,$4,'ok')",id.0,actor,scope,position).execute(&mut *tx).await?;
     let blobs = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name='blob_changes'")
         .fetch_one(&mut *tx)

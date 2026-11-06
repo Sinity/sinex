@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReplyFrame {
+    Waiting {
+        stream: String,
+    },
     Data {
         stream: String,
         sequence: u64,
@@ -23,6 +26,7 @@ pub enum ReplyFrame {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FlowAck {
+    Waiting { stream: String },
     Accepted { stream: String, sequence: u64 },
     Cancel { stream: String },
 }

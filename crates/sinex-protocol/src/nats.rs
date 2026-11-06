@@ -190,6 +190,13 @@ impl Subjects {
         format!("{}.fetch_material.*", self.root)
     }
 
+    pub fn backup(&self, producer: &str) -> String {
+        format!("{}.backup.{producer}", self.root)
+    }
+    pub fn backup_inbox(&self, producer: &str) -> String {
+        format!("_SINEX_BACKUP.{producer}")
+    }
+
     /// What a producer's NATS user may publish and subscribe to: its own
     /// ingress, have, materials and lifecycle subjects, its acknowledgments, and
     /// reply inboxes.
@@ -200,6 +207,7 @@ impl Subjects {
     ) -> (Vec<String>, Vec<String>) {
         let mut publish = vec![
             self.ingress(producer),
+            format!("{}.>", self.backup_inbox(producer)),
             self.connect(producer),
             self.recorded(producer),
             self.materials(producer),
@@ -225,6 +233,8 @@ impl Subjects {
             publish,
             vec![
                 self.ack(producer),
+                self.backup(producer),
+                format!("{}.>", self.backup_inbox(producer)),
                 format!("{}.>", self.inbox_prefix(producer)),
             ],
         )

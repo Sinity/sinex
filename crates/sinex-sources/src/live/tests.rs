@@ -479,6 +479,7 @@ async fn hold_final_ack(
                 );
             }
             ReplyFrame::Abort { code, .. } => panic!("controlled recorded reply aborted: {code}"),
+            ReplyFrame::Waiting { .. } => panic!("unexpected wait marker"),
         }
     }
 }

@@ -304,6 +304,15 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .map_err(|e| format!("read pool: {e}"))?;
     let read_failures = crate::binding_runner::ReadFailures::default();
     let reader_api = Api {
+        backup_producers: Some((
+            client.clone(),
+            subjects.clone(),
+            o.producer_grants
+                .iter()
+                .filter(|(_, grant)| grant.write.is_some())
+                .map(|(name, _)| name.clone())
+                .collect(),
+        )),
         source_config: Arc::new(sources.clone()),
         read_failures: read_failures.clone(),
         running_stages: Default::default(),

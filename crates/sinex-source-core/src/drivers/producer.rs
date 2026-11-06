@@ -279,9 +279,36 @@ pub struct Producer {
     upload: Option<Store>,
     /// The largest message the server accepts.
     max_message: usize,
+    publication: sinex_transport::backup::Publication,
 }
 
 impl Producer {
+    /// Hold this gate across the complete position, poll, produce and raw-spool
+    /// retirement operation. Acquisition runs independently of this gate.
+    pub fn publication(&self) -> sinex_transport::backup::Publication {
+        self.publication.clone()
+    }
+
+    pub async fn backup_participant(
+        &self,
+        capture: std::sync::Arc<
+            dyn Fn(
+                    std::sync::Arc<std::sync::atomic::AtomicBool>,
+                ) -> Result<sinex_transport::backup::Captured, String>
+                + Send
+                + Sync,
+        >,
+    ) -> Result<sinex_transport::backup::Participant, String> {
+        sinex_transport::backup::Participant::start(
+            self.client.clone(),
+            self.subjects.clone(),
+            self.name.clone(),
+            self.publication.clone(),
+            capture,
+        )
+        .await
+    }
+
     pub fn monitor(&mut self, binding: &str, counter: super::spool_health::Counter) {
         self.health.insert(binding.to_owned(), counter);
     }
@@ -340,6 +367,7 @@ impl Producer {
             acks,
             upload: None,
             max_message,
+            publication: Default::default(),
         })
     }
 

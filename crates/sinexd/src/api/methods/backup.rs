@@ -90,17 +90,102 @@ impl Api {
                 if let Err(e) = crate::backup::create(&output) {
                     return refused(e);
                 }
-                let snapshot = match writer.backup_snapshot(caller.actor).await {
+                let source_publication = writer.source_publication();
+                let local_guard = source_publication.freeze().await;
+                let mut frozen = Vec::new();
+                let mut producer_cuts = Vec::new();
+                if let Some((client, subjects, producers)) = &self.backup_producers {
+                    let results =
+                        futures::future::join_all(producers.iter().map(|producer| async {
+                            (
+                                producer,
+                                sinex_transport::backup::Frozen::freeze(
+                                    client.clone(),
+                                    subjects.clone(),
+                                    producer.clone(),
+                                )
+                                .await,
+                            )
+                        }))
+                        .await;
+                    for (producer, result) in results {
+                        match result {
+                            Ok(cut) => frozen.push(cut),
+                            Err(reason) => producer_cuts.push(sinex_model::backup::ProducerCut {
+                                producer: producer.clone(),
+                                incarnation: None,
+                                files: Vec::new(),
+                                unavailable: Some(reason),
+                            }),
+                        }
+                    }
+                }
+                let mut snapshot = match writer.backup_snapshot(caller.actor).await {
                     Ok(snapshot) => snapshot,
-                    Err(e) => return refused(e.to_string()),
+                    Err(e) => {
+                        for cut in &frozen {
+                            let _ = cut.release().await;
+                        }
+                        return refused(e.to_string());
+                    }
                 };
                 let hold = snapshot.hold.id;
+                if let Err(error) = crate::backup::record_boundary(&output, &snapshot.hold) {
+                    for cut in &frozen {
+                        let _ = cut.release().await;
+                    }
+                    return refused(format!("{error}; backup hold {hold} remains open"));
+                }
+                let local_bindings = crate::binding_runner::backup_bindings(
+                    snapshot.connection(),
+                    &self.source_config,
+                    &self.host,
+                )
+                .await;
+                let boundary = &snapshot.hold;
+                let output_root = &output;
+                let external =
+                    futures::future::join_all(frozen.into_iter().map(|cut| async move {
+                        let relative = format!("main/producers/{}", cut.producer);
+                        let result = cut.acquire(boundary, &output_root.join(&relative)).await;
+                        let _ = cut.release().await;
+                        match result {
+                            Ok(mut files) => {
+                                for file in &mut files {
+                                    file.path = format!("{relative}/{}", file.path);
+                                }
+                                sinex_model::backup::ProducerCut {
+                                    producer: cut.producer,
+                                    incarnation: Some(cut.incarnation),
+                                    files,
+                                    unavailable: None,
+                                }
+                            }
+                            Err(reason) => sinex_model::backup::ProducerCut {
+                                producer: cut.producer,
+                                incarnation: Some(cut.incarnation),
+                                files: Vec::new(),
+                                unavailable: Some(reason),
+                            },
+                        }
+                    }));
+                let local = crate::backup::local_sources(local_bindings, output_root);
+                let (acquired, local) = futures::join!(external, local);
+                drop(local_guard);
+                producer_cuts.extend(acquired);
+                producer_cuts.push(local);
                 match crate::backup::prepare(
                     snapshot,
                     self.blobs.root(),
                     &output,
                     self.stop.clone(),
                     revision.into(),
+                    producer_cuts,
+                    self.backup_producers.as_ref().map(|(_, _, producers)| {
+                        let mut required = producers.clone();
+                        required.push("@daemon".into());
+                        required
+                    }),
                 )
                 .await
                 {

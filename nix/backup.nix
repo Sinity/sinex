@@ -1,4 +1,4 @@
-# One coordinator prepares the immutable core cut; Borg owns archive durability.
+# One coordinator acquires the native cut; Borg owns archive durability.
 { cfg, pkgs }:
 let
   root = cfg.backup.artifactDir;
@@ -82,6 +82,9 @@ in {
       ${asUser} tee "$run/prepare.json" < ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
       printf '%s\n' "$run" > ${pkgs.lib.escapeShellArg "${control}/active.tmp"}
       mv -- ${pkgs.lib.escapeShellArg "${control}/active.tmp"} ${pkgs.lib.escapeShellArg "${control}/active"}
+      # A missing participant retains the native artifact and hold. It cannot
+      # become a completed nightly backup through successful core archives.
+      jq -e '.result.artifact.producer_custody == "complete"' ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
       systemctl start --wait borgbackup-job-sinex.service
       systemctl start --wait borgbackup-job-sinex-keys.service
       # Both receipts came from actual archive reads, never unrelated latest
@@ -91,7 +94,8 @@ in {
       jq -n --arg hold "$hold" \
         --slurpfile main ${pkgs.lib.escapeShellArg "${control}/main.borg-info.json"} \
         --slurpfile keys ${pkgs.lib.escapeShellArg "${control}/keys.borg-info.json"} \
-        '{hold:$hold,main:$main[0].archives[0],keys:$keys[0].archives[0],producer_custody:"incomplete"}' \
+        --slurpfile prepared ${pkgs.lib.escapeShellArg "${control}/prepare.json"} \
+        '{hold:$hold,main:$main[0].archives[0],keys:$keys[0].archives[0],producer_custody:$prepared[0].result.artifact.producer_custody,required_producers:$prepared[0].result.artifact.required_producers,producer_cuts:$prepared[0].result.artifact.producer_cuts}' \
         > ${pkgs.lib.escapeShellArg "${control}/complete.json"}
       sync -f ${pkgs.lib.escapeShellArg "${control}/complete.json"}
       ${asUser} tee "$run/complete.json" < ${pkgs.lib.escapeShellArg "${control}/complete.json"} >/dev/null

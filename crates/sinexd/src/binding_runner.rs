@@ -132,6 +132,55 @@ pub(crate) fn plan(
     .bindings)
 }
 
+/// Native spool obligations at the exported core cut, plus configured spools
+/// whose acquired bytes have not yet produced a database checkpoint.
+pub(crate) async fn backup_bindings(
+    conn: &mut PgConnection,
+    config: &Config,
+    host: &str,
+) -> Result<Vec<Binding>, String> {
+    use sinex_source_core::registry::{Origin, Shape};
+    let specs = sources::specs();
+    let mut bindings = plan(config, host)?
+        .into_iter()
+        .map(|(_, binding)| binding)
+        .collect::<Vec<_>>();
+    for row in sinex_store::bindings::all(conn)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        let settings: Settings = serde_json::from_value(row.settings)
+            .map_err(|e| format!("saved binding {}: {e}", row.binding))?;
+        if settings.host != host {
+            continue;
+        }
+        if !specs.iter().any(|spec| spec.name == row.source) {
+            return Err(format!(
+                "saved native binding {} has unknown source {}",
+                row.binding, row.source
+            ));
+        }
+        for spec in specs.iter().filter(|spec| spec.name == row.source) {
+            bindings.push(Binding {
+                name: row.binding.clone(),
+                source: row.source.clone(),
+                input: row.input.clone().into(),
+                parser: spec.parser.into(),
+                settings: settings.clone(),
+            });
+        }
+    }
+    bindings.retain(|binding| {
+        specs.iter().any(|spec| {
+            spec.name == binding.source
+                && matches!(spec.origin, Origin::Input(Shape::LiveStream | Shape::Media))
+        })
+    });
+    bindings.sort_by(|a, b| a.name.cmp(&b.name));
+    bindings.dedup_by(|a, b| a.name == b.name);
+    Ok(bindings)
+}
+
 /// A saved name belongs to the source and input, independent of which current
 /// parser discovers it. Reconciliation compares only the proposed parser.
 async fn saved(

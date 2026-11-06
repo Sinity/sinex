@@ -175,6 +175,10 @@ pub(crate) async fn read(
     access: Access<'_>,
     report: &mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
 ) -> Vec<(String, Result<Totals, String>)> {
+    // Backup waits here before requesting writer P, so a reader waiting on its
+    // writer acknowledgment never deadlocks the snapshot job.
+    let publication = writer.source_publication();
+    let _publication = publication.enter().await;
     let Rounds {
         runs: native_runs,
         coverage,

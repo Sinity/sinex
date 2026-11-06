@@ -18,7 +18,6 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
     .await;
     assert_eq!(one["outcome"], "ok", "{one}");
     assert_eq!(one["result"]["hold"]["actor"], "operator");
-    assert_eq!(one["result"]["hold"]["producer_custody"], "incomplete");
     let (_, two) = call(
         &w,
         Some(OPERATOR),

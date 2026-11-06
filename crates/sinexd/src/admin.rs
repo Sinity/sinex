@@ -294,6 +294,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     let local = api::Api {
+        backup_producers: None,
         source_config: Default::default(),
         read_failures: Default::default(),
         running_stages: Default::default(),

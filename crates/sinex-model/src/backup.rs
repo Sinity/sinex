@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum ProducerCustody {
     Incomplete,
+    Complete,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -17,7 +18,6 @@ pub struct Hold {
     pub commit_position: i64,
     pub blob_changes: i64,
     pub schema_version: i32,
-    pub producer_custody: ProducerCustody,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -39,8 +39,15 @@ pub struct File {
     pub blake3: String,
 }
 
-/// Published only after both dumps and every committed segment prefix are durable.
-/// This is local byte custody, never an assertion that Borg or a producer acknowledged it.
+/// Exact native custody for one configured producer, or its missing evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProducerCut {
+    pub producer: String,
+    pub incarnation: Option<String>,
+    pub files: Vec<File>,
+    pub unavailable: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Manifest {
     pub format: u32,
@@ -48,4 +55,7 @@ pub struct Manifest {
     pub database: Database,
     pub source_revision: String,
     pub files: Vec<File>,
+    pub required_producers: Option<Vec<String>>,
+    pub producer_custody: ProducerCustody,
+    pub producer_cuts: Vec<ProducerCut>,
 }

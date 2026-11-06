@@ -71,12 +71,14 @@ async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
         &artifact,
         stop,
         "synthetic-source-revision".into(),
+        Vec::new(),
+        None,
     )
     .await
     .unwrap();
     assert_eq!(manifest.boundary.id, hold);
     assert_eq!(
-        manifest.boundary.producer_custody,
+        manifest.producer_custody,
         sinex_model::backup::ProducerCustody::Incomplete
     );
     assert_eq!(
@@ -162,7 +164,16 @@ async fn stopping_preparation_never_publishes_an_artifact(db: devkit::pg::TestDa
     let artifact = output.path().join("stopped");
     create(&artifact).unwrap();
     let (_sender, stop) = watch::channel(true);
-    let result = prepare(snapshot, output.path(), &artifact, stop, "synthetic".into()).await;
+    let result = prepare(
+        snapshot,
+        output.path(),
+        &artifact,
+        stop,
+        "synthetic".into(),
+        Vec::new(),
+        None,
+    )
+    .await;
     assert!(result.is_err());
     assert!(!artifact.join("manifest.json").exists());
     assert!(artifact.join("boundary.json").is_file());
@@ -265,4 +276,195 @@ async fn exporter_loss_between_actual_dump_imports_refuses_the_second_dump(
             .released_at
             .is_none()
     );
+}
+
+/// Restore the real older SQL checkpoint and native spool cut after ordinary
+/// publication advanced and deleted the original segment. Resume must admit
+/// the retained pending record rather than skip it using the newer checkpoint.
+#[devkit::test]
+async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
+    db: devkit::pg::TestDatabase,
+) {
+    use crate::{
+        binding_reader::{self, BindingReader, Rounds},
+        material_access::{Access, Sink},
+        reader_context::ReaderContext,
+    };
+    use sinex_source_core::{
+        Binding, Settings,
+        drivers::live_stream::{Rotation, SpoolWriter},
+    };
+    use sinex_sources::sources::journald;
+    use sinex_transport::backup::capture_tree;
+    let root = tempfile::tempdir().unwrap();
+    let spool = root.path().join("spool");
+    let source = root.path().join("store");
+    let artifact = root.path().join("artifact");
+    let restored_store = root.path().join("restored-store");
+    let url = db.url(None);
+    let settings = sinex_model::time_settings::TimeSettings::new("UTC", 4, 0).unwrap();
+    let mut context = ReaderContext::open(&url, &source, settings.clone())
+        .await
+        .unwrap();
+    let binding = Binding::of(&journald::SPEC, &spool, Settings::new("synthetic-host"));
+    let mut reader = vec![BindingReader::new(&journald::FORMAT, binding.clone()).unwrap()];
+    let mut rounds = Rounds::default();
+    let sink = Sink(context.blobs.clone());
+    let (_stop, stop) = watch::channel(false);
+    let append = |writer: &mut SpoolWriter, cursor: &str, message: &str| {
+        writer.append(sinex_model::Timestamp::now(),&serde_json::to_vec(&serde_json::json!({"__CURSOR":cursor,"__REALTIME_TIMESTAMP":"1000000","MESSAGE":message,"_HOSTNAME":"synthetic-host"})).unwrap()).unwrap();
+        writer.sync().unwrap();
+    };
+    let mut capture = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    append(&mut capture, "original-cursor", "original-record");
+    for (_, result) in binding_reader::read(
+        &mut context.read_conn,
+        &context.blobs,
+        &context.writer,
+        &sink,
+        &mut reader,
+        &mut rounds,
+        stop.clone(),
+        Access::default(),
+        &mut |_, _| {},
+    )
+    .await
+    {
+        result.unwrap();
+    }
+    let original_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT id FROM core.events WHERE source='machine.journald' ORDER BY id",
+    )
+    .fetch_all(&mut context.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(original_ids.len(), 1);
+    append(&mut capture, "pending-cursor", "pending-before-cut");
+    let publication = context.writer.source_publication();
+    let frozen = publication.freeze().await;
+    let snapshot = context
+        .writer
+        .backup_snapshot("synthetic-backup")
+        .await
+        .unwrap();
+    create(&artifact).unwrap();
+    let local = local_sources(Ok(vec![binding.clone()]), &artifact).await;
+    assert_eq!(local.unavailable, None);
+    drop(frozen);
+    drop(capture);
+    let mut next = SpoolWriter::open(&spool, Rotation::default()).unwrap();
+    append(&mut next, "later-cursor", "after-cut-record");
+    for (_, result) in binding_reader::read(
+        &mut context.read_conn,
+        &context.blobs,
+        &context.writer,
+        &sink,
+        &mut reader,
+        &mut rounds,
+        stop.clone(),
+        Access::default(),
+        &mut |_, _| {},
+    )
+    .await
+    {
+        result.unwrap();
+    }
+    assert!(
+        !spool.join("000000000000.ndjson").exists(),
+        "ordinary source retirement must actually remove the older generation"
+    );
+    let current: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE source='machine.journald'")
+            .fetch_one(&mut context.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(current, 3);
+    let manifest = prepare(
+        snapshot,
+        &source,
+        &artifact,
+        stop.clone(),
+        "synthetic-source-cut".into(),
+        vec![local],
+        Some(vec!["@daemon".into()]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        manifest.producer_custody,
+        sinex_model::backup::ProducerCustody::Complete
+    );
+    drop(next);
+    drop(sink);
+    context.close().await.unwrap();
+    // This database and every filesystem path in this test are disposable
+    // fixtures. The restore uses only the paired immutable artifact.
+    let status = tokio::process::Command::new("pg_restore")
+        .env("PGDATABASE", &url)
+        .args([
+            "--no-password",
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            "--exit-on-error",
+        ])
+        .arg(artifact.join("main/sinex.dump"))
+        .status()
+        .await
+        .unwrap();
+    assert!(status.success());
+    let status = tokio::process::Command::new("pg_restore")
+        .env("PGDATABASE", &url)
+        .args(["--no-password", "--data-only", "--exit-on-error"])
+        .arg(artifact.join("keys/data-keys.dump"))
+        .status()
+        .await
+        .unwrap();
+    assert!(status.success());
+    std::fs::remove_dir_all(&spool).unwrap();
+    capture_tree(&artifact.join("main/local-sources/spool/0"), &spool).unwrap();
+    capture_tree(
+        &artifact.join("main/segments"),
+        &restored_store.join("segments"),
+    )
+    .unwrap();
+    let mut context = ReaderContext::open(&url, &restored_store, settings)
+        .await
+        .unwrap();
+    let restored_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT id FROM core.events WHERE source='machine.journald' ORDER BY id",
+    )
+    .fetch_all(&mut context.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(restored_ids, original_ids);
+    let sink = Sink(context.blobs.clone());
+    let mut resumed = vec![BindingReader::new(&journald::FORMAT, binding).unwrap()];
+    for (_, result) in binding_reader::read(
+        &mut context.read_conn,
+        &context.blobs,
+        &context.writer,
+        &sink,
+        &mut resumed,
+        &mut Rounds::default(),
+        stop,
+        Access::default(),
+        &mut |_, _| {},
+    )
+    .await
+    {
+        result.unwrap();
+    }
+    let payloads: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM core.events WHERE source='machine.journald' ORDER BY id",
+    )
+    .fetch_all(&mut context.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(payloads.len(), 2);
+    let encoded = serde_json::to_string(&payloads).unwrap();
+    assert!(encoded.contains("pending-before-cut"));
+    assert!(!encoded.contains("after-cut-record"));
+    drop(sink);
+    context.close().await.unwrap();
 }

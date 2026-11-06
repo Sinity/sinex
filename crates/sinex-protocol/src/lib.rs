@@ -3,6 +3,7 @@
 //! the NATS ingress. Domain types live in `sinex-model`; the `cli` feature
 //! adds the parsers both `sinexctl` and `sinexd admin` build from the table.
 //! This crate does no IO. Filesystem helpers live in sinex-transport.
+pub mod backup;
 #[cfg(feature = "cli")]
 pub mod cli;
 mod commands;
