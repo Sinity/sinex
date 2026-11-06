@@ -50,6 +50,10 @@ self: {
     import json
     ctl = "sinexctl --endpoint unix:/run/sinex/sinexd.sock --token-file /var/lib/sinex/tokens/operator.token --json"
 
+    def wait_for_daemon():
+        machine.wait_for_unit("sinexd.service")
+        machine.wait_until_succeeds(f"{ctl} status", timeout=120)
+
     def events():
         return machine.succeed(
             "sudo -u postgres psql -d sinex -tAc \"select count(*), md5(string_agg(id::text || payload::text, ',' order by id)) from core.events\""
@@ -58,7 +62,7 @@ self: {
     def files(root):
         return machine.succeed(f"cd {root} && find . -type f | sort | xargs -r sha256sum").strip()
 
-    machine.wait_for_unit("sinexd.service")
+    wait_for_daemon()
     machine.succeed(f"{ctl} stage /var/lib/sinex/zsh_history --parser zsh --follow")
     machine.succeed("BORG_PASSCOMMAND='cat /etc/sinex-test/borg-pass' borg init --encryption=repokey-blake2 /backup/sinex")
     machine.succeed("BORG_PASSCOMMAND='cat /etc/sinex-test/borg-pass' borg init --encryption=repokey-blake2 /backup/sinex-keys")
@@ -134,7 +138,7 @@ self: {
         machine.succeed("sudo -u postgres pg_restore -d sinex --data-only --exit-on-error < /restore/keys/data-keys.dump")
         machine.succeed("sudo -u postgres psql -d sinex -c 'SELECT timescaledb_post_restore()'")
         machine.succeed("systemctl start sinexd.service")
-        machine.wait_for_unit("sinexd.service")
+        wait_for_daemon()
 
     after = events()
     after_files = files("/var/lib/sinex/store")
