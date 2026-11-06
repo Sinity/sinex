@@ -41,6 +41,17 @@ pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 /// upgrade starts from.
 pub const VERSION: i32 = upgrades::LANDED_VERSION + upgrades::NAMED.len() as i32;
 
+/// The schema version immediately before a named forward step in this build.
+pub fn version_before(step: &str) -> Option<i32> {
+    upgrades::NAMED
+        .iter()
+        .position(|name| *name == step)
+        .map(|position| {
+            upgrades::LANDED_VERSION
+                + i32::try_from(position).expect("named upgrade positions fit schema versions")
+        })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
