@@ -34,11 +34,10 @@ self: {
         selected=$(cat /run/sinex-backup/active)
         ${pkgs.util-linux}/bin/runuser -u sinex -- mv "$selected/main" "$selected/main.original"
         ${pkgs.util-linux}/bin/runuser -u sinex -- ln -s /root "$selected/main"
-        rm /run/poison-backup-path
       fi
     '') (lib.mkAfter ''
       if test -e /run/hold-backup-copy; then
-        touch /run/backup-artifact-ready
+        touch /run/sinex-backup/artifact-ready
         while ! test -e /run/release-backup-copy; do sleep 0.05; done
       fi
     '') ];
@@ -84,12 +83,13 @@ self: {
         machine.fail("systemctl start sinex-backup.service")
         poisoned = machine.succeed("cat /run/sinex-backup/active").strip()
         machine.succeed(f"test -L {poisoned}/main; test ! -e {poisoned}/main.borg-info.json; test ! -e {poisoned}/complete.json")
+        machine.succeed("rm /run/poison-backup-path")
         machine.succeed(f"sudo -u sinex rm {poisoned}/main; sudo -u sinex mv {poisoned}/main.original {poisoned}/main")
 
     with subtest("admission advances while the immutable cut is being archived"):
         machine.succeed("touch /run/hold-backup-copy")
         machine.succeed("systemctl start --no-block sinex-backup.service")
-        machine.wait_until_succeeds("test -e /run/backup-artifact-ready")
+        machine.wait_until_succeeds("test -e /run/sinex-backup/artifact-ready")
         run = machine.succeed("cat /run/sinex-backup/active").strip()
         manifest = json.loads(machine.succeed(f"cat {run}/manifest.json"))
         assert manifest["producer_custody"] == "complete"
