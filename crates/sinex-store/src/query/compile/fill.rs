@@ -1,6 +1,6 @@
 //! Fill the requested calendar buckets in SQL, before later filters and paging.
 use super::*;
-use sinex_model::query::{Aggregate, Fill, Group};
+use sinex_model::query::{Fill, Group};
 
 impl Compiler<'_> {
     pub(super) fn fill(
@@ -8,24 +8,32 @@ impl Compiler<'_> {
         grouped: SqlFragment,
         group: &Group,
         fill: &Fill,
+        renamed: &BTreeMap<String, String>,
     ) -> Result<SqlFragment> {
-        let func = group
+        let physical = |name: &str| {
+            renamed
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.to_string())
+        };
+        let time_key = group
             .keys
             .iter()
             .find_map(|k| {
-                if let Operand::TimeFn(func, _) = k {
-                    Some(*func)
+                if let Operand::TimeFn(func, _) = k.unnamed() {
+                    Some((k.column(), *func))
                 } else {
                     None
                 }
             })
             .ok_or_else(|| invalid("fill requires a time key"))?;
-        let key = func.name();
+        let (key, func) = time_key;
+        let key = physical(&key);
         let dimensions: Vec<String> = group
             .keys
             .iter()
-            .filter(|k| !matches!(k, Operand::TimeFn(..)))
-            .map(Operand::column)
+            .filter(|k| !matches!(k.unnamed(), Operand::TimeFn(..)))
+            .map(|k| physical(&k.column()))
             .collect();
         let (ticks, bucket) = if func == TimeFn::Hour {
             let local = |at| -> Result<SqlFragment> {
@@ -100,8 +108,8 @@ impl Compiler<'_> {
             .append(ticks)
             .push("), filled_buckets AS (SELECT ")
             .append(bucket)
-            .push(format!(" AS {} FROM filled_ticks GROUP BY 1)", quote(key)));
-        let all_keys: Vec<String> = group.keys.iter().map(Operand::column).collect();
+            .push(format!(" AS {} FROM filled_ticks GROUP BY 1)", quote(&key)));
+        let all_keys: Vec<String> = group.keys.iter().map(|k| physical(&k.column())).collect();
         out.push(", filled_keys AS (SELECT b.*");
         if !dimensions.is_empty() {
             out.push(", d.* FROM filled_buckets b CROSS JOIN (SELECT DISTINCT ")
@@ -123,8 +131,8 @@ impl Compiler<'_> {
         for aggregate in &group.aggregates {
             select.push(SqlFragment::text(format!(
                 "g.{} AS {}",
-                quote(&aggregate.column()),
-                quote(&aggregate.column())
+                quote(&physical(&aggregate.column())),
+                quote(&physical(&aggregate.column()))
             )));
         }
         select.push(SqlFragment::text(
@@ -142,7 +150,7 @@ impl Compiler<'_> {
         let recorded: Vec<String> = all_keys
             .iter()
             .cloned()
-            .chain(group.aggregates.iter().map(Aggregate::column))
+            .chain(group.aggregates.iter().map(|a| physical(&a.column())))
             .map(|name| format!("g.{}", quote(&name)))
             .chain(std::iter::once("'recorded'".into()))
             .collect();
