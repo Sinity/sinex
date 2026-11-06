@@ -392,3 +392,11 @@ async fn source_identity_projection_is_the_existing_binding_key(db: devkit::pg::
     assert!(!answer.rows.is_empty());
     assert!(answer.rows.iter().all(|row| row["id"] == row["binding"]));
 }
+
+#[devkit::test]
+async fn absolute_unknown_values_stay_unknown(db: devkit::pg::TestDatabase) {
+    let mut conn = fixture(&db).await;
+    let answer = ask(&mut conn, "commands | fields abs(unknown) as magnitude").await;
+    assert_eq!(answer.total, 3);
+    assert!(answer.rows.iter().all(|row| row["magnitude"].is_null()));
+}

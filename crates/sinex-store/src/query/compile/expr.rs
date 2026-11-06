@@ -202,6 +202,18 @@ impl Compiler<'_> {
                 Ok((out, Kind::Typed(FieldType::Bool)))
             }
             Operand::Absolute(value) => {
+                if matches!(
+                    &**value,
+                    Operand::Literal {
+                        value: Value::Unknown,
+                        ..
+                    }
+                ) {
+                    return Ok((
+                        SqlFragment::text("NULL::numeric"),
+                        Kind::Typed(FieldType::Number),
+                    ));
+                }
                 let (sql, kind) = self.operand(cols, value)?;
                 let mut out = SqlFragment::text("abs((");
                 out.append(sql).push(")::numeric)");

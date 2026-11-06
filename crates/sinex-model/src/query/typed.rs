@@ -459,6 +459,17 @@ pub(super) fn operand_type(value: &Operand) -> Result<FieldType, QueryError> {
         Operand::TimeFn(TimeFn::Hour | TimeFn::Year, _) | Operand::Length(_) => FieldType::Integer,
         Operand::TimeFn(_, _) => FieldType::Text,
         Operand::Literal { kind, .. } | Operand::Arithmetic { kind, .. } => physical_kind(kind),
+        Operand::Absolute(value)
+            if matches!(
+                &**value,
+                Operand::Literal {
+                    value: Value::Unknown,
+                    ..
+                }
+            ) =>
+        {
+            FieldType::Number
+        }
         Operand::CaseEqual { value, .. } | Operand::Absolute(value) => operand_type(value)?,
         Operand::Glob { .. } => FieldType::Bool,
         Operand::Named { operand, .. } => operand_type(operand)?,
@@ -491,12 +502,13 @@ fn operand(
         Operand::Absolute(inner) => {
             operand(inner, kinds, ctx)?;
             if !matches!(
-                inner.kind(),
-                query_language::catalog::FieldKind::Integer
-                    | query_language::catalog::FieldKind::Number
-                    | query_language::catalog::FieldKind::Money
-                    | query_language::catalog::FieldKind::Duration
-            ) {
+                &**inner,
+                Operand::Literal {
+                    value: Value::Unknown,
+                    ..
+                }
+            ) && !matches!(operand_type(inner)?, FieldType::Integer | FieldType::Number)
+            {
                 return Err(QueryError::new("abs requires a number, money or duration"));
             }
             Ok(())

@@ -241,3 +241,16 @@ fn sources_and_gaps_expose_their_existing_raw_identity_as_text() {
         assert_eq!(columns[0].field_type().unwrap(), FieldType::Text);
     }
 }
+
+#[devkit::test]
+fn absolute_payload_values_narrow_before_physical_numeric_validation() {
+    q(
+        "events where event_type = command.executed | fields abs(payload.exit_code) as magnitude | where magnitude > 0",
+    );
+    q("events | fields abs(unknown) as magnitude | where magnitude > 0");
+    assert!(
+        err("events where event_type = command.executed | fields abs(payload.command)")
+            .message
+            .contains("abs")
+    );
+}
