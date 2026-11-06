@@ -340,6 +340,9 @@ impl<'c> Compiler<'c> {
             output.extend(a.fields.iter().map(FieldRef::Field));
         }
         let mut needed = output.clone();
+        if let Some(filter) = &q.filter {
+            expr_fields(filter, &mut needed);
+        }
         for s in &q.stages {
             match s {
                 Stage::Where(e) => expr_fields(e, &mut needed),
@@ -373,31 +376,14 @@ impl<'c> Compiler<'c> {
         let mut seen = std::collections::HashSet::new();
         needed.retain(|f| seen.insert(column_name(f)));
 
-        // The base relation: filter, rows-phase conditions and joins.
-        let mut conds = self.base_conditions(&base);
-        let mut parent_proofs = Vec::new();
-        if let Some(f) = q.filter.as_ref().and_then(Expr::predicate) {
-            conds.push(self.expr(&base, &f)?);
-            if has_order_witness(&f) {
-                parent_proofs.push(self.predicate_parents(&base, &f)?);
-            }
-        }
-        let mut stages = q.stages.iter().peekable();
-        while let Some(stage) = stages.peek() {
-            match stage {
-                Stage::Where(e) => {
-                    if let Some(e) = e.predicate() {
-                        conds.push(self.expr(&base, &e)?);
-                        if has_order_witness(&e) {
-                            parent_proofs.push(self.predicate_parents(&base, &e)?);
-                        }
-                    }
-                }
-                Stage::AsOf(_) => {}
-                _ => break,
-            }
-            stages.next();
-        }
+        // Source conditions use the same relation and matched-column semantics
+        // as later filters. PostgreSQL can push scalar filters into this base.
+        let conds = self.base_conditions(&base);
+        let source_filter = q
+            .filter
+            .as_ref()
+            .map(|expression| Stage::Where(expression.clone()));
+        let stages = source_filter.iter().chain(q.stages.iter());
         let mut renamed = BTreeMap::new();
         let mut ordinal = None;
         let mut select = Vec::new();
@@ -431,15 +417,6 @@ impl<'c> Compiler<'c> {
             "ARRAY[]::uuid[]".into()
         };
         let mut parents = SqlFragment::text(parents);
-        if !parent_proofs.is_empty() {
-            let mut with_proof = SqlFragment::text("ARRAY(SELECT DISTINCT unnest(");
-            with_proof.append(parents);
-            for proof in parent_proofs {
-                with_proof.push(" || ").append(proof);
-            }
-            with_proof.push("))");
-            parents = with_proof;
-        }
         parents.push(" AS \"_parents\"");
         select.push(parents);
         let ranked = q.ranked && table.is_events();
@@ -506,7 +483,6 @@ impl<'c> Compiler<'c> {
                     let Some(e) = e.predicate() else {
                         continue;
                     };
-                    let cond = self.expr(&cols, &e)?;
                     rel = self.wrap(
                         rel,
                         &r,
@@ -517,8 +493,63 @@ impl<'c> Compiler<'c> {
                         ranked,
                         &group_order,
                     )?;
+                    let witnesses = self.order_witnesses(&cols, &e)?;
+                    let mut condition_cols = cols.clone();
+                    if !witnesses.is_empty() {
+                        let order =
+                            self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
+                        let next_ordinal = self.alias("o");
+                        let mut ordered = SqlFragment::text(format!(
+                            "SELECT {r}.*, row_number() OVER (ORDER BY "
+                        ));
+                        ordered
+                            .append(order)
+                            .push(format!(") AS {} FROM (", quote(&next_ordinal)))
+                            .append(rel)
+                            .push(format!(") {r}"));
+                        rel = ordered;
+                        ordinal = Some(next_ordinal);
+                        sort = None;
+                        condition_cols = Cols::Named {
+                            r: r.clone(),
+                            table,
+                            grouped: is_grouped,
+                            renamed: renamed.clone(),
+                            ordinal: ordinal.clone(),
+                        };
+                    }
+                    for witness in witnesses {
+                        let mut select = vec![SqlFragment::text(format!("{r}.*"))];
+                        for (name, value) in witness.columns {
+                            let physical = self.alias("c");
+                            select.push(SqlFragment::text(format!(
+                                "{value} AS {}",
+                                quote(&physical)
+                            )));
+                            if !columns.contains(&name) {
+                                columns.push(name.clone());
+                            }
+                            renamed.insert(name, physical);
+                        }
+                        let mut witnessed = SqlFragment::text("SELECT ");
+                        witnessed
+                            .append(SqlFragment::join(select, ", "))
+                            .push(" FROM (")
+                            .append(rel)
+                            .push(format!(") {r} "))
+                            .append(witness.lateral);
+                        rel = witnessed;
+                        condition_cols = Cols::Named {
+                            r: r.clone(),
+                            table,
+                            grouped: is_grouped,
+                            renamed: renamed.clone(),
+                            ordinal: ordinal.clone(),
+                        };
+                    }
+                    let cond = self.expr(&condition_cols, &e)?;
                     let mut f = if has_order_witness(&e) {
-                        let proof = self.predicate_parents(&cols, &e)?;
+                        let proof = self.predicate_parents(&condition_cols, &e)?;
                         let mut retained: Vec<_> = renamed
                             .values()
                             .cloned()

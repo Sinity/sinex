@@ -188,3 +188,13 @@ async fn positive_order_predicates_keep_all_witnesses_and_skip_false_or_negated_
     assert_eq!(negated.len(), 1);
     assert_eq!(parent_set(&negated[0]), parent_set(&[ids[0].0]));
 }
+
+#[devkit::test]
+async fn an_order_predicate_publishes_its_nearest_match_to_later_stages(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = fixture(&db).await;
+    let answer = ask(&mut conn, "commands where command = a AND before(commands where command != a | sort when desc) within 5m | where match.command = bbbb | fields match.command, match.distance").await;
+    assert_eq!(column(&answer, "match.command"), [json!("bbbb")]);
+    assert_eq!(answer.rows[0]["match.distance"].as_f64(), Some(60.0));
+}
