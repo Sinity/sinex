@@ -274,7 +274,20 @@ async fn run_inner(
     };
     let mut bound = match query {
         Some(query) => query.clone(),
-        None => execution.as_ref().expect("execution template").bind(&ctx)?,
+        None => execution
+            .as_ref()
+            .expect("execution template")
+            .bind(&ctx)
+            .map_err(|mut error| {
+                // Expanded definition spans belong to stored text, not the invocation.
+                if saved_context
+                    .as_ref()
+                    .is_some_and(|definitions| !definitions.is_empty())
+                {
+                    error.at = None;
+                }
+                error
+            })?,
     };
     ctx.catalog
         .as_ref()
