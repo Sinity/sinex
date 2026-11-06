@@ -763,11 +763,12 @@ fn check_join(
         schema: &PhysicalSchema,
         kinds: &Option<BTreeSet<String>>,
         ctx: &Context,
+        required: bool,
     ) -> Result<(), QueryError> {
         match column {
             Operand::Named {
                 operand: column, ..
-            } => implicit_column(column, schema, kinds, ctx),
+            } => implicit_column(column, schema, kinds, ctx, required),
             Operand::Field(field @ (FieldRef::Payload(_) | FieldRef::TypedPayload { .. })) => {
                 let path = match field {
                     FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } => path.clone(),
@@ -776,7 +777,11 @@ fn check_join(
                 // The shared catalog is the union of declared payload paths.
                 // Implicit matched columns absent in this selected kind remain
                 // dynamic JSON; explicit inner projections were checked above.
-                let ty = field_type(&path, kinds, ctx).unwrap_or(FieldType::Json);
+                let ty = if required {
+                    field_type(&path, kinds, ctx)?
+                } else {
+                    field_type(&path, kinds, ctx).unwrap_or(FieldType::Json)
+                };
                 *field = FieldRef::TypedPayload { path, ty };
                 Ok(())
             }
@@ -808,7 +813,13 @@ fn check_join(
                 }
             }
         }
-        implicit_column(column, &inner_schema, &inner_kinds, ctx)?;
+        implicit_column(
+            column,
+            &inner_schema,
+            &inner_kinds,
+            ctx,
+            join.required.contains(&name),
+        )?;
     }
     if let JoinOn::Key { left, right } = &mut join.on {
         field(left, kinds, ctx)?;
@@ -1029,14 +1040,20 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
             _ => {}
         }
     }
+    fn witnesses(value: &Expr) -> usize {
+        match value {
+            Expr::Order(_) => 1,
+            Expr::And(left, right) => witnesses(left) + witnesses(right),
+            _ => 0,
+        }
+    }
     fn assign(value: &mut Expr, names: &[String]) {
         match value {
             Expr::Order(join) => join.required = names.to_vec(),
-            Expr::And(left, right) | Expr::Or(left, right) => {
+            Expr::And(left, right) => {
                 assign(left, names);
                 assign(right, names);
             }
-            Expr::Not(value) => assign(value, names),
             _ => {}
         }
     }
@@ -1044,27 +1061,34 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
         .iter()
         .filter_map(|name| name.strip_prefix("match.").map(str::to_owned))
         .collect::<BTreeSet<_>>();
-    if let Some(value) = &query.filter {
-        expression(value, &mut names);
-    }
-    for stage in &query.stages {
+    // A later join replaces the match namespace. Work back to its producer
+    // rather than applying another join's payload requirements to every input.
+    for stage in query.stages.iter_mut().rev() {
         match stage {
-            Stage::Where(value) => expression(value, &mut names),
+            Stage::Where(value) => {
+                expression(value, &mut names);
+                if witnesses(value) == 1 {
+                    assign(value, &names.iter().cloned().collect::<Vec<_>>());
+                    names.clear();
+                } else {
+                    assign(value, &[]);
+                }
+            }
             Stage::Join(join) => {
+                join.required = names.iter().cloned().collect();
+                if let JoinOn::Key { right, .. } = &join.on {
+                    join.required.push(right.name());
+                }
+                names.clear();
                 if let JoinOn::Key { left, .. } = &join.on {
                     if let Some(name) = left.name().strip_prefix("match.") {
                         names.insert(name.to_owned());
                     }
                 }
             }
-            Stage::GroupFirst { keys, .. } => {
+            Stage::GroupFirst { keys, .. } | Stage::Fields(keys) => {
                 for key in keys {
                     operand(key, &mut names);
-                }
-            }
-            Stage::Fields(values) => {
-                for value in values {
-                    operand(value, &mut names);
                 }
             }
             Stage::Sort(values) => {
@@ -1087,20 +1111,12 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
             _ => {}
         }
     }
-    let names = names.into_iter().collect::<Vec<_>>();
     if let Some(value) = &mut query.filter {
-        assign(value, &names);
-    }
-    for stage in &mut query.stages {
-        match stage {
-            Stage::Where(value) => assign(value, &names),
-            Stage::Join(join) => {
-                join.required = names.clone();
-                if let JoinOn::Key { right, .. } = &join.on {
-                    join.required.push(right.name());
-                }
-            }
-            _ => {}
+        expression(value, &mut names);
+        if witnesses(value) == 1 {
+            assign(value, &names.into_iter().collect::<Vec<_>>());
+        } else {
+            assign(value, &[]);
         }
     }
 }

@@ -166,3 +166,18 @@ fn first_in_a_group_keeps_original_fields_and_physical_types() {
     };
     assert_eq!(columns[1].field_type().unwrap(), FieldType::Id);
 }
+
+#[devkit::test]
+fn matched_payload_fields_are_checked_against_the_inner_kind() {
+    let error = err(
+        "events | join (events where event_type = operator.mark) on id = id | fields match.payload.exit_code",
+    );
+    assert!(error.message.contains("exit_code"), "{}", error.message);
+}
+
+#[devkit::test]
+fn each_join_checks_only_the_matched_columns_it_produces() {
+    q(
+        "events | join (commands) on id = id | fields id, match.command as first_command | join (events where event_type = operator.mark) on id = id | fields first_command, match.payload.text",
+    );
+}
