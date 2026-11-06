@@ -189,7 +189,7 @@ impl SavedQuery {
         ctx: &Context,
         definitions: &BTreeMap<String, SavedQuery>,
     ) -> Result<(), QueryError> {
-        let input = self.validation_ast(ctx)?;
+        let input = self.validation_ast()?;
         let input = expand_definition(
             input,
             ctx,
@@ -201,12 +201,9 @@ impl SavedQuery {
         input.validate(ctx).map(|_| ())
     }
     pub fn validate_parameters(&self) -> Result<(), QueryError> {
-        // Syntax validation has no time interpretation. A context supplies only
-        // the same bundled field catalog used by public query discovery.
-        let ctx = Context::utc(jiff::Timestamp::UNIX_EPOCH);
-        self.validation_ast(&ctx).map(|_| ())
+        self.validation_ast().map(|_| ())
     }
-    fn validation_ast(&self, ctx: &Context) -> Result<Definition, QueryError> {
+    fn validation_ast(&self) -> Result<Definition, QueryError> {
         if !valid_name(&self.name) {
             return Err(QueryError::new(
                 "saved query name uses letters, numbers, _ or -",
@@ -220,13 +217,12 @@ impl SavedQuery {
                 ));
             }
         }
-        substitute(self, &args, ctx, true)
+        substitute(self, &args, true)
     }
 }
 fn substitute(
     saved: &SavedQuery,
     args: &BTreeMap<String, syntax::Value>,
-    ctx: &Context,
     validating: bool,
 ) -> Result<Definition, QueryError> {
     for name in args.keys() {
@@ -415,7 +411,7 @@ pub(super) fn expand_historical(
                 )));
             }
         }
-        let target = substitute(definition, &args, ctx, validating)?;
+        let target = substitute(definition, &args, validating)?;
         let result = match target {
             Definition::FormatOne { mut body, .. } => {
                 if let Some(condition) = condition {
@@ -480,7 +476,7 @@ fn expand(
                 )));
             }
         }
-        let definition = substitute(definition, &args, ctx, validating)?;
+        let definition = substitute(definition, &args, validating)?;
         let mut expanded = expand_definition(
             definition,
             ctx,

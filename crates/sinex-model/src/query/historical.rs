@@ -46,9 +46,6 @@ pub const GRAMMAR_REVISION: &str = "8c22e127bb1f5c10d8c1740de4c4f0bfe53ffdb7";
 
 fn historical_catalog(ctx: &Context) -> Result<Value, QueryError> {
     let mut catalog = super::syntax::catalog(ctx);
-    catalog.functions.retain(|function| {
-        historical_query_format_v1::catalog::FUNCTIONS.contains(&function.name.as_str())
-    });
     for unit in &mut catalog.units {
         let alias = super::Alias::from_name(&unit.name);
         let table = super::Table::from_name(&unit.name).or(alias.map(|_| super::Table::Events));
