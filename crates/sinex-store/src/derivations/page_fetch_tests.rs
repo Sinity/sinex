@@ -178,20 +178,26 @@ fn payload_lookup_is_bounded(plan: &Value) {
         let hashed = (!independent && hashed) || kind == "Hash Join" || kind == "Merge Join";
         let alias = node["Alias"].as_str().unwrap_or("");
         if alias.starts_with("payload_event") {
-            *payloads += 1;
             assert!(
                 excluding && !hashed,
                 "payload scan must be an excluding selected-ID fetch: {node}"
             );
-            let condition = ["Filter", "Index Cond", "Recheck Cond", "Vectorized Filter"]
-                .iter()
-                .map(|key| node[*key].to_string())
-                .collect::<Vec<_>>()
-                .join(" ");
-            assert!(
-                condition.contains("ANY"),
-                "payload scan lost its selected IDs: {node}"
-            );
+            // Append nodes route rows; their physical children own the ID
+            // predicate. Count and inspect those scans rather than the router.
+            let append = matches!(kind, "Append" | "Merge Append")
+                || node["Custom Plan Provider"].as_str() == Some("ChunkAppend");
+            if !append {
+                *payloads += 1;
+                let condition = ["Filter", "Index Cond", "Recheck Cond", "Vectorized Filter"]
+                    .iter()
+                    .map(|key| node[*key].to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                assert!(
+                    condition.contains("ANY"),
+                    "payload scan lost its selected IDs: {node}"
+                );
+            }
         }
         if let Some(children) = node["Plans"].as_array() {
             for child in children {
