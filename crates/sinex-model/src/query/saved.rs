@@ -27,6 +27,7 @@ pub enum ParameterType {
 pub struct SavedQuery {
     pub name: String,
     pub query: String,
+    pub template: native::Template,
     pub parameters: Vec<Parameter>,
 }
 
@@ -100,6 +101,11 @@ fn sample(p: &Parameter) -> syntax::Value {
     }
 }
 impl SavedQuery {
+    pub fn from_text(name: String, query: String, parameters: Vec<Parameter>, ctx: &Context) -> Result<Self, QueryError> {
+        let template = native::parse(&query, ctx)?;
+        Ok(Self { name, query, template, parameters })
+    }
+
     pub fn validate(&self, ctx: &Context) -> Result<(), QueryError> {
         self.validate_with(ctx, &BTreeMap::new())
     }
@@ -117,7 +123,7 @@ impl SavedQuery {
             &mut false,
             true,
         )?;
-        super::parse::validate_syntax(input, ctx).map(|_| ())
+        input.validate(ctx).map(|_| ())
     }
     pub fn validate_parameters(&self) -> Result<(), QueryError> {
         // Syntax validation has no time interpretation. A context supplies only
@@ -125,7 +131,7 @@ impl SavedQuery {
         let ctx = Context::utc(jiff::Timestamp::UNIX_EPOCH);
         self.validation_ast(&ctx).map(|_| ())
     }
-    fn validation_ast(&self, ctx: &Context) -> Result<syntax::Query, QueryError> {
+    fn validation_ast(&self, ctx: &Context) -> Result<native::Template, QueryError> {
         if !valid_name(&self.name) {
             return Err(QueryError::new(
                 "saved query name uses letters, numbers, _ or -",
@@ -145,9 +151,9 @@ impl SavedQuery {
 fn substitute(
     saved: &SavedQuery,
     args: &BTreeMap<String, syntax::Value>,
-    ctx: &Context,
+    _ctx: &Context,
     validating: bool,
-) -> Result<syntax::Query, QueryError> {
+) -> Result<native::Template, QueryError> {
     for name in args.keys() {
         if !saved.parameters.iter().any(|p| p.name == *name) {
             return Err(QueryError::new(format!(
@@ -168,7 +174,7 @@ fn substitute(
         }
         arguments.insert(p.name.clone(), value);
     }
-    let parsed = super::syntax::parse(&saved.query, ctx)?;
+    let parsed = saved.template.clone();
     let mut wire = serde_json::to_value(parsed).map_err(|e| QueryError::new(e.to_string()))?;
     let mut used = BTreeSet::new();
     replace_parameters(&mut wire, &arguments, &mut used, validating, false)?;
@@ -232,12 +238,12 @@ pub fn reference_name(text: &str) -> Option<String> {
         _ => None,
     }
 }
-pub fn bind_saved(
+pub fn template_saved(
     text: &str,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
-) -> Result<Query, QueryError> {
-    let input = super::syntax::parse(text, ctx)?;
+) -> Result<native::Template, QueryError> {
+    let input = native::parse(text, ctx)?;
     let mut expanded_definition = false;
     let result = expand(
         input,
@@ -246,8 +252,7 @@ pub fn bind_saved(
         &mut BTreeSet::new(),
         &mut expanded_definition,
         false,
-    )
-    .and_then(|expanded| super::parse::bind_syntax(expanded, ctx));
+    );
     result.map_err(|mut error| {
         // Definition spans belong to the stored question, not its invocation.
         if expanded_definition {
@@ -256,20 +261,28 @@ pub fn bind_saved(
         error
     })
 }
+pub fn bind_saved(
+    text: &str,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+) -> Result<Query, QueryError> {
+    template_saved(text, ctx, saved)?.bind(ctx)
+}
+
 fn expand(
-    mut input: syntax::Query,
+    mut input: native::Template,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
     seen: &mut BTreeSet<String>,
     expanded_definition: &mut bool,
     validating: bool,
-) -> Result<syntax::Query, QueryError> {
+) -> Result<native::Template, QueryError> {
     if let syntax::Source::Saved {
         name,
         arguments,
         condition,
         ..
-    } = input.source.clone()
+    } = input.relation.source.clone()
     {
         *expanded_definition = true;
         if !seen.insert(name.clone()) {
@@ -289,29 +302,28 @@ fn expand(
         }
         let mut expanded = substitute(definition, &args, ctx, validating)?;
         if let Some(condition) = condition {
-            expanded.stages.push(syntax::Stage {
+            expanded.relation.transforms.push(syntax::Transform {
                 span: condition.span,
-                kind: syntax::StageKind::Where { condition },
+                kind: syntax::TransformKind::Where { condition },
             });
         }
-        expanded.stages.append(&mut input.stages);
-        expanded.attach.append(&mut input.attach);
+        expanded.relation.transforms.append(&mut input.relation.transforms);
+        expanded.relation.attach.append(&mut input.relation.attach);
         let out = expand(expanded, ctx, saved, seen, expanded_definition, validating);
         seen.remove(&name);
         return out;
     }
-    for stage in &mut input.stages {
-        if let syntax::StageKind::Temporal { query, .. }
-        | syntax::StageKind::Combine { query, .. } = &mut stage.kind
+    for transform in &mut input.relation.transforms {
+        if let syntax::TransformKind::Combine { query, .. }
+        | syntax::TransformKind::Join { query, .. }
+        | syntax::TransformKind::Diff { query, .. } = &mut transform.kind
         {
-            **query = expand(
-                (**query).clone(),
-                ctx,
-                saved,
-                seen,
-                expanded_definition,
-                validating,
-            )?;
+            let inner = expand(native::Template::query((**query).clone()), ctx, saved,
+                seen, expanded_definition, validating)?;
+            if inner.operation.is_some() {
+                return Err(QueryError::new("native commands cannot be nested as query relations"));
+            }
+            **query = inner.relation;
         }
     }
     Ok(input)

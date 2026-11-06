@@ -8,6 +8,8 @@ use serde_json::Value;
 #[serde(deny_unknown_fields)]
 pub struct QuerySelection {
     pub query: String,
+    /// Executable definition; authored query text remains unchanged evidence.
+    pub template: crate::query::native::Template,
     pub now: Timestamp,
     /// Only an explicitly historical question fixes the producer position.
     pub read_as: Option<i64>,

@@ -10,6 +10,7 @@ pub use catalog::QueryCatalog;
 mod parse;
 mod read_as;
 pub mod saved;
+pub mod native;
 pub mod syntax;
 pub mod tables;
 pub mod text;
