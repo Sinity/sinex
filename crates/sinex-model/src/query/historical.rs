@@ -477,8 +477,13 @@ fn convert_relation(
                     old::TemporalRelation::During => (format!("during{suffix}"), false),
                     old::TemporalRelation::Containing => (format!("containing{suffix}"), false),
                 };
+                let offset_name = format!("offset{suffix}");
+                // Frozen temporal outputs shadow equally named input fields:
+                // in particular, numeric seconds `offset` replaces the event's
+                // integer byte offset. Emit one current projection per name.
                 let mut columns = outer_fields
                     .into_iter()
+                    .filter(|field| field != &name && (!distance || field != &offset_name))
                     .map(ast::Column::field)
                     .collect::<Vec<_>>();
                 columns.push(ast::Column {
@@ -487,7 +492,7 @@ fn convert_relation(
                 });
                 generated.push(name);
                 if distance {
-                    let name = format!("offset{suffix}");
+                    let name = offset_name;
                     // The old offset is numeric seconds with the opposite
                     // sign to match.distance. Divide first so the expression
                     // also has a spelling in the current unparenthesized grammar.
@@ -536,7 +541,11 @@ fn convert_relation(
         None
     } else if !grouped && inherited_output.is_some() {
         let mut fields = inherited_output.unwrap();
-        fields.extend(generated);
+        for field in generated {
+            if !fields.contains(&field) {
+                fields.push(field);
+            }
+        }
         Some(fields)
     } else if !grouped {
         let unit = source_unit.or_else(|| match &relation.source {
@@ -555,7 +564,11 @@ fn convert_relation(
             if let Some(alias) = alias {
                 fields.extend(alias.fields.iter().map(|field| field.name.to_owned()));
             }
-            fields.extend(generated);
+            for field in generated {
+                if !fields.contains(&field) {
+                    fields.push(field);
+                }
+            }
             Some(fields)
         })
     } else {

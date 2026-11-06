@@ -184,3 +184,38 @@ fn historical_witness_choice_keeps_old_clock_ties_and_non_event_main_times() {
         super::super::FieldType::Number
     );
 }
+
+#[devkit::test]
+fn historical_temporal_offsets_shadow_byte_offsets_once_across_repeated_stages() {
+    let ctx = context();
+    let template = decode_format_one(
+        "events near (sources) within 5m near (sources) within 10m fields offset, offset_2",
+        &ctx,
+    )
+    .unwrap();
+    for transform in &template.relation.transforms {
+        if let ast::TransformKind::Fields { columns } = &transform.kind {
+            let names = columns
+                .iter()
+                .map(ast::Column::column)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(names.len(), columns.len());
+        }
+    }
+    let bound = template.bind(&ctx).unwrap();
+    let super::super::Stage::Fields(columns) = bound.stages.last().unwrap() else {
+        panic!("historical offset display")
+    };
+    assert_eq!(
+        columns
+            .iter()
+            .map(|column| column.column())
+            .collect::<Vec<_>>(),
+        ["offset", "offset_2"]
+    );
+    assert!(
+        columns
+            .iter()
+            .all(|column| column.field_type().unwrap() == super::super::FieldType::Number)
+    );
+}
