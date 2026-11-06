@@ -260,7 +260,11 @@ async fn project_pack(
             "historical context pack belongs to a different producer family".into(),
         ));
     }
-    let parents:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT p.parent FROM core.event_parents_of($1) p JOIN core.visible_events e ON e.id=p.parent WHERE e.event_type='analysis.request' ORDER BY p.parent").bind(event.0).fetch_all(&mut *conn).await?;
+    let parents: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT p.parent FROM core.event_parents_of($1) p JOIN core.visible_events e ON e.id=p.parent WHERE e.event_type=$2 ORDER BY p.parent")
+        .bind(event.0)
+        .bind(AnalysisRequest::EVENT_TYPE)
+        .fetch_all(&mut *conn)
+        .await?;
     let selection = original.pointer("/analysis/selected").ok_or_else(|| {
         Error::Invalid("historical context pack has no retained selection".into())
     })?;
