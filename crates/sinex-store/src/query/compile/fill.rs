@@ -136,6 +136,9 @@ impl Compiler<'_> {
             )));
         }
         select.push(SqlFragment::text(
+            "coalesce(g.\"_parents\", ARRAY[]::uuid[]) AS \"_parents\"",
+        ));
+        select.push(SqlFragment::text(
             "CASE WHEN g._recorded IS TRUE THEN 'recorded' ELSE 'no_data' END AS coverage",
         ));
         let same_keys = all_keys
@@ -152,7 +155,7 @@ impl Compiler<'_> {
             .cloned()
             .chain(group.aggregates.iter().map(|a| physical(&a.column())))
             .map(|name| format!("g.{}", quote(&name)))
-            .chain(std::iter::once("'recorded'".into()))
+            .chain(["g.\"_parents\"".into(), "'recorded'".into()])
             .collect();
         out.push(" UNION ALL SELECT ")
             .push(recorded.join(", "))
