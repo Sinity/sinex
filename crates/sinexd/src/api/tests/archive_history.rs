@@ -19,7 +19,7 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
     let (_, body) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"events | sort when"}),
+        json!({"method":"query","query":"events | sort by when"}),
     )
     .await;
     let reference = body["result"]["rows"][0]["id"].as_str().unwrap().to_owned();

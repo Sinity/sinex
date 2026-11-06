@@ -89,7 +89,7 @@ fn a_command_word_is_never_a_search() {
 
 #[devkit::test]
 fn a_misspelled_table_is_refused_with_a_suggestion() {
-    let e = err("comands since:7d");
+    let e = err("comands where since:7d");
     assert!(e.message.contains("commands"), "{e}");
 }
 
@@ -179,7 +179,7 @@ fn every_written_archive_reason_can_be_asked_for() {
 #[devkit::test]
 fn times_resolve_once_against_the_context() {
     // since 7d is [now - 7d, ...).
-    let query = q("events since:7d");
+    let query = q("events where since:7d");
     let Some(Expr::Compare {
         rhs: Value::Time(t),
         op: Op::Ge,
@@ -324,10 +324,15 @@ fn joins_take_an_inner_relation_and_expose_its_matched_schema() {
     assert!(
         matches!(query.stages.first(), Some(Stage::Join(join)) if matches!(join.on, JoinOn::Order { relation: JoinKind::During, .. }))
     );
-    // An omitted distance is unbounded, rather than an implicit nearest match.
-    let query = q("events | join near (commands)");
+    // Span membership can be unbounded; proximity requires an explicit distance.
+    let query = q("events | join during (commands)");
     assert!(
         matches!(query.stages.first(), Some(Stage::Join(join)) if matches!(join.on, JoinOn::Order { within_secs: None, .. }))
+    );
+    assert!(
+        err("events | join near (commands)")
+            .message
+            .contains("distance")
     );
     let query = q(
         "events | join near (commands | fields id, exit_code) within 5m | fields when, match.id, match.exit_code | sort by match.exit_code",
@@ -343,7 +348,7 @@ fn joins_take_an_inner_relation_and_expose_its_matched_schema() {
         matches!(columns[1].unnamed(), Operand::Field(FieldRef::TypedGroup(column)) if column.field_type() == Some(FieldType::Id))
     );
     assert!(
-        err("events | join near (commands | fields command) | fields match.id")
+        err("events | join near (commands | fields command) within 5m | fields match.id")
             .message
             .contains("match.id")
     );
@@ -370,7 +375,7 @@ fn grouping_makes_a_relation_of_groups() {
     assert!(
         err("commands | group by cwd | fill")
             .message
-            .contains("time-bucket")
+            .contains("time bucket")
     );
     let query = q("commands | count");
     assert!(matches!(&query.stages[0], Stage::Group(g) if g.keys.is_empty()));
@@ -559,7 +564,7 @@ fn record_citations_preserve_wide_unsigned_output_ordinals() {
 
 #[devkit::test]
 fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
-    let until = q("events until:2026-09-14");
+    let until = q("events where until:2026-09-14");
     let before = q("events where when < 2026-09-14");
     let get = |q: Query| match q.filter.or_else(|| {
         q.stages.into_iter().find_map(|s| {
@@ -580,7 +585,7 @@ fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
     assert_eq!(get(until), ts("2026-09-15T02:00:00Z"));
     assert_eq!(get(before), ts("2026-09-14T02:00:00Z"));
     assert_eq!(
-        get(q("events until:2026-09-14T10:00:00Z")),
+        get(q("events where until:2026-09-14T10:00:00Z")),
         ts("2026-09-14T10:00:00Z")
     );
 }

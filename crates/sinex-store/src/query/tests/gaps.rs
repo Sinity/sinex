@@ -62,7 +62,7 @@ async fn typed_payload_aggregates_preserve_unknown_and_sort_as_numbers(
         .await
         .unwrap();
     world(&mut conn).await;
-    let a = ask(&mut conn,"events where event_type = command.executed | agg sum(payload.exit_code) count(payload.exit_code)").await;
+    let a = ask(&mut conn,"events where event_type = command.executed | agg sum(payload.exit_code), count(payload.exit_code)").await;
     assert_eq!(a.rows[0]["sum_payload_exit_code"], 2);
     assert_eq!(a.rows[0]["count_payload_exit_code"], 4);
     let a = ask(&mut conn,"events where event_type = command.executed | fields payload.exit_code | sort by payload.exit_code desc").await;

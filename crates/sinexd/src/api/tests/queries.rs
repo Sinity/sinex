@@ -246,7 +246,7 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
     assert_eq!(page["outcome"], "ok", "{page}");
     let cursor = page["result"]["page"]["cursor"].clone();
     assert!(cursor.is_string());
-    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | sort when desc | fields id","parameter":["directory:text"]})).await;
+    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | sort by when desc | fields id","parameter":["directory:text"]})).await;
     assert_eq!(changed["outcome"], "ok", "{changed}");
     let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
     assert_eq!(continued["outcome"], "refused", "{continued}");
@@ -291,7 +291,11 @@ async fn recall_digest_obeys_row_filters_and_limits(db: devkit::pg::TestDatabase
     admit_events(&w, vec![first, other, last]).await;
     for (suffix, count, command) in [
         ("", 2, "synthetic last"),
-        (" | sort when | limit 1 | fields id", 1, "synthetic first"),
+        (
+            " | sort by when | limit 1 | fields id",
+            1,
+            "synthetic first",
+        ),
         (" | count", 2, "synthetic last"),
     ] {
         let query = format!(

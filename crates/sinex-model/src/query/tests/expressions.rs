@@ -157,7 +157,7 @@ fn glob_has_boolean_type_and_accepts_row_dependent_patterns() {
 
 #[devkit::test]
 fn first_in_a_group_keeps_original_fields_and_physical_types() {
-    let query = q("commands | sort command desc | group by cwd | first 1 | fields command, id");
+    let query = q("commands | sort by command desc | group by cwd | first 1 | fields command, id");
     assert!(
         matches!(&query.stages[1], Stage::GroupFirst { keys, count:1 } if keys[0].column() == "cwd")
     );

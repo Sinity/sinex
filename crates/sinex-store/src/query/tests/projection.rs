@@ -18,7 +18,7 @@ async fn projected_private_name_keeps_public_value_and_cursor_identity(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;
-    let query = "commands | fields len(command) as _id, command | sort _id";
+    let query = "commands | fields len(command) as _id, command | sort by _id";
     let mut cursor = None;
     let mut rows = Vec::new();
     loop {
@@ -55,7 +55,7 @@ async fn projected_expressions_and_aliases_feed_filters_sorts_and_groups(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;
-    let answer = ask(&mut conn, "commands | fields len(command) + 1 as score, cwd as place | where score >= 3 | sort score desc | fields place, score | group by place | agg sum(score) as total | sort place").await;
+    let answer = ask(&mut conn, "commands | fields len(command) + 1 as score, cwd as place | where score >= 3 | sort by score desc | fields place, score | group by place | agg sum(score) as total | sort by place").await;
     assert_eq!(
         answer.rows,
         [
@@ -70,7 +70,7 @@ async fn projection_preserves_order_when_replacing_the_sort_column(db: devkit::p
     let mut conn = fixture(&db).await;
     let answer = ask(
         &mut conn,
-        "commands | sort command | fields len(command) as command",
+        "commands | sort by command | fields len(command) as command",
     )
     .await;
     assert_eq!(column(&answer, "command"), [json!(1), json!(4), json!(2)]);
@@ -81,12 +81,12 @@ async fn sorting_after_a_limit_sorts_the_selected_rows(db: devkit::pg::TestDatab
     let mut conn = fixture(&db).await;
     let limited_first = ask(
         &mut conn,
-        "commands | limit 2 | sort command desc | fields command",
+        "commands | limit 2 | sort by command desc | fields command",
     )
     .await;
     let sorted_first = ask(
         &mut conn,
-        "commands | sort command desc | limit 2 | fields command",
+        "commands | sort by command desc | limit 2 | fields command",
     )
     .await;
     assert_eq!(
@@ -150,7 +150,7 @@ async fn pair_relations_keep_all_matches_child_order_and_exact_event_contributor
         &[("a", "/one"), ("bbbb", "/two"), ("cc", "/one")],
     )
     .await;
-    let text = "commands where command = a | fields command | join near (commands where cwd = /one | sort when desc | fields command) within 5m | fields command, match.command";
+    let text = "commands where command = a | fields command | join near (commands where cwd = /one | sort by when desc | fields command) within 5m | fields command, match.command";
     let answer = ask(&mut conn, text).await;
     assert_eq!(column(&answer, "match.command"), [json!("cc"), json!("a")]);
     let parents = private_parents(&mut conn, text).await;
@@ -200,7 +200,7 @@ async fn an_order_predicate_publishes_its_nearest_match_to_later_stages(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;
-    let answer = ask(&mut conn, "commands where command = a AND before(commands where command != a | sort when desc) within 5m | where match.command = bbbb | fields match.command, match.distance").await;
+    let answer = ask(&mut conn, "commands where command = a AND before(commands where command != a | sort by when desc) within 5m | where match.command = bbbb | fields match.command, match.distance").await;
     assert_eq!(column(&answer, "match.command"), [json!("bbbb")]);
     assert_eq!(answer.rows[0]["match.distance"].as_f64(), Some(60.0));
 }
@@ -219,7 +219,7 @@ async fn glob_preserves_case_and_literal_sql_metacharacters_with_dynamic_pattern
     .await;
     let answer = ask(
         &mut conn,
-        "commands where glob(command, cwd) = true | fields command | sort command",
+        "commands where glob(command, cwd) = true | fields command | sort by command",
     )
     .await;
     assert_eq!(
@@ -228,7 +228,7 @@ async fn glob_preserves_case_and_literal_sql_metacharacters_with_dynamic_pattern
     );
     let literal = ask(
         &mut conn,
-        r#"commands where glob(command, "*%_\\中") = true | fields command | sort command"#,
+        r#"commands where glob(command, "*%_\\中") = true | fields command | sort by command"#,
     )
     .await;
     assert_eq!(
@@ -263,7 +263,7 @@ async fn first_in_each_group_keeps_original_rows_order_and_page_identity(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;
-    let text = "commands | sort command desc | group by cwd | first 1 | fields id, command, cwd";
+    let text = "commands | sort by command desc | group by cwd | first 1 | fields id, command, cwd";
     let first = ask_page(
         &mut conn,
         text,
@@ -289,7 +289,7 @@ async fn first_in_each_group_keeps_original_rows_order_and_page_identity(
     assert!(second.page.cursor.is_none());
     let after_limit = ask(
         &mut conn,
-        "commands | limit 2 | sort command desc | group by cwd | first 1 | fields command",
+        "commands | limit 2 | sort by command desc | group by cwd | first 1 | fields command",
     )
     .await;
     assert_eq!(column(&after_limit, "command"), [json!("bbbb"), json!("a")]);
@@ -333,7 +333,7 @@ async fn absolute_numeric_values_keep_unknown_rows_and_integer_magnitude(
     let mut conn = fixture(&db).await;
     let answer = ask(
         &mut conn,
-        "commands | fields command, abs(exit_code - 1) as magnitude | sort command",
+        "commands | fields command, abs(exit_code - 1) as magnitude | sort by command",
     )
     .await;
     assert_eq!(
@@ -386,7 +386,7 @@ async fn source_identity_projection_is_the_existing_binding_key(db: devkit::pg::
     let mut conn = fixture(&db).await;
     let answer = ask(
         &mut conn,
-        "sources where events > 0 | fields id, binding | sort binding",
+        "sources where events > 0 | fields id, binding | sort by binding",
     )
     .await;
     assert!(!answer.rows.is_empty());

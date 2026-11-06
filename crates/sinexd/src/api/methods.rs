@@ -793,7 +793,7 @@ impl Api {
         let sources = match self
             .query(
                 caller,
-                "sources | sort binding",
+                "sources | sort by binding",
                 Page {
                     size: Some(1000),
                     cursor: None,

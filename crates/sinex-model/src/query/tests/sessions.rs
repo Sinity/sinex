@@ -8,7 +8,7 @@ fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
         native_q("recall last").source,
         Source::RecallLast { filter: None }
     ));
-    let query = q(r#"recall last where cwds ^ "/src/tide (notes)""#);
+    let query = native_q(r#"recall last where cwds ^ "/src/tide (notes)""#);
     assert!(matches!(
         query.source,
         Source::RecallLast { filter: Some(_) }

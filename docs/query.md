@@ -9,7 +9,7 @@ expressions, sealed cursors and the shared query laws belong to the common
 crate; how the CLI, MCP and HTTP carry a query is in [interfaces](interfaces.md); what a
 record and a citation identify is in [events](events.md#identity).
 
-Relation transforms use explicit pipes: `commands since:7d | group by cwd | agg sum(duration) as elapsed | sort by elapsed desc`. `F:VALUE` uses the field's declared natural match, while `F = VALUE` is exact comparison. Use `F:known` and `F:unknown` for presence tests, and `(A | B)` for a set of values. `glob(text, pattern)` performs case-sensitive whole-text matching with `*` as its only wildcard; `%`, `_` and backslash are literal. For example, `events where glob(source, "terminal.*") = true` selects that source family, while `source = "terminal.*"` names that exact source.
+Relation transforms use explicit pipes: `commands where since:7d | group by cwd | agg sum(duration) as elapsed | sort by elapsed desc`. `F:VALUE` uses the field's declared natural match, while `F = VALUE` is exact comparison. Use `F:known` and `F:unknown` for presence tests, and `(A | B)` for a set of values. `glob(text, pattern)` performs case-sensitive whole-text matching with `*` as its only wildcard; `%`, `_` and backslash are literal. For example, `events where glob(source, "terminal.*") = true` selects that source family, while `source = "terminal.*"` names that exact source.
 
 `| group by F | first N` selects the first N original rows in each group, preserving the incoming order and each row's identity and provenance. It keeps the original row fields for later filters and projections.
 
@@ -74,7 +74,7 @@ years (29 February matches only 29 February and answers "no such day" in other y
 
 Archived visibility is a relation and read-context choice: `events` excludes
 readings archived at the selected position; `archive` exposes archive history.
-`as of POSITION` selects historical visibility at that exact commit. It does
+`| as of POSITION` selects historical visibility at that exact commit. It does
 not make every archived reading part of ordinary `events`, and current privacy
 and tombstone policy still applies. There is no separate `archived` table name
 or global include-archived switch.
@@ -214,7 +214,7 @@ outer read snapshot. `hour()` continues to name the local clock hour.
 - **An answer resolves once:** `now`, the zone, the day start, the query text and its
   bindings, schema and definition versions, grants and the commit position. Every page
   shares them.
-- `as of POSITION` reads visibility at that commit, including archive, restore, replay
+- `| as of POSITION` reads visibility at that commit, including archive, restore, replay
   and tombstone ([as-of reads](lifecycle.md#as-of-reads)).
 - Continuations are sealed to the question and the caller-visible context. A changed
   definition, grant or incompatible change refuses with `stale_cursor` and says how to
@@ -257,7 +257,7 @@ THIS. THIS IS WHAT I MEANT"
 (cc-queued:3b0038ec-234c-44b8-bb88-fe222b44fe0f@2026-07-09T20:06Z).
 
 ```sh
-sinexctl 'commands where cwd ^ $directory since:$period | count' \
+sinexctl 'commands where cwd ^ $directory AND since:$period | count' \
   save in-directory --parameter directory:text --parameter period:duration
 sinexctl 'query:in-directory(directory="/src/tide", period=7d)'
 sinexctl 'queries'

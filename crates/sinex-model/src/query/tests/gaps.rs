@@ -106,9 +106,9 @@ fn fill_resolves_bounds_and_keeps_later_group_filters() {
             .contains("lower time bound")
     );
     assert!(
-        err("commands since:7d | group by cwd | count | fill")
+        err("commands where since:7d | group by cwd | count | fill")
             .message
-            .contains("time-bucket")
+            .contains("time bucket")
     );
 }
 
@@ -180,7 +180,7 @@ fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
 #[devkit::test]
 fn unrepresentable_time_ranges_are_errors_without_panicking() {
     for text in [
-        "events since:99999999999999999999999999999d",
+        "events where since:99999999999999999999999999999d",
         "recall 9999-12-30T12:00:00Z ±999999999d",
         "events where when in last -9223372036854775808 days",
     ] {
@@ -203,15 +203,20 @@ fn each_boolean_branch_uses_its_selected_event_schema() {
 #[devkit::test]
 fn event_type_globs_select_the_schemas_used_for_payload_fields() {
     assert!(
+        err("events where event_type = metric.* AND payload.value > 0")
+            .message
+            .contains("payload.value")
+    );
+    assert!(
         bind(
-            "events where event_type = metric.* AND payload.value > 0",
+            r#"events where glob(event_type, "metric.*") = true AND payload.value > 0"#,
             &ctx()
         )
         .is_ok()
     );
     assert!(
         bind(
-            "events where event_type = (metric.* |health.figure) | agg sum(payload.numerator)",
+            r#"events where (glob(event_type, "metric.*") = true OR event_type = health.figure) | agg sum(payload.numerator)"#,
             &ctx()
         )
         .is_ok()

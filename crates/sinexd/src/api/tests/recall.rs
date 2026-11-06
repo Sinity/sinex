@@ -96,7 +96,7 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     let (_, listed) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"shell-sessions | sort start"}),
+        json!({"method":"query","query":"shell-sessions | sort by start"}),
     )
     .await;
     assert_eq!(listed["outcome"], "ok", "{listed}");

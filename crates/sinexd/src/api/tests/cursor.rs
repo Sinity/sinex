@@ -16,7 +16,7 @@ async fn first(w: &World, token: &str, query: &str) -> Value {
 async fn a_public_cursor_cannot_skip_rows_in_a_different_question(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["alpha", "beta", "gamma"], 0).await;
-    let page = first(&w, READ, "events | sort when").await;
+    let page = first(&w, READ, "events | sort by when").await;
     let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"events where beta", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
         next["outcome"], "refused",
@@ -38,14 +38,14 @@ async fn a_public_cursor_does_not_transfer_the_operators_guarded_visibility(
     .await;
     assert_eq!(set["outcome"], "ok");
     admit(&w, &["guarded alpha", "guarded beta"], 0).await;
-    let page = first(&w, OPERATOR, "events | sort when").await;
-    let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"events | sort when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
+    let page = first(&w, OPERATOR, "events | sort by when").await;
+    let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"events | sort by when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(next["outcome"], "refused", "{next}");
     assert!(!next.to_string().contains("guarded beta"));
     let (_, fresh) = call(
         &w,
         Some(READ),
-        json!({"method":"query", "query":"events | sort when"}),
+        json!({"method":"query", "query":"events | sort by when"}),
     )
     .await;
     assert_eq!(fresh["outcome"], "ok");
@@ -102,7 +102,7 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
         .collect();
     admit_events(&w, parents).await;
     admit_events(&w, derived).await;
-    let page = first(&w, READ, "commands | sort when").await;
+    let page = first(&w, READ, "commands | sort by when").await;
     for method in ["archive", "tombstone"] {
         let (_, removed) = call(
             &w,
@@ -112,7 +112,7 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
         .await;
         assert_eq!(removed["outcome"], "ok", "{removed}");
     }
-    let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"commands | sort when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
+    let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"commands | sort by when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
         next["outcome"], "refused",
         "a permanent removal silently changed page positions: {next}"
@@ -140,7 +140,7 @@ async fn public_run_metadata_changes_invalidate_a_question_without_new_event_com
         .await
         .unwrap();
     }
-    let query = "runs | sort started | fields id,ended";
+    let query = "runs | sort by started | fields id,ended";
     let page = first(&w, READ, query).await;
     let id = uuid::Uuid::parse_str(page["result"]["rows"][0]["id"].as_str().unwrap()).unwrap();
     sinex_store::runs::end(&mut w.reads.acquire().await.unwrap(), RunId(id))
@@ -155,7 +155,7 @@ async fn public_run_metadata_changes_invalidate_a_question_without_new_event_com
 async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["one", "two"], 0).await;
-    let page = first(&w, READ, "events | sort when").await;
+    let page = first(&w, READ, "events | sort by when").await;
     let raw = page["result"]["page"]["cursor"].as_str().unwrap();
     let mut tokens = vec!["1.1".to_owned(), "broken".to_owned()];
     for index in [0, raw.len() / 2, raw.len() - 1] {
@@ -167,7 +167,7 @@ async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::Test
         let (_, answer) = call(
             &w,
             Some(READ),
-            json!({"method":"query", "query":"events | sort when", "cursor":token}),
+            json!({"method":"query", "query":"events | sort by when", "cursor":token}),
         )
         .await;
         assert_eq!(answer["outcome"], "refused", "{answer}");
