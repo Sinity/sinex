@@ -784,13 +784,23 @@ impl<'c> Compiler<'c> {
                         )));
                         ordinal = Some(pair_ordinal);
                     }
-                    for (name, value) in joined.columns {
+                    for (visible, (name, value)) in joined
+                        .columns
+                        .into_iter()
+                        .map(|column| (true, column))
+                        .chain(
+                            joined
+                                .hidden_columns
+                                .into_iter()
+                                .map(|column| (false, column)),
+                        )
+                    {
                         let physical = self.alias("c");
                         select.push(SqlFragment::text(format!(
                             "{value} AS {}",
                             quote(&physical)
                         )));
-                        if !columns.contains(&name) {
+                        if visible && !columns.contains(&name) {
                             columns.push(name.clone());
                         }
                         renamed.insert(name, physical);

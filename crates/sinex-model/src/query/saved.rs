@@ -101,9 +101,19 @@ fn sample(p: &Parameter) -> syntax::Value {
     }
 }
 impl SavedQuery {
-    pub fn from_text(name: String, query: String, parameters: Vec<Parameter>, ctx: &Context) -> Result<Self, QueryError> {
+    pub fn from_text(
+        name: String,
+        query: String,
+        parameters: Vec<Parameter>,
+        ctx: &Context,
+    ) -> Result<Self, QueryError> {
         let template = native::parse(&query, ctx)?;
-        Ok(Self { name, query, template, parameters })
+        Ok(Self {
+            name,
+            query,
+            template,
+            parameters,
+        })
     }
 
     pub fn validate(&self, ctx: &Context) -> Result<(), QueryError> {
@@ -307,7 +317,10 @@ fn expand(
                 kind: syntax::TransformKind::Where { condition },
             });
         }
-        expanded.relation.transforms.append(&mut input.relation.transforms);
+        expanded
+            .relation
+            .transforms
+            .append(&mut input.relation.transforms);
         expanded.relation.attach.append(&mut input.relation.attach);
         let out = expand(expanded, ctx, saved, seen, expanded_definition, validating);
         seen.remove(&name);
@@ -318,10 +331,18 @@ fn expand(
         | syntax::TransformKind::Join { query, .. }
         | syntax::TransformKind::Diff { query, .. } = &mut transform.kind
         {
-            let inner = expand(native::Template::query((**query).clone()), ctx, saved,
-                seen, expanded_definition, validating)?;
+            let inner = expand(
+                native::Template::query((**query).clone()),
+                ctx,
+                saved,
+                seen,
+                expanded_definition,
+                validating,
+            )?;
             if inner.operation.is_some() {
-                return Err(QueryError::new("native commands cannot be nested as query relations"));
+                return Err(QueryError::new(
+                    "native commands cannot be nested as query relations",
+                ));
             }
             **query = inner.relation;
         }

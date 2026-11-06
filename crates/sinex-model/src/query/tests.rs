@@ -120,7 +120,7 @@ fn field_colon_value_means_equals() {
     let query = q("events where source:terminal.*");
     assert!(matches!(
         query.filter,
-        Some(Expr::Compare { op: Op::Eq, rhs: Value::Glob(ref g), .. }) if g == "terminal.*"
+        Some(Expr::Compare { op: Op::Eq, rhs: Value::Text(ref g), .. }) if g == "terminal.*"
     ));
 }
 
@@ -290,8 +290,8 @@ fn time_functions_and_differences() {
     let terms = terms(&filter);
     assert_eq!(terms.len(), 3);
     assert!(terms.iter().any(|term| matches!(term,
-        Expr::Compare { lhs: Operand::Arithmetic { operator: query_language::ast::Arithmetic::Subtract, left, right, .. }, op: Op::Gt, rhs: Value::Number(seconds) }
-        if matches!(&**left, Operand::Field(FieldRef::Field(a)) if a.name == "seen") && matches!(&**right, Operand::Field(FieldRef::Field(b)) if b.name == "when") && *seconds == 86_400.0
+        Expr::Compare { lhs: Operand::Arithmetic { operator: query_language::ast::Arithmetic::Subtract, left, right, .. }, op: Op::Gt, rhs: Value::Text(seconds) }
+        if matches!(&**left, Operand::Field(FieldRef::Field(a)) if a.name == "seen") && matches!(&**right, Operand::Field(FieldRef::Field(b)) if b.name == "when") && seconds == "86400"
     )));
     assert!(terms.iter().any(|term| matches!(term,
         Expr::Compare { lhs: Operand::TimeFn(TimeFn::Hour, FieldRef::Field(field)), op: Op::Ge, rhs: Value::Integer(1) }
@@ -642,7 +642,7 @@ fn shared_match_unknown_and_any_keep_their_explicit_predicate_meanings() {
 }
 
 #[devkit::test]
-fn scalar_quotes_preserve_identifier_patterns_and_literal_payload_operators() {
+fn scalar_quotes_preserve_exact_identifiers_and_literal_payload_operators() {
     for text in [
         "events where source = terminal.*",
         "events where source = \"terminal.*\"",
@@ -653,7 +653,7 @@ fn scalar_quotes_preserve_identifier_patterns_and_literal_payload_operators() {
             matches!(
                 q(text).filter,
                 Some(Expr::Compare {
-                    rhs: Value::Glob(_),
+                    rhs: Value::Text(_),
                     ..
                 })
             ),

@@ -103,6 +103,22 @@ pub fn duration(word: &str) -> Option<f64> {
     query_language::time::duration(word).map(|value| value.as_secs_f64())
 }
 
+/// Exact seconds for row arithmetic; keep nanoseconds out of floating point.
+pub(super) fn duration_decimal(word: &str) -> Option<String> {
+    let (negative, magnitude) = word
+        .strip_prefix('-')
+        .map_or((false, word), |magnitude| (true, magnitude));
+    let nanos = query_language::time::duration(magnitude)?.as_nanos();
+    let sign = if negative && nanos != 0 { "-" } else { "" };
+    let fraction = format!("{:09}", nanos % 1_000_000_000);
+    let fraction = fraction.trim_end_matches('0');
+    Some(if fraction.is_empty() {
+        format!("{sign}{}", nanos / 1_000_000_000)
+    } else {
+        format!("{sign}{}.{fraction}", nanos / 1_000_000_000)
+    })
+}
+
 pub fn date(word: &str) -> Option<Date> {
     if word.len() != 10 {
         return None;

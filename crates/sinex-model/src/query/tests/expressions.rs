@@ -1,6 +1,17 @@
 use super::*;
 
 #[devkit::test]
+fn duration_arithmetic_keeps_nanoseconds_beyond_float_precision() {
+    let query = q("events | fields 1000000000.000000001s as elapsed");
+    let Stage::Fields(columns) = &query.stages[0] else {
+        panic!("projection")
+    };
+    assert!(matches!(columns[0].unnamed(), Operand::Literal {
+        value: Value::Text(seconds), kind: query_language::catalog::FieldKind::Duration,
+    } if seconds == "1000000000.000000001"));
+}
+
+#[devkit::test]
 fn arithmetic_and_row_dependent_comparisons_keep_typed_operands() {
     let query = q("commands where exit_code = len(command)");
     assert!(matches!(query.filter, Some(Expr::Compare {

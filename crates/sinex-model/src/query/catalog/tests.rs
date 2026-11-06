@@ -1,5 +1,5 @@
 use super::*;
-use crate::query::{Expr, FieldRef, FieldType, Stage, Value};
+use crate::query::{Expr, FieldRef, FieldType, Operand, Stage, Value};
 use serde_json::json;
 
 fn declaration(schema: Json) -> KindDeclaration {
@@ -129,8 +129,8 @@ fn each_query_and_join_binds_to_its_selected_saved_kinds() {
     number.kind.name = "example.number".into();
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(QueryCatalog::new([text, number]));
-    let query = crate::query::bind("events where event_type = example.text AND payload.value = 7 near (events where event_type = example.number AND payload.value = 7 fields payload.value) within 5m fields payload.value", &ctx).unwrap();
-    assert!(query.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Text, .. }))));
+    let query = crate::query::bind("events where event_type = example.text AND payload.value = 7 | join near (events where event_type = example.number AND payload.value = 7 | fields payload.value) within 5m | fields payload.value", &ctx).unwrap();
+    assert!(query.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], Operand::Field(FieldRef::TypedPayload { ty: FieldType::Text, .. })))));
     let inner = query
         .stages
         .iter()
@@ -142,7 +142,7 @@ fn each_query_and_join_binds_to_its_selected_saved_kinds() {
             }
         })
         .unwrap();
-    assert!(inner.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Integer, .. }))));
+    assert!(inner.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], Operand::Field(FieldRef::TypedPayload { ty: FieldType::Integer, .. })))));
     assert!(
         crate::query::bind(
             "events where event_type = example.number AND payload.value = wrong",
@@ -158,7 +158,7 @@ fn schema_binding_rechecks_programmatic_payload_fields() {
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(QueryCatalog::new([first]));
     let mut query = crate::query::bind(
-        "events where event_type = example.reading fields payload.value",
+        "events where event_type = example.reading | fields payload.value",
         &ctx,
     )
     .unwrap();
@@ -166,7 +166,7 @@ fn schema_binding_rechecks_programmatic_payload_fields() {
     let catalog = QueryCatalog::new([next]);
     catalog.bind(&mut query, &ctx).unwrap();
     assert!(
-        matches!(&query.stages[0], Stage::Fields(fields) if matches!(&fields[0], FieldRef::TypedPayload { ty: FieldType::Integer, .. }))
+        matches!(&query.stages[0], Stage::Fields(fields) if matches!(&fields[0], Operand::Field(FieldRef::TypedPayload { ty: FieldType::Integer, .. })))
     );
 }
 

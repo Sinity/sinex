@@ -212,7 +212,7 @@ impl Operand {
     /// The column name a grouped stage gives this key.
     pub fn column(&self) -> String {
         match self {
-            Operand::Field(f) => f.column(),
+            Operand::Field(f) => f.name(),
             Operand::TimeFn(func, _) => func.name().to_string(),
             Operand::Literal { .. } => "value".into(),
             Operand::Arithmetic {
@@ -290,6 +290,22 @@ impl BoundColumn {
     }
     pub(super) fn info(&self) -> &query_language::scope::FieldInfo {
         &self.info
+    }
+    pub fn generated(name: impl Into<String>, ty: super::FieldType) -> Self {
+        Self {
+            info: std::sync::Arc::new(query_language::scope::FieldInfo {
+                field: query_language::catalog::Field {
+                    name: name.into(),
+                    kind: super::syntax::field_kind(ty),
+                    ..Default::default()
+                },
+                origin: query_language::scope::Origin::Generated,
+            }),
+            physical: Some(ty),
+        }
+    }
+    pub(super) fn clear_binding(&mut self) {
+        self.physical = None;
     }
     pub(super) fn bind(&mut self, ty: super::FieldType) {
         self.physical = Some(ty);
@@ -394,6 +410,10 @@ pub enum Stage {
 pub struct Join {
     pub on: JoinOn,
     pub inner: Box<Query>,
+    /// Every visible column of the bound inner relation, with physical lineage.
+    pub columns: Vec<Operand>,
+    /// Matched fields actually read by the containing native relation.
+    pub required: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

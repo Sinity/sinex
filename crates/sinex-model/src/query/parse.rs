@@ -214,9 +214,10 @@ impl Binder<'_> {
                     syntax::Value::Scalar {
                         text,
                         quoted: false,
-                    } if time::duration(text).is_some() => {
-                        (Value::Number(time::duration(text).unwrap()), K::Duration)
-                    }
+                    } if time::duration_decimal(text).is_some() => (
+                        Value::Text(time::duration_decimal(text).unwrap()),
+                        K::Duration,
+                    ),
                     syntax::Value::Scalar { text, .. } => (Value::Text(text.clone()), K::Text),
                     syntax::Value::Parameter { name } if self.validating => {
                         (Value::PlaceholderText(name.clone()), K::Text)
@@ -440,14 +441,7 @@ impl Binder<'_> {
                         {
                             return Err(QueryError::at(at, "path prefix must be absolute"));
                         }
-                        if matches!(f.name, "source" | "event_type")
-                            && raw.contains('*')
-                            && matches!(op, Op::Eq | Op::Ne)
-                        {
-                            Value::Glob(raw.into())
-                        } else {
-                            Value::Text(raw.into())
-                        }
+                        Value::Text(raw.into())
                     }
                 })
             }
@@ -456,8 +450,8 @@ impl Binder<'_> {
                 use query_language::catalog::FieldKind as K;
                 Ok(match other.kind() {
                     K::Integer | K::Number | K::Money => Value::Text(raw.to_owned()),
-                    K::Duration => Value::Number(
-                        time::duration(raw)
+                    K::Duration => Value::Text(
+                        time::duration_decimal(raw)
                             .ok_or_else(|| QueryError::at(at, "expected a duration"))?,
                     ),
                     K::Time => Value::Time(self.instant(value, at)?),
@@ -724,11 +718,13 @@ impl Binder<'_> {
                     order_scope.as_deref(),
                     at,
                 )?;
+                let inner_path = path.field("kind").field("query");
+                let inner_scope = self.output_scope(&inner_path)?;
                 Expr::Order(Box::new(Join {
                     on,
-                    inner: Box::new(
-                        self.query((**query).clone(), &path.field("kind").field("query"))?,
-                    ),
+                    columns: self.inner_columns(&inner_scope, at)?,
+                    required: vec![],
+                    inner: Box::new(self.query((**query).clone(), &inner_path)?),
                 }))
             }
             C::Reference { reference } => {
@@ -753,6 +749,18 @@ impl Binder<'_> {
         })
     }
 
+    fn inner_columns(&self, scope: &Scope, at: usize) -> Result<Vec<Operand>, QueryError> {
+        scope
+            .fields
+            .iter()
+            .map(|info| {
+                Ok(Operand::Named {
+                    operand: Box::new(Operand::Field(self.resolve_info(info, at)?)),
+                    name: info.field.name.clone(),
+                })
+            })
+            .collect()
+    }
     fn output_scope(&self, path: &NodePath) -> Result<Scope, QueryError> {
         let query = self
             .typing
@@ -986,6 +994,8 @@ impl Binder<'_> {
                     };
                     stages.push(Stage::Join(Join {
                         on,
+                        columns: self.inner_columns(&inner_scope, at)?,
+                        required: vec![],
                         inner: Box::new(self.query(*query, &inner_path)?),
                     }));
                 }
