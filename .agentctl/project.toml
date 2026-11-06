@@ -30,9 +30,9 @@ description = "All Rust tests under nextest; each database test clones the schem
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 pool = "bulk"
 result = "exit"
-# A contended cold build exceeded 1800s before running tests. Allow the
-# build and full suite; individual nextest deadlines remain unchanged.
-timeout_seconds = 3600
+# A contended initial build can take an hour; the complete test phase takes
+# about ten minutes. Individual nextest deadlines remain unchanged.
+timeout_seconds = 4500
 scratch = "tmpfs"
 cache = "none"
 unit_properties = ["MemoryHigh=8G"]
