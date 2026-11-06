@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 mod database;
 pub mod migration;
-pub use database::{commit_pending_extents, delete_unreferenced_extents};
+pub use database::{commit_pending_extents, delete_unreferenced_extents, finish_deleting_extents};
 pub use hashed_blobs::DEFAULT_FRAME as BLOB_FRAME_BYTES;
 
 /// Explicit budgets supplied by an unlocked operation.
