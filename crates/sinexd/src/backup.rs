@@ -98,10 +98,20 @@ fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command, 
             public.push((key.into_owned(), value.into_owned()));
         }
     }
-    url.set_query(None);
-    if !public.is_empty() {
-        url.query_pairs_mut().extend_pairs(public);
-    }
+    // SQLx reads form-encoded pairs; libpq only percent-decodes them. Emit
+    // spaces as %20 and literal plus signs as %2B for the same effective values.
+    let query = public
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                percent_encoding::utf8_percent_encode(key, percent_encoding::NON_ALPHANUMERIC),
+                percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    url.set_query((!query.is_empty()).then_some(query.as_str()));
     command
         .env_remove("PGDATABASE")
         .arg("--dbname")

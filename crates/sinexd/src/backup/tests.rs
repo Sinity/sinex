@@ -555,3 +555,46 @@ fn libpq_uri_passwords_stay_in_the_child_environment_and_plain_names_stay_plain(
             .any(|(key, _)| key == "PGPASSWORD")
     );
 }
+
+#[devkit::test]
+fn libpq_uri_options_preserve_spaces_and_literal_plus_signs() {
+    for program in ["pg_dump", "pg_restore"] {
+        let command = pg_command(
+            program,
+            "postgresql:///database?host=%2Fsynthetic%2Fprivate%20socket&options=-c%20statement_timeout%3D5000+-c%20application_name%3Dleft%2Bright",
+        )
+        .unwrap();
+        let uri = command.as_std().get_args().nth(1).unwrap();
+        let uri = reqwest::Url::parse(uri.to_str().unwrap()).unwrap();
+        // This is libpq's percent decoding, without form decoding '+' as space.
+        let options = uri
+            .query()
+            .unwrap()
+            .split('&')
+            .map(|pair| {
+                let (key, value) = pair.split_once('=').unwrap();
+                (
+                    percent_encoding::percent_decode_str(key)
+                        .decode_utf8()
+                        .unwrap()
+                        .into_owned(),
+                    percent_encoding::percent_decode_str(value)
+                        .decode_utf8()
+                        .unwrap()
+                        .into_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            [
+                ("host".into(), "/synthetic/private socket".into()),
+                (
+                    "options".into(),
+                    "-c statement_timeout=5000 -c application_name=left+right".into()
+                ),
+            ]
+        );
+        assert!(!uri.query().unwrap().contains('+'));
+    }
+}
