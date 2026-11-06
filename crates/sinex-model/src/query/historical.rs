@@ -373,6 +373,8 @@ fn convert_relation(
     }
     let mut fields = if let Some(fields) = explicit {
         Some(fields)
+    } else if temporal == 0 {
+        None
     } else if !grouped && inherited_output.is_some() {
         let mut fields = inherited_output.unwrap();
         fields.extend(generated);

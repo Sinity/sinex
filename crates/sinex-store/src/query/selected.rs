@@ -25,7 +25,9 @@ pub async fn resolve_recall(
     text: &str,
     ctx: &Context,
 ) -> Result<QuerySelection> {
-    let template = if sinex_model::query::saved::reference_name(text).is_some() {
+    let template = if let Some(selection) = selection {
+        Some(selection.template.clone())
+    } else if sinex_model::query::saved::reference_name(text).is_some() {
         None
     } else {
         Some(sinex_model::query::native::parse(text, ctx)?)
@@ -282,6 +284,9 @@ pub async fn check_selected_question(
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
         declarations.into_values(),
     ));
+    if selection.original_question.is_some() && text.trim() == selection.query.trim() {
+        return Ok(());
+    }
     let requested = if sinex_model::query::saved::reference_name(text).is_some() {
         sinex_model::query::saved::template_saved(text, &ctx, &selection.definitions)?
     } else {
