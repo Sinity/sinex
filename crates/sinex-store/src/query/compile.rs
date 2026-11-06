@@ -398,6 +398,12 @@ impl<'c> Compiler<'c> {
         let mut id = SqlFragment::text(Self::template(&base, fields::tiebreak(table)));
         id.push(" AS \"_id\"");
         select.push(id);
+        let event_id = if table.is_events() {
+            Self::template(&base, fields::tiebreak(table))
+        } else {
+            "NULL::uuid".into()
+        };
+        select.push(SqlFragment::text(format!("{event_id} AS \"_event_id\"")));
         let when = self.main_time(&base)?;
         let mut timestamp = when.clone();
         timestamp.push(" AS \"_t\"");
@@ -456,6 +462,7 @@ impl<'c> Compiler<'c> {
         let mut limit: Option<u64> = None;
         let mut internal: Vec<String> = vec![
             "_id".into(),
+            "_event_id".into(),
             "_t".into(),
             "_s".into(),
             "_e".into(),
@@ -704,7 +711,7 @@ impl<'c> Compiler<'c> {
                         .collect::<Vec<_>>()
                         .join(", ");
                     let mut identified = SqlFragment::text(format!(
-                        "SELECT g_identity.*, jsonb_build_array({identity_keys})::text AS \"_id\", NULL::timestamptz AS \"_t\", NULL::timestamptz AS \"_s\", NULL::timestamptz AS \"_e\", true AS \"_inclusive\", false AS \"_has_span\" FROM ("
+                        "SELECT g_identity.*, jsonb_build_array({identity_keys})::text AS \"_id\", NULL::uuid AS \"_event_id\", NULL::timestamptz AS \"_t\", NULL::timestamptz AS \"_s\", NULL::timestamptz AS \"_e\", true AS \"_inclusive\", false AS \"_has_span\" FROM ("
                     ));
                     identified.append(f).push(") g_identity");
                     rel = identified;
@@ -714,6 +721,7 @@ impl<'c> Compiler<'c> {
                     group_order = columns.clone();
                     internal = vec![
                         "_id".into(),
+                        "_event_id".into(),
                         "_t".into(),
                         "_s".into(),
                         "_e".into(),

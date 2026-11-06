@@ -157,6 +157,12 @@ async fn pair_relations_keep_all_matches_child_order_and_exact_event_contributor
     assert_eq!(parents.len(), 2);
     assert_eq!(parent_set(&parents[0]), parent_set(&[ids[0].0, ids[2].0]));
     assert_eq!(parent_set(&parents[1]), parent_set(&[ids[0].0]));
+    catch_up_search_text(&mut conn).await.unwrap();
+    let searched = ask(&mut conn, &format!("{text} | where \"a\"")).await;
+    assert_eq!(
+        column(&searched, "match.command"),
+        [json!("cc"), json!("a")]
+    );
 }
 
 #[devkit::test]
