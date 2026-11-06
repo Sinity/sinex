@@ -131,9 +131,13 @@ async fn ask(conn: &mut PgConnection, text: &str) -> Answer {
 
 async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
     let ctx = ctx();
-    run(conn, text, None, &ctx, &page)
-        .await
-        .unwrap_or_else(|e| panic!("{text}: {e}"))
+    let result = if sinex_model::query::native::is_command(text) {
+        let operation = sinex_model::query::native::parse(text, &ctx).unwrap();
+        run_operation(conn, text, &operation, &ctx, &page).await
+    } else {
+        run(conn, text, None, &ctx, &page).await
+    };
+    result.unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
 fn column(a: &Answer, name: &str) -> Vec<serde_json::Value> {
@@ -170,7 +174,7 @@ async fn aliases_filter_on_promoted_fields_with_unknown_kept_unknown(db: devkit:
         column(&a, "command"),
         [json!("git push origin master"), json!("ls -la")]
     );
-    let a = ask(&mut conn, "commands where NOT exit_code exists").await;
+    let a = ask(&mut conn, "commands where NOT exit_code:known").await;
     assert_eq!(column(&a, "command"), [json!("cargo build")]);
 }
 
@@ -201,7 +205,7 @@ async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatab
     assert_eq!(a.total, 0);
     let a = ask(
         &mut conn,
-        "events where source = [terminal.atuin, derive.shell-fusion]",
+        "events where source = (terminal.atuin | derive.shell-fusion)",
     )
     .await;
     assert_eq!(a.total, 10);
@@ -237,7 +241,7 @@ async fn pages_read_one_answer_at_one_commit_position(db: devkit::pg::TestDataba
     world(&mut conn).await;
     let first = ask_page(
         &mut conn,
-        "commands sort when desc",
+        "commands | sort by when desc",
         Page {
             size: Some(2),
             cursor: None,
@@ -253,7 +257,7 @@ async fn pages_read_one_answer_at_one_commit_position(db: devkit::pg::TestDataba
     while let Some(c) = cursor {
         let next = ask_page(
             &mut conn,
-            "commands sort when desc",
+            "commands | sort by when desc",
             Page {
                 size: Some(2),
                 cursor: Some(c),
@@ -277,7 +281,7 @@ async fn limit_is_part_of_the_answer(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     world(&mut conn).await;
-    let a = ask(&mut conn, "commands sort when limit 2").await;
+    let a = ask(&mut conn, "commands | sort by when | limit 2").await;
     assert_eq!(a.total, 2);
     assert_eq!(
         column(&a, "command"),
@@ -296,19 +300,31 @@ async fn grouping_makes_rows_of_groups(db: devkit::pg::TestDatabase) {
     world(&mut conn).await;
     let a = ask(
         &mut conn,
-        "commands group by cwd count sort count desc limit 1",
+        "commands | group by cwd | count | sort by count desc | limit 1",
     )
     .await;
     assert_eq!(a.rows, [json!({"cwd": "/src/tide", "count": 2})]);
-    let a = ask(&mut conn, "commands group by cwd count where count > 1").await;
+    let a = ask(
+        &mut conn,
+        "commands | group by cwd | count | where count > 1",
+    )
+    .await;
     assert_eq!(a.total, 1);
-    let a = ask(&mut conn, "commands count").await;
+    let a = ask(&mut conn, "commands | count").await;
     assert_eq!(a.rows, [json!({"count": 5})]);
-    let a = ask(&mut conn, "commands group by day(when) sum(duration)").await;
+    let a = ask(
+        &mut conn,
+        "commands | group by day(when) | agg sum(duration)",
+    )
+    .await;
     assert_eq!(a.rows.len(), 1);
     assert_eq!(a.rows[0]["day"], json!("2026-09-14"));
     assert_eq!(a.rows[0]["sum_duration"].as_f64(), Some(10.0));
-    let a = ask(&mut conn, "events group by source count sort source").await;
+    let a = ask(
+        &mut conn,
+        "events | group by source | count | sort by source",
+    )
+    .await;
     assert_eq!(
         a.rows,
         [
@@ -349,7 +365,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
     let old = ask(
         &mut conn,
         &format!(
-            "commands where command ~ workspace as of seq {}",
+            "commands where command ~ workspace | as of seq {}",
             before - 1
         ),
     )
@@ -361,7 +377,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
 }
 
 #[devkit::test]
-async fn near_joins_pick_the_nearest_match_once(db: devkit::pg::TestDatabase) {
+async fn near_conditions_pick_the_nearest_witness_once(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -370,34 +386,60 @@ async fn near_joins_pick_the_nearest_match_once(db: devkit::pg::TestDatabase) {
     // observations, a minute apart, each once.
     let a = ask(
         &mut conn,
-        "events where source = terminal.atuin near (commands where exit_code = 1) within 90s",
+        "events where source = terminal.atuin AND near (commands where exit_code = 1) within 90s | fields id, match.id, match.distance",
     )
     .await;
     assert_eq!(a.total, 5, "{:?}", a.rows);
     for row in &a.rows {
-        assert!(row["near"].is_string());
-        assert!(row["offset"].as_f64().unwrap().abs() <= 90.0);
+        assert!(row["match.id"].is_string());
+        assert!(row["match.distance"].as_f64().unwrap().abs() <= 90.0);
     }
     let a = ask(
         &mut conn,
-        "events where source = terminal.atuin near (commands where exit_code = 7) within 1h",
+        "events where source = terminal.atuin AND near (commands where exit_code = 7) within 1h",
     )
     .await;
     assert_eq!(a.total, 0, "an empty inner query never widens to a scan");
     let a = ask(
         &mut conn,
-        "events where source = terminal.atuin near (commands where exit_code = 1) within 90s fields when, offset sort offset desc",
+        "events where source = terminal.atuin AND near (commands where exit_code = 1) within 90s | fields when, match.distance | sort by match.distance desc",
     )
     .await;
-    assert_eq!(a.columns, ["when", "offset"]);
+    assert_eq!(a.columns, ["when", "match.distance"]);
     let offsets: Vec<f64> = a
         .rows
         .iter()
-        .map(|r| r["offset"].as_f64().unwrap())
+        .map(|r| r["match.distance"].as_f64().unwrap())
         .collect();
     let mut sorted = offsets.clone();
     sorted.sort_by(|x, y| y.partial_cmp(x).unwrap());
     assert_eq!(offsets, sorted);
+}
+
+#[devkit::test]
+async fn near_pair_joins_return_every_matching_pair(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = world(&mut conn).await;
+    let answer = ask(&mut conn, "events where source = terminal.atuin | join near (commands where exit_code = 1) within 90s | fields id, match.id").await;
+    let pairs = answer
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap().parse::<Uuid>().unwrap(),
+                row["match.id"].as_str().unwrap().parse::<Uuid>().unwrap(),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = [(0, 1), (1, 1), (2, 1), (2, 3), (3, 3), (4, 3)]
+        .into_iter()
+        .map(|(outer, inner)| (ids[outer].1, ids[inner].0))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(pairs, expected);
+    assert_eq!(answer.total, 6);
+    assert_eq!(answer.rows.len(), 6);
 }
 
 #[devkit::test]
@@ -455,7 +497,7 @@ async fn sources_lists_every_source_with_events(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     world(&mut conn).await;
-    let a = ask(&mut conn, "sources sort binding").await;
+    let a = ask(&mut conn, "sources | sort by binding").await;
     assert_eq!(
         column(&a, "binding"),
         [json!("derive.shell-fusion"), json!("terminal.atuin")]
@@ -498,7 +540,7 @@ async fn payload_paths_compare_by_the_literal_type(db: devkit::pg::TestDatabase)
     assert_eq!(a.total, 5);
     let a = ask(
         &mut conn,
-        "events where event_type = command.fused fields id, payload.cwd",
+        "events where event_type = command.fused | fields id, payload.cwd",
     )
     .await;
     assert_eq!(a.columns, ["id", "payload.cwd"]);
@@ -631,19 +673,23 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
     assert_eq!(column(&now, "subject"), vec![json!("b window")]);
     let closed = ask(
         &mut conn,
-        "intervals where open = false fields duration, state",
+        "intervals where open = false | fields duration, state",
     )
     .await;
     assert_eq!(closed.total, 1);
     assert_eq!(column(&closed, "state"), vec![json!("desktop.focus")]);
     let days = ask(
         &mut conn,
-        "figures where grain = day AND dimension != cwd fields day, value",
+        "figures where grain = day AND dimension != cwd | fields day, value",
     )
     .await;
     assert_eq!(days.total, 1);
     assert_eq!(column(&days, "value")[0].as_f64(), Some(3.0));
-    let focus = ask(&mut conn, "focus where app = kitty fields duration, title").await;
+    let focus = ask(
+        &mut conn,
+        "focus where app = kitty | fields duration, title",
+    )
+    .await;
     assert_eq!(column(&focus, "duration")[0].as_f64(), Some(90.0));
     assert_eq!(column(&focus, "title"), vec![json!("vim")]);
     // Other state intervals are not focus.
@@ -768,7 +814,7 @@ async fn commands_show_each_occurrence_once(db: devkit::pg::TestDatabase) {
     }
     let commands = ask(
         &mut conn,
-        "commands sort when fields command, observed_by, end",
+        "commands | sort by when | fields command, observed_by, end",
     )
     .await;
     assert_eq!(commands.total, 2);

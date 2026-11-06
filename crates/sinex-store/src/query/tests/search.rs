@@ -28,7 +28,11 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
     ] {
         assert_eq!(ask(&mut conn, text).await.total, 0, "{text}");
     }
-    let rows = ask(&mut conn, "cargo fields event_type,text sort event_type").await;
+    let rows = ask(
+        &mut conn,
+        "cargo | fields event_type,text | sort by event_type",
+    )
+    .await;
     assert_eq!(rows.total, 3);
     for row in rows.rows {
         assert!(row["text"].as_str().unwrap().contains("strasse café café"));
@@ -56,7 +60,7 @@ async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
                 "{grants}: {text}"
             );
         }
-        let answer = ask(&mut conn, "events fields text").await;
+        let answer = ask(&mut conn, "events | fields text").await;
         if grants.is_empty() {
             for row in answer.rows {
                 assert!(row["text"].is_null());

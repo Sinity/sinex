@@ -20,9 +20,14 @@ async fn standing_queries_keep_native_and_group_keys_through_projection_and_repl
     let ids = world(&mut conn).await;
     let mut tx = conn.begin().await.unwrap();
     let seq = current_seq(&mut tx).await.unwrap();
-    let plain = standing_query(&mut tx, "commands sort when fields command", &ctx(), seq)
-        .await
-        .unwrap();
+    let plain = standing_query(
+        &mut tx,
+        "commands | sort by when | fields command",
+        &ctx(),
+        seq,
+    )
+    .await
+    .unwrap();
     assert_eq!(plain.rows.len(), 5);
     assert!(plain.complete);
     assert!(plain.rows.iter().all(|row| {
@@ -50,7 +55,7 @@ async fn standing_queries_keep_native_and_group_keys_through_projection_and_repl
     assert_eq!(keys.len(), 5);
     let group = standing_query(
         &mut tx,
-        "commands group by cwd count sort cwd fields count",
+        "commands | group by cwd | count | sort by cwd | fields count",
         &ctx(),
         seq,
     )
@@ -125,9 +130,14 @@ async fn standing_queries_keep_native_and_group_keys_through_projection_and_repl
     assert_eq!(outcome.replaced, 1);
     tx.commit().await.unwrap();
     let seq = current_seq(&mut conn).await.unwrap();
-    let replayed = standing_query(&mut conn, "commands sort when fields command", &ctx(), seq)
-        .await
-        .unwrap();
+    let replayed = standing_query(
+        &mut conn,
+        "commands | sort by when | fields command",
+        &ctx(),
+        seq,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         replayed
             .rows
@@ -186,9 +196,14 @@ async fn signal_observations_do_not_feed_standing_event_queries(db: devkit::pg::
     assert_eq!(tx.admit(&batch, &NoDerivations).await.unwrap().admitted, 1);
     tx.commit().await.unwrap();
     let seq = current_seq(&mut conn).await.unwrap();
-    let answer = standing_query(&mut conn, "events group by event_type count", &ctx(), seq)
-        .await
-        .unwrap();
+    let answer = standing_query(
+        &mut conn,
+        "events | group by event_type | count",
+        &ctx(),
+        seq,
+    )
+    .await
+    .unwrap();
     assert_eq!(answer.rows.len(), 2);
     assert!(answer.rows.iter().all(|row| {
         !row.result["event_type"]
@@ -245,7 +260,7 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
         .unwrap();
     let ids = world(&mut conn).await;
     let seq = current_seq(&mut conn).await.unwrap();
-    let question = "commands sort when fields command";
+    let question = "commands | sort by when | fields command";
     let before = standing_query(&mut conn, question, &ctx(), seq)
         .await
         .unwrap();
@@ -445,7 +460,7 @@ async fn keyless_native_coordinates_survive_rereading_and_distinguish_outputs(
     let seq = current_seq(&mut conn).await.unwrap();
     let after = standing_query(
         &mut conn,
-        "events where source = fixture.notes sort output",
+        "events where source = fixture.notes | sort by output",
         &ctx(),
         seq,
     )

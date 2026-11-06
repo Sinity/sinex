@@ -55,7 +55,11 @@ async fn implausible_times_are_kept_and_labelled(db: devkit::pg::TestDatabase) {
     assert_eq!(tx.admit(&batch, &NoDerivations).await.unwrap().admitted, 4);
     tx.commit().await.unwrap();
 
-    let all = ask(&mut conn, "events fields when, time_suspect sort when").await;
+    let all = ask(
+        &mut conn,
+        "events | fields when, time_suspect | sort by when",
+    )
+    .await;
     assert_eq!(
         column(&all, "time_suspect"),
         [
@@ -65,7 +69,7 @@ async fn implausible_times_are_kept_and_labelled(db: devkit::pg::TestDatabase) {
             json!("future")
         ]
     );
-    let suspect = ask(&mut conn, "events where time_suspect exists sort when").await;
+    let suspect = ask(&mut conn, "events where time_suspect:known | sort by when").await;
     assert_eq!(suspect.total, 2);
     let future = ask(&mut conn, "events where time_suspect = future").await;
     assert_eq!(future.total, 1);
@@ -109,7 +113,7 @@ async fn events_name_their_producer_version(db: devkit::pg::TestDatabase) {
     }
     let a = ask(
         &mut conn,
-        "events fields when, producer_version sort producer_version",
+        "events | fields when, producer_version | sort by producer_version",
     )
     .await;
     assert_eq!(column(&a, "producer_version"), [json!("1"), json!("2")]);
@@ -158,7 +162,7 @@ async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDat
     let mut tx = conn.begin().await.unwrap();
     assert_eq!(tx.admit(&batch, &NoDerivations).await.unwrap().admitted, 1);
     tx.commit().await.unwrap();
-    let answer = ask(&mut conn, "telemetry fields payload").await;
+    let answer = ask(&mut conn, "telemetry | fields payload").await;
     assert_eq!(column(&answer, "payload"), [json!({"withheld": "guarded"})]);
     assert_eq!(
         crate::telemetry::latest(&mut conn, "sinex.telemetry")
