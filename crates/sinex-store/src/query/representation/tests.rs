@@ -1,9 +1,7 @@
 use super::*;
-use crate::NoDerivations;
 use serde_json::json;
 use sinex_model::{
-    Batch, BatchKind, Class, DbCheck, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
-    RecordOutcome, RunId, Timestamp,
+    Class, DbCheck, Event, MaterialId, Origin, ReadingOrder, RecordLocation, RunId, Timestamp,
 };
 
 // Model a registry retained from the bundled format-2 owner. Producer ingress
@@ -94,25 +92,12 @@ async fn original_saved(
         Class::Guarded,
     )
     .unwrap();
-    // This constructs an original admitted-format fixture before admission;
+    // Construct the original captured representation before snapshot setup;
     // the stored event is never modified to the current representation.
     event.kind_version = 2;
     event.payload = original.clone();
     let id = event.id;
-    let batch = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "synthetic".into(),
-        },
-        records: vec![RecordOutcome::Events {
-            location: None,
-            events: vec![event],
-        }],
-        archive: vec![],
-    };
-    let mut transaction = conn.begin().await.unwrap();
-    transaction.admit(&batch, &NoDerivations).await.unwrap();
-    transaction.commit().await.unwrap();
+    retain_original(conn, event).await;
     (id, original, directory)
 }
 
@@ -126,6 +111,9 @@ async fn original_saved_read_projection_preserves_captured_events_and_requires_i
     set_grants(&mut conn, "guarded").await.unwrap();
     let (event, original, _custody) =
         original_saved(&mut conn, "retained", Some("query-request"), None).await;
+    set_grants(&mut conn, "").await.unwrap();
+    assert!(saved(&mut conn, event).await.is_err());
+    set_grants(&mut conn, "guarded").await.unwrap();
     let before: Json = sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e WHERE id=$1")
         .bind(event.0)
         .fetch_one(&mut *conn)
@@ -153,21 +141,50 @@ async fn original_saved_read_projection_preserves_captured_events_and_requires_i
     assert!(saved(&mut conn, missing).await.is_err());
 }
 
-async fn admit_original(conn: &mut crate::AdmissionContext, event: Event) {
-    let batch = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "synthetic".into(),
-        },
-        records: vec![RecordOutcome::Events {
-            location: None,
-            events: vec![event],
-        }],
-        archive: vec![],
+// These rows model an already captured database snapshot. New admission
+// correctly refuses obsolete Rust validators; the reader must still accept
+// authenticated retained formats without enabling them for new writes.
+async fn retain_original(conn: &mut crate::AdmissionContext, event: Event) {
+    let (material, anchor, output, parents) = match &event.origin {
+        Origin::Record {
+            location,
+            output_index,
+        } => (
+            Some(location.material.0),
+            Some(i64::try_from(location.anchor).unwrap()),
+            i64::try_from(*output_index).unwrap(),
+            None,
+        ),
+        Origin::Derived { parents } => (
+            None,
+            None,
+            0,
+            Some(parents.iter().map(|parent| parent.0).collect::<Vec<_>>()),
+        ),
     };
-    let mut transaction = conn.begin().await.unwrap();
-    transaction.admit(&batch, &NoDerivations).await.unwrap();
-    transaction.commit().await.unwrap();
+    let position: i64 = sqlx::query_scalar(
+        "UPDATE core.counters SET value=value+1 WHERE name='commit_seq' RETURNING value",
+    )
+    .fetch_one(&mut **conn)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO core.events (id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,record_state,class,kind_version,validation) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)")
+        .bind(event.id.0).bind(&event.event_type).bind(&event.source).bind(RunId::new().0)
+        .bind(material).bind(anchor).bind(output).bind(&parents)
+        .bind(event.ts_orig.at.map(|at| at.0)).bind(event.ts_orig.quality.as_db())
+        .bind(position).bind(&event.payload).bind(event.equivalence_key.as_ref().map(|key| &key.0))
+        .bind(event.reading_order.0).bind(event.record_hash.as_slice())
+        .bind(event.record_state.as_db()).bind(event.class.as_db())
+        .bind(i64::try_from(event.kind_version).unwrap()).bind(event.validation.as_db())
+        .execute(&mut **conn).await.unwrap();
+    if let Some(parents) = parents {
+        sqlx::query("INSERT INTO core.event_children(parent,child) SELECT unnest($1::uuid[]),$2")
+            .bind(parents)
+            .bind(event.id.0)
+            .execute(&mut **conn)
+            .await
+            .unwrap();
+    }
 }
 
 async fn original_request(
@@ -232,7 +249,7 @@ async fn original_request(
     event.kind_version = 2;
     event.payload = original.clone();
     let id = event.id;
-    admit_original(conn, event).await;
+    retain_original(conn, event).await;
     (id, selection, directory)
 }
 
@@ -275,7 +292,7 @@ async fn original_pack(
     )
     .unwrap();
     let id = event.id;
-    admit_original(conn, event).await;
+    retain_original(conn, event).await;
     (id, original)
 }
 
@@ -291,7 +308,20 @@ async fn old_pack_projection_uses_its_immutable_request_parent_without_rewriting
     selection["selected"]["_fingerprint"] = json!("materialized-inputs");
     let (pack, original) =
         original_pack(&mut conn, request, selection.clone(), "recall.products").await;
+    let before: Vec<Json> =
+        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e WHERE id=ANY($1) ORDER BY id")
+            .bind(vec![request.0, pack.0])
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
     let projected = context_pack(&mut conn, pack).await.unwrap();
+    let after: Vec<Json> =
+        sqlx::query_scalar("SELECT to_jsonb(e) FROM core.events e WHERE id=ANY($1) ORDER BY id")
+            .bind(vec![request.0, pack.0])
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(after, before);
     assert_eq!(
         projected["analysis"]["answer"],
         original["analysis"]["answer"]

@@ -201,7 +201,7 @@ fn generated_reading_fields_have_real_types_and_old_grammar_stays_frozen() {
         );
     }
     let template =
-        historical::decode_format_one("events text:workspace fields id", &ctx()).unwrap();
+        historical::decode_format_one("events where text:workspace fields id", &ctx()).unwrap();
     let current = template.bind(&ctx()).unwrap();
     assert!(
         matches!(current.stages.last(),Some(Stage::Fields(columns)) if columns.iter().any(|column|column.column()=="snippet"))

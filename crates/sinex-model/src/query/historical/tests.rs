@@ -171,4 +171,16 @@ fn historical_witness_choice_keeps_old_clock_ties_and_non_event_main_times() {
     assert!(matches!(&keys[0].expression,ast::Expression::Function {name,..} if name=="abs"));
     assert_eq!(keys[1].expression, ast::Expression::field("last_event"));
     assert_eq!(keys[2].expression, ast::Expression::field("match.id"));
+    let bound = template.bind(&ctx).unwrap();
+    let super::super::Stage::Fields(columns) = bound.stages.last().unwrap() else {
+        panic!("final historical display")
+    };
+    let offset = columns
+        .iter()
+        .find(|column| column.column() == "offset")
+        .unwrap();
+    assert_eq!(
+        offset.field_type().unwrap(),
+        super::super::FieldType::Number
+    );
 }

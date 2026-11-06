@@ -488,18 +488,20 @@ fn convert_relation(
                 generated.push(name);
                 if distance {
                     let name = format!("offset{suffix}");
-                    let difference = ast::Expression::Arithmetic {
+                    // The old offset is numeric seconds with the opposite
+                    // sign to match.distance. Divide first so the expression
+                    // also has a spelling in the current unparenthesized grammar.
+                    let expression = ast::Expression::Arithmetic {
                         operator: ast::Arithmetic::Subtract,
                         left: Box::new(ast::Expression::Value {
-                            value: ast::Value::scalar("0s"),
+                            value: ast::Value::scalar("0"),
                         }),
-                        right: Box::new(ast::Expression::field("match.distance")),
-                    };
-                    let expression = ast::Expression::Arithmetic {
-                        operator: ast::Arithmetic::Divide,
-                        left: Box::new(difference),
-                        right: Box::new(ast::Expression::Value {
-                            value: ast::Value::scalar("1s"),
+                        right: Box::new(ast::Expression::Arithmetic {
+                            operator: ast::Arithmetic::Divide,
+                            left: Box::new(ast::Expression::field("match.distance")),
+                            right: Box::new(ast::Expression::Value {
+                                value: ast::Value::scalar("1s"),
+                            }),
                         }),
                     };
                     columns.push(ast::Column {
