@@ -8,6 +8,18 @@ fn timestamp(value: time::OffsetDateTime) -> Result<Timestamp> {
     Timestamp::from_unix_ns(value.unix_timestamp_nanos()).map_err(|e| Error::Invalid(e.to_string()))
 }
 
+/// Count open holds and report the oldest committed boundary for status.
+pub async fn open_summary(conn: &mut PgConnection) -> Result<(i64, Option<Timestamp>)> {
+    let row = sqlx::query!(
+        r#"SELECT count(*) AS "open!", min(o.at) AS oldest
+           FROM core.backup_holds h JOIN core.operations o ON o.id=h.operation_id
+           WHERE h.released_at IS NULL"#
+    )
+    .fetch_one(conn)
+    .await?;
+    Ok((row.open, row.oldest.map(timestamp).transpose()?))
+}
+
 pub async fn get(conn: &mut PgConnection, id: OperationId) -> Result<Option<Hold>> {
     let row = sqlx::query!("SELECT o.actor,o.at,h.commit_position,h.blob_changes,h.schema_version,h.released_at
         FROM core.backup_holds h JOIN core.operations o ON o.id=h.operation_id WHERE h.operation_id=$1",id.0)

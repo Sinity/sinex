@@ -730,9 +730,9 @@ impl Api {
         let row = sinex_store::diagnostics::positions(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
-        let open_backup_holds: (i64,Option<time::OffsetDateTime>) = sqlx::query_as(
-            "SELECT count(*),min(o.at) FROM core.backup_holds h JOIN core.operations o ON o.id=h.operation_id WHERE h.released_at IS NULL")
-            .fetch_one(&mut *conn).await.map_err(|e| e.to_string())?;
+        let open_backup_holds = sinex_store::backup::open_summary(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
         let telemetry = sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE)
             .await
             .map_err(|e| e.to_string())?;
@@ -857,7 +857,7 @@ impl Api {
             "ingress_refusals_24h": refusals,
             "producer_errors": producer_errors,
             "writer": self.writer.is_some(),
-            "backup_holds": { "open":open_backup_holds.0,"oldest":open_backup_holds.1.map(sinex_model::Timestamp) },
+            "backup_holds": { "open":open_backup_holds.0,"oldest":open_backup_holds.1 },
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,
