@@ -36,7 +36,7 @@ impl Compiler<'_> {
             // Shared binding supplies column lineage; the product resolves its
             // physical scalar type against the current declaration snapshot.
             (Cols::Named { r, .. }, FieldRef::TypedGroup(column)) => Ok((
-                SqlFragment::text(format!("{r}.{}", quote(column.name()))),
+                SqlFragment::text(Self::named(cols, column.name())),
                 Kind::Typed(
                     column
                         .field_type()
@@ -44,11 +44,11 @@ impl Compiler<'_> {
                 ),
             )),
             (Cols::Named { r, .. }, FieldRef::Field(field)) => Ok((
-                SqlFragment::text(format!("{r}.{}", quote(field.name))),
+                SqlFragment::text(Self::named(cols, field.name)),
                 Kind::Typed(field.ty),
             )),
             (Cols::Named { r, .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
-                SqlFragment::text(format!("{r}.{}", quote(&column_name(f)))),
+                SqlFragment::text(Self::named(cols, &column_name(f))),
                 Kind::Typed(*ty),
             )),
         }
@@ -109,6 +109,7 @@ impl Compiler<'_> {
             TimeFn::Weekday => "weekday",
             TimeFn::Month => "month",
             TimeFn::MonthDay => "month_day",
+            TimeFn::Year => "year",
             TimeFn::Hour => unreachable!(),
         };
         let mut ns = SqlFragment::text("(extract(epoch from ");
@@ -128,16 +129,237 @@ impl Compiler<'_> {
     pub(super) fn operand(&self, cols: &Cols, o: &Operand) -> Result<(SqlFragment, Kind)> {
         match o {
             Operand::Field(f) => self.field(cols, f),
+            Operand::Named { operand, .. } => self.operand(cols, operand),
+            Operand::Literal { value, kind } => {
+                use query_language::catalog::FieldKind as K;
+                let ty = o.field_type().map_err(|e| invalid(e.to_string()))?;
+                let cast = match kind {
+                    K::Integer | K::Number | K::Money | K::Duration => "numeric",
+                    K::Bool => "boolean",
+                    K::Time => "timestamptz",
+                    K::Reference => "uuid",
+                    K::Json => "jsonb",
+                    _ => "text",
+                };
+                let mut sql = SqlFragment::new();
+                if matches!(value, Value::Unknown) {
+                    sql.push(format!("NULL::{cast}"));
+                } else {
+                    sql.param(value_param(value)?).push(format!("::{cast}"));
+                }
+                Ok((sql, Kind::Typed(ty)))
+            }
+            Operand::Length(value) => {
+                let (sql, kind) = self.operand(cols, value)?;
+                let mut out = SqlFragment::text(match kind {
+                    Kind::Typed(FieldType::TextList | FieldType::PathList | FieldType::IdList) => {
+                        "cardinality("
+                    }
+                    Kind::Typed(FieldType::Json) => "(CASE jsonb_typeof(",
+                    _ => "char_length(",
+                });
+                if kind == Kind::Typed(FieldType::Json) {
+                    out.append(sql.clone())
+                        .push(") WHEN 'array' THEN jsonb_array_length(")
+                        .append(sql.clone())
+                        .push(") WHEN 'string' THEN char_length(")
+                        .append(sql)
+                        .push(" #>> '{}') END)");
+                } else {
+                    out.append(sql).push(")");
+                }
+                Ok((out, Kind::Typed(FieldType::Integer)))
+            }
+            Operand::Arithmetic {
+                operator,
+                left,
+                right,
+                ..
+            } => {
+                use query_language::{ast::Arithmetic as A, catalog::FieldKind as K};
+                let left_time = left.kind() == K::Time;
+                let right_time = right.kind() == K::Time;
+                let (mut l, lk) = self.semantic_operand(cols, left)?;
+                let (mut r, rk) = self.semantic_operand(cols, right)?;
+                if lk == Kind::Typed(FieldType::Json) {
+                    l = Self::typed_json(l, FieldType::Number);
+                }
+                if rk == Kind::Typed(FieldType::Json) {
+                    r = Self::typed_json(r, FieldType::Number);
+                }
+                let mut out = SqlFragment::new();
+                if *operator == A::Subtract && left_time && right_time {
+                    out.push("extract(epoch from (")
+                        .append(l)
+                        .push(" - ")
+                        .append(r)
+                        .push("))");
+                } else if left_time || right_time {
+                    if left_time {
+                        out.push("(")
+                            .append(l)
+                            .push(" ")
+                            .push(operator.symbol())
+                            .push(" (")
+                            .append(r)
+                            .push(" * interval '1 second'))");
+                    } else {
+                        out.push("(")
+                            .append(r)
+                            .push(" + (")
+                            .append(l)
+                            .push(" * interval '1 second'))");
+                    }
+                } else {
+                    out.push("((")
+                        .append(l)
+                        .push(")::numeric ")
+                        .push(operator.symbol());
+                    if *operator == A::Divide {
+                        out.push(" NULLIF((").append(r).push(")::numeric, 0))");
+                    } else {
+                        out.push(" (").append(r).push(")::numeric)");
+                    }
+                }
+                Ok((
+                    out,
+                    Kind::Typed(o.field_type().map_err(|e| invalid(e.to_string()))?),
+                ))
+            }
+            Operand::CaseEqual { left, right, value } => {
+                let (left, left_kind) = self.semantic_operand(cols, left)?;
+                let (right, right_kind) = self.semantic_operand(cols, right)?;
+                let condition =
+                    self.compare_operands(left, left_kind, Op::Eq, right, right_kind)?;
+                let (value, kind) = self.operand(cols, value)?;
+                let mut out = SqlFragment::text("(CASE WHEN ");
+                out.append(condition)
+                    .push(" THEN ")
+                    .append(value)
+                    .push(" ELSE NULL END)");
+                Ok((out, kind))
+            }
             Operand::TimeFn(func, f) => {
-                let (t, kind) = self.field(cols, f)?;
+                let (t, kind) = self.semantic_operand(cols, &Operand::Field(f.clone()))?;
                 let t = if kind == Kind::Typed(FieldType::Json) {
                     Self::typed_json(t, FieldType::Time)
                 } else {
                     t
                 };
-                Ok((self.time_fn(*func, t)?, Kind::Derived))
+                Ok((
+                    self.time_fn(*func, t)?,
+                    if matches!(func, TimeFn::Hour | TimeFn::Year) {
+                        Kind::Typed(FieldType::Integer)
+                    } else {
+                        Kind::Derived
+                    },
+                ))
             }
         }
+    }
+
+    fn semantic_operand(&self, cols: &Cols, operand: &Operand) -> Result<(SqlFragment, Kind)> {
+        match operand.unnamed() {
+            Operand::TimeFn(func @ (TimeFn::Day | TimeFn::Week | TimeFn::Month), field) => {
+                let (value, kind) = self.field(cols, field)?;
+                let value = if kind == Kind::Typed(FieldType::Json) {
+                    Self::typed_json(value, FieldType::Time)
+                } else {
+                    value
+                };
+                Ok((
+                    self.time_bucket(*func, value)?,
+                    Kind::Typed(FieldType::Time),
+                ))
+            }
+            Operand::Field(FieldRef::TypedGroup(column))
+                if matches!(
+                    column.time_function(),
+                    Some(TimeFn::Day | TimeFn::Week | TimeFn::Month)
+                ) =>
+            {
+                let (value, _) = self.operand(cols, operand)?;
+                Ok((
+                    self.time_bucket_label(
+                        column.time_function().expect("calendar lineage"),
+                        value,
+                    )?,
+                    Kind::Typed(FieldType::Time),
+                ))
+            }
+            _ => self.operand(cols, operand),
+        }
+    }
+
+    pub(super) fn compare_operands(
+        &self,
+        mut left: SqlFragment,
+        left_kind: Kind,
+        op: Op,
+        mut right: SqlFragment,
+        right_kind: Kind,
+    ) -> Result<SqlFragment> {
+        if left_kind == Kind::Typed(FieldType::Json) && right_kind != Kind::Typed(FieldType::Json) {
+            let Kind::Typed(ty) = right_kind else {
+                return Err(invalid(
+                    "dynamic JSON cannot compare to an untyped calendar label",
+                ));
+            };
+            left = Self::typed_json(left, ty);
+        }
+        if right_kind == Kind::Typed(FieldType::Json) && left_kind != Kind::Typed(FieldType::Json) {
+            let Kind::Typed(ty) = left_kind else {
+                return Err(invalid(
+                    "dynamic JSON cannot compare to an untyped calendar label",
+                ));
+            };
+            right = Self::typed_json(right, ty);
+        }
+        if left_kind == Kind::Typed(FieldType::Json) && right_kind == left_kind {
+            let null_if = |value| {
+                let mut out = SqlFragment::text("NULLIF(");
+                out.append(value).push(", 'null'::jsonb)");
+                out
+            };
+            left = null_if(left);
+            right = null_if(right);
+        }
+        let mut out = SqlFragment::text("(");
+        match op {
+            Op::Contains => {
+                out.push("position(lower(")
+                    .append(right)
+                    .push(") in lower(")
+                    .append(left)
+                    .push(")) > 0");
+            }
+            Op::Prefix if left_kind == Kind::Typed(FieldType::Path) => {
+                out.append(left.clone())
+                    .push(" = rtrim(")
+                    .append(right.clone())
+                    .push(", '/') OR starts_with(")
+                    .append(left)
+                    .push(", rtrim(")
+                    .append(right)
+                    .push(", '/') || '/')");
+            }
+            Op::Prefix => {
+                out.push("starts_with(lower(")
+                    .append(left)
+                    .push("), lower(")
+                    .append(right)
+                    .push("))");
+            }
+            _ => {
+                out.append(left)
+                    .push(" ")
+                    .push(op_sql(op))
+                    .push(" ")
+                    .append(right);
+            }
+        }
+        out.push(")");
+        Ok(out)
     }
 
     pub(super) fn json_as(raw: SqlFragment, value: &Value) -> SqlFragment {
@@ -348,7 +570,8 @@ impl Compiler<'_> {
                 r,
                 table,
                 grouped: false,
-            } if table.is_events() => Ok(SqlFragment::text(format!("{r}.\"_id\""))),
+                ..
+            } if table.is_events() => Ok(SqlFragment::text(format!("{r}.\"_event_id\""))),
             _ => Err(invalid(
                 "full-text words search events; this relation has no event rows",
             )),
@@ -391,6 +614,7 @@ impl Compiler<'_> {
 
     pub(super) fn expr(&self, cols: &Cols, e: &Expr) -> Result<SqlFragment> {
         Ok(match e {
+            Expr::Order(join) => self.order_predicate(cols, join)?,
             Expr::And(a, b) => {
                 let mut f = SqlFragment::text("(");
                 f.append(self.expr(cols, a)?)
@@ -421,8 +645,14 @@ impl Compiler<'_> {
                 })
             }
             Expr::Compare { lhs, op, rhs } => {
-                let (l, kind) = self.operand(cols, lhs)?;
-                self.compare(l, kind, *op, rhs)?
+                if let Value::Operand(right) = rhs {
+                    let (left, left_kind) = self.semantic_operand(cols, lhs)?;
+                    let (right, right_kind) = self.semantic_operand(cols, right)?;
+                    self.compare_operands(left, left_kind, *op, right, right_kind)?
+                } else {
+                    let (left, kind) = self.operand(cols, lhs)?;
+                    self.compare(left, kind, *op, rhs)?
+                }
             }
             Expr::Exists(o) => {
                 let (l, kind) = self.operand(cols, o)?;
@@ -439,8 +669,16 @@ impl Compiler<'_> {
                 f
             }
             Expr::Words(w) => self.words(cols, w)?,
+            Expr::FieldWords { operand, words } => {
+                let (value, _) = self.operand(cols, operand)?;
+                let mut out = SqlFragment::text("(CASE WHEN ");
+                out.append(value.clone()).push(" IS NULL THEN NULL ELSE EXISTS (SELECT 1 FROM regexp_split_to_table(lower(")
+                    .append(value).push("), '[^[:alnum:]]+') AS matched_word(word) WHERE word = ")
+                    .param(V::String(Some(words.words.join(" ")))).push(") END)");
+                out
+            }
             Expr::Within { lhs, from, to } => {
-                let (l, kind) = self.operand(cols, lhs)?;
+                let (l, kind) = self.semantic_operand(cols, lhs)?;
                 let l = if kind == Kind::Typed(FieldType::Json) {
                     Self::typed_json(l, FieldType::Time)
                 } else {
@@ -461,30 +699,6 @@ impl Compiler<'_> {
                 return Err(invalid("rank directive reached predicate compiler"));
             }
             Expr::Overlaps { from, to } => self.overlaps(cols, *from, *to)?,
-            Expr::TimeDiff { a, b, op, seconds } => {
-                let (a, a_kind) = self.field(cols, a)?;
-                let (b, b_kind) = self.field(cols, b)?;
-                let a = if a_kind == Kind::Typed(FieldType::Json) {
-                    Self::typed_json(a, FieldType::Time)
-                } else {
-                    a
-                };
-                let b = if b_kind == Kind::Typed(FieldType::Json) {
-                    Self::typed_json(b, FieldType::Time)
-                } else {
-                    b
-                };
-                let mut f = SqlFragment::text("(extract(epoch from (");
-                f.append(a)
-                    .push(" - ")
-                    .append(b)
-                    .push(")) ")
-                    .push(op_sql(*op))
-                    .push(" ")
-                    .param(V::Double(Some(*seconds)))
-                    .push(")");
-                f
-            }
         })
     }
 
@@ -494,6 +708,22 @@ impl Compiler<'_> {
         from: jiff::Timestamp,
         to: Option<jiff::Timestamp>,
     ) -> Result<SqlFragment> {
+        if let Cols::Named {
+            r, grouped: false, ..
+        } = cols
+        {
+            let mut out = SqlFragment::text(format!(
+                "({r}.\"_has_span\" AND {r}.\"_s\" {} ",
+                if to.is_some() { "<" } else { "<=" }
+            ));
+            out.param(time_value(to.unwrap_or(from))?)
+                .push(format!(" AND ({r}.\"_e\" IS NULL OR {r}.\"_e\" > "))
+                .param(time_value(from)?)
+                .push(format!(" OR ({r}.\"_inclusive\" AND {r}.\"_e\" = "))
+                .param(time_value(from)?)
+                .push(")))");
+            return Ok(out);
+        }
         let Cols::Base { table, alias, .. } = cols else {
             return Err(invalid("overlaps applies before grouping or limiting"));
         };
@@ -626,6 +856,9 @@ impl Compiler<'_> {
     }
 
     pub(super) fn main_time(&self, cols: &Cols) -> Result<SqlFragment> {
+        if let Cols::Named { r, .. } = cols {
+            return Ok(SqlFragment::text(format!("{r}.\"_t\"")));
+        }
         let table = Self::table_of(cols);
         let field = table
             .field(table.main_time())
@@ -633,7 +866,105 @@ impl Compiler<'_> {
         Ok(self.field(cols, &FieldRef::Field(field))?.0)
     }
 
+    /// Private native time metadata survives projection independently of aliases.
+    /// Ordinary events choose an interval schema by kind; other rows are points.
+    pub(super) fn span_metadata(
+        &self,
+        cols: &Cols,
+    ) -> Result<(SqlFragment, SqlFragment, SqlFragment, SqlFragment)> {
+        if let Cols::Named { r, .. } = cols {
+            return Ok((
+                SqlFragment::text(format!("{r}.\"_s\"")),
+                SqlFragment::text(format!("{r}.\"_e\"")),
+                SqlFragment::text(format!("{r}.\"_inclusive\"")),
+                SqlFragment::text(format!("{r}.\"_has_span\"")),
+            ));
+        }
+        let when = self.main_time(cols)?;
+        let Cols::Base { table, alias, .. } = cols else {
+            unreachable!()
+        };
+        if let Some((start, end, inclusive)) = self.span(cols) {
+            return Ok((
+                start,
+                end,
+                SqlFragment::text(inclusive.to_string()),
+                SqlFragment::text("true"),
+            ));
+        }
+        if !table.is_events() || alias.is_some() {
+            return Ok((
+                when.clone(),
+                when,
+                SqlFragment::text("true"),
+                SqlFragment::text("false"),
+            ));
+        }
+        let mut start = SqlFragment::text("CASE ");
+        let mut end = SqlFragment::text("CASE ");
+        let mut inclusive = SqlFragment::text("CASE ");
+        let mut spans = vec![];
+        for alias in sinex_model::query::ALIASES.iter().filter(|a| a.spans) {
+            let Some((s, e, inc)) = fields::span(*table, Some(alias.name)) else {
+                continue;
+            };
+            let mut selected = SqlFragment::text(Self::template(cols, "{t}.event_type = ANY("));
+            selected
+                .param(V::String(Some(text_array(
+                    &alias
+                        .kinds
+                        .iter()
+                        .map(|s| (*s).to_owned())
+                        .collect::<Vec<_>>(),
+                ))))
+                .push("::text[])");
+            start
+                .push("WHEN ")
+                .append(selected.clone())
+                .push(" THEN ")
+                .push(Self::template(cols, &s))
+                .push(" ");
+            end.push("WHEN ")
+                .append(selected.clone())
+                .push(" THEN ")
+                .push(Self::template(cols, &e))
+                .push(" ");
+            inclusive
+                .push("WHEN ")
+                .append(selected.clone())
+                .push(format!(" THEN {inc} "));
+            spans.push(selected);
+        }
+        if spans.is_empty() {
+            return Ok((
+                when.clone(),
+                when,
+                SqlFragment::text("true"),
+                SqlFragment::text("false"),
+            ));
+        }
+        start.push("ELSE ").append(when.clone()).push(" END");
+        end.push("ELSE ").append(when).push(" END");
+        inclusive.push("ELSE true END");
+        Ok((
+            start,
+            end,
+            inclusive,
+            SqlFragment::join(spans, " OR ").parenthesized(),
+        ))
+    }
+
     pub(super) fn span(&self, cols: &Cols) -> Option<(SqlFragment, SqlFragment, bool)> {
+        if let Cols::Named {
+            r, grouped: false, ..
+        } = cols
+        {
+            return Some((
+                SqlFragment::text(format!("{r}.\"_s\"")),
+                SqlFragment::text(format!("{r}.\"_e\"")),
+                false,
+            ));
+        }
         let Cols::Base { table, alias, .. } = cols else {
             return None;
         };
