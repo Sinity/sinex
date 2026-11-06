@@ -168,10 +168,14 @@ async fn bounded_payload_pages_equal_window_and_keep_exact_membership(
 fn payload_lookup_is_bounded(plan: &Value) {
     fn walk(node: &Value, excluding: bool, hashed: bool, payloads: &mut usize) {
         let kind = node["Node Type"].as_str().unwrap_or("");
-        let excluding = excluding
+        // InitPlans are independent executions attached to the outer node.
+        // Its bounded metadata join cannot make the payload CTE unbounded.
+        let independent = node["Parent Relationship"].as_str() == Some("InitPlan")
+            || node["Subplan Name"].as_str() == Some("CTE payload");
+        let excluding = (!independent && excluding)
             || node["Runtime Exclusion"].as_bool() == Some(true)
             || node["Startup Exclusion"].as_bool() == Some(true);
-        let hashed = hashed || kind == "Hash Join" || kind == "Merge Join";
+        let hashed = (!independent && hashed) || kind == "Hash Join" || kind == "Merge Join";
         let alias = node["Alias"].as_str().unwrap_or("");
         if alias.starts_with("payload_event") {
             *payloads += 1;
