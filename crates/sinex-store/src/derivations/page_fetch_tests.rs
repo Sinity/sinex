@@ -1,6 +1,8 @@
 use super::*;
 use crate::{AdmissionContext, NoDerivations};
-use sinex_model::{Batch, BatchKind, RecordOutcome, RunId, event_types::operator::LogEntry};
+use sinex_model::{
+    Batch, BatchKind, EventPayload, RecordOutcome, RunId, event_types::operator::LogEntry,
+};
 
 async fn fixture(conn: &mut AdmissionContext) -> Vec<EventId> {
     let mut ids = Vec::new();
@@ -64,7 +66,7 @@ fn window() -> Window {
         unknown_times: false,
         intervals: vec![],
         kinds: vec![Kind {
-            event_type: "operator_log.entry".into(),
+            event_type: LogEntry::EVENT_TYPE.into(),
             contains: serde_json::json!({"label":"selected"}),
         }],
         start: Some(OffsetDateTime::UNIX_EPOCH),
@@ -146,7 +148,7 @@ async fn bounded_payload_pages_equal_window_and_keep_exact_membership(
         exact_rows.extend(rows);
     }
     assert_eq!(identities(&exact_rows), identities(&expected));
-    let feed = after_seq(&mut conn, &["operator_log.entry".into()], 0, 10, i64::MAX)
+    let feed = after_seq(&mut conn, &[LogEntry::EVENT_TYPE.into()], 0, 10, i64::MAX)
         .await
         .unwrap();
     assert_eq!(
@@ -236,7 +238,7 @@ async fn bounded_payload_queries_keep_excluding_batch_plans_on_compressed_histor
                 .fetch_one(&mut *conn).await.unwrap()
         }};
     }
-    let types = vec!["operator_log.entry".to_owned()];
+    let types = vec![LogEntry::EVENT_TYPE.to_owned()];
     let contains = vec![serde_json::json!({"label":"selected"})];
     let w = window();
     let raw_ids: Vec<_> = ids.iter().map(|id| id.0).collect();
