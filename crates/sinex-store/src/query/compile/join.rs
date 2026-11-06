@@ -13,10 +13,17 @@ pub(super) struct Joined {
 }
 
 impl Compiler<'_> {
-    fn inner_compiler(&self) -> Compiler<'_> {
+    fn inner_compiler(&self, query: &Query) -> Result<Compiler<'_>> {
+        for stage in &query.stages {
+            if let Stage::AsOf(context) = stage {
+                if !matches!(context,sinex_model::query::AsOf::Seq(position) if *position == self.seq) {
+                    return Err(invalid("an inner query's as of context must resolve to the outer read position"));
+                }
+            }
+        }
         let mut compiler = Compiler::new(self.ctx, self.seq);
         compiler.calendar = self.calendar.clone();
-        compiler
+        Ok(compiler)
     }
 
     fn join_point(&self, outer: &Cols, at: TimePoint) -> Result<SqlFragment> {
@@ -34,11 +41,10 @@ impl Compiler<'_> {
     fn join_condition(&self, outer: &Cols, on: &JoinOn, inner: &Compiled, i: &str) -> Result<SqlFragment> {
         let (relation, within, outer_point, inner_point) = match on {
             JoinOn::Key { left, right } => {
-                let (left, _) = self.field(outer, left)?;
-                let right = inner.output_column(&right.name())?;
-                let mut condition = SqlFragment::text("(");
-                condition.append(left).push(format!(" = {i}.{right})"));
-                return Ok(condition);
+                let (left,left_kind) = self.field(outer,left)?;
+                let right_kind = Kind::Typed(Operand::Field(right.clone()).field_type().map_err(|error|invalid(error.to_string()))?);
+                let right_column = inner.output_column(&right.name())?;
+                return self.compare_operands(left,left_kind,Op::Eq,SqlFragment::text(format!("{i}.{right_column}")),right_kind);
             }
             JoinOn::Order { relation, within_secs, at } =>
                 (*relation, *within_secs, self.join_point(outer, *at)?, format!("{i}.\"_s\"")),
@@ -80,7 +86,7 @@ impl Compiler<'_> {
 
     /// A semijoin is an EXISTS over the same predicate as the pair relation.
     pub(super) fn order_predicate(&self, outer: &Cols, join: &Join) -> Result<SqlFragment> {
-        let mut compiler = self.inner_compiler();
+        let mut compiler = self.inner_compiler(&join.inner)?;
         let inner = compiler.compile(&join.inner)?;
         let condition = self.join_condition(outer, &join.on, &inner, "order_inner")?;
         let known = match &join.on {
@@ -98,7 +104,7 @@ impl Compiler<'_> {
     pub(super) fn predicate_parents(&self, outer: &Cols, expression: &Expr) -> Result<SqlFragment> {
         match expression {
             Expr::Order(join) => {
-                let inner = self.inner_compiler().compile(&join.inner)?;
+                let inner = self.inner_compiler(&join.inner)?.compile(&join.inner)?;
                 let condition = self.join_condition(outer,&join.on,&inner,"proof_inner")?;
                 let mut out = SqlFragment::text("ARRAY(SELECT DISTINCT unnest(proof_inner.\"_parents\") FROM (");
                 out.append(inner.answer).push(") proof_inner WHERE ").append(condition).push(")");
@@ -150,7 +156,7 @@ impl Compiler<'_> {
     }
 
     fn join_lateral(&mut self, outer:&Cols, join:&Join, nearest:bool)->Result<Joined> {
-        let inner = self.inner_compiler().compile(&join.inner)?;
+        let inner = self.inner_compiler(&join.inner)?.compile(&join.inner)?;
         let i = self.alias("joined");
         let condition = self.join_condition(outer, &join.on, &inner, &i)?;
         let distance=self.join_distance(outer,&join.on,&i)?;
