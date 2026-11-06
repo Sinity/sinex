@@ -67,9 +67,29 @@ impl Compiler<'_> {
         Ok((self.inner_compiler(&query)?.compile(&query)?, display))
     }
 
+    fn matched_point(at: TimePoint) -> bool {
+        matches!(
+            at,
+            TimePoint::MatchWhen | TimePoint::MatchStart | TimePoint::MatchEnd
+        )
+    }
+
     fn join_point(&self, outer: &Cols, at: TimePoint) -> Result<SqlFragment> {
         let (start, end, _, _) = self.span_metadata(outer)?;
-        Ok(if at == TimePoint::End { end } else { start })
+        Ok(match at {
+            TimePoint::Start => start,
+            TimePoint::End => end,
+            _ => self.main_time(outer)?,
+        })
+    }
+
+    fn inner_point(at: TimePoint, i: &str) -> String {
+        match at {
+            TimePoint::MatchWhen => format!("{i}.\"_t\""),
+            TimePoint::MatchStart => format!("CASE WHEN {i}.\"_has_span\" THEN {i}.\"_s\" END"),
+            TimePoint::MatchEnd => format!("CASE WHEN {i}.\"_has_span\" THEN {i}.\"_e\" END"),
+            _ => format!("{i}.\"_s\""),
+        }
     }
 
     fn row_identity(cols: &Cols) -> String {
@@ -86,7 +106,7 @@ impl Compiler<'_> {
         inner: &Compiled,
         i: &str,
     ) -> Result<SqlFragment> {
-        let (relation, within, outer_point, inner_point) = match on {
+        let (relation, within, at, outer_point, inner_point) = match on {
             JoinOn::Key { left, right } => {
                 let (left, left_kind) = self.field(outer, left)?;
                 let right_kind = Kind::Typed(
@@ -110,8 +130,9 @@ impl Compiler<'_> {
             } => (
                 *relation,
                 *within_secs,
+                *at,
                 self.join_point(outer, *at)?,
-                format!("{i}.\"_s\""),
+                Self::inner_point(*at, i),
             ),
         };
         let mut conditions = vec![];
@@ -119,8 +140,11 @@ impl Compiler<'_> {
         match relation {
             JoinKind::Near => {
                 condition
+                    .push("CASE WHEN ")
                     .append(outer_point.clone())
-                    .push(format!(" IS NOT NULL AND {inner_point} IS NOT NULL"));
+                    .push(format!(
+                        " IS NULL OR ({inner_point}) IS NULL THEN NULL::boolean ELSE true END"
+                    ));
             }
             JoinKind::Before | JoinKind::After => {
                 condition
@@ -133,6 +157,11 @@ impl Compiler<'_> {
                     .push(&inner_point);
             }
             JoinKind::During => {
+                if Self::matched_point(at) {
+                    condition.push(format!(
+                        "CASE WHEN NOT {i}.\"_has_span\" THEN NULL::boolean ELSE "
+                    ));
+                }
                 condition
                     .append(outer_point.clone())
                     .push(format!(" >= {i}.\"_s\" AND ({i}.\"_e\" IS NULL OR "))
@@ -140,35 +169,66 @@ impl Compiler<'_> {
                     .push(format!(" < {i}.\"_e\" OR ({i}.\"_inclusive\" AND "))
                     .append(outer_point.clone())
                     .push(format!(" = {i}.\"_e\"))"));
+                if Self::matched_point(at) {
+                    condition.push(" END");
+                }
             }
             JoinKind::Containing => {
-                let (start, end, inclusive, _) = self.span_metadata(outer)?;
-                let inner_end = format!("{i}.\"_e\"");
-                condition
-                    .push(&inner_point)
-                    .push(" >= ")
-                    .append(start)
-                    .push(" AND (")
-                    .append(end.clone())
-                    .push(" IS NULL OR ")
-                    .push(&inner_end)
-                    .push(" <= ")
-                    .append(end.clone())
-                    .push(" OR (")
-                    .append(inclusive)
-                    .push(" AND ")
-                    .push(inner_end)
-                    .push(" = ")
-                    .append(end)
-                    .push("))");
+                let (start, end, inclusive, has_span) = self.span_metadata(outer)?;
+                if Self::matched_point(at) {
+                    condition
+                        .push("CASE WHEN ")
+                        .append(self.main_time(outer)?)
+                        .push(" IS NULL OR NOT ")
+                        .append(has_span)
+                        .push(" THEN NULL::boolean ELSE (")
+                        .push(&inner_point)
+                        .push(") >= ")
+                        .append(start)
+                        .push(" AND (")
+                        .append(end.clone())
+                        .push(" IS NULL OR (")
+                        .push(&inner_point)
+                        .push(") < ")
+                        .append(end.clone())
+                        .push(" OR (")
+                        .append(inclusive)
+                        .push(" AND (")
+                        .push(&inner_point)
+                        .push(") = ")
+                        .append(end)
+                        .push(")) END");
+                } else {
+                    condition
+                        .push(&inner_point)
+                        .push(" >= ")
+                        .append(start)
+                        .push(" AND (")
+                        .append(end.clone())
+                        .push(" IS NULL OR (CASE WHEN ")
+                        .push(format!(
+                            "{i}.\"_has_span\" AND {i}.\"_e\" IS NULL THEN false ELSE {i}.\"_e\" < "
+                        ))
+                        .append(end.clone())
+                        .push(format!(" OR ({i}.\"_e\" = "))
+                        .append(end)
+                        .push(" AND (")
+                        .append(inclusive)
+                        .push(format!(" OR NOT {i}.\"_inclusive\")) END))"));
+                }
             }
         }
         condition.push(")");
         conditions.push(condition);
         if let Some(seconds) = within {
             let mut window = SqlFragment::text("abs(extract(epoch from (");
+            let distance_point = if relation == JoinKind::During && Self::matched_point(at) {
+                format!("{i}.\"_s\"")
+            } else {
+                inner_point
+            };
             window
-                .push(inner_point)
+                .push(distance_point)
                 .push(" - ")
                 .append(outer_point)
                 .push("))) <= ")
@@ -178,7 +238,8 @@ impl Compiler<'_> {
         Ok(SqlFragment::join(conditions, " AND "))
     }
 
-    /// A semijoin is an EXISTS over the same predicate as the pair relation.
+    /// A true candidate wins; absent that, any unknown comparison keeps the
+    /// semijoin unknown. The inner query is evaluated once.
     pub(super) fn order_predicate(&self, outer: &Cols, join: &Join) -> Result<SqlFragment> {
         let (inner, _display) = self.compile_inner(join)?;
         let condition = self.join_condition(outer, &join.on, &inner, "order_inner")?;
@@ -186,13 +247,15 @@ impl Compiler<'_> {
             JoinOn::Key { left, .. } => self.field(outer, left)?.0,
             JoinOn::Order { at, .. } => self.join_point(outer, *at)?,
         };
-        let mut sql = SqlFragment::text("(CASE WHEN ");
+        let mut sql = SqlFragment::text(
+            "(SELECT CASE WHEN bool_or(order_candidate.predicate) IS TRUE THEN true WHEN count(*) FILTER (WHERE order_candidate.predicate IS NULL) > 0 OR ",
+        );
         sql.append(known)
-            .push(" IS NULL THEN NULL::boolean ELSE EXISTS (SELECT 1 FROM (");
-        sql.append(inner.answer)
-            .push(") order_inner WHERE ")
+            .push(" IS NULL THEN NULL::boolean ELSE false END FROM (SELECT ")
             .append(condition)
-            .push(") END)");
+            .push(" AS predicate FROM (")
+            .append(inner.answer)
+            .push(") order_inner) order_candidate)");
         Ok(sql)
     }
 
@@ -260,10 +323,15 @@ impl Compiler<'_> {
     }
 
     fn join_distance(&self, outer: &Cols, on: &JoinOn, i: &str) -> Result<Option<SqlFragment>> {
-        let JoinOn::Order { at, .. } = on else {
+        let JoinOn::Order { relation, at, .. } = on else {
             return Ok(None);
         };
-        let mut out = SqlFragment::text(format!("extract(epoch from ({i}.\"_s\" - "));
+        let inner_point = if *relation == JoinKind::During && Self::matched_point(*at) {
+            format!("{i}.\"_s\"")
+        } else {
+            Self::inner_point(*at, i)
+        };
+        let mut out = SqlFragment::text(format!("extract(epoch from (({inner_point}) - "));
         out.append(self.join_point(outer, *at)?).push("))");
         Ok(Some(out))
     }
