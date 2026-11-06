@@ -83,3 +83,45 @@ fn template_serialization_keeps_parameter_values_out_of_query_structure() {
     };
     assert_eq!(root, "/src/tide OR source exists");
 }
+
+#[devkit::test]
+fn operation_words_reserve_only_the_product_command_boundary() {
+    let ctx = context();
+    for text in [
+        "recall last",
+        "TRACE 0190a0b0-0000-7000-8000-000000000001",
+        "related sinex:ev/0190a0b0-0000-7000-8000-000000000001",
+    ] {
+        let error = super::super::bind(text, &ctx).unwrap_err();
+        assert!(error.not_built, "{text}: {error}");
+        assert!(error.message.contains("Sinex operation"), "{text}: {error}");
+    }
+    for text in [
+        r#""recall""#,
+        "we recall earlier details",
+        "recalling details",
+        "events where text ~ recall",
+        "duplicates",
+    ] {
+        super::super::bind(text, &ctx).unwrap_or_else(|error| panic!("{text}: {error}"));
+    }
+}
+
+#[devkit::test]
+fn provenance_operations_refuse_unexecuted_relation_transforms_at_binding() {
+    let ctx = context();
+    let reference = "0190a0b0-0000-7000-8000-000000000001";
+    for direction in ["trace", "parents", "descendants"] {
+        let template = parse(&format!("{direction} {reference} | limit 1"), &ctx).unwrap();
+        let error = template.bind(&ctx).unwrap_err();
+        assert!(
+            error.message.contains("provenance walks do not support"),
+            "{error}"
+        );
+        let plain = parse(&format!("{direction} {reference}"), &ctx)
+            .unwrap()
+            .bind(&ctx)
+            .unwrap();
+        assert!(matches!(plain.source, Source::Walk { .. }));
+    }
+}

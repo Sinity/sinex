@@ -230,10 +230,11 @@ pub fn parse(text: &str, ctx: &Context) -> Result<Template, QueryError> {
         } else {
             Direction::Descendants
         };
-        let reference = arguments.trim();
+        let (reference, tail) = split_subject(arguments.trim());
+        let reference = reference.trim();
         parse_reference(reference)?;
         return Ok(Template {
-            relation: super::syntax::parse("events", ctx)?,
+            relation: super::syntax::parse(&format!("events {tail}"), ctx)?,
             operation: Some(Operation::Walk {
                 direction,
                 reference: reference.into(),

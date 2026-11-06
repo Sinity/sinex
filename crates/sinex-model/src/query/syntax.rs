@@ -156,7 +156,22 @@ pub fn field_kind(ty: FieldType) -> FieldKind {
     }
 }
 pub fn parse(text: &str, ctx: &Context) -> Result<query_language::ast::Query, QueryError> {
-    query_language::parse::parse(text, &catalog(ctx)).map_err(error)
+    let catalog = catalog(ctx);
+    let input = text.trim_start();
+    let first = input.split_whitespace().next().unwrap_or("");
+    // Command routing belongs to the product. A quoted command word remains
+    // ordinary search text, and a declared relation wins an overlapping name.
+    if catalog.unit(first).is_none()
+        && super::tables::COMMAND_WORDS
+            .iter()
+            .any(|word| first.eq_ignore_ascii_case(word))
+    {
+        return Err(QueryError::not_built(
+            text.len() - input.len(),
+            format!("`{first}` is a Sinex operation, not a relation query"),
+        ));
+    }
+    query_language::parse::parse(text, &catalog).map_err(error)
 }
 pub fn error(e: query_language::Error) -> QueryError {
     let not_built = e.kind == query_language::ErrorKind::NotAQuery;
