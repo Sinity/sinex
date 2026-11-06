@@ -10,6 +10,7 @@ mod fields;
 mod follow;
 mod products;
 mod recall;
+pub mod representation;
 mod saved;
 mod selected;
 pub mod signals;

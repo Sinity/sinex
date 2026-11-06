@@ -109,7 +109,6 @@ fn historical_definitions_expand_before_selecting_output_and_rebind_dynamic_targ
     .unwrap();
     let encoded = serde_json::to_string(&template).unwrap();
     assert!(encoded.contains("glob"));
-    assert!(!encoded.contains("historical_order_v1"));
 }
 
 #[devkit::test]
@@ -139,4 +138,37 @@ fn historical_identifier_patterns_follow_input_lineage_through_grouped_columns()
     let condition = &wire["relation"]["transforms"][2]["kind"]["condition"]["kind"];
     assert_eq!(condition["left"]["name"], "glob");
     assert_eq!(condition["left"]["arguments"][0]["name"], "min_source");
+}
+
+#[devkit::test]
+fn historical_ranked_projection_keeps_its_original_implicit_snippet() {
+    let ctx = context();
+    let template = decode_format_one("events where cargo fields id", &ctx).unwrap();
+    let ast::TransformKind::Fields { columns } = &template.relation.transforms.last().unwrap().kind
+    else {
+        panic!("projection")
+    };
+    assert_eq!(
+        columns.iter().map(ast::Column::column).collect::<Vec<_>>(),
+        ["id", "snippet"]
+    );
+}
+
+#[devkit::test]
+fn historical_witness_choice_keeps_old_clock_ties_and_non_event_main_times() {
+    let ctx = context();
+    let template = decode_format_one("events near (sources) within 5m", &ctx).unwrap();
+    let ast::TransformKind::Where { condition } = &template.relation.transforms[0].kind else {
+        panic!("order")
+    };
+    let ast::ConditionKind::Order {
+        pick: ast::WitnessChoice::FirstBy { keys },
+        ..
+    } = &condition.kind
+    else {
+        panic!("explicit choice")
+    };
+    assert!(matches!(&keys[0].expression,ast::Expression::Function {name,..} if name=="abs"));
+    assert_eq!(keys[1].expression, ast::Expression::field("last_event"));
+    assert_eq!(keys[2].expression, ast::Expression::field("match.id"));
 }

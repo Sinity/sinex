@@ -10,7 +10,28 @@ pub(super) async fn read(
     env: &Env,
     in_snapshot: bool,
 ) -> Result<Option<SelectedInputs>, String> {
-    let Some(selection) = derivation.selected_query(key, inputs, env) else {
+    let request = if derivation.name() == "recall.products" {
+        let original = inputs.iter().find(|event| {
+            event.event_type == "analysis.request"
+                && event.payload.get("request") == key.get("request")
+        });
+        match original {
+            Some(original) => Some(
+                sinex_store::query::representation::analysis_request(conn, original.id)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            ),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let Some(selection) = derivation.selected_query(
+        key,
+        inputs,
+        request.as_ref().map(|checked| checked.request()),
+        env,
+    ) else {
         return Ok(None);
     };
     let selected = if in_snapshot {
@@ -20,6 +41,7 @@ pub(super) async fn read(
     }
     .map_err(|error| error.to_string())?;
     Ok(Some(SelectedInputs {
+        request: request.map(|checked| checked.into_request()),
         read_as: selected.answer.resolved.commit_seq,
         value: serde_json::to_value(selected.answer).map_err(|error| error.to_string())?,
         parents: selected.parents,

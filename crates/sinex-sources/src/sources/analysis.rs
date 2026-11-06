@@ -17,7 +17,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
     purpose: "canonical analysis questions",
     class: Class::Open,
     parser: "analysis-request",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["analysis.request"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_lines,
@@ -35,8 +35,33 @@ impl Parser for RequestParser {
         _: &(),
         context: &RecordContext<'_>,
     ) -> Result<(Vec<AnalysisRequest>, ()), RecordError> {
-        let mut request: AnalysisRequest = serde_json::from_value(Value::Object(record.clone()))
-            .map_err(|e| RecordError::new(e.to_string()))?;
+        let mut payload = Value::Object(record.clone());
+        match context
+            .manifest
+            .details
+            .get("format_version")
+            .map(Value::as_u64)
+        {
+            None | Some(Some(1)) => {
+                sinex_model::query::historical::validate_original_payload(
+                    &sinex_model::KindRef {
+                        name: "analysis.request".into(),
+                        version: 2,
+                    },
+                    &payload,
+                )
+                .map_err(|error| RecordError::new(error.to_string()))?;
+                sinex_model::query::historical::upgrade_payload(
+                    &mut payload,
+                    &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+                )
+                .map_err(|error| RecordError::new(error.to_string()))?;
+            }
+            Some(Some(2)) => {}
+            _ => return Err(RecordError::new("unknown analysis request input format")),
+        }
+        let mut request: AnalysisRequest =
+            serde_json::from_value(payload).map_err(|e| RecordError::new(e.to_string()))?;
         request.by = context
             .manifest
             .details
@@ -84,7 +109,7 @@ pub fn request_material(
             part_index: 0,
             previous_part: None,
             manifest: sinex_model::Manifest::from_json(
-                json!({"path":"analysis", "host":host, "actor":actor, "written_at_ns":at.unix_ns().to_string(), "read_at_ns":order, "media_type":"application/x-sinex-analysis-request"}),
+                json!({"path":"analysis", "format_version":2, "host":host, "actor":actor, "written_at_ns":at.unix_ns().to_string(), "read_at_ns":order, "media_type":"application/x-sinex-analysis-request"}),
             ),
             reading_order: Box::new(move |_| ReadingOrder(order)),
             cursor_at: Box::new(|_| Ok(Value::Null)),
@@ -115,3 +140,6 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         reader: None,
         capture: None,
     };
+
+#[cfg(test)]
+mod tests;

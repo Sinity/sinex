@@ -1,10 +1,46 @@
-//! Explicit reader for immutable query-request format 1 and stored-data upgrades.
+//! Explicit reader for immutable query-request format 1 and source-owned read projections.
 //! Ordinary command admission never calls this decoder.
 use super::{Context, QueryError, native};
 use historical_query_format_v1::ast as old;
 use query_language::ast;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod formats;
+
+/// The exact historical admitted schema expected by this owner converter.
+pub fn original_declaration(reference: &crate::KindRef) -> Option<crate::KindDeclaration> {
+    formats::original(reference)
+}
+
+/// The original request material header owned by these historical query kinds.
+pub struct MaterialFormat {
+    pub parser: &'static str,
+    pub version: i32,
+    pub path: &'static str,
+    pub media_type: &'static str,
+}
+pub fn original_material_format(kind: &crate::KindRef) -> Option<MaterialFormat> {
+    match (kind.name.as_str(), kind.version) {
+        ("query.saved", 2) => Some(MaterialFormat {
+            parser: "query-request",
+            version: 1,
+            path: "query",
+            media_type: "application/x-sinex-query-request",
+        }),
+        ("analysis.request", 2) => Some(MaterialFormat {
+            parser: "analysis-request",
+            version: 1,
+            path: "analysis",
+            media_type: "application/x-sinex-analysis-request",
+        }),
+        _ => None,
+    }
+}
+
+pub fn validate_original_payload(kind: &crate::KindRef, payload: &Value) -> Result<(), QueryError> {
+    formats::validate(kind, payload)
+}
 
 pub const GRAMMAR_REVISION: &str = "8c22e127bb1f5c10d8c1740de4c4f0bfe53ffdb7";
 
@@ -184,6 +220,13 @@ fn convert_relation(
         old::Source::Unit { unit, .. } => Some(unit.clone()),
         _ => None,
     };
+    let inherited_snippet = base
+        .as_ref()
+        .map(|base| {
+            available_fields(base, ctx).map(|fields| fields.iter().any(|field| field == "snippet"))
+        })
+        .transpose()?
+        .unwrap_or(true);
     let inherited_output = base
         .as_ref()
         .map(|base| default_output(base, ctx))
@@ -256,17 +299,6 @@ fn convert_relation(
                         "historical temporal relation contains a native command",
                     ));
                 }
-                if !all
-                    && (matches!(
-                        kind,
-                        old::TemporalRelation::During | old::TemporalRelation::Containing
-                    ) || !matches!(at, old::TimePoint::When))
-                {
-                    return Err(QueryError::not_built(
-                        stage.span.start,
-                        "historical witness ordering needs the grouped first-row conversion",
-                    ));
-                }
                 let outer_fields = available_fields(&relation, ctx)?;
                 let suffix = if temporal == 0 {
                     String::new()
@@ -275,6 +307,51 @@ fn convert_relation(
                 };
                 temporal += 1;
                 let relation_kind = current(kind)?;
+                let inner_table = match &inner.relation.source {
+                    ast::Source::Unit { unit, .. } => super::Table::from_name(unit)
+                        .or(super::Alias::from_name(unit).map(|_| super::Table::Events)),
+                    _ => None,
+                }
+                .ok_or_else(|| {
+                    QueryError::new("historical temporal input has no native row domain")
+                })?;
+                let span_start = if inner_table == super::Table::Runs {
+                    "started"
+                } else {
+                    "start"
+                };
+                let span_end = if inner_table == super::Table::Runs {
+                    "ended"
+                } else {
+                    "end"
+                };
+                let anchor = match at {
+                    old::TimePoint::When => inner_table.main_time(),
+                    old::TimePoint::Start => span_start,
+                    old::TimePoint::End => span_end,
+                };
+                let key = |name: &str, descending| ast::SortKey {
+                    expression: ast::Expression::field(name),
+                    descending,
+                };
+                let mut choice = match kind {
+                    old::TemporalRelation::Near => vec![
+                        ast::SortKey {
+                            expression: ast::Expression::Function {
+                                name: "abs".into(),
+                                arguments: vec![ast::Expression::field("match.distance")],
+                            },
+                            descending: false,
+                        },
+                        key(anchor, false),
+                    ],
+                    old::TemporalRelation::Before | old::TemporalRelation::Containing => {
+                        vec![key(anchor, false)]
+                    }
+                    old::TemporalRelation::After => vec![key(anchor, true)],
+                    old::TemporalRelation::During => vec![key(span_start, false)],
+                };
+                choice.push(key("match.id", false));
                 let at = match at {
                     old::TimePoint::When => ast::TimePoint::MatchWhen,
                     old::TimePoint::Start => ast::TimePoint::MatchStart,
@@ -305,6 +382,7 @@ fn convert_relation(
                                 within,
                                 at,
                                 scope: None,
+                                pick: ast::WitnessChoice::FirstBy { keys: choice },
                             },
                         },
                     }
@@ -402,17 +480,17 @@ fn convert_relation(
     } else {
         None
     };
-    if let Some(fields) = &mut fields {
-        let template = native::Template::query(relation.clone());
-        let executable = if validating {
-            template.validate(ctx)?
-        } else {
-            template.bind(ctx)?
-        };
-        if executable.ranked && !fields.iter().any(|name| name == "snippet") {
+    if !grouped
+        && inherited_snippet
+        && let Some(fields) = &mut fields
+    {
+        if ranked_relation(&relation, ctx, validating)?
+            && !fields.iter().any(|name| name == "snippet")
+        {
             fields.push("snippet".into());
         }
     }
+
     if let Some(fields) = fields {
         relation.transforms.push(ast::Transform {
             span: Default::default(),
@@ -422,6 +500,20 @@ fn convert_relation(
         });
     }
     Ok(relation)
+}
+
+fn ranked_relation(
+    relation: &ast::Query,
+    ctx: &Context,
+    validating: bool,
+) -> Result<bool, QueryError> {
+    let template = native::Template::query(relation.clone());
+    Ok(if validating {
+        template.validate(ctx)?
+    } else {
+        template.bind(ctx)?
+    }
+    .ranked)
 }
 
 fn default_output(query: &ast::Query, ctx: &Context) -> Result<Vec<String>, QueryError> {
@@ -528,7 +620,7 @@ fn error(error: serde_json::Error) -> QueryError {
     QueryError::new(error.to_string())
 }
 
-/// Evolve stored readings while leaving original selector/hash evidence intact.
+/// Project an owned historical payload while preserving original selector/hash evidence.
 pub fn upgrade_payload(payload: &mut Value, fallback: &Context) -> Result<(), QueryError> {
     upgrade_value(payload, fallback, true)
 }

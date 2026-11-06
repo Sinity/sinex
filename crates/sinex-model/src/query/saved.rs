@@ -32,7 +32,7 @@ pub struct SavedQuery {
 }
 
 /// Current writes use Current. FormatOne is constructed only by the immutable
-/// historical source reader and numbered stored-data conversion.
+/// historical source reader and authenticated owning read projection.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "format", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Definition {

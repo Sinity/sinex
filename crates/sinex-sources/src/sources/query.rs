@@ -75,6 +75,21 @@ impl Parser for RequestParser {
         };
         match format {
             1 if object.get("record").and_then(Value::as_str) == Some("saved") => {
+                if object.contains_key("template") {
+                    return Err(RecordError::new(
+                        "historical saved request has an unexpected template",
+                    ));
+                }
+                let mut original = object.clone();
+                original.remove("record");
+                sinex_model::query::historical::validate_original_payload(
+                    &sinex_model::KindRef {
+                        name: "query.saved".into(),
+                        version: 2,
+                    },
+                    &Value::Object(original),
+                )
+                .map_err(|error| RecordError::new(error.to_string()))?;
                 let query = object.get("query").and_then(Value::as_str).ok_or_else(|| {
                     RecordError::new("historical saved query has no authored text")
                 })?;

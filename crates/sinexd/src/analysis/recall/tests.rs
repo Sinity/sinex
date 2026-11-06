@@ -59,6 +59,7 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
     let rows:Vec<Value> = parents.iter().enumerate().map(|(index,parent)| json!({"id":parent,"event_type":"command.executed","source":"synthetic.shell","when":at,"payload":{"command":format!("synthetic command {index}")}})).collect();
     let answer = json!({"rows":rows,"total":10_001,"resolved":{"commit_seq":42},"recall":{"from":at,"to":at}});
     let selected = SelectedInputs {
+        request: None,
         value: answer.clone(),
         parents,
         class: Class::Guarded,
@@ -183,18 +184,20 @@ async fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitt
     assert_eq!(keys, vec![json!({"request":request.request})]);
     assert_eq!(keys[0].as_object().unwrap().len(), 1);
     let selected = RecallProducts
-        .selected_query(&keys[0], std::slice::from_ref(&input), &env)
+        .selected_query(&keys[0], std::slice::from_ref(&input), None, &env)
         .unwrap();
     assert_eq!(Some(selected), request.selection);
     assert!(
-        RecallProducts.selected_query(&keys[0], &[], &env).is_none(),
+        RecallProducts
+            .selected_query(&keys[0], &[], None, &env)
+            .is_none(),
         "the key never substitutes for admitted request evidence"
     );
     let mut wrong = input.clone();
     wrong.payload["request"] = json!("different request");
     assert!(
         RecallProducts
-            .selected_query(&keys[0], &[wrong], &env)
+            .selected_query(&keys[0], &[wrong], None, &env)
             .is_none()
     );
 }
