@@ -400,31 +400,8 @@ async fn window_page(
 ) -> Result<(Vec<Committed>, i64)> {
     let (types, contains) = kind_arrays(&w.kinds);
     let (after_ts, after_seq) = after.unzip();
-    let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
-             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule, page.matched AS "matched!"
-           FROM core.events e JOIN (
-             SELECT p.id, p.matched FROM (
-               SELECT q.id, count(*) OVER () AS matched,
-                      (sum(q.size) OVER (ORDER BY q.ts_orig, q.commit_seq) - q.size)::bigint AS before
-               FROM (
-                 SELECT s.id, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
-                 FROM core.events s
-                 WHERE s.event_type = ANY($1) AND s.ts_orig IS NOT NULL
-                   AND ($2::timestamptz IS NULL OR s.ts_orig >= $2)
-                   AND ($3::timestamptz IS NULL OR s.ts_orig < $3)
-                   AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
-                               WHERE k.event_type = s.event_type AND s.payload @> k.contains)
-                   AND ($5::timestamptz IS NULL OR (s.ts_orig, s.commit_seq) > ($5, $6::bigint))
-                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
-                 ORDER BY s.ts_orig, s.commit_seq
-                 LIMIT $7
-               ) q
-             ) p WHERE p.before < $8::bigint
-           ) page ON page.id = e.id
-           ORDER BY e.ts_orig, e.commit_seq"#,
+    let rows = sqlx::query_file!(
+        "src/derivations/sql/window_page.sql",
         &types,
         w.start,
         w.end,
@@ -515,31 +492,21 @@ impl ValueGroup {
             .clone()
             .map(|(value, ts, seq)| (Some(value), Some(ts), Some(seq)))
             .unwrap_or_default();
-        let rows = sqlx::query!(
-            r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
-                 e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-                 e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-                 (SELECT replace_rule FROM registry.event_types t WHERE t.name=e.event_type AND t.version=e.kind_version) AS replace_rule, page.value AS "value!", page.matched AS "matched!"
-               FROM core.events e JOIN (
-                 SELECT p.id, p.value, p.matched FROM (
-                   SELECT q.id, q.value, count(*) OVER () AS matched,
-                          (sum(q.size) OVER (ORDER BY q.value, q.ts_orig, q.commit_seq) - q.size)::bigint AS before
-                   FROM (
-                     SELECT s.id, v.value COLLATE "C" AS value, s.ts_orig, s.commit_seq, pg_column_size(s.payload)::bigint AS size
-                     FROM unnest($1::text[]) v(value)
-                     JOIN core.events s ON s.payload->>$2 = v.value AND jsonb_typeof(s.payload->$2) = 'string'
-                     WHERE s.event_type = ANY($3) AND s.ts_orig >= $4 AND s.ts_orig < $5
-                       AND ($6::text IS NULL OR (v.value COLLATE "C", s.ts_orig, s.commit_seq) > ($6 COLLATE "C", $7::timestamptz, $8::bigint))
-                       AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
-                     ORDER BY v.value COLLATE "C", s.ts_orig, s.commit_seq
-                     LIMIT $9
-                   ) q
-                 ) p WHERE p.before < $10::bigint
-               ) page ON page.id = e.id
-               ORDER BY page.value, e.ts_orig, e.commit_seq"#,
-            &values, self.field, &self.kinds, self.start, self.end,
-            after_value, after_ts, after_seq, page, bytes,
-        ).fetch_all(&mut *conn).await?;
+        let rows = sqlx::query_file!(
+            "src/derivations/sql/value_page.sql",
+            &values,
+            self.field,
+            &self.kinds,
+            self.start,
+            self.end,
+            after_value,
+            after_ts,
+            after_seq,
+            page,
+            bytes,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
         let matched = rows.first().map_or(0, |row| row.matched);
         let finished = matched < page && rows.len() as i64 == matched;
         for row in rows {
@@ -892,29 +859,8 @@ pub async fn after_seq(
     limit: i64,
     bytes: i64,
 ) -> Result<Vec<Committed>> {
-    let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
-             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-             e.record_state AS "record_state!", e.class AS "class!", page.seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM core.events e JOIN (
-             SELECT p.id, p.seq FROM (
-               SELECT q.id, q.seq, (sum(q.size) OVER (ORDER BY q.seq) - q.size)::bigint AS before
-               FROM (
-                 SELECT s.id, s.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
-                 FROM core.events s
-                 WHERE s.commit_seq > $2 AND s.event_type = ANY($1)
-                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
-                 UNION ALL
-                 SELECT c.event_id AS id, c.commit_seq AS seq, pg_column_size(s.payload)::bigint AS size
-                 FROM audit.archive_changes c JOIN core.events s ON s.id = c.event_id
-                 WHERE c.commit_seq > $2 AND NOT c.archived AND s.event_type = ANY($1)
-                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)
-                 ORDER BY seq LIMIT $3
-               ) q
-             ) p WHERE p.before < $4::bigint
-           ) page ON page.id = e.id
-           ORDER BY page.seq"#,
+    let rows = sqlx::query_file!(
+        "src/derivations/sql/after_seq.sql",
         event_types,
         after_seq,
         limit,
@@ -1225,3 +1171,6 @@ mod tests;
 
 mod exact;
 pub use exact::ExactInputs;
+
+#[cfg(test)]
+mod page_fetch_tests;

@@ -34,16 +34,16 @@ impl ExactInputs {
         if self.finished {
             return Ok(None);
         }
-        let rows=sqlx::query!(r#"SELECT e.id AS "id!",e.event_type AS "event_type!",e.source AS "source!",e.material_id,e.anchor,e.output_index AS "output_index!",e.parents,
-          e.ts_orig,e.ts_quality AS "ts_quality!",e.payload AS "payload!",e.equivalence_key,e.reading_order AS "reading_order!",e.record_hash AS "record_hash!",
-          e.record_state AS "record_state!",e.class AS "class!",e.commit_seq AS "commit_seq!",e.kind_version AS "kind_version!",e.validation AS "validation!",
-          (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-          FROM core.events e JOIN (
-            SELECT id FROM(SELECT id,commit_seq,sum(size) OVER(ORDER BY commit_seq,id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)-size AS before
-              FROM(SELECT e.id,e.commit_seq,pg_column_size(e)::bigint AS size FROM core.events e
-                WHERE e.id=ANY($1) AND (e.commit_seq>$2 OR (e.commit_seq=$2 AND $5::uuid IS NOT NULL AND e.id>$5)) AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
-                ORDER BY e.commit_seq,e.id LIMIT $3) selected) bounded WHERE before<$4::bigint) page ON page.id=e.id
-          ORDER BY e.commit_seq,e.id"#,&self.ids,self.after,self.count,self.bytes,self.after_id).fetch_all(conn).await?;
+        let rows = sqlx::query_file!(
+            "src/derivations/sql/exact_page.sql",
+            &self.ids,
+            self.after,
+            self.count,
+            self.bytes,
+            self.after_id
+        )
+        .fetch_all(conn)
+        .await?;
         if rows.is_empty() {
             self.finished = true;
             return Ok(None);
