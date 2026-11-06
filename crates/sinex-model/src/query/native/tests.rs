@@ -34,8 +34,9 @@ fn native_subjects_lower_without_entering_the_shared_query_grammar() {
     let Source::Recall { from, to } = day.source else {
         panic!("expected window")
     };
-    assert_eq!(from.to_string(), "2026-09-13T00:00:00Z");
-    assert_eq!(to.to_string(), "2026-09-14T00:00:00Z");
+    // The explicit fixture clock starts logical days at 04:00 UTC.
+    assert_eq!(from.to_string(), "2026-09-13T04:00:00Z");
+    assert_eq!(to.to_string(), "2026-09-14T04:00:00Z");
 }
 
 #[devkit::test]
