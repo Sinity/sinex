@@ -21,9 +21,9 @@ fn latch_media(
     ),
     String,
 > {
-    let (send, receive) = std::sync::mpsc::channel();
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
     let mut watcher = notify::recommended_watcher(move |event| {
-        let _ = send.send(event);
+        let _ = send.try_send(event);
     })
     .map_err(|e| e.to_string())?;
     let mut latched = BTreeMap::<PathBuf, Vec<String>>::new();
@@ -127,10 +127,16 @@ fn wait_media(
         if complete {
             return Ok(());
         }
-        match receive.recv_timeout(Duration::from_secs(1)) {
-            Ok(Ok(_)) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Ok(Err(error)) => return Err(error.to_string()),
-            Err(error) => return Err(error.to_string()),
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err("producer capture cancelled while sealing media".into());
+            }
+            match receive.recv_timeout(Duration::from_secs(1)) {
+                Ok(Ok(_)) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Ok(Err(error)) => return Err(error.to_string()),
+                Err(error) => return Err(error.to_string()),
+            }
         }
     }
 }

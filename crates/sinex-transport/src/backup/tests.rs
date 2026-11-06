@@ -222,3 +222,61 @@ async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash
     observer.await.unwrap();
     server.await.unwrap();
 }
+
+#[devkit::test]
+async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request() {
+    use sinex_protocol::replies::{FlowAck, ReplyFrame};
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let subjects = Subjects::sinex();
+    let callback: Arc<dyn Fn(Arc<AtomicBool>) -> Result<Captured, String> + Send + Sync> =
+        Arc::new(|_| {
+            Ok(Captured {
+                directory: tempfile::tempdir().map_err(|e| e.to_string())?,
+                files: Vec::new(),
+            })
+        });
+    let _participant = Participant::start(
+        client.clone(),
+        subjects.clone(),
+        "capture".into(),
+        Publication::default(),
+        callback,
+    )
+    .await
+    .unwrap();
+    let inbox = "_SINEX_BACKUP.capture.cancelled";
+    let mut response = client.subscribe(inbox).await.unwrap();
+    client.flush().await.unwrap();
+    client
+        .publish_with_reply(
+            subjects.backup("capture"),
+            inbox,
+            serde_json::to_vec(&Request::Freeze {
+                token: "abandoned-coordinator".into(),
+            })
+            .unwrap()
+            .into(),
+        )
+        .await
+        .unwrap();
+    let frame = response.next().await.unwrap();
+    let ReplyFrame::Data { stream, .. } = serde_json::from_slice(&frame.payload).unwrap() else {
+        panic!("expected frozen response data");
+    };
+    // Refuse acknowledgment of the freeze reply. Native custody must drop
+    // before the next coordinator request, rather than waiting for expiry.
+    client
+        .publish(
+            format!("{inbox}.flow"),
+            serde_json::to_vec(&FlowAck::Cancel { stream })
+                .unwrap()
+                .into(),
+        )
+        .await
+        .unwrap();
+    let next = Frozen::freeze(client, subjects, "capture".into())
+        .await
+        .unwrap();
+    next.release().await.unwrap();
+}

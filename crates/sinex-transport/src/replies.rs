@@ -216,6 +216,10 @@ where
     loop {
         tokio::select! {
             value=&mut build => return match value {Some(value)=>publish_with_acks(client,inbox,stream,acks,value,idle).await,None=>Ok(())},
+            message=acks.next()=> {
+                let Some(message)=message else {return Err(ReplyError::Closed);};
+                if matches!(serde_json::from_slice::<FlowAck>(&message.payload),Ok(FlowAck::Cancel {stream:found}) if found==stream) {return Err(ReplyError::Cancelled);}
+            }
             _=tokio::time::sleep(idle/2)=> {
                 client.publish_with_reply(inbox.clone(),flow.clone(),frame_bytes(&ReplyFrame::Waiting {stream:stream.clone()})?.into()).await.map_err(transport)?;
                 tokio::time::timeout(idle,async {

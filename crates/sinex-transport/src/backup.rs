@@ -140,8 +140,12 @@ impl Participant {
                 }.await;
                     Some(result.unwrap_or_else(|reason| Reply::Unavailable { reason }))
                 };
-                let _ = crate::replies::respond_json_wait(&client, inbox.to_string(), build, IDLE)
-                    .await;
+                if crate::replies::respond_json_wait(&client, inbox.to_string(), build, IDLE)
+                    .await
+                    .is_err()
+                {
+                    cut = None;
+                }
             }
         })))
     }
