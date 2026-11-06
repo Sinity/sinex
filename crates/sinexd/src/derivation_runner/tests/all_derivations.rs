@@ -627,6 +627,19 @@ async fn every_derivation_gives_the_same_outputs_at_once_and_piece_by_piece(
         .collect();
     assert!(silent.is_empty(), "derivations with no output: {silent:?}");
 
+    // Release the first database slot before acquiring another. Stop its writer
+    // before dropping the database so it cannot outlive the fixture.
+    conn.close().await.unwrap();
+    let World {
+        _db,
+        handle,
+        _writer,
+        ..
+    } = once;
+    drop(handle);
+    _writer.await.unwrap();
+    drop(_db);
+
     // The same world in five pieces, newest first, deriving after each.
     let pieces = declared_world(devkit::pg::test_database().unwrap()).await;
     let mut reversed = events;
