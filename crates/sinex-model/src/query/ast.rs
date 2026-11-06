@@ -87,6 +87,7 @@ pub enum Reference {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
+    Order(Box<Join>),
     Truth {
         value: query_language::semantics::Truth,
         operand: Operand,
@@ -106,6 +107,11 @@ pub enum Expr {
     Exists(Operand),
     /// Full-text words or a phrase.
     Words(Words),
+    /// Natural word matching restricted to one projected text field.
+    FieldWords {
+        operand: Operand,
+        words: Words,
+    },
     /// A half-open time range on a time operand: `[from, to)`.
     Within {
         lhs: Operand,
@@ -116,13 +122,6 @@ pub enum Expr {
     Overlaps {
         from: Timestamp,
         to: Option<Timestamp>,
-    },
-    /// The difference of two time fields: `seen - when > 1d`.
-    TimeDiff {
-        a: FieldRef,
-        b: FieldRef,
-        op: Op,
-        seconds: f64,
     },
 }
 
@@ -140,6 +139,26 @@ pub struct Words {
 pub enum Operand {
     Field(FieldRef),
     TimeFn(TimeFn, FieldRef),
+    Literal {
+        value: Value,
+        kind: query_language::catalog::FieldKind,
+    },
+    Arithmetic {
+        operator: query_language::ast::Arithmetic,
+        left: Box<Operand>,
+        right: Box<Operand>,
+        kind: query_language::catalog::FieldKind,
+    },
+    Length(Box<Operand>),
+    CaseEqual {
+        left: Box<Operand>,
+        right: Box<Operand>,
+        value: Box<Operand>,
+    },
+    Named {
+        operand: Box<Operand>,
+        name: String,
+    },
 }
 
 impl Operand {
@@ -147,14 +166,64 @@ impl Operand {
         match self {
             Operand::Field(f) => f.name(),
             Operand::TimeFn(func, f) => format!("{}({})", func.name(), f.name()),
+            Operand::Literal { value, .. } => format!("{value:?}"),
+            Operand::Arithmetic {
+                operator,
+                left,
+                right,
+                ..
+            } => format!("({} {} {})", left.name(), operator.symbol(), right.name()),
+            Operand::Length(value) => format!("len({})", value.name()),
+            Operand::CaseEqual { left, right, value } => format!(
+                "case_eq({}, {}, {})",
+                left.name(),
+                right.name(),
+                value.name()
+            ),
+            Operand::Named { name, .. } => name.clone(),
         }
     }
 
+    /// The shared semantic kind, before physical payload narrowing.
+    pub fn kind(&self) -> query_language::catalog::FieldKind {
+        use query_language::catalog::FieldKind as K;
+        match self {
+            Self::Field(FieldRef::Field(field)) => super::syntax::field_kind(field.ty),
+            Self::Field(FieldRef::TypedPayload { ty, .. }) => super::syntax::field_kind(*ty),
+            Self::Field(FieldRef::TypedGroup(column)) => column.info().field.kind.clone(),
+            Self::Field(_) => K::Json,
+            Self::TimeFn(TimeFn::Hour | TimeFn::Year, _) | Self::Length(_) => K::Integer,
+            Self::TimeFn(TimeFn::Day | TimeFn::Week | TimeFn::Month, _) => K::Time,
+            Self::TimeFn(_, _) => K::Text,
+            Self::Literal { kind, .. } | Self::Arithmetic { kind, .. } => kind.clone(),
+            Self::CaseEqual { value, .. } => value.kind(),
+            Self::Named { operand, .. } => operand.kind(),
+        }
+    }
+    pub fn field_type(&self) -> Result<super::FieldType, super::QueryError> {
+        super::typed::operand_type(self)
+    }
+    pub fn unnamed(&self) -> &Self {
+        match self {
+            Self::Named { operand, .. } => operand.unnamed(),
+            other => other,
+        }
+    }
     /// The column name a grouped stage gives this key.
     pub fn column(&self) -> String {
         match self {
-            Operand::Field(f) => f.name().replace('.', "_"),
+            Operand::Field(f) => f.column(),
             Operand::TimeFn(func, _) => func.name().to_string(),
+            Operand::Literal { .. } => "value".into(),
+            Operand::Arithmetic {
+                operator,
+                left,
+                right,
+                ..
+            } => format!("{}_{}_{}", left.column(), operator.word(), right.column()),
+            Operand::Length(_) => "len".into(),
+            Operand::CaseEqual { .. } => "case_eq".into(),
+            Operand::Named { name, .. } => name.clone(),
         }
     }
 }
@@ -193,6 +262,32 @@ impl BoundColumn {
     pub fn field_type(&self) -> Option<super::FieldType> {
         self.physical
     }
+    /// Calendar label lineage retained through projection and grouping.
+    pub fn time_function(&self) -> Option<TimeFn> {
+        use query_language::scope::{FieldInfo, Origin, TypeRule};
+        fn function(info: &FieldInfo) -> Option<TimeFn> {
+            match &info.origin {
+                Origin::Group { input, .. } | Origin::Matched { input } => function(input),
+                Origin::Function {
+                    arguments,
+                    rule: TypeRule::Input(index),
+                    ..
+                } => arguments.get(*index).and_then(function),
+                Origin::Aggregate {
+                    inputs,
+                    rule: TypeRule::Input(index),
+                    ..
+                } => inputs.get(*index).and_then(function),
+                Origin::Function {
+                    name,
+                    rule: TypeRule::Fixed,
+                    ..
+                } => TimeFn::from_name(name),
+                _ => None,
+            }
+        }
+        function(&self.info)
+    }
     pub(super) fn info(&self) -> &query_language::scope::FieldInfo {
         &self.info
     }
@@ -222,16 +317,18 @@ pub enum TimeFn {
     Weekday,
     Month,
     MonthDay,
+    Year,
 }
 
 impl TimeFn {
-    pub const ALL: [TimeFn; 6] = [
+    pub const ALL: [TimeFn; 7] = [
         TimeFn::Day,
         TimeFn::Hour,
         TimeFn::Week,
         TimeFn::Weekday,
         TimeFn::Month,
         TimeFn::MonthDay,
+        TimeFn::Year,
     ];
 
     pub fn name(self) -> &'static str {
@@ -242,6 +339,7 @@ impl TimeFn {
             TimeFn::Weekday => "weekday",
             TimeFn::Month => "month",
             TimeFn::MonthDay => "month_day",
+            TimeFn::Year => "year",
         }
     }
 
@@ -275,6 +373,8 @@ pub enum Value {
     Id(Uuid),
     /// Any of: `field = [a, b]`.
     List(Vec<Value>),
+    /// A value evaluated on the current row rather than a supplied literal.
+    Operand(Box<Operand>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -287,17 +387,27 @@ pub enum Stage {
     Group(Group),
     Sort(Vec<SortKey>),
     Limit(u64),
-    Fields(Vec<FieldRef>),
+    Fields(Vec<Operand>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Join {
-    pub kind: JoinKind,
+    pub on: JoinOn,
     pub inner: Box<Query>,
-    /// Which time of an inner row the join measures from.
-    pub at: TimePoint,
-    /// The window, for `near`, `before` and `after`.
-    pub within_secs: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum JoinOn {
+    /// Current shared order joins pair every matching row. The anchor is outer.
+    Order {
+        relation: JoinKind,
+        within_secs: Option<f64>,
+        at: TimePoint,
+    },
+    Key {
+        left: FieldRef,
+        right: FieldRef,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -350,15 +460,19 @@ pub struct Fill {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Aggregate {
     pub function: AggFn,
-    pub field: Option<FieldRef>,
+    pub argument: Option<Operand>,
+    pub name: Option<String>,
 }
 
 impl Aggregate {
     /// The column the aggregate becomes: `count`, `sum_duration`.
     pub fn column(&self) -> String {
-        match &self.field {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
+        match &self.argument {
             None => self.function.name().to_string(),
-            Some(f) => format!("{}_{}", self.function.name(), f.name().replace('.', "_")),
+            Some(f) => format!("{}_{}", self.function.name(), f.column()),
         }
     }
 }

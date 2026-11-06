@@ -1,6 +1,6 @@
 //! Payload fields come from the same Rust schemas that admission registers.
 use super::*;
-use query_language::scope::{FieldInfo, Origin, TemporalOutput, TypeRule};
+use query_language::scope::{FieldInfo, Origin, TypeRule};
 use serde_json::Value as Json;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
@@ -100,7 +100,7 @@ pub fn complete(text: &str) -> Vec<Completion> {
         );
         if let Ok(parsed) = super::syntax::parse(&probe, &ctx) {
             fn mentioned(c: &query_language::ast::Condition, out: &mut BTreeSet<String>) {
-                use query_language::ast::{ConditionKind as C, Operand as O, Value as V};
+                use query_language::ast::{ConditionKind as C, Expression as O, Value as V};
                 match &c.kind {
                     C::And { conditions } | C::Or { conditions } => {
                         for c in conditions {
@@ -108,9 +108,9 @@ pub fn complete(text: &str) -> Vec<Completion> {
                         }
                     }
                     C::Compare {
-                        operand: O::Field { name },
+                        left: O::Field { name },
                         op: Op::Eq,
-                        value,
+                        right: O::Value { value },
                     }
                     | C::Match { field: name, value }
                         if name == "event_type" =>
@@ -357,7 +357,7 @@ fn physical_kind(kind: &query_language::catalog::FieldKind) -> FieldType {
         K::Json => FieldType::Json,
         K::List(item) => match &**item {
             K::Reference => FieldType::IdList,
-            K::Text | K::Match | K::Substring | K::Words | K::Subtree => FieldType::TextList,
+            K::Text | K::Exact | K::Substring | K::Words | K::Subtree => FieldType::TextList,
             _ => FieldType::Json,
         },
         _ => FieldType::Text,
@@ -398,16 +398,16 @@ fn physical_type(
         Origin::Group { input, .. } => physical_type(input, kinds, ctx),
         Origin::Aggregate {
             inputs,
-            rule: TypeRule::Input,
+            rule: TypeRule::Input(index),
             ..
         }
         | Origin::Function {
             arguments: inputs,
-            rule: TypeRule::Input,
+            rule: TypeRule::Input(index),
             ..
         } => physical_type(
             inputs
-                .first()
+                .get(*index)
                 .ok_or_else(|| QueryError::new("bound input lineage is missing"))?,
             kinds,
             ctx,
@@ -419,22 +419,12 @@ fn physical_type(
         } => {
             // These are the existing SQL calendar columns, not another scope rule.
             match TimeFn::from_name(name) {
-                Some(TimeFn::Hour) => Ok(FieldType::Integer),
+                Some(TimeFn::Hour | TimeFn::Year) => Ok(FieldType::Integer),
                 Some(_) => Ok(FieldType::Text),
-                None => Err(QueryError::not_built(
-                    0,
-                    format!("{name}() has no physical adapter"),
-                )),
+                None => Ok(physical_kind(&info.field.kind)),
             }
         }
-        Origin::Temporal {
-            output: TemporalOutput::Match,
-            ..
-        } => Ok(FieldType::Id),
-        Origin::Temporal {
-            output: TemporalOutput::Offset,
-            ..
-        } => Ok(FieldType::Number),
+        Origin::Matched { input } => physical_type(input, kinds, ctx),
         _ => Ok(physical_kind(&info.field.kind)),
     }
 }
@@ -452,6 +442,16 @@ fn output_type(field: &FieldRef) -> Result<FieldType, QueryError> {
     }
 }
 
+pub(super) fn operand_type(value: &Operand) -> Result<FieldType, QueryError> {
+    Ok(match value {
+        Operand::Field(field) => output_type(field)?,
+        Operand::TimeFn(TimeFn::Hour | TimeFn::Year, _) | Operand::Length(_) => FieldType::Integer,
+        Operand::TimeFn(_, _) => FieldType::Text,
+        Operand::Literal { kind, .. } | Operand::Arithmetic { kind, .. } => physical_kind(kind),
+        Operand::CaseEqual { value, .. } => operand_type(value)?,
+        Operand::Named { operand, .. } => operand_type(operand)?,
+    })
+}
 fn operand(
     o: &mut Operand,
     kinds: &Option<BTreeSet<String>>,
@@ -467,8 +467,53 @@ fn operand(
                 *ty = FieldType::Time;
             }
             let ty = output_type(f)?;
-            if ty != FieldType::Time && !(ctx.catalog.is_some() && ty == FieldType::Json) {
+            let bucket = matches!(f, FieldRef::TypedGroup(column) if matches!(column.time_function(), Some(TimeFn::Day | TimeFn::Week | TimeFn::Month)));
+            if ty != FieldType::Time && !bucket && !(ctx.catalog.is_some() && ty == FieldType::Json)
+            {
                 return Err(QueryError::new("time functions require a time field"));
+            }
+            Ok(())
+        }
+        Operand::Literal { .. } => Ok(()),
+        Operand::Named { operand: inner, .. } => operand(inner, kinds, ctx),
+        Operand::Length(inner) => {
+            operand(inner, kinds, ctx)?;
+            if !matches!(
+                operand_type(inner)?,
+                FieldType::Text
+                    | FieldType::TextList
+                    | FieldType::Path
+                    | FieldType::PathList
+                    | FieldType::IdList
+                    | FieldType::Enum(_)
+                    | FieldType::Json
+            ) {
+                return Err(QueryError::new("len requires text or a list"));
+            }
+            Ok(())
+        }
+        Operand::Arithmetic {
+            operator,
+            left,
+            right,
+            kind,
+        } => {
+            operand(left, kinds, ctx)?;
+            operand(right, kinds, ctx)?;
+            *kind = query_language::scope::arithmetic_kind(*operator, &left.kind(), &right.kind())
+                .ok_or_else(|| {
+                    QueryError::new("arithmetic operands have incompatible physical dimensions")
+                })?;
+            Ok(())
+        }
+        Operand::CaseEqual { left, right, value } => {
+            operand(left, kinds, ctx)?;
+            operand(right, kinds, ctx)?;
+            operand(value, kinds, ctx)?;
+            let expected = operand_type(left)?;
+            if let Operand::Literal { value, kind } = &mut **right {
+                validate_value(value, expected, false, ctx)?;
+                *kind = super::syntax::field_kind(expected);
             }
             Ok(())
         }
@@ -480,6 +525,25 @@ fn validate_value(
     identifier_pattern: bool,
     ctx: &Context,
 ) -> Result<(), QueryError> {
+    if let Value::Operand(value) = v {
+        let actual = operand_type(value)?;
+        if actual == ty
+            || matches!(
+                (actual, ty),
+                (
+                    FieldType::Integer | FieldType::Number,
+                    FieldType::Integer | FieldType::Number
+                )
+            )
+            || actual == FieldType::Json
+            || ty == FieldType::Json
+        {
+            return Ok(());
+        }
+        return Err(QueryError::new(
+            "comparison expressions have incompatible physical types",
+        ));
+    }
     if matches!(v, Value::Unknown) {
         return Ok(());
     }
@@ -572,10 +636,15 @@ fn identifier_origin(info: &FieldInfo) -> bool {
         Origin::Catalog { field, .. } => matches!(field.as_str(), "source" | "event_type"),
         Origin::Group { input, .. } => identifier_origin(input),
         Origin::Aggregate {
-            rule: TypeRule::Input,
+            rule: TypeRule::Input(index),
             inputs,
             ..
-        } => inputs.first().is_some_and(identifier_origin),
+        }
+        | Origin::Function {
+            rule: TypeRule::Input(index),
+            arguments: inputs,
+            ..
+        } => inputs.get(*index).is_some_and(identifier_origin),
         _ => false,
     }
 }
@@ -595,10 +664,15 @@ fn normalize_output_literal(
         Origin::Group { input, .. } => return normalize_output_literal(value, input, ctx),
         Origin::Aggregate {
             inputs,
-            rule: TypeRule::Input,
+            rule: TypeRule::Input(index),
+            ..
+        }
+        | Origin::Function {
+            arguments: inputs,
+            rule: TypeRule::Input(index),
             ..
         } => {
-            if let Some(input) = inputs.first() {
+            if let Some(input) = inputs.get(*index) {
                 return normalize_output_literal(value, input, ctx);
             }
         }
@@ -637,6 +711,45 @@ fn normalize_output_literal(
     Ok(())
 }
 
+fn check_join(
+    join: &mut Join,
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<(), QueryError> {
+    let mut inner_kinds = join.inner.source.alias().map(|alias| {
+        alias
+            .kinds
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect::<BTreeSet<_>>()
+    });
+    for expression in join.inner.filter.iter().chain(
+        join.inner
+            .stages
+            .iter()
+            .take_while(|stage| !matches!(stage, Stage::Group(_)))
+            .filter_map(|stage| {
+                if let Stage::Where(expression) = stage {
+                    Some(expression)
+                } else {
+                    None
+                }
+            }),
+    ) {
+        if let Some(selected) = selected(expression, ctx) {
+            inner_kinds = Some(inner_kinds.map_or(selected.clone(), |kinds| {
+                kinds.intersection(&selected).cloned().collect()
+            }));
+        }
+    }
+    check(&mut join.inner, ctx)?;
+    if let JoinOn::Key { left, right } = &mut join.on {
+        field(left, kinds, ctx)?;
+        field(right, &inner_kinds, ctx)?;
+    }
+    Ok(())
+}
+
 fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
     let narrowed = selected(e, ctx).map(|selected| {
         kinds.as_ref().map_or(selected.clone(), |ks| {
@@ -645,6 +758,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
     });
     let kinds = if narrowed.is_some() { &narrowed } else { kinds };
     match e {
+        Expr::Order(join) => check_join(join, kinds, ctx)?,
         Expr::Truth { operand: field, .. } => operand(field, kinds, ctx)?,
         Expr::And(a, b) | Expr::Or(a, b) => {
             expr(a, kinds, ctx)?;
@@ -653,6 +767,9 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
         Expr::Not(e) => expr(e, kinds, ctx)?,
         Expr::Compare { lhs, op, rhs } => {
             operand(lhs, kinds, ctx)?;
+            if let Value::Operand(value) = rhs {
+                operand(value, kinds, ctx)?;
+            }
             if let Operand::Field(
                 FieldRef::TypedPayload { .. } | FieldRef::TypedGroup(_) | FieldRef::Field(_),
             ) = lhs
@@ -740,24 +857,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 }
             }
         }
-        Expr::Exists(o) => operand(o, kinds, ctx)?,
-        Expr::TimeDiff { a, b, .. } => {
-            field(a, kinds, ctx)?;
-            field(b, kinds, ctx)?;
-            for field in [&mut *a, &mut *b] {
-                if let FieldRef::TypedPayload { ty, .. } = field
-                    && *ty == FieldType::Json
-                {
-                    *ty = FieldType::Time;
-                }
-            }
-            for field in [&*a, &*b] {
-                let ty = output_type(field)?;
-                if ty != FieldType::Time && !(ctx.catalog.is_some() && ty == FieldType::Json) {
-                    return Err(QueryError::new("time differences require time fields"));
-                }
-            }
-        }
+        Expr::Exists(o) | Expr::FieldWords { operand: o, .. } => operand(o, kinds, ctx)?,
         Expr::Words(_) | Expr::Overlaps { .. } | Expr::Similar { .. } => {}
     }
     Ok(())
@@ -864,12 +964,10 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
     for stage in &mut q.stages {
         match stage {
             Stage::Where(e) => expr(e, &kinds, ctx)?,
-            Stage::Join(j) => {
-                check(&mut j.inner, ctx)?;
-            }
+            Stage::Join(join) => check_join(join, &kinds, ctx)?,
             Stage::Fields(fs) => {
                 for f in fs {
-                    field(f, &kinds, ctx)?;
+                    operand(f, &kinds, ctx)?;
                 }
             }
             Stage::Sort(keys) => {
@@ -884,9 +982,9 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                     operand(k, &kinds, ctx)?;
                 }
                 for a in &mut g.aggregates {
-                    if let Some(f) = &mut a.field {
-                        field(f, &kinds, ctx)?;
-                        let ty = output_type(f)?;
+                    if let Some(argument) = &mut a.argument {
+                        operand(argument, &kinds, ctx)?;
+                        let ty = operand_type(argument)?;
                         if matches!(a.function, AggFn::Min | AggFn::Max)
                             && matches!(
                                 ty,

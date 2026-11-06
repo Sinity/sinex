@@ -1,7 +1,7 @@
 //! Lower shared syntax into Sinex's checked SQL execution plan.
 //! All tokenization, grammar and time expressions belong to query-language.
 use super::*;
-use jiff::{SignedDuration, Timestamp};
+use jiff::Timestamp;
 use query_language::ast as syntax;
 use query_language::scope::{FieldInfo, NodePath, Origin, Scope, Typing};
 
@@ -32,6 +32,18 @@ pub(super) fn validate_syntax(input: syntax::Query, ctx: &Context) -> Result<Que
     super::typed::check(&mut q, ctx)?;
     super::fill::bind(&mut q, ctx)?;
     Ok(q)
+}
+pub(super) fn bind_native_syntax(
+    input: syntax::Query,
+    ctx: &Context,
+    source: Source,
+    validating: bool,
+) -> Result<Query, QueryError> {
+    let mut query = lower(shared_bound(input, ctx)?, ctx, validating)?;
+    query.source = source;
+    super::typed::check(&mut query, ctx)?;
+    super::fill::bind(&mut query, ctx)?;
+    Ok(query)
 }
 fn lower(
     bound: query_language::bind::BoundQuery,
@@ -163,22 +175,136 @@ impl Binder<'_> {
     }
     fn operand(
         &self,
-        value: &syntax::Operand,
+        value: &syntax::Expression,
         scope: &Scope,
         at: usize,
     ) -> Result<Operand, QueryError> {
-        match value {
-            syntax::Operand::Field { name } => Ok(Operand::Field(self.resolve(name, scope, at)?)),
-            syntax::Operand::Function { name, arguments } => {
-                let func = TimeFn::from_name(name)
-                    .ok_or_else(|| QueryError::not_built(at, format!("{name}() is not built")))?;
-                let [syntax::Operand::Field { name }] = arguments.as_slice() else {
-                    return Err(QueryError::at(at, "time functions take one time field"));
-                };
-                let field = self.resolve(name, scope, at)?;
-                self.time_field(&field, scope, at)?;
-                Ok(Operand::TimeFn(func, field))
+        self.operand_at(value, scope, at, None)
+    }
+    fn operand_at(
+        &self,
+        value: &syntax::Expression,
+        scope: &Scope,
+        at: usize,
+        path: Option<&NodePath>,
+    ) -> Result<Operand, QueryError> {
+        use query_language::catalog::FieldKind as K;
+        Ok(match value {
+            syntax::Expression::Field { name } => {
+                Operand::Field(match path.and_then(|path| self.typing.operand(path)) {
+                    Some(info) => self.resolve_info(&info.result, at)?,
+                    None => self.resolve(name, scope, at)?,
+                })
             }
+            syntax::Expression::Value { value } => {
+                let (value, kind) = match value {
+                    syntax::Value::Unknown => (Value::Unknown, K::Json),
+                    syntax::Value::Scalar {
+                        text,
+                        quoted: false,
+                    } if query_language::number::is_decimal(text) => {
+                        (Value::Text(text.clone()), K::Number)
+                    }
+                    syntax::Value::Scalar {
+                        text,
+                        quoted: false,
+                    } if matches!(text.as_str(), "true" | "false") => {
+                        (Value::Bool(text == "true"), K::Bool)
+                    }
+                    syntax::Value::Scalar {
+                        text,
+                        quoted: false,
+                    } if time::duration(text).is_some() => {
+                        (Value::Number(time::duration(text).unwrap()), K::Duration)
+                    }
+                    syntax::Value::Scalar { text, .. } => (Value::Text(text.clone()), K::Text),
+                    syntax::Value::Parameter { name } if self.validating => {
+                        (Value::PlaceholderText(name.clone()), K::Text)
+                    }
+                    _ => return Err(QueryError::at(at, "an expression needs one scalar value")),
+                };
+                Operand::Literal { value, kind }
+            }
+            syntax::Expression::Arithmetic {
+                operator,
+                left,
+                right,
+            } => {
+                let left_path = path.map(|path| path.field("left"));
+                let right_path = path.map(|path| path.field("right"));
+                let left = self.operand_at(left, scope, at, left_path.as_ref())?;
+                let right = self.operand_at(right, scope, at, right_path.as_ref())?;
+                let kind = path
+                    .and_then(|path| self.typing.operand(path))
+                    .map(|info| info.result.field.kind.clone())
+                    .or_else(|| {
+                        query_language::scope::arithmetic_kind(
+                            *operator,
+                            &left.kind(),
+                            &right.kind(),
+                        )
+                    })
+                    .ok_or_else(|| {
+                        QueryError::at(at, "arithmetic operands have incompatible dimensions")
+                    })?;
+                Operand::Arithmetic {
+                    operator: *operator,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    kind,
+                }
+            }
+            syntax::Expression::Function { name, arguments } => {
+                let arguments = arguments
+                    .iter()
+                    .enumerate()
+                    .map(|(index, argument)| {
+                        let argument_path = path.map(|path| path.field("arguments").index(index));
+                        self.operand_at(argument, scope, at, argument_path.as_ref())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if name == "len" {
+                    let [argument] = arguments.as_slice() else {
+                        return Err(QueryError::at(at, "len takes one value"));
+                    };
+                    Operand::Length(Box::new(argument.clone()))
+                } else if name == "case_eq" {
+                    let [left, right, value] = arguments.as_slice() else {
+                        return Err(QueryError::at(at, "case_eq takes three values"));
+                    };
+                    Operand::CaseEqual {
+                        left: Box::new(left.clone()),
+                        right: Box::new(right.clone()),
+                        value: Box::new(value.clone()),
+                    }
+                } else {
+                    let func = TimeFn::from_name(name).ok_or_else(|| {
+                        QueryError::not_built(at, format!("{name}() is not built"))
+                    })?;
+                    let [Operand::Field(field)] = arguments.as_slice() else {
+                        return Err(QueryError::at(at, "time functions take one time field"));
+                    };
+                    self.time_field(field, scope, at)?;
+                    Operand::TimeFn(func, field.clone())
+                }
+            }
+        })
+    }
+    fn column(
+        &self,
+        column: &syntax::Column,
+        scope: &Scope,
+        at: usize,
+    ) -> Result<Operand, QueryError> {
+        let operand = self.operand(&column.expression, scope, at)?;
+        let name = column.column();
+        if operand.column() == name {
+            Ok(operand)
+        } else {
+            Ok(Operand::Named {
+                operand: Box::new(operand),
+                name,
+            })
         }
     }
     fn value(
@@ -213,7 +339,7 @@ impl Binder<'_> {
                     *func,
                     match func {
                         TimeFn::Day | TimeFn::Week => "2000-01-01",
-                        TimeFn::Hour => "1",
+                        TimeFn::Hour | TimeFn::Year => "1",
                         TimeFn::Weekday => "mon",
                         TimeFn::Month => "2000-01",
                         TimeFn::MonthDay => "01-01",
@@ -325,6 +451,23 @@ impl Binder<'_> {
                     }
                 })
             }
+            Operand::Named { operand, .. } => self.value(operand, op, value, at),
+            other => {
+                use query_language::catalog::FieldKind as K;
+                Ok(match other.kind() {
+                    K::Integer | K::Number | K::Money => Value::Text(raw.to_owned()),
+                    K::Duration => Value::Number(
+                        time::duration(raw)
+                            .ok_or_else(|| QueryError::at(at, "expected a duration"))?,
+                    ),
+                    K::Time => Value::Time(self.instant(value, at)?),
+                    K::Bool => Value::Bool(
+                        raw.parse()
+                            .map_err(|_| QueryError::at(at, "expected true or false"))?,
+                    ),
+                    _ => Value::Text(raw.to_owned()),
+                })
+            }
         }
     }
     fn comparison(
@@ -337,19 +480,104 @@ impl Binder<'_> {
         let rhs = self.value(&lhs, op, value, at)?;
         Ok(Expr::Compare { lhs, op, rhs })
     }
-    fn condition(&mut self, c: &syntax::Condition, scope: &Scope) -> Result<Expr, QueryError> {
+    fn natural_match(
+        &mut self,
+        field: &str,
+        value: &syntax::Value,
+        scope: &Scope,
+        at: usize,
+    ) -> Result<Expr, QueryError> {
+        if let syntax::Value::Set { values } = value {
+            let mut values = values.iter();
+            let first = values
+                .next()
+                .ok_or_else(|| QueryError::at(at, "empty match set"))?;
+            let mut result = self.natural_match(field, first, scope, at)?;
+            for value in values {
+                result = Expr::Or(
+                    Box::new(result),
+                    Box::new(self.natural_match(field, value, scope, at)?),
+                );
+            }
+            return Ok(result);
+        }
+        Ok({
+            let lhs = Operand::Field(self.resolve(field, scope, at)?);
+            match value {
+                syntax::Value::Any => Expr::Truth {
+                    value: query_language::semantics::Truth::True,
+                    operand: lhs,
+                },
+                syntax::Value::Unknown => Expr::Not(Box::new(Expr::Exists(lhs))),
+                syntax::Value::Known => Expr::Exists(lhs),
+                _ => {
+                    use query_language::catalog::NaturalMatch as M;
+                    match scope
+                        .field(field)
+                        .expect("resolved field")
+                        .field
+                        .natural_match()
+                    {
+                        M::Contains => self.comparison(lhs, Op::Contains, value, at)?,
+                        M::Subtree => self.comparison(lhs, Op::Prefix, value, at)?,
+                        M::Words => {
+                            let raw = self.scalar(value, at)?;
+                            Expr::FieldWords {
+                                operand: lhs,
+                                words: Words {
+                                    words: vec![raw.to_lowercase()],
+                                    phrase: false,
+                                    prefix: false,
+                                },
+                            }
+                        }
+                        M::Period => {
+                            let resolved = query_language::time::resolve(
+                                self.scalar(value, at)?,
+                                &self.ctx.clock()?,
+                            )
+                            .map_err(super::syntax::error)?
+                            .value;
+                            if let Some(range) = resolved.range() {
+                                Expr::Within {
+                                    lhs,
+                                    from: range.start,
+                                    to: range.end,
+                                }
+                            } else {
+                                self.comparison(lhs, Op::Eq, value, at)?
+                            }
+                        }
+                        M::Equal | M::Same => self.comparison(lhs, Op::Eq, value, at)?,
+                    }
+                }
+            }
+        })
+    }
+    fn condition(
+        &mut self,
+        c: &syntax::Condition,
+        scope: &Scope,
+        path: &NodePath,
+    ) -> Result<Expr, QueryError> {
         use syntax::ConditionKind as C;
         let at = c.span.start;
         Ok(match &c.kind {
             C::And { conditions } | C::Or { conditions } => {
-                let mut iter = conditions.iter();
+                let mut iter = conditions.iter().enumerate();
                 let mut out = self.condition(
                     iter.next()
-                        .ok_or_else(|| QueryError::at(at, "empty condition"))?,
+                        .ok_or_else(|| QueryError::at(at, "empty condition"))?
+                        .1,
                     scope,
+                    &path.field("kind").field("conditions").index(0),
                 )?;
-                for c2 in iter {
-                    let rhs = self.condition(c2, scope)?;
+                for (index, c2) in iter {
+                    let rhs = self.condition(
+                        c2,
+                        scope,
+                        &path.field("kind").field("conditions").index(index),
+                    )?;
                     out = if matches!(c.kind, C::And { .. }) {
                         Expr::And(Box::new(out), Box::new(rhs))
                     } else {
@@ -358,24 +586,25 @@ impl Binder<'_> {
                 }
                 out
             }
-            C::Not { condition } => Expr::Not(Box::new(self.condition(condition, scope)?)),
-            C::Match { field, value } => {
-                let lhs = Operand::Field(self.resolve(field, scope, at)?);
-                match value {
-                    syntax::Value::Any => Expr::Truth {
-                        value: query_language::semantics::Truth::True,
-                        operand: lhs,
+            C::Not { condition } => Expr::Not(Box::new(self.condition(
+                condition,
+                scope,
+                &path.field("kind").field("condition"),
+            )?)),
+            C::Match { field, value } => self.natural_match(field, value, scope, at)?,
+            C::Compare { left, op, right } => {
+                let lhs = self.operand(left, scope, at)?;
+                match right {
+                    syntax::Expression::Value { value } => self.comparison(lhs, *op, value, at)?,
+                    expression => Expr::Compare {
+                        lhs,
+                        op: *op,
+                        rhs: Value::Operand(Box::new(self.operand(expression, scope, at)?)),
                     },
-                    syntax::Value::Unknown => Expr::Not(Box::new(Expr::Exists(lhs))),
-                    _ => self.comparison(lhs, Op::Eq, value, at)?,
                 }
             }
-            C::Compare { operand, op, value } => {
-                let lhs = self.operand(operand, scope, at)?;
-                self.comparison(lhs, *op, value, at)?
-            }
-            C::Since { operand, value } | C::Until { operand, value } => {
-                let lhs = self.operand(operand, scope, at)?;
+            C::Since { field, value } | C::Until { field, value } => {
+                let lhs = Operand::Field(self.resolve(field, scope, at)?);
                 let resolved =
                     query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
                         .map_err(super::syntax::error)?;
@@ -391,12 +620,14 @@ impl Binder<'_> {
                     rhs: Value::Time(bound),
                 }
             }
-            C::Similar { value } => {
+            C::Rank {
+                list: syntax::RankList::Similar,
+                value,
+            } => {
                 let raw = self.scalar(value, at)?;
                 let reference=super::reference::parse_id(raw).ok_or_else(||QueryError::not_built(at,"similar requires a supplied text.embedding event reference; no embedding provider is configured for text"))?;
                 Expr::Similar { reference }
             }
-            C::FieldExists { operand } => Expr::Exists(self.operand(operand, scope, at)?),
             C::Text { text, mode } => {
                 if *mode == syntax::TextMode::Approximate {
                     return Err(QueryError::not_built(at, "approximate search is not built"));
@@ -411,10 +642,11 @@ impl Binder<'_> {
                     words,
                 })
             }
-            C::TimeRange { operand, value } => {
-                let lhs = self.operand(operand, scope, at)?;
+            C::TimeRange { left, value } => {
+                let lhs = self.operand(left, scope, at)?;
                 let field = match &lhs {
                     Operand::Field(f) | Operand::TimeFn(_, f) => f,
+                    _ => return Err(QueryError::at(at, "time range requires a time field")),
                 };
                 self.time_field(field, scope, at)?;
                 let r = query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
@@ -428,39 +660,88 @@ impl Binder<'_> {
                     to: r.end,
                 }
             }
-            C::Between { operand, from, to } => {
-                let lhs = self.operand(operand, scope, at)?;
+            C::Between { left, from, to } => {
+                let lhs = self.operand(left, scope, at)?;
                 let a = self.comparison(lhs.clone(), Op::Ge, from, at)?;
                 let b = self.comparison(lhs, Op::Le, to, at)?;
                 Expr::And(Box::new(a), Box::new(b))
             }
-            C::Overlaps { from, to } => {
-                let from = self.instant(from, at)?;
-                let to = to.as_ref().map(|v| self.instant(v, at)).transpose()?;
+            C::Extension { name, arguments } if name == "holding" || name == "overlaps" => {
+                use syntax::ExtensionArgument as A;
+                let (from, to) = if name == "holding" {
+                    let [A::Name(mode), A::Value(value)] = arguments.as_slice() else {
+                        return Err(QueryError::at(
+                            at,
+                            "holding takes at INSTANT or during PERIOD",
+                        ));
+                    };
+                    let resolved =
+                        query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
+                            .map_err(super::syntax::error)?
+                            .value;
+                    match mode.as_str() {
+                        "at" => (resolved.start(), None),
+                        "during" => {
+                            let range = resolved.range().ok_or_else(|| {
+                                QueryError::at(at, "holding during takes a period")
+                            })?;
+                            (range.start, Some(range.end))
+                        }
+                        _ => {
+                            return Err(QueryError::at(
+                                at,
+                                "holding takes at INSTANT or during PERIOD",
+                            ));
+                        }
+                    }
+                } else {
+                    let [A::Value(from), A::Optional(rest)] = arguments.as_slice() else {
+                        return Err(QueryError::at(at, "invalid interval arguments"));
+                    };
+                    let end = match rest.as_slice() {
+                        [] => None,
+                        [A::Keyword(_), A::Value(to)] => Some(self.instant(to, at)?),
+                        _ => return Err(QueryError::at(at, "invalid interval end")),
+                    };
+                    (self.instant(from, at)?, end)
+                };
                 if to.is_some_and(|to| to <= from) {
-                    return Err(QueryError::at(at, "overlap end must follow its start"));
+                    return Err(QueryError::at(at, "interval end must follow its start"));
                 }
                 Expr::Overlaps { from, to }
             }
-            C::TimeDifference {
-                left,
-                right,
-                op,
-                value,
+            C::Order {
+                relation,
+                query,
+                within,
+                at: point,
+                scope: order_scope,
             } => {
-                let Operand::Field(a) = self.operand(left, scope, at)? else {
-                    return Err(QueryError::at(at, "time difference needs fields"));
+                let on = self.order_on(
+                    *relation,
+                    within.as_ref(),
+                    *point,
+                    order_scope.as_deref(),
+                    at,
+                )?;
+                Expr::Order(Box::new(Join {
+                    on,
+                    inner: Box::new(
+                        self.query((**query).clone(), &path.field("kind").field("query"))?,
+                    ),
+                }))
+            }
+            C::Reference { reference } => {
+                let Reference::Event(id) = super::reference::parse_reference(reference)? else {
+                    return Err(QueryError::at(
+                        at,
+                        "use read or trace for a source-coordinate reference",
+                    ));
                 };
-                let Operand::Field(b) = self.operand(right, scope, at)? else {
-                    return Err(QueryError::at(at, "time difference needs fields"));
-                };
-                self.time_field(&a, scope, at)?;
-                self.time_field(&b, scope, at)?;
-                Expr::TimeDiff {
-                    a,
-                    b,
-                    op: *op,
-                    seconds: self.seconds(value, at)?,
+                Expr::Compare {
+                    lhs: Operand::Field(self.resolve("id", scope, at)?),
+                    op: Op::Eq,
+                    rhs: Value::Id(id),
                 }
             }
             _ => {
@@ -469,6 +750,58 @@ impl Binder<'_> {
                     "this query operator has no Sinex execution adapter",
                 ));
             }
+        })
+    }
+
+    fn output_scope(&self, path: &NodePath) -> Result<Scope, QueryError> {
+        let query = self
+            .typing
+            .query(path)
+            .ok_or_else(|| QueryError::new("bound inner query scope is missing"))?;
+        Ok(query
+            .transforms
+            .last()
+            .map(|stage| &stage.after)
+            .unwrap_or(&query.source)
+            .clone())
+    }
+    fn order_on(
+        &self,
+        relation: syntax::OrderRelation,
+        within: Option<&syntax::Distance>,
+        point: syntax::TimePoint,
+        scope: Option<&str>,
+        at: usize,
+    ) -> Result<JoinOn, QueryError> {
+        if scope.is_some() {
+            return Err(QueryError::not_built(
+                at,
+                "Sinex has no declared step-order scope",
+            ));
+        }
+        let within_secs = within
+            .map(|distance| match distance {
+                syntax::Distance::Time { duration } => self.seconds(duration, at),
+                syntax::Distance::Steps { .. } => Err(QueryError::not_built(
+                    at,
+                    "Sinex has no declared step-order scope",
+                )),
+            })
+            .transpose()?;
+        Ok(JoinOn::Order {
+            relation: match relation {
+                syntax::OrderRelation::Near => JoinKind::Near,
+                syntax::OrderRelation::Before => JoinKind::Before,
+                syntax::OrderRelation::After => JoinKind::After,
+                syntax::OrderRelation::During => JoinKind::During,
+                syntax::OrderRelation::Containing => JoinKind::Containing,
+            },
+            within_secs,
+            at: match point {
+                syntax::TimePoint::When => TimePoint::When,
+                syntax::TimePoint::Start => TimePoint::Start,
+                syntax::TimePoint::End => TimePoint::End,
+            },
         })
     }
 
@@ -491,84 +824,11 @@ impl Binder<'_> {
                     .ok_or_else(|| QueryError::new(format!("unknown table {unit}")))?;
                 let filter = condition
                     .as_ref()
-                    .map(|c| self.condition(c, &typing.source))
+                    .map(|c| {
+                        self.condition(c, &typing.source, &path.field("source").field("condition"))
+                    })
                     .transpose()?;
                 (Source::Table { table, alias }, filter)
-            }
-            syntax::Source::Walk {
-                direction,
-                reference,
-            } => (
-                Source::Walk {
-                    walk: match direction {
-                        syntax::WalkDirection::Trace => Walk::Trace,
-                        syntax::WalkDirection::Parents => Walk::Parents,
-                        syntax::WalkDirection::Descendants => Walk::Descendants,
-                    },
-                    reference: super::reference::parse_reference(&reference)?,
-                },
-                None,
-            ),
-            syntax::Source::RecallLast { unit, condition } => {
-                Alias::from_name(&unit)
-                    .ok_or_else(|| QueryError::new("missing recorded session relation"))?;
-                let filter = condition
-                    .as_ref()
-                    .map(|c| self.condition(c, &typing.source))
-                    .transpose()?;
-                (Source::RecallLast { filter }, None)
-            }
-            syntax::Source::RecallMark { number, window } => (
-                Source::RecallMark {
-                    number,
-                    window: window
-                        .as_ref()
-                        .map(|v| self.seconds(v, 0))
-                        .transpose()?
-                        .unwrap_or(1800.0),
-                },
-                None,
-            ),
-            syntax::Source::Recall { time, window } => {
-                let r = if let Some(syntax::Value::Scalar { text, .. }) = &time
-                    && text.starts_with("sinex:window/")
-                {
-                    match super::reference::parse_reference(text)? {
-                        Reference::Window { from, to } => (from, to),
-                        _ => unreachable!(),
-                    }
-                } else {
-                    let resolved = time
-                        .as_ref()
-                        .map(|v| {
-                            query_language::time::resolve(self.scalar(v, 0)?, &self.ctx.clock()?)
-                                .map_err(super::syntax::error)
-                        })
-                        .transpose()?;
-                    if window.is_none()
-                        && let Some(r) = resolved.as_ref().and_then(|r| r.value.range())
-                    {
-                        (r.start, r.end)
-                    } else {
-                        let centre = resolved.map_or(self.ctx.now, |r| r.value.start());
-                        let w = SignedDuration::from_secs_f64(
-                            window
-                                .as_ref()
-                                .map(|v| self.seconds(v, 0))
-                                .transpose()?
-                                .unwrap_or(1800.0),
-                        );
-                        (
-                            centre
-                                .checked_sub(w)
-                                .map_err(|e| QueryError::new(e.to_string()))?,
-                            centre
-                                .checked_add(w)
-                                .map_err(|e| QueryError::new(e.to_string()))?,
-                        )
-                    }
-                };
-                (Source::Recall { from: r.0, to: r.1 }, None)
             }
             _ => {
                 return Err(QueryError::not_built(
@@ -578,19 +838,21 @@ impl Binder<'_> {
             }
         };
         let mut stages = Vec::new();
-        for (index, stage) in input.stages.into_iter().enumerate() {
-            let stage_path = path.field("stages").index(index).field("kind");
+        for (index, stage) in input.transforms.into_iter().enumerate() {
+            let stage_path = path.field("transforms").index(index).field("kind");
             let scope = typing
-                .stages
+                .transforms
                 .get(index)
                 .map(|stage| &stage.before)
                 .ok_or_else(|| QueryError::new("bound stage scope is missing"))?;
-            use syntax::StageKind as S;
+            use syntax::TransformKind as S;
             let at = stage.span.start;
             match stage.kind {
-                S::Where { condition } => {
-                    stages.push(Stage::Where(self.condition(&condition, scope)?))
-                }
+                S::Where { condition } => stages.push(Stage::Where(self.condition(
+                    &condition,
+                    scope,
+                    &stage_path.field("condition"),
+                )?)),
                 S::AsOf { value, sequence } => stages.push(Stage::AsOf(if sequence {
                     AsOf::Seq(
                         self.scalar(&value, at)?
@@ -603,7 +865,7 @@ impl Binder<'_> {
                 S::Group { keys } => {
                     let keys = keys
                         .iter()
-                        .map(|k| self.operand(k, scope, at))
+                        .map(|k| self.column(k, scope, at))
                         .collect::<Result<Vec<_>, _>>()?;
                     let group = Group {
                         keys,
@@ -618,7 +880,7 @@ impl Binder<'_> {
                         .into_iter()
                         .enumerate()
                         .map(|(aggregate_index, a)| {
-                            let function = match a.function {
+                            let function = match &a.function {
                                 syntax::AggregateFunction::Count => AggFn::Count,
                                 syntax::AggregateFunction::Sum => AggFn::Sum,
                                 syntax::AggregateFunction::Avg => AggFn::Avg,
@@ -632,31 +894,32 @@ impl Binder<'_> {
                                     ));
                                 }
                             };
-                            if a.fields.len() > 1 {
-                                return Err(QueryError::at(at, "aggregate takes one field"));
+                            if a.arguments.len() > 1 {
+                                return Err(QueryError::at(at, "aggregate takes one argument"));
                             }
-                            let field =
-                                a.fields
-                                    .first()
-                                    .map(|_| {
-                                        let operand_path = stage_path
-                                            .field("aggregates")
-                                            .index(aggregate_index)
-                                            .field("fields")
-                                            .index(0);
-                                        let info = self.typing.operand(&operand_path).ok_or_else(
-                                            || QueryError::new("bound aggregate input is missing"),
-                                        )?;
-                                        self.resolve_info(&info.result, at)
-                                    })
-                                    .transpose()?;
+                            let argument = a
+                                .arguments
+                                .first()
+                                .map(|expression| {
+                                    let path = stage_path
+                                        .field("aggregates")
+                                        .index(aggregate_index)
+                                        .field("arguments")
+                                        .index(0);
+                                    self.operand_at(expression, scope, at, Some(&path))
+                                })
+                                .transpose()?;
                             if matches!(function, AggFn::Sum | AggFn::Avg)
-                                && let Some(FieldRef::Field(f)) = &field
+                                && let Some(Operand::Field(FieldRef::Field(f))) = &argument
                                 && !matches!(f.ty, FieldType::Integer | FieldType::Number)
                             {
                                 return Err(QueryError::at(at, "aggregate needs a number"));
                             }
-                            Ok(Aggregate { function, field })
+                            Ok(Aggregate {
+                                function,
+                                argument,
+                                name: Some(a.column()),
+                            })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     if let Some(Stage::Group(g)) = stages.last_mut()
@@ -683,7 +946,7 @@ impl Binder<'_> {
                 }
                 S::Sort { keys } => {
                     let keys=keys.into_iter().map(|k| {
-                    let key=if matches!(&k.operand,syntax::Operand::Field{name} if name=="rank") {SortBy::Rank} else {SortBy::Operand(self.operand(&k.operand,scope,at)?)};
+                    let key=if matches!(&k.expression,syntax::Expression::Field{name} if name=="rank") {SortBy::Rank} else {SortBy::Operand(self.operand(&k.expression,scope,at)?)};
                     Ok(SortKey{key,descending:k.descending})
                 }).collect::<Result<Vec<_>,QueryError>>()?;
                     stages.push(Stage::Sort(keys));
@@ -694,56 +957,39 @@ impl Binder<'_> {
                     }
                     stages.push(Stage::Limit(count));
                 }
-                S::Fields { fields } => stages.push(Stage::Fields(
-                    fields
+                S::Fields { columns } => stages.push(Stage::Fields(
+                    columns
                         .iter()
-                        .map(|f| self.resolve(f, scope, at))
+                        .map(|column| self.column(column, scope, at))
                         .collect::<Result<Vec<_>, _>>()?,
                 )),
-                S::Temporal {
-                    relation,
-                    query,
-                    at: point,
-                    within,
-                    all,
-                } => {
-                    if all {
-                        return Err(QueryError::not_built(
-                            at,
-                            "all temporal matches are not built",
-                        ));
-                    }
+                S::Join { query, on } => {
                     let inner_path = stage_path.field("query");
-                    let inner = self.query(*query, &inner_path)?;
-                    if !matches!(inner.source, Source::Table { .. })
-                        || inner.stages.iter().any(|s| matches!(s, Stage::Group(_)))
-                    {
-                        return Err(QueryError::at(at, "time join must select rows of a table"));
-                    }
-                    let kind = match relation {
-                        syntax::TemporalRelation::Near => JoinKind::Near,
-                        syntax::TemporalRelation::Before => JoinKind::Before,
-                        syntax::TemporalRelation::After => JoinKind::After,
-                        syntax::TemporalRelation::During => JoinKind::During,
-                        syntax::TemporalRelation::Containing => JoinKind::Containing,
-                    };
-                    let within_secs = within.as_ref().map(|v| self.seconds(v, at)).transpose()?;
-                    if matches!(kind, JoinKind::Near | JoinKind::Before | JoinKind::After)
-                        && within_secs.is_none()
-                    {
-                        return Err(QueryError::at(at, "time join needs within duration"));
-                    }
-                    stages.push(Stage::Join(Join {
-                        kind,
-                        inner: Box::new(inner),
-                        at: match point {
-                            syntax::TimePoint::When => TimePoint::When,
-                            syntax::TimePoint::Start => TimePoint::Start,
-                            syntax::TimePoint::End => TimePoint::End,
+                    let inner_scope = self.output_scope(&inner_path)?;
+                    let on = match on {
+                        syntax::JoinOn::Order {
+                            relation,
+                            within,
+                            at: point,
+                            scope: order_scope,
+                        } => self.order_on(
+                            relation,
+                            within.as_ref(),
+                            point,
+                            order_scope.as_deref(),
+                            at,
+                        )?,
+                        syntax::JoinOn::Key { left, right } => JoinOn::Key {
+                            left: self.resolve(&left, scope, at)?,
+                            right: self.resolve(&right, &inner_scope, at)?,
                         },
-                        within_secs,
+                    };
+                    stages.push(Stage::Join(Join {
+                        on,
+                        inner: Box::new(self.query(*query, &inner_path)?),
                     }));
                 }
+
                 _ => {
                     return Err(QueryError::not_built(
                         at,
@@ -758,7 +1004,8 @@ impl Binder<'_> {
             {
                 g.aggregates.push(Aggregate {
                     function: AggFn::Count,
-                    field: None,
+                    argument: None,
+                    name: None,
                 });
             }
         }
@@ -808,9 +1055,9 @@ pub(super) fn time_fn_value(
                 .map_err(|_| bad("a date in range"))?;
             Value::Text(monday.to_string())
         }
-        TimeFn::Hour => {
+        TimeFn::Hour | TimeFn::Year => {
             let h: i64 = raw.parse().map_err(|_| bad("an hour, 0 to 23"))?;
-            if !(0..=23).contains(&h) {
+            if func == TimeFn::Hour && !(0..=23).contains(&h) {
                 return Err(bad("an hour, 0 to 23"));
             }
             Value::Integer(h)

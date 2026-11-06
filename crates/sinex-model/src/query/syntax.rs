@@ -1,6 +1,6 @@
 //! Sinex vocabulary for the shared grammar. Storage binding lives in `parse`.
 use super::{ALIASES, Context, FieldType, QueryCatalog, QueryError, Table};
-use query_language::catalog::{Catalog, Field, FieldKind, ReferenceSyntax, Unit};
+use query_language::catalog::{Catalog, Field, FieldKind, ReferenceForm, Unit};
 
 pub fn catalog(ctx: &Context) -> Catalog {
     let declarations = ctx
@@ -27,7 +27,16 @@ pub fn catalog(ctx: &Context) -> Catalog {
             .chain(extra)
             .map(|f| Field {
                 name: f.name.into(),
-                kind: field_kind(f.ty),
+                kind: if matches!(
+                    f.name,
+                    "source" | "event_type" | "host" | "binding" | "producer"
+                ) {
+                    FieldKind::Exact
+                } else if f.name == "text" {
+                    FieldKind::Words
+                } else {
+                    field_kind(f.ty)
+                },
                 values: if let FieldType::Enum(v) = f.ty {
                     v.iter().map(|v| (*v).into()).collect()
                 } else {
@@ -65,17 +74,40 @@ pub fn catalog(ctx: &Context) -> Catalog {
     }));
     Catalog {
         default_unit: "events".into(),
-        recall_last_unit: Some("shell-sessions".into()),
+        namespace: Some("sx".into()),
         units,
-        commands: super::tables::COMMAND_WORDS
-            .iter()
-            .map(|s| (*s).into())
-            .collect(),
-        references: vec![ReferenceSyntax {
+        extensions: {
+            use query_language::catalog::{Extension, ExtensionPosition as P, ExtensionSlot as S};
+            vec![
+                Extension {
+                    name: "holding".into(),
+                    position: P::Atom,
+                    arguments: vec![S::Name, S::Value],
+                    help: "State intervals holding at an instant or during a period".into(),
+                },
+                Extension {
+                    name: "overlaps".into(),
+                    position: P::Atom,
+                    arguments: vec![
+                        S::Value,
+                        S::Optional(vec![S::Keyword("..".into()), S::Value]),
+                    ],
+                    help: "Intersect state intervals with an instant or interval".into(),
+                },
+                Extension {
+                    name: "measure".into(),
+                    position: P::Transform,
+                    arguments: vec![S::Name, S::List(Box::new(S::Expression))],
+                    help:
+                        "Stored historical measure syntax; execution requires an analysis operation"
+                            .into(),
+                },
+            ]
+        },
+        references: vec![ReferenceForm::Prefix {
             prefix: "sinex:".into(),
             marker: Some("/".into()),
         }],
-        unpiped_stages: true,
         ..Catalog::default()
     }
 }
