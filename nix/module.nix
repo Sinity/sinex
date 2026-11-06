@@ -37,6 +37,12 @@ let
         // { passwordFile = cfg.session.passwordFile; };
     };
 
+  # Capture producers receive discovery inputs, not daemon staging authority.
+  sourceConfiguration = { spool, watch }: {
+    inherit (cfg) sources exclude;
+    discovery = cfg.discovery // { inherit spool watch; };
+  };
+
   # The NATS server and user, and the file the password is read from: a
   # password never appears in a process's arguments.
   natsArgs = { user, passwordFile, address }:
@@ -476,19 +482,19 @@ in
           forward_signals = producer.forwardSignals or false;
         };
       }) producers);
-      environment.etc."sinex/sources.json".text = builtins.toJSON {
+      environment.etc."sinex/sources.json".text = builtins.toJSON ((sourceConfiguration {
+        spool = "${cfg.stateDir}/spool";
+        watch = cfg.session.watch;
+      }) // {
         signals = cfg.signals;
-        sources = cfg.sources;
-        exclude = cfg.exclude;
-        discovery = cfg.discovery // {
-          spool = "${cfg.stateDir}/spool";
-          watch = cfg.session.watch;
-          inputs = cfg.discovery.inputs;
-        };
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
         staging_roots = cfg.stagingRoots;
         inherit (cfg) tags activity project_attribution rhythm;
-      };
+      });
+      environment.etc."sinex/session-sources.json".text = builtins.toJSON (sourceConfiguration {
+        spool = "${cfg.session.stateDir}/spool";
+        watch = cfg.session.watch;
+      });
 
       assertions = [{
         assertion = (cfg.backup.repo == null) == (cfg.backup.keysRepo == null)
@@ -757,7 +763,7 @@ in
             --store ${escapeShellArg cfg.storeDir} \
             --state ${escapeShellArg cfg.session.stateDir} \
             --host ${escapeShellArg cfg.host} \
-            --sources /etc/sinex/sources.json
+            --sources /etc/sinex/session-sources.json
         '';
       };
 
@@ -769,11 +775,10 @@ in
     })
 
     (mkIf node.enable {
-      environment.etc."sinex/capture-sources.json".text = builtins.toJSON {
-        sources = cfg.sources;
-        exclude = cfg.exclude;
-        discovery = cfg.discovery // { watch = node.watch; spool = "${node.stateDir}/spool"; };
-      };
+      environment.etc."sinex/capture-sources.json".text = builtins.toJSON (sourceConfiguration {
+        spool = "${node.stateDir}/spool";
+        watch = node.watch;
+      });
       users.users.${node.user} = {
         isSystemUser = true;
         group = node.group;
