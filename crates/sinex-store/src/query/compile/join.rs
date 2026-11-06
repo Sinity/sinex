@@ -305,21 +305,9 @@ impl Compiler<'_> {
         outer: &Cols,
         expression: &Expr,
     ) -> Result<Vec<Joined>> {
-        fn collect<'a>(expression: &'a Expr, out: &mut Vec<&'a Join>) {
-            match expression {
-                Expr::And(left, right) => {
-                    collect(left, out);
-                    collect(right, out);
-                }
-                Expr::Order(join) => out.push(join),
-                _ => {}
-            }
-        }
-        let mut orders = vec![];
-        collect(expression, &mut orders);
-        match orders.as_slice() {
-            [join] => Ok(vec![self.join_lateral(outer, join, true)?]),
-            _ => Ok(vec![]),
+        match expression.exposed_order() {
+            Some(join) => Ok(vec![self.join_lateral(outer, join, true)?]),
+            None => Ok(vec![]),
         }
     }
 

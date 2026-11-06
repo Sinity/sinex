@@ -522,7 +522,7 @@ impl<'c> Compiler<'c> {
                         &group_order,
                     )?;
                     let witnesses = self.order_witnesses(&cols, &e)?;
-                    let mut condition_cols = cols.clone();
+                    let condition_cols = cols.clone();
                     if !witnesses.is_empty() {
                         let order =
                             self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
@@ -538,13 +538,6 @@ impl<'c> Compiler<'c> {
                         rel = ordered;
                         ordinal = Some(next_ordinal);
                         sort = None;
-                        condition_cols = Cols::Named {
-                            r: r.clone(),
-                            table,
-                            grouped: is_grouped,
-                            renamed: renamed.clone(),
-                            ordinal: ordinal.clone(),
-                        };
                     }
                     for witness in witnesses {
                         let mut select = vec![SqlFragment::text(format!("{r}.*"))];
@@ -577,13 +570,6 @@ impl<'c> Compiler<'c> {
                             .push(format!(") {r} "))
                             .append(witness.lateral);
                         rel = witnessed;
-                        condition_cols = Cols::Named {
-                            r: r.clone(),
-                            table,
-                            grouped: is_grouped,
-                            renamed: renamed.clone(),
-                            ordinal: ordinal.clone(),
-                        };
                     }
                     let cond = self.expr(&condition_cols, &e)?;
                     let mut f = if has_order_witness(&e) {

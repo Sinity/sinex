@@ -1101,46 +1101,65 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
             _ => {}
         }
     }
-    fn witnesses(value: &Expr) -> usize {
+    fn clear_orders(value: &mut Expr) {
         match value {
-            Expr::Order(_) => 1,
-            Expr::And(left, right) => witnesses(left) + witnesses(right),
-            _ => 0,
+            Expr::Order(join) => join.required.clear(),
+            Expr::And(left, right) | Expr::Or(left, right) => {
+                clear_orders(left);
+                clear_orders(right);
+            }
+            Expr::Not(value) => clear_orders(value),
+            _ => {}
         }
     }
-    fn assign(value: &mut Expr, names: &[String]) {
-        match value {
-            Expr::Order(join) => join.required = names.to_vec(),
-            Expr::And(left, right) => {
-                assign(left, names);
-                assign(right, names);
+    fn assign(join: &mut Join, names: &mut BTreeSet<String>, pair: bool) {
+        let mut produced = join
+            .columns
+            .iter()
+            .map(Operand::column)
+            .collect::<BTreeSet<_>>();
+        if matches!(
+            join.on,
+            JoinOn::Order {
+                within_secs: Some(_),
+                ..
             }
-            _ => {}
+        ) || (pair && matches!(join.on, JoinOn::Order { .. }))
+        {
+            produced.insert("distance".into());
+        }
+        join.required = names.intersection(&produced).cloned().collect();
+        names.retain(|name| !produced.contains(name));
+        if let JoinOn::Key { right, .. } = &join.on {
+            join.required.push(right.name());
+        }
+    }
+    if let Some(value) = &mut query.filter {
+        clear_orders(value);
+    }
+    for stage in &mut query.stages {
+        if let Stage::Where(value) = stage {
+            clear_orders(value);
         }
     }
     let mut names = extra
         .iter()
         .filter_map(|name| name.strip_prefix("match.").map(str::to_owned))
         .collect::<BTreeSet<_>>();
-    // A later join replaces the match namespace. Work back to its producer
-    // rather than applying another join's payload requirements to every input.
+    // Work back to the producer of each matched column. A later join
+    // overwrites the names it exposes, while other input fields survive.
     for stage in query.stages.iter_mut().rev() {
         match stage {
             Stage::Where(value) => {
-                expression(value, &mut names);
-                if witnesses(value) == 1 {
-                    assign(value, &names.iter().cloned().collect::<Vec<_>>());
-                    names.clear();
-                } else {
-                    assign(value, &[]);
+                if let Some(join) = value.exposed_order_mut() {
+                    assign(join, &mut names, false);
                 }
+                // Conditions read the input witness, before this filter exposes
+                // a replacement. Their requirements belong to earlier producers.
+                expression(value, &mut names);
             }
             Stage::Join(join) => {
-                join.required = names.iter().cloned().collect();
-                if let JoinOn::Key { right, .. } = &join.on {
-                    join.required.push(right.name());
-                }
-                names.clear();
+                assign(join, &mut names, true);
                 if let JoinOn::Key { left, .. } = &join.on {
                     if let Some(name) = left.name().strip_prefix("match.") {
                         names.insert(name.to_owned());
@@ -1173,11 +1192,8 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
         }
     }
     if let Some(value) = &mut query.filter {
-        expression(value, &mut names);
-        if witnesses(value) == 1 {
-            assign(value, &names.into_iter().collect::<Vec<_>>());
-        } else {
-            assign(value, &[]);
+        if let Some(join) = value.exposed_order_mut() {
+            assign(join, &mut names, false);
         }
     }
 }
@@ -1262,19 +1278,7 @@ fn expose_join(schema: &mut PhysicalSchema, join: &Join) -> Result<(), QueryErro
     Ok(())
 }
 fn expose_order(schema: &mut PhysicalSchema, value: &Expr) -> Result<(), QueryError> {
-    fn collect<'a>(value: &'a Expr, orders: &mut Vec<&'a Join>) {
-        match value {
-            Expr::Order(join) => orders.push(join),
-            Expr::And(left, right) => {
-                collect(left, orders);
-                collect(right, orders);
-            }
-            _ => {}
-        }
-    }
-    let mut orders = vec![];
-    collect(value, &mut orders);
-    if let [join] = orders.as_slice() {
+    if let Some(join) = value.exposed_order() {
         expose_join(schema, join)?;
     }
     Ok(())

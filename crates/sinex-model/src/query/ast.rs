@@ -658,6 +658,40 @@ impl Query {
     }
 }
 impl Expr {
+    fn positive_order_count(&self) -> usize {
+        match self {
+            Self::Order(_) => 1,
+            Self::And(left, right) => {
+                (left.positive_order_count() + right.positive_order_count()).min(2)
+            }
+            _ => 0,
+        }
+    }
+    /// Only one order under positive AND conditions exposes its chosen row.
+    /// Every predicate operand still reads the relation entering that filter.
+    pub fn exposed_order(&self) -> Option<&Join> {
+        if self.positive_order_count() != 1 {
+            return None;
+        }
+        match self {
+            Self::Order(join) => Some(join),
+            Self::And(left, right) => left.exposed_order().or_else(|| right.exposed_order()),
+            _ => None,
+        }
+    }
+    pub(super) fn exposed_order_mut(&mut self) -> Option<&mut Join> {
+        if self.positive_order_count() != 1 {
+            return None;
+        }
+        match self {
+            Self::Order(join) => Some(join),
+            Self::And(left, right) => left
+                .exposed_order_mut()
+                .or_else(|| right.exposed_order_mut()),
+            _ => None,
+        }
+    }
+
     /// Remove rank directives structurally before compiling the predicate.
     pub fn predicate(&self) -> Option<Expr> {
         match self {

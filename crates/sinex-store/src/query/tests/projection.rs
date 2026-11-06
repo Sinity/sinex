@@ -400,3 +400,64 @@ async fn absolute_unknown_values_stay_unknown(db: devkit::pg::TestDatabase) {
     assert_eq!(answer.total, 3);
     assert!(answer.rows.iter().all(|row| row["magnitude"].is_null()));
 }
+
+#[devkit::test]
+async fn filter_operands_read_the_input_witness_before_exposing_a_new_one(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = fixture(&db).await;
+    let prefix = "commands where near (commands where command = a) within 5m";
+    let condition = "near (commands where command = cc) within 5m AND match.command = a";
+    let reversed = "match.command = a AND near (commands where command = cc) within 5m";
+    let first_query = format!("{prefix} | where {condition} | fields command, match.command");
+    let second_query = format!("{prefix} | where {reversed} | fields command, match.command");
+    let first = ask_page(
+        &mut conn,
+        &first_query,
+        Page {
+            size: Some(1),
+            cursor: None,
+        },
+    )
+    .await;
+    assert_eq!(first.total, 3);
+    assert_eq!(first.rows[0]["match.command"], json!("cc"));
+    let next = ask_page(
+        &mut conn,
+        &second_query,
+        Page {
+            size: Some(2),
+            cursor: first.page.cursor,
+        },
+    )
+    .await;
+    assert_eq!(column(&next, "command"), [json!("bbbb"), json!("cc")]);
+    assert!(
+        next.rows
+            .iter()
+            .all(|row| row["match.command"] == json!("cc"))
+    );
+    for condition in [
+        "near (commands where command = bbbb) within 5m AND near (commands where command = cc) within 5m",
+        "near (commands where command = bbbb) within 5m OR near (commands where command = cc) within 5m",
+    ] {
+        let query = format!("{prefix} | where {condition} | fields match.command");
+        let answer = ask(&mut conn, &query).await;
+        assert_eq!(answer.total, 3);
+        assert!(
+            answer
+                .rows
+                .iter()
+                .all(|row| row["match.command"] == json!("a")),
+            "{query}"
+        );
+    }
+    let negative=ask(&mut conn,&format!("{prefix} | where NOT near (commands where command = cc) within 0s | fields command, match.command")).await;
+    assert_eq!(column(&negative, "command"), [json!("a"), json!("bbbb")]);
+    assert!(
+        negative
+            .rows
+            .iter()
+            .all(|row| row["match.command"] == json!("a"))
+    );
+}
