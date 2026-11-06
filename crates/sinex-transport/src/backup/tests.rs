@@ -15,6 +15,7 @@ fn boundary() -> Hold {
 #[devkit::test]
 async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
     let broker = devkit::nats::test_nats().unwrap();
+    let producer = broker.prefix().to_owned();
     let client = async_nats::connect(broker.url()).await.unwrap();
     let source = Arc::new(tempfile::tempdir().unwrap());
     std::fs::write(source.path().join("checkpoint"), b"before-core-cut").unwrap();
@@ -24,7 +25,7 @@ async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
     let participant = Participant::start(
         client.clone(),
         Subjects::sinex(),
-        "capture".into(),
+        producer.clone(),
         publication.clone(),
         Arc::new(move |cancel| {
             let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -34,7 +35,7 @@ async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
     )
     .await
     .unwrap();
-    let cut = Frozen::freeze(client.clone(), Subjects::sinex(), "capture".into())
+    let cut = Frozen::freeze(client.clone(), Subjects::sinex(), producer.clone())
         .await
         .unwrap();
     // An ACK arriving after P may not retire raw bytes or advance this checkpoint.
@@ -78,6 +79,7 @@ async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
 #[devkit::test]
 async fn producer_restart_rejects_old_freeze_instead_of_certifying_new_checkpoint() {
     let broker = devkit::nats::test_nats().unwrap();
+    let producer = broker.prefix().to_owned();
     let client = async_nats::connect(broker.url()).await.unwrap();
     let callback: Arc<dyn Fn(Arc<AtomicBool>) -> Result<Captured, String> + Send + Sync> =
         Arc::new(|_cancel| {
@@ -89,13 +91,13 @@ async fn producer_restart_rejects_old_freeze_instead_of_certifying_new_checkpoin
     let participant = Participant::start(
         client.clone(),
         Subjects::sinex(),
-        "capture".into(),
+        producer.clone(),
         Publication::default(),
         callback.clone(),
     )
     .await
     .unwrap();
-    let cut = Frozen::freeze(client.clone(), Subjects::sinex(), "capture".into())
+    let cut = Frozen::freeze(client.clone(), Subjects::sinex(), producer.clone())
         .await
         .unwrap();
     drop(participant);
@@ -104,7 +106,7 @@ async fn producer_restart_rejects_old_freeze_instead_of_certifying_new_checkpoin
     let _restarted = Participant::start(
         client,
         Subjects::sinex(),
-        "capture".into(),
+        producer.clone(),
         Publication::default(),
         callback,
     )
@@ -177,9 +179,12 @@ fn cancellation_stops_a_native_copy_at_a_transfer_unit_without_a_finished_identi
 async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash() {
     use sinex_protocol::replies::ReplyFrame;
     let broker = devkit::nats::test_nats().unwrap();
+    let producer = broker.prefix().to_owned();
     let client = async_nats::connect(broker.url()).await.unwrap();
-    let mut incoming = client.subscribe("backup.wait").await.unwrap();
-    let mut observed = client.subscribe("_SINEX_BACKUP.capture.>").await.unwrap();
+    let subject = broker.subject("backup.wait");
+    let prefix = Subjects::sinex().backup_inbox(&producer);
+    let mut incoming = client.subscribe(subject.clone()).await.unwrap();
+    let mut observed = client.subscribe(format!("{prefix}.>")).await.unwrap();
     client.flush().await.unwrap();
     let (finish, finished) = tokio::sync::oneshot::channel();
     let owner = client.clone();
@@ -211,8 +216,8 @@ async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash
     });
     let value: serde_json::Value = crate::replies::request_inbox(
         &client,
-        "backup.wait",
-        "_SINEX_BACKUP.capture".into(),
+        subject,
+        prefix,
         b"{}".to_vec(),
         Duration::from_secs(10),
     )
@@ -227,6 +232,7 @@ async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash
 async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request() {
     use sinex_protocol::replies::{FlowAck, ReplyFrame};
     let broker = devkit::nats::test_nats().unwrap();
+    let producer = broker.prefix().to_owned();
     let client = async_nats::connect(broker.url()).await.unwrap();
     let subjects = Subjects::sinex();
     let callback: Arc<dyn Fn(Arc<AtomicBool>) -> Result<Captured, String> + Send + Sync> =
@@ -239,19 +245,19 @@ async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request()
     let _participant = Participant::start(
         client.clone(),
         subjects.clone(),
-        "capture".into(),
+        producer.clone(),
         Publication::default(),
         callback,
     )
     .await
     .unwrap();
-    let inbox = "_SINEX_BACKUP.capture.cancelled";
-    let mut response = client.subscribe(inbox).await.unwrap();
+    let inbox = format!("{}.cancelled", subjects.backup_inbox(&producer));
+    let mut response = client.subscribe(inbox.clone()).await.unwrap();
     client.flush().await.unwrap();
     client
         .publish_with_reply(
-            subjects.backup("capture"),
-            inbox,
+            subjects.backup(&producer),
+            inbox.clone(),
             serde_json::to_vec(&Request::Freeze {
                 token: "abandoned-coordinator".into(),
             })
@@ -275,7 +281,7 @@ async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request()
         )
         .await
         .unwrap();
-    let next = Frozen::freeze(client, subjects, "capture".into())
+    let next = Frozen::freeze(client, subjects, producer.clone())
         .await
         .unwrap();
     next.release().await.unwrap();
