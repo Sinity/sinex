@@ -49,8 +49,9 @@ async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64
     )
     .fetch_one(&mut *tx)
     .await?;
-    // Each bound is spelled out so it stays an index range under a generic
-    // plan, and so the events join reads only the chunks the range covers.
+    // Seek on the ordinary search table before joining event identities.
+    // Materializing those IDs prevents timestamp-based UUID chunk pruning
+    // from discarding distinct records within the same millisecond.
     let resumed = mark.is_some();
     let (next_batch, rewrite) = (
         format!(
@@ -60,12 +61,13 @@ async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64
             after("event_id", resumed)
         ),
         format!(
-            "UPDATE core.search_text s SET trigram_indexed = false
-             FROM core.events e
-             WHERE e.id = s.event_id AND s.trigram_indexed AND e.event_type = ANY($3)
-               AND {} AND s.event_id <= $2::uuid AND {} AND e.id <= $2::uuid",
-            after("s.event_id", resumed),
-            after("e.id", resumed)
+            "WITH batch AS MATERIALIZED (
+               SELECT event_id FROM core.search_text
+               WHERE {} AND event_id <= $2::uuid)
+             UPDATE core.search_text s SET trigram_indexed = false
+             FROM batch b JOIN core.events e ON e.id = b.event_id
+             WHERE s.event_id = b.event_id AND s.trigram_indexed AND e.event_type = ANY($3)",
+            after("event_id", resumed)
         ),
     );
     let last: Option<String> = sqlx::query_scalar(next_batch.as_str())
