@@ -325,7 +325,7 @@ where
 {
     let mut selected_at = Instant::now();
     let mut declaration = declaration(lives);
-    let mut producer = None;
+    let mut producer: Option<Producer> = None;
     let mut participant = None;
     let backup_bindings = Arc::new(std::sync::Mutex::new(
         lives
