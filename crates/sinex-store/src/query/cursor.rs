@@ -138,36 +138,6 @@ pub async fn context_for_page(
     )?
     .ctx)
 }
-pub(super) fn question(
-    text: &str,
-    programmatic: Option<String>,
-    definitions: Option<&std::collections::BTreeMap<String, sinex_model::query::saved::SavedQuery>>,
-    ctx: &Context,
-    scope: &(String, String),
-) -> Result<String> {
-    question_from_identity(
-        continuation::query_identity(text, ctx)?,
-        programmatic,
-        definitions,
-        ctx,
-        scope,
-    )
-}
-
-pub(super) fn question_from_identity(
-    identity: Json,
-    programmatic: Option<String>,
-    definitions: Option<&std::collections::BTreeMap<String, sinex_model::query::saved::SavedQuery>>,
-    ctx: &Context,
-    scope: &(String, String),
-) -> Result<String> {
-    let definitions = definitions
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(|_| invalid())?;
-    question_from_evidence(identity, programmatic, definitions.as_ref(), ctx, scope)
-}
-
 pub(super) fn question_from_evidence(
     identity: Json,
     programmatic: Option<String>,

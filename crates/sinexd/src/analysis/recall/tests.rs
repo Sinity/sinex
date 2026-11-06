@@ -255,12 +255,12 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
     )
     .unwrap();
     let canonical_key = key(&request.request);
-    assert!(request_input(&canonical_key, std::slice::from_ref(&input)).is_ok());
+    assert!(request_input(&canonical_key, std::slice::from_ref(&input), None).is_ok());
 
     let mut forged = input.clone();
     forged.payload["request"] = json!("forged");
     assert!(
-        request_input(&key("forged"), std::slice::from_ref(&forged))
+        request_input(&key("forged"), std::slice::from_ref(&forged), None)
             .unwrap_err()
             .contains("identity")
     );
@@ -282,7 +282,7 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
         let mut changed = input.clone();
         *changed.payload.pointer_mut(pointer).unwrap() = value;
         assert!(
-            request_input(&canonical_key, &[changed])
+            request_input(&canonical_key, &[changed], None)
                 .unwrap_err()
                 .contains("identity"),
             "{pointer}"
@@ -292,7 +292,7 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
     let mut refreshed = input;
     refreshed.payload["selection"]["selected"]["_fingerprint"] = json!("second");
     assert!(
-        request_input(&canonical_key, &[refreshed]).is_ok(),
+        request_input(&canonical_key, &[refreshed], None).is_ok(),
         "the fingerprint changes evidence, not selector identity"
     );
 }

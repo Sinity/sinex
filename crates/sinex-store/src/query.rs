@@ -762,31 +762,6 @@ async fn page_of(
     })
 }
 
-/// `jsonb_build_object` over the columns, in order, in chunks the function's
-/// argument limit allows.
-fn json_object(columns: &[String]) -> String {
-    if columns.is_empty() {
-        return "'{}'::jsonb".to_string();
-    }
-    let parts: Vec<String> = columns
-        .chunks(50)
-        .map(|chunk| {
-            let pairs: Vec<String> = chunk
-                .iter()
-                .map(|c| {
-                    format!(
-                        "'{}', q.\"{}\"",
-                        c.replace('\'', "''"),
-                        c.replace('"', "\"\"")
-                    )
-                })
-                .collect();
-            format!("jsonb_build_object({})", pairs.join(", "))
-        })
-        .collect();
-    parts.join(" || ")
-}
-
 /// The commit position Sinex had reached at a time.
 async fn seq_at(conn: &mut PgConnection, t: jiff::Timestamp) -> Result<i64> {
     let odt = time::OffsetDateTime::from_unix_timestamp_nanos(t.as_nanosecond())
