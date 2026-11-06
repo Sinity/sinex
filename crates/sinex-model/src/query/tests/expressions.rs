@@ -16,8 +16,8 @@ fn arithmetic_and_row_dependent_comparisons_keep_typed_operands() {
     })));
     assert!(matches!(&query.stages[1], Stage::Where(Expr::Compare {
         lhs: Operand::Field(FieldRef::TypedGroup(column)),
-        rhs: Value::Number(seconds), ..
-    }) if column.name() == "latency" && *seconds == 86_400.0));
+        rhs: Value::Text(seconds), ..
+    }) if column.name() == "latency" && seconds == "86400"));
 }
 
 #[devkit::test]
