@@ -34,9 +34,17 @@ the current schema; there is no offline query cache. The database is named
 after a hash of the DDL the schema crate generates (tables, CHECK lists of
 closed value sets, the per-kind views and the payload fields they expose)
 combined with the PostgreSQL server version. A change that alters DDL
-produces a new database and recompiles only the query-checking crates; a
-parser, model or payload-value change that leaves DDL alone keeps the same
-`DATABASE_URL`.
+produces a new database and recompiles only the query-checking crates. After
+preparing that database, xtask supplies its content-addressed name as
+`SINEX_SCHEMA_IDENTITY`; checked-query builds track that identity instead of
+the server's transport address. Restarting a disposable server at another
+socket therefore reuses the same checked queries. A parser, model or
+payload-value change that leaves DDL alone keeps the same schema identity.
+
+`SINEX_SCHEMA_IDENTITY` belongs to xtask's prepared-schema environment. A
+manual build without it tracks `DATABASE_URL`, and entering or leaving the
+managed environment also triggers a query check. SQLx still checks queries
+against the live prepared database whenever the checked crate compiles.
 
 Each test that needs PostgreSQL gets its own copy of the schema database from
 a template (`devkit::pg::test_database()`), so database tests run in

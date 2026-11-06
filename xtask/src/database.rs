@@ -82,8 +82,14 @@ pub fn prepare(root: &Path) -> Result<(Server, SchemaDatabases)> {
 /// `DATABASE_URL` for compile-time checks against the schema database, and
 /// what tests need to clone the template (`devkit::pg::test_database`).
 pub fn env(server: &Server, databases: &SchemaDatabases) -> Vec<(String, String)> {
-    let mut env = vec![("DATABASE_URL".into(), server.url(&databases.schema, None))];
+    let mut env = vec![
+        ("DATABASE_URL".into(), server.url(&databases.schema, None)),
+        ("SINEX_SCHEMA_IDENTITY".into(), databases.schema.clone()),
+    ];
     env.extend(server.test_env(&databases.template));
     env.extend(server.pg_env());
     env
 }
+
+#[cfg(test)]
+mod tests;
