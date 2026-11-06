@@ -66,10 +66,8 @@ exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 arguments = "required"
 pool = "normal"
 result = "exit"
-# A cold target compiles 290-380 crates before any test runs: 10m01s and
-# 14m44s for the test profile on 2026-11-01/02. 14 of 62 focused jobs since
-# 11-01 ended at the old 900 s limit while still compiling.
-timeout_seconds = 2400
+# The outer budget includes compilation; individual test deadlines are unchanged.
+timeout_seconds = 3600
 scratch = "tmpfs"
 cache = "none"
 unit_properties = ["MemoryHigh=8G"]
