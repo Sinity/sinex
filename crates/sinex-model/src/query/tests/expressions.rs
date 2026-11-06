@@ -288,3 +288,13 @@ fn text_cast_clears_entity_typing_without_stringifying_other_scalars() {
     };
     assert_eq!(columns[0].field_type().unwrap(), FieldType::Text);
 }
+
+#[devkit::test]
+fn natural_search_ranks_the_entering_text_but_not_an_inner_witness() {
+    assert!(q("events where text:workspace").ranked);
+    assert!(!q("events where NOT text:workspace").ranked);
+    assert!(
+        !q("events where before(events | fields text) within 5m | where match.text:workspace")
+            .ranked
+    );
+}

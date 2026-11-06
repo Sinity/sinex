@@ -664,8 +664,25 @@ impl Query {
 impl Expr {
     /// Search terms in this relation, excluding negated predicates and inner queries.
     pub fn positive_words(&self) -> Vec<&Words> {
+        fn original_text(info: &query_language::scope::FieldInfo) -> bool {
+            use query_language::scope::Origin;
+            match &info.origin {
+                Origin::Catalog { field, .. } => field == "text",
+                Origin::Group { input, .. } => original_text(input),
+                _ => false,
+            }
+        }
         match self {
-            Self::Words(words) | Self::FieldWords { words, .. } => vec![words],
+            Self::Words(words) => vec![words],
+            Self::FieldWords { operand, words }
+                if match operand {
+                    Operand::Field(FieldRef::Field(field)) => field.name == "text",
+                    Operand::Field(FieldRef::TypedGroup(column)) => original_text(column.info()),
+                    _ => false,
+                } =>
+            {
+                vec![words]
+            }
             Self::And(left, right) | Self::Or(left, right) => {
                 let mut words = left.positive_words();
                 words.extend(right.positive_words());
