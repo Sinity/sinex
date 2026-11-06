@@ -123,9 +123,32 @@ pub async fn run(
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
-    run_inner(conn, text, query, ctx, page, None, false, false)
+    run_inner(conn, text, query, ctx, page, None, false, false, None)
         .await
         .map(|selected| selected.answer)
+}
+
+/// Execute a product operation with its already parsed shared relation body.
+pub async fn run_operation(
+    conn: &mut PgConnection,
+    text: &str,
+    operation: &sinex_model::query::native::Template,
+    ctx: &Context,
+    page: &Page,
+) -> Result<Answer> {
+    run_inner(
+        conn,
+        text,
+        None,
+        ctx,
+        page,
+        None,
+        false,
+        false,
+        Some(operation),
+    )
+    .await
+    .map(|selected| selected.answer)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -138,6 +161,7 @@ async fn run_inner(
     retained: Option<&sinex_model::event_types::analysis::QuerySelection>,
     capture_selection: bool,
     in_snapshot: bool,
+    operation: Option<&sinex_model::query::native::Template>,
 ) -> Result<selected::SelectedPage> {
     if !in_snapshot {
         initialize_calendar(conn).await?;
@@ -160,14 +184,27 @@ async fn run_inner(
         ));
     }
     let grants = current_grants(&mut tx).await?;
-    let question_id =
-        continuation::identity("query", &continuation::query_identity(text, &ctx)?, &grants)?;
+    let mut question_form = retained
+        .and_then(|selection| selection.original_question.clone())
+        .map_or_else(|| continuation::query_identity(text, &ctx), Ok)?;
+    let mut question_id = continuation::identity("query", &question_form, &grants)?;
     let seal = continuation::seal_key(&mut tx).await?;
-    let pinned = page
-        .cursor
-        .as_deref()
-        .map(|raw| cursor::Cursor::decode(&seal, raw, question_id, &ctx))
-        .transpose()?;
+    let pinned = if let Some(raw) = page.cursor.as_deref() {
+        let authenticated = continuation::authenticate(&seal, raw)?;
+        (question_form, question_id) = continuation::authenticated_operation_question(
+            &authenticated,
+            question_form,
+            operation,
+            &grants,
+        )?;
+        Some(cursor::Cursor::decode_authenticated(
+            authenticated,
+            question_id,
+            &ctx,
+        )?)
+    } else {
+        None
+    };
     if let Some(pinned) = &pinned {
         ctx.now = pinned.ctx.now;
     }
@@ -215,26 +252,28 @@ async fn run_inner(
         let parsed = sinex_model::query::bind(text, &ctx).ok();
         (parsed.as_ref() != Some(q)).then(|| format!("{q:?}"))
     });
-    let mut saved_context = None;
+    let mut saved_context = retained.map(|selection| selection.definitions.clone());
+    let execution = if let Some(retained) = retained {
+        Some(retained.template.clone())
+    } else if let Some(operation) = operation {
+        Some(operation.clone())
+    } else if query.is_none() {
+        if let Some(name) = sinex_model::query::saved::reference_name(text) {
+            let definitions = saved::saved_definitions(&mut tx, &name).await?;
+            let template = sinex_model::query::saved::template_saved(text, &ctx, &definitions)?;
+            saved_context = Some(definitions);
+            Some(template)
+        } else {
+            Some(sinex_model::query::native::Template::query(
+                sinex_model::query::syntax::parse(text, &ctx)?,
+            ))
+        }
+    } else {
+        None
+    };
     let mut bound = match query {
         Some(query) => query.clone(),
-        None => {
-            if let Some(name) = sinex_model::query::saved::reference_name(text) {
-                let definitions = if let Some(snapshot) =
-                    retained.and_then(|retained| retained.selected.get("_saved"))
-                {
-                    serde_json::from_value(snapshot.clone())
-                        .map_err(|error| Error::Invalid(error.to_string()))?
-                } else {
-                    saved::saved_definitions(&mut tx, &name).await?
-                };
-                let bound = sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?;
-                saved_context = Some(definitions);
-                bound
-            } else {
-                sinex_model::query::bind(text, &ctx)?
-            }
-        }
+        None => execution.as_ref().expect("execution template").bind(&ctx)?,
     };
     ctx.catalog
         .as_ref()
@@ -248,7 +287,22 @@ async fn run_inner(
     .fetch_one(&mut *tx)
     .await?;
     let scope = (scope.user, scope.grants);
-    let question = cursor::question(text, programmatic, saved_context.as_ref(), &ctx, &scope)?;
+    let definition_evidence = if let Some(retained) = retained {
+        retained.selected.get("_saved").cloned()
+    } else {
+        saved_context
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| Error::Invalid(error.to_string()))?
+    };
+    let question = cursor::question_from_evidence(
+        question_form,
+        programmatic,
+        definition_evidence.as_ref(),
+        &ctx,
+        &scope,
+    )?;
     let current = current_seq(&mut tx).await?;
     let prior = pinned;
     let mut seq = match &prior {
@@ -401,7 +455,12 @@ async fn run_inner(
                 },
                 filter: Some(Expr::And(
                     Box::new(selection.filter()),
-                    Box::new(recall::input_filter()),
+                    Box::new(match query.filter.clone() {
+                        Some(filter) => {
+                            Expr::And(Box::new(recall::input_filter()), Box::new(filter))
+                        }
+                        None => recall::input_filter(),
+                    }),
                 )),
                 stages: query.stages.clone(),
                 ranked: query.ranked,
@@ -415,12 +474,21 @@ async fn run_inner(
                 .await?;
             if capture_selection {
                 let (context, parents, class) = selected::capture(
-                    &mut tx, text, query, &read.ctx, read.seq, &scope.1, &selection, &as_events,
+                    &mut tx,
+                    text,
+                    execution.as_ref().expect("recall template"),
+                    query,
+                    &read.ctx,
+                    read.seq,
+                    &scope.1,
+                    &selection,
+                    &as_events,
                     &account,
                 )
                 .await?;
                 let mut context = context;
                 if let Some(definitions) = &saved_context {
+                    context.definitions = definitions.clone();
                     context.selected["_saved"] = serde_json::to_value(definitions)
                         .map_err(|error| Error::Invalid(error.to_string()))?;
                 }
@@ -544,7 +612,7 @@ fn typed_boundary(value: &Json, ty: &str) -> Result<SqlFragment> {
     Ok(f)
 }
 fn render_page(compiled: Compiled, read: &ReadPage) -> Result<Rendered> {
-    let object = json_object(&compiled.columns);
+    let object = compiled.json_object();
     let values = compiled
         .keys
         .iter()

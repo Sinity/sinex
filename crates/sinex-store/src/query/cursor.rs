@@ -36,7 +36,14 @@ impl Cursor {
         question: QuestionId,
         ctx: &Context,
     ) -> Result<Self> {
-        let c = continuation::open(seal, raw, question, ctx)?;
+        Self::decode_authenticated(continuation::authenticate(seal, raw)?, question, ctx)
+    }
+    pub(super) fn decode_authenticated(
+        authenticated: query_language::cursor::AuthenticatedCursor,
+        question: QuestionId,
+        ctx: &Context,
+    ) -> Result<Self> {
+        let c = continuation::bind_authenticated(authenticated, question, ctx)?;
         let m: Metadata =
             serde_json::from_str(c.context.versions.get("sinex.query").ok_or_else(invalid)?)
                 .map_err(|_| invalid())?;
@@ -138,8 +145,38 @@ pub(super) fn question(
     ctx: &Context,
     scope: &(String, String),
 ) -> Result<String> {
-    digest(&serde_json::json!([
+    question_from_identity(
         continuation::query_identity(text, ctx)?,
+        programmatic,
+        definitions,
+        ctx,
+        scope,
+    )
+}
+
+pub(super) fn question_from_identity(
+    identity: Json,
+    programmatic: Option<String>,
+    definitions: Option<&std::collections::BTreeMap<String, sinex_model::query::saved::SavedQuery>>,
+    ctx: &Context,
+    scope: &(String, String),
+) -> Result<String> {
+    let definitions = definitions
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|_| invalid())?;
+    question_from_evidence(identity, programmatic, definitions.as_ref(), ctx, scope)
+}
+
+pub(super) fn question_from_evidence(
+    identity: Json,
+    programmatic: Option<String>,
+    definitions: Option<&Json>,
+    ctx: &Context,
+    scope: &(String, String),
+) -> Result<String> {
+    digest(&serde_json::json!([
+        identity,
         programmatic,
         definitions,
         ctx.now.to_string(),

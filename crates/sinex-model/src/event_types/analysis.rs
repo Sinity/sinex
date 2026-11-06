@@ -8,7 +8,7 @@ use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(version = 2, type = "analysis.request", key = ["request"], replace = repeat, time = started_at, quality = operator)]
+#[event(version = 3, type = "analysis.request", key = ["request"], replace = repeat, time = started_at, quality = operator)]
 pub struct AnalysisRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<QuerySelection>,

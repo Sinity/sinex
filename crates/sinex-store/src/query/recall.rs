@@ -198,10 +198,7 @@ async fn latest(
     };
     let (text, values) = {
         let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
-        let mut rows = SqlFragment::text(format!(
-            "SELECT {} FROM (",
-            super::json_object(&compiled.columns)
-        ));
+        let mut rows = SqlFragment::text(format!("SELECT {} FROM (", compiled.json_object()));
         rows.append(compiled.answer).push(") q");
         rows.render()
     };
@@ -280,10 +277,7 @@ async fn mark_links(
         let query = sinex_model::query::bind(&text, &ctx).map_err(|e| Error::Invalid(e.message))?;
         let (text, values) = {
             let compiled = super::compile_query(conn, &ctx, seq, &query).await?;
-            let mut sql = SqlFragment::text(format!(
-                "SELECT {} FROM (",
-                super::json_object(&compiled.columns)
-            ));
+            let mut sql = SqlFragment::text(format!("SELECT {} FROM (", compiled.json_object()));
             sql.append(compiled.answer).push(") q");
             sql.render()
         };

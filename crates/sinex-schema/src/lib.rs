@@ -21,6 +21,7 @@ pub mod online;
 mod owner_protocol;
 pub mod prepare;
 mod query_cursors;
+mod query_templates;
 mod read_boundary;
 mod source_declarations;
 mod source_expectations;
@@ -525,6 +526,14 @@ async fn run_upgrades(
     description::Description::current()
         .apply(connection, owners)
         .await?;
+    let templates = upgrades::LANDED_VERSION
+        + upgrades::NAMED
+            .iter()
+            .position(|name| *name == "typed_query_templates")
+            .expect("named query upgrade") as i32;
+    if from <= templates {
+        query_templates::upgrade(connection).await?;
+    }
     Ok(())
 }
 

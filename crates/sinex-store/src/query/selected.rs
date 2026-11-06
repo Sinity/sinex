@@ -25,6 +25,11 @@ pub async fn resolve_recall(
     text: &str,
     ctx: &Context,
 ) -> Result<QuerySelection> {
+    let template = if sinex_model::query::saved::reference_name(text).is_some() {
+        None
+    } else {
+        Some(sinex_model::query::native::parse(text, ctx)?)
+    };
     run_inner(
         conn,
         text,
@@ -37,6 +42,7 @@ pub async fn resolve_recall(
         None,
         true,
         false,
+        template.as_ref(),
     )
     .await?
     .selection
@@ -94,6 +100,7 @@ async fn complete(
                 Some(selection),
                 first.is_none(),
                 in_snapshot,
+                None,
             )
             .await?;
             let cursor = next.answer.page.cursor.clone();
@@ -142,6 +149,7 @@ async fn complete(
 pub(super) async fn capture(
     conn: &mut PgConnection,
     text: &str,
+    template: &sinex_model::query::native::Template,
     query: &Query,
     ctx: &Context,
     seq: i64,
@@ -153,35 +161,29 @@ pub(super) async fn capture(
     let selector = walk::recall_rows(rows);
     let (sql, values) = {
         let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
-        let mut sql =
-            SqlFragment::text(format!("SELECT {} FROM (", json_object(&compiled.columns)));
+        let mut sql = SqlFragment::text(format!(
+            "SELECT jsonb_build_object('row',{},'parents',to_jsonb(q.\"_parents\")) FROM (",
+            compiled.json_object()
+        ));
         sql.append(compiled.answer).push(") q");
         sql.render()
     };
-    let rows: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql), values)
+    let inputs: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql), values)
         .fetch_all(&mut *conn)
         .await?;
     let mut parents = BTreeSet::new();
-    for row in &rows {
-        if let Some(fields) = row.as_object() {
-            for (name, value) in fields {
-                if name == "id"
-                    || name == "near"
-                    || name.starts_with("near_")
-                    || name == "during"
-                    || name.starts_with("during_")
-                    || name == "containing"
-                    || name.starts_with("containing_")
-                {
-                    if let Some(id) = value
-                        .as_str()
-                        .and_then(|value| value.parse::<uuid::Uuid>().ok())
-                    {
-                        parents.insert(id);
-                    }
-                }
-            }
+    let mut rows = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        for id in input["parents"].as_array().into_iter().flatten() {
+            let id = id
+                .as_str()
+                .and_then(|value| value.parse::<uuid::Uuid>().ok())
+                .ok_or_else(|| {
+                    Error::Invalid("selected query contains invalid event lineage".into())
+                })?;
+            parents.insert(id);
         }
+        rows.push(input["row"].clone());
     }
     parents.extend(selection.anchor_ids());
     let ids: Vec<_> = parents.into_iter().collect();
@@ -211,6 +213,7 @@ pub(super) async fn capture(
     grants.dedup();
     let mut retained = selection.retained(&query.source)?;
     retained["_query"] = json!(format!("{query:?}"));
+    retained["_template"] = template.identity()?;
     retained["_fingerprint"] = json!(
         blake3::hash(
             serde_json::to_vec(&json!([rows, account]))
@@ -222,6 +225,9 @@ pub(super) async fn capture(
     );
     let selection = QuerySelection {
         query: text.trim().into(),
+        template: template.clone(),
+        definitions: Default::default(),
+        original_question: None,
         now: Timestamp::from_unix_ns(ctx.now.as_nanosecond())
             .map_err(|error| Error::Invalid(error.to_string()))?,
         read_as: explicit.then_some(seq),
@@ -276,18 +282,12 @@ pub async fn check_selected_question(
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
         declarations.into_values(),
     ));
-    let mut query = if sinex_model::query::saved::reference_name(text).is_some() {
-        let definitions = serde_json::from_value(selection.selected["_saved"].clone())
-            .map_err(|error| Error::Invalid(error.to_string()))?;
-        sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?
+    let requested = if sinex_model::query::saved::reference_name(text).is_some() {
+        sinex_model::query::saved::template_saved(text, &ctx, &selection.definitions)?
     } else {
-        sinex_model::query::bind(text, &ctx)?
+        sinex_model::query::native::parse(text, &ctx)?
     };
-    ctx.catalog
-        .as_ref()
-        .expect("retained query catalog")
-        .bind(&mut query, &ctx)?;
-    if selection.selected["_query"].as_str() != Some(format!("{query:?}").as_str()) {
+    if selection.template.identity()? != requested.identity()? {
         return Err(Error::Invalid(
             "recall cursor belongs to a different bound question".into(),
         ));
@@ -304,7 +304,23 @@ pub async fn selected_page(
     page: &Page,
     selection: Option<&QuerySelection>,
 ) -> Result<SelectedAnswer> {
-    let selected = run_inner(conn, text, None, ctx, page, selection, true, false).await?;
+    let template = if sinex_model::query::saved::reference_name(text).is_some() {
+        None
+    } else {
+        Some(sinex_model::query::native::parse(text, ctx)?)
+    };
+    let selected = run_inner(
+        conn,
+        text,
+        None,
+        ctx,
+        page,
+        selection,
+        true,
+        false,
+        template.as_ref(),
+    )
+    .await?;
     let signature = selected
         .selection
         .as_ref()

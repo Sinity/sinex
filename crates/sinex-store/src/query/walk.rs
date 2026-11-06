@@ -280,24 +280,31 @@ pub(crate) async fn recall_summary(
         aggregates: vec![
             Aggregate {
                 function: AggFn::Count,
-                field: None,
+                argument: None,
+                name: None,
             },
             Aggregate {
                 function: AggFn::Min,
-                field: Some(field("when")),
+                argument: Some(Operand::Field(field("when"))),
+                name: None,
             },
             Aggregate {
                 function: AggFn::Max,
-                field: Some(field("when")),
+                argument: Some(Operand::Field(field("when"))),
+                name: None,
             },
         ],
         fill: None,
     }));
     let (sql, values) = {
         let compiled = super::compile_query(conn, ctx, seq, &summary).await?;
-        let mut rows = super::SqlFragment::text(
-            "SELECT jsonb_build_object('source',q.source,'events',q.count,'first',q.min_when,'last',q.max_when) FROM (",
-        );
+        let mut rows = super::SqlFragment::text(format!(
+            "SELECT jsonb_build_object('source',q.{},'events',q.{},'first',q.{},'last',q.{}) FROM (",
+            compiled.output_column("source")?,
+            compiled.output_column("count")?,
+            compiled.output_column("min_when")?,
+            compiled.output_column("max_when")?,
+        ));
         rows.append(compiled.answer).push(") q");
         rows.render()
     };
@@ -307,12 +314,16 @@ pub(crate) async fn recall_summary(
     let latest_by_source = {
         let (sql, values) = {
             let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
+            let source = compiled.output_column("source")?;
+            let when = compiled.output_column("when")?;
+            let id = compiled.output_column("id")?;
             let mut rows = super::SqlFragment::text(format!(
-                "SELECT DISTINCT ON (q.source) {} FROM (",
-                super::json_object(&compiled.columns)
+                "SELECT DISTINCT ON (q.{source}) {} FROM (",
+                compiled.json_object()
             ));
-            rows.append(compiled.answer)
-                .push(") q ORDER BY q.source, q.\"when\" DESC NULLS LAST, q.id DESC");
+            rows.append(compiled.answer).push(format!(
+                ") q ORDER BY q.{source}, q.{when} DESC NULLS LAST, q.{id} DESC"
+            ));
             rows.render()
         };
         super::sql::bind_scalar(sqlx::query_scalar::<_, Json>(&sql), values)

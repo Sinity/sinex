@@ -572,6 +572,12 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
         let definition = sinex_model::event_types::query::Saved {
             name: format!("synthetic-definition-{index}"),
             query: "events fields id".into(),
+            template: sinex_model::query::native::parse(
+                "events fields id",
+                &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            )
+            .unwrap()
+            .into(),
             parameters: vec![],
             by: "synthetic".into(),
             written_at: Timestamp::from_unix_secs(1_789_372_800 + 120 + index as i64).unwrap(),

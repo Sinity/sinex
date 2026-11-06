@@ -654,19 +654,8 @@ impl Api {
                     Ok(seal) => seal,
                     Err(e) => return refused(e.to_string()),
                 };
-                let question = match sinex_store::query::continuation::query_identity(text, &ctx)
-                    .and_then(|question| {
-                        sinex_store::query::continuation::identity(
-                            "recall",
-                            &question,
-                            &caller.grants,
-                        )
-                    }) {
-                    Ok(question) => question,
-                    Err(e) => return refused(e.to_string()),
-                };
-                if sinex_store::query::continuation::open(&seal, raw, question, &ctx)
-                    .is_ok_and(|cursor| cursor.context.versions.contains_key("sinex.recall"))
+                if sinex_store::query::continuation::authenticate(&seal, raw)
+                    .is_ok_and(|cursor| cursor.context().versions.contains_key("sinex.recall"))
                 {
                     drop(conn);
                     return self.recall(caller, text, page).await;
@@ -693,7 +682,18 @@ impl Api {
                 return self.recall(caller, text, page).await;
             }
         }
-        match sinex_store::query::run(&mut conn, text, None, &ctx, &page).await {
+        let result = if query::native::is_command(text) {
+            match query::native::parse(text, &ctx) {
+                Ok(operation) => {
+                    sinex_store::query::run_operation(&mut conn, text, &operation, &ctx, &page)
+                        .await
+                }
+                Err(error) => return query_refusal(text, error),
+            }
+        } else {
+            sinex_store::query::run(&mut conn, text, None, &ctx, &page).await
+        };
+        match result {
             Ok(answer) => data(answer_json(answer)),
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),

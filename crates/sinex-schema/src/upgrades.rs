@@ -79,6 +79,7 @@ pub(crate) const NAMED: &[&str] = &[
     "source_expectations",
     "stage_without_parser",
     "library_curation",
+    "typed_query_templates",
 ];
 
 #[cfg(test)]
@@ -159,6 +160,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(crate::source_expectations::statements());
     steps.push(crate::stage_without_parser::statements());
     steps.push(crate::library_curation::statements());
+    steps.push(vec![]);
     steps
 }
 

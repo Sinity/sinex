@@ -38,6 +38,7 @@ pub async fn saved_definitions(
             SavedQuery {
                 name: record.name,
                 query: record.query,
+                template: record.template,
                 parameters: record.parameters,
             },
         ));
@@ -67,7 +68,10 @@ pub async fn saved_definitions(
                 )
             }));
         };
-        next = sinex_model::query::saved::reference_name(&definition.query);
+        next = match definition.template.reference_name() {
+            Some(name) => Some(name),
+            _ => None,
+        };
         out.insert(name, (*definition).clone());
     }
     Ok(out)

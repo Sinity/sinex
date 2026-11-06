@@ -6,6 +6,13 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
     let at = Timestamp::from_unix_secs(1_000).unwrap();
     let selection = QuerySelection {
         query: "recall last".into(),
+        definitions: Default::default(),
+        original_question: None,
+        template: sinex_model::query::native::parse(
+            "recall last",
+            &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+        )
+        .unwrap(),
         now: at,
         read_as: None,
         zone: "UTC".into(),
@@ -105,6 +112,13 @@ async fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitt
         requested_at: at,
         selection: Some(QuerySelection {
             query: "recall last".into(),
+            definitions: Default::default(),
+            original_question: None,
+            template: sinex_model::query::native::parse(
+                "recall last",
+                &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            )
+            .unwrap(),
             now: at,
             read_as: None,
             zone: "Etc/UTC".into(),
@@ -205,6 +219,13 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
         requested_at: at,
         selection: Some(QuerySelection {
             query: "recall last".into(),
+            definitions: Default::default(),
+            original_question: None,
+            template: sinex_model::query::native::parse(
+                "recall last",
+                &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            )
+            .unwrap(),
             now: at,
             read_as: None,
             zone: "Etc/UTC".into(),

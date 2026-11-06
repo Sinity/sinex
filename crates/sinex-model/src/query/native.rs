@@ -71,14 +71,16 @@ impl Template {
                 super::parse::bind_syntax(relation, ctx)
             }
         };
-        let mut query = bind(self.relation.clone())?;
-        query.source = match &self.operation {
-            None => return Ok(query),
+        let source = match &self.operation {
+            None => return bind(self.relation.clone()),
             Some(Operation::Walk {
                 direction,
                 reference,
             }) => {
-                if query.filter.is_some() || !query.stages.is_empty() {
+                if !self.relation.transforms.is_empty()
+                    || !self.relation.attach.is_empty()
+                    || !matches!(&self.relation.source, syntax::Source::Unit { unit, condition: None, .. } if unit == "events")
+                {
                     return Err(QueryError::new(
                         "provenance walks do not support query transforms",
                     ));
@@ -159,7 +161,7 @@ impl Template {
                 Source::Recall { from, to }
             }
         };
-        Ok(query)
+        super::parse::bind_native_syntax(self.relation.clone(), ctx, source, validating)
     }
 
     /// Spans locate authored text, and do not identify a question.
@@ -318,3 +320,6 @@ fn split_subject(text: &str) -> (&str, &str) {
     }
     (text, "")
 }
+
+#[cfg(test)]
+mod tests;

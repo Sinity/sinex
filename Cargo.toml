@@ -78,6 +78,7 @@ jsonschema = { version = "0.42", default-features = false }
 futures = "0.3"
 sinex-macros = { path = "crates/sinex-macros" }
 sinex-model = { path = "crates/sinex-model" }
+historical-query-format-v1 = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 sinex-protocol = { path = "crates/sinex-protocol" }
 sinex-transport = { path = "crates/sinex-transport" }
 sinex-schema = { path = "crates/sinex-schema" }
