@@ -131,7 +131,7 @@ struct Live {
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Run(run) => {
-            let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let runtime = runtime();
             match runtime.block_on(produce(run)) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => fail(e),
@@ -148,10 +148,7 @@ fn main() -> ExitCode {
                 Err(e) => fail(e.to_string()),
             }
         }
-        Command::Capture(live) => match tokio::runtime::Runtime::new()
-            .expect("tokio runtime")
-            .block_on(capture(live))
-        {
+        Command::Capture(live) => match runtime().block_on(capture(live)) {
             Ok(n) => {
                 println!("captured {n}");
                 ExitCode::SUCCESS
@@ -159,6 +156,16 @@ fn main() -> ExitCode {
             Err(e) => fail(e),
         },
     }
+}
+
+fn runtime() -> tokio::runtime::Runtime {
+    // The root future reads spools synchronously. Keep transport tasks on a
+    // dedicated scheduler; captures and blocking work already own their threads.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
 }
 
 fn report_command(report: ReportCommand) -> Result<(), String> {
