@@ -7,13 +7,13 @@ use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Parameter {
+pub(super) struct Parameter {
     pub name: String,
     pub field_type: ParameterType,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ParameterType {
+pub(super) enum ParameterType {
     Text,
     Integer,
     Number,
@@ -24,7 +24,7 @@ pub enum ParameterType {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Saved {
+pub(super) struct Saved {
     pub name: String,
     pub query: String,
     pub parameters: Vec<Parameter>,
@@ -34,7 +34,7 @@ pub struct Saved {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct QuerySelection {
+pub(super) struct QuerySelection {
     pub query: String,
     pub now: Timestamp,
     /// Only an explicitly historical question fixes the producer position.
@@ -50,7 +50,7 @@ pub struct QuerySelection {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct AnalysisRequest {
+pub(super) struct AnalysisRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<QuerySelection>,
     pub request: String,

@@ -133,9 +133,11 @@ pub async fn standing_query(
         selector
             .stages
             .retain(|stage| !matches!(stage, Stage::Fields(_)));
-        selector.stages.push(Stage::Fields(vec![FieldRef::Field(
-            Table::Events.field("id").expect("event ID field"),
-        )]));
+        selector
+            .stages
+            .push(Stage::Fields(vec![Operand::Field(FieldRef::Field(
+                Table::Events.field("id").expect("event ID field"),
+            ))]));
         let (sql, params) = {
             let compiled = super::compile_query(conn, &ctx, seq, &selector).await?;
             let mut sql = SqlFragment::text("SELECT DISTINCT unnest(q.\"_parents\") FROM (");

@@ -86,6 +86,7 @@ impl Compiler<'_> {
                 TimeFn::Week => "week",
                 TimeFn::Weekday => "weekday",
                 TimeFn::Month => "month",
+                TimeFn::Year => "year",
                 TimeFn::MonthDay => "month_day",
                 TimeFn::Hour => unreachable!(),
             };

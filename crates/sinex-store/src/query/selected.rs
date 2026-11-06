@@ -25,9 +25,7 @@ pub async fn resolve_recall(
     text: &str,
     ctx: &Context,
 ) -> Result<QuerySelection> {
-    let template = if let Some(selection) = selection {
-        Some(selection.template.clone())
-    } else if sinex_model::query::saved::reference_name(text).is_some() {
+    let template = if sinex_model::query::saved::reference_name(text).is_some() {
         None
     } else {
         Some(sinex_model::query::native::parse(text, ctx)?)
@@ -309,7 +307,9 @@ pub async fn selected_page(
     page: &Page,
     selection: Option<&QuerySelection>,
 ) -> Result<SelectedAnswer> {
-    let template = if sinex_model::query::saved::reference_name(text).is_some() {
+    let template = if let Some(selection) = selection {
+        Some(selection.template.clone())
+    } else if sinex_model::query::saved::reference_name(text).is_some() {
         None
     } else {
         Some(sinex_model::query::native::parse(text, ctx)?)

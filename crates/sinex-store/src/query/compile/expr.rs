@@ -56,7 +56,7 @@ impl Compiler<'_> {
             }
             // Shared binding supplies column lineage; the product resolves its
             // physical scalar type against the current declaration snapshot.
-            (Cols::Named { r, .. }, FieldRef::TypedGroup(column)) => Ok((
+            (Cols::Named { .. }, FieldRef::TypedGroup(column)) => Ok((
                 SqlFragment::text(Self::named(cols, column.name())),
                 Kind::Typed(
                     column
@@ -64,11 +64,11 @@ impl Compiler<'_> {
                         .ok_or_else(|| invalid("bound output column type is unavailable"))?,
                 ),
             )),
-            (Cols::Named { r, .. }, FieldRef::Field(field)) => Ok((
+            (Cols::Named { .. }, FieldRef::Field(field)) => Ok((
                 SqlFragment::text(Self::named(cols, field.name)),
                 Kind::Typed(field.ty),
             )),
-            (Cols::Named { r, .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
+            (Cols::Named { .. }, FieldRef::TypedPayload { ty, .. }) => Ok((
                 SqlFragment::text(Self::named(cols, &column_name(f))),
                 Kind::Typed(*ty),
             )),

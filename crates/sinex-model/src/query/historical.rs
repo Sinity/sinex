@@ -713,12 +713,6 @@ fn upgrade_value(
     Ok(())
 }
 
-fn relation(query: old::Query) -> Result<query_language::ast::Query, QueryError> {
-    let mut wire = serde_json::to_value(query).map_err(error)?;
-    evolve(&mut wire)?;
-    serde_json::from_value(wire).map_err(error)
-}
-
 /// The old decoder owns its old syntax; this conversion owns the storage change.
 fn evolve(value: &mut Value) -> Result<(), QueryError> {
     match value {
