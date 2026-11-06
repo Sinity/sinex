@@ -3,6 +3,8 @@
 let
   root = cfg.backup.artifactDir;
   control = "/run/sinex-backup";
+  localRepositories = builtins.filter (repo: pkgs.lib.hasPrefix "/" repo)
+    (map (pkgs.lib.removePrefix "file://") [ cfg.backup.repo cfg.backup.keysRepo ]);
   asUser = "${pkgs.util-linux}/bin/runuser -u ${pkgs.lib.escapeShellArg cfg.user} --";
   client = "${cfg.package}/bin/sinexctl --endpoint ${pkgs.lib.escapeShellArg "unix:${cfg.api.socket}"} --token-file ${pkgs.lib.escapeShellArg "${cfg.stateDir}/tokens/operator.token"} --json";
   job = component: repo: {
@@ -14,6 +16,9 @@ let
     startAt = [ ];
     failOnWarnings = true;
     appendFailedSuffix = true;
+    # The upstream sandbox is read-only. Both repository identity reads take
+    # Borg's ordinary locks, and the hooks retain root and daemon receipts.
+    readWritePaths = [ control root ] ++ localRepositories;
     preHook = ''
       sinexBackupRun=$(cat ${pkgs.lib.escapeShellArg "${control}/active"})
       run=$(basename -- "$sinexBackupRun")
@@ -54,6 +59,7 @@ in {
     description = "Sinex immutable core backup and paired Borg archives";
     after = [ "sinexd.service" ];
     requires = [ "sinexd.service" ];
+    unitConfig.RequiresMountsFor = localRepositories;
     startAt = cfg.backup.startAt;
     path = [ pkgs.systemd pkgs.coreutils pkgs.jq pkgs.util-linux ];
     serviceConfig = {
@@ -76,7 +82,7 @@ in {
       run=${pkgs.lib.escapeShellArg root}/$(uuidgen)
       ${asUser} ${client} backup prepare --output "$run" > ${pkgs.lib.escapeShellArg "${control}/prepare.json"}
       ${asUser} test -s "$run/manifest.json"
-      hold=$(jq -er '.result.artifact.boundary.id' ${pkgs.lib.escapeShellArg "${control}/prepare.json"})
+      hold=$(jq -er '.artifact.boundary.id' ${pkgs.lib.escapeShellArg "${control}/prepare.json"})
       [[ "$hold" =~ ^[0-9a-f-]{36}$ ]]
       test "$hold" = "$(${asUser} jq -er '.boundary.id' "$run/manifest.json")"
       ${asUser} tee "$run/prepare.json" < ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
@@ -84,7 +90,7 @@ in {
       mv -- ${pkgs.lib.escapeShellArg "${control}/active.tmp"} ${pkgs.lib.escapeShellArg "${control}/active"}
       # A missing participant retains the native artifact and hold. It cannot
       # become a completed nightly backup through successful core archives.
-      jq -e '.result.artifact.producer_custody == "complete"' ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
+      jq -e '.artifact.producer_custody == "complete"' ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
       systemctl start --wait borgbackup-job-sinex.service
       systemctl start --wait borgbackup-job-sinex-keys.service
       # Both receipts came from actual archive reads, never unrelated latest
@@ -95,7 +101,7 @@ in {
         --slurpfile main ${pkgs.lib.escapeShellArg "${control}/main.borg-info.json"} \
         --slurpfile keys ${pkgs.lib.escapeShellArg "${control}/keys.borg-info.json"} \
         --slurpfile prepared ${pkgs.lib.escapeShellArg "${control}/prepare.json"} \
-        '{hold:$hold,main:$main[0].archives[0],keys:$keys[0].archives[0],producer_custody:$prepared[0].result.artifact.producer_custody,required_producers:$prepared[0].result.artifact.required_producers,producer_cuts:$prepared[0].result.artifact.producer_cuts}' \
+        '{hold:$hold,main:$main[0].archives[0],keys:$keys[0].archives[0],producer_custody:$prepared[0].artifact.producer_custody,required_producers:$prepared[0].artifact.required_producers,producer_cuts:$prepared[0].artifact.producer_cuts}' \
         > ${pkgs.lib.escapeShellArg "${control}/complete.json"}
       sync -f ${pkgs.lib.escapeShellArg "${control}/complete.json"}
       ${asUser} tee "$run/complete.json" < ${pkgs.lib.escapeShellArg "${control}/complete.json"} >/dev/null
