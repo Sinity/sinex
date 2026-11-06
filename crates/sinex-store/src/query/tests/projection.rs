@@ -98,3 +98,93 @@ async fn sorting_after_a_limit_sorts_the_selected_rows(db: devkit::pg::TestDatab
         [json!("cc"), json!("bbbb")]
     );
 }
+
+async fn private_parents(conn: &mut PgConnection, text: &str) -> Vec<Vec<Uuid>> {
+    let context = ctx();
+    let query = bind(text, &context).unwrap();
+    let compiled = compile::Compiler::new(&context, current_seq(conn).await.unwrap())
+        .compile(&query)
+        .unwrap();
+    let mut statement = sql::SqlFragment::text("SELECT q.\"_parents\" FROM (");
+    statement.append(compiled.answer).push(") q");
+    let (text, values) = statement.render();
+    sql::bind_scalar(sqlx::query_scalar::<_, Vec<Uuid>>(&text), values)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap()
+}
+
+fn parent_set(parents: &[Uuid]) -> std::collections::BTreeSet<Uuid> {
+    parents.iter().copied().collect()
+}
+
+#[devkit::test]
+async fn grouping_keeps_event_contributors_after_public_identity_is_hidden(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = admit_commands(
+        &mut conn,
+        &[("a", "/one"), ("bbbb", "/two"), ("cc", "/one")],
+    )
+    .await;
+    let parents = private_parents(&mut conn, "commands | fields command as _parents | count").await;
+    assert_eq!(parents.len(), 1);
+    assert_eq!(
+        parent_set(&parents[0]),
+        ids.iter().map(|(fused, _)| *fused).collect()
+    );
+}
+
+#[devkit::test]
+async fn pair_relations_keep_all_matches_child_order_and_exact_event_contributors(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = admit_commands(
+        &mut conn,
+        &[("a", "/one"), ("bbbb", "/two"), ("cc", "/one")],
+    )
+    .await;
+    let text = "commands where command = a | fields command | join near (commands where cwd = /one | sort when desc | fields command) within 5m | fields command, match.command";
+    let answer = ask(&mut conn, text).await;
+    assert_eq!(column(&answer, "match.command"), [json!("cc"), json!("a")]);
+    let parents = private_parents(&mut conn, text).await;
+    assert_eq!(parents.len(), 2);
+    assert_eq!(parent_set(&parents[0]), parent_set(&[ids[0].0, ids[2].0]));
+    assert_eq!(parent_set(&parents[1]), parent_set(&[ids[0].0]));
+}
+
+#[devkit::test]
+async fn positive_order_predicates_keep_all_witnesses_and_skip_false_or_negated_branches(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = admit_commands(
+        &mut conn,
+        &[("a", "/one"), ("bbbb", "/two"), ("cc", "/one")],
+    )
+    .await;
+    let positive = private_parents(&mut conn, "commands where command = a AND before(commands where command != a) within 5m | fields command as id").await;
+    assert_eq!(positive.len(), 1);
+    assert_eq!(
+        parent_set(&positive[0]),
+        ids.iter().map(|(fused, _)| *fused).collect()
+    );
+    let false_branch = private_parents(&mut conn, "commands where (before(commands where command = bbbb) within 5m AND command = missing) OR command = a").await;
+    assert_eq!(false_branch.len(), 1);
+    assert_eq!(parent_set(&false_branch[0]), parent_set(&[ids[0].0]));
+    let negated = private_parents(
+        &mut conn,
+        "commands where command = a AND NOT before(commands where command = missing) within 5m",
+    )
+    .await;
+    assert_eq!(negated.len(), 1);
+    assert_eq!(parent_set(&negated[0]), parent_set(&[ids[0].0]));
+}
