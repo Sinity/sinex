@@ -137,6 +137,8 @@ A stage records what it holds before any record is parsed: its **inventory**. Ev
 | failed | the binding that would read it failed; the bytes stay stored |
 | stored, not interpreted | kept in the stored original and read by nothing; when several sources would read it, they are listed as candidates |
 
+Planning, progress, and output share typed inventory and accounting records. They are serialized at storage and transport boundaries; malformed reports are refused rather than displayed with missing counts replaced by zero. Stored progress keeps typed inventory and binding checkpoints; checkpoint accounting commits atomically with its batch and cursor. Finalization failures use the same `failures` field in the immediate report, `stage-show` and `stage-list`, and are printed by the CLI. Counts are absent until the stage has ended once.
+
 As each staged file is read, each product's line carries its **accounting**: the records the driver framed and what the parser made of them (read into readings, headers with no reading, failures with the first unreadable form), and the readings and what admission made of them (new, the same as an earlier export, revised, older, superseded), with the records the input no longer holds that were archived as removed at the source. Two identities hold for every product, every file and the whole stage, each side counted at a different point of the pipeline: records framed = read + headers + failures, and readings offered = new + same + revised + older + superseded. A product whose accounting does not balance ends the stage `stopped_early`, because a mismatch is a defect, not a status.
 
 ```

@@ -6,6 +6,7 @@ fn a_report_names_each_file_its_products_and_what_no_parser_reads() {
     let report = json!({
         "operation": "01900000-0000-7000-8000-000000000001",
         "result": "stopped_early",
+        "failures": ["synthetic finalization error"],
         "inventory": {"files": [
             {
                 "path": "/synthetic/takeout-001.zip",
@@ -20,7 +21,7 @@ fn a_report_names_each_file_its_products_and_what_no_parser_reads() {
                         "readings": 2, "new": 1, "same": 1, "revised": 0, "older": 0, "superseded": 0,
                         "first_failure": "missing title"}},
                     "browser.takeout-chrome-history": {"state": "failed", "error": "synthetic read error",
-                        "accounting": {"framed": 0}}
+                        "accounting": serde_json::to_value(sinex_model::Accounting::default()).unwrap()}
                 }
             },
             {
@@ -31,6 +32,7 @@ fn a_report_names_each_file_its_products_and_what_no_parser_reads() {
             }
         ]}
     });
+    let report: Report = serde_json::from_value(report).unwrap();
     let text = render(&report);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
@@ -47,6 +49,10 @@ fn a_report_names_each_file_its_products_and_what_no_parser_reads() {
     );
     assert!(text.contains("synthetic read error"), "{text}");
     assert!(
+        text.contains("failed: synthetic finalization error"),
+        "{text}"
+    );
+    assert!(
         text.contains("stored, not interpreted: 1 member(s): Takeout/Travel/t.json"),
         "{text}"
     );
@@ -60,6 +66,18 @@ fn a_report_names_each_file_its_products_and_what_no_parser_reads() {
 
 #[devkit::test]
 fn a_stage_that_has_not_ended_says_so() {
-    let text = render(&json!({"operation": "op", "result": null, "inventory": {"files": []}}));
-    assert_eq!(text, "stage op  not ended\n");
+    let report: Report = serde_json::from_value(json!({"operation": "01900000-0000-7000-8000-000000000001", "result": null, "inventory": {"files": []}})).unwrap();
+    let text = render(&report);
+    assert_eq!(
+        text,
+        "stage 01900000-0000-7000-8000-000000000001  not ended\n"
+    );
+}
+
+#[devkit::test]
+fn malformed_product_counts_cannot_be_rendered_as_zero() {
+    let report = json!({"operation":"01900000-0000-7000-8000-000000000001", "result":null,
+      "inventory":{"files":[{"path":"/synthetic/file", "reading":{"as":"unparsed","candidates":[]},
+       "members":[], "products":{"source":{"state":"read","accounting":{"framed":4}}}}]}});
+    assert!(serde_json::from_value::<Report>(report).is_err());
 }

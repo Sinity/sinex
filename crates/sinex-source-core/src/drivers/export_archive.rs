@@ -7,7 +7,6 @@ pub(crate) mod records;
 
 #[cfg(feature = "archives")]
 use super::DriverError;
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "archives")]
 use sinex_model::InputRef;
 use std::path::PathBuf;
@@ -94,16 +93,7 @@ impl Framing {
     }
 }
 
-/// The container a file is, from its first bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Container {
-    Stateless,
-    Gzip,
-    Zip,
-    Tar,
-    TarGzip,
-}
+use sinex_model::stage::Container;
 
 #[derive(Clone)]
 pub struct ExportArchive {

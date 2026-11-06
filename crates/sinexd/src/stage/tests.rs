@@ -30,7 +30,7 @@ fn named(path: &Path, parser: &str) -> Item {
     }
 }
 
-async fn stage(db: &devkit::pg::TestDatabase, store: &Path, items: Vec<Item>) -> Outcome {
+async fn stage(db: &devkit::pg::TestDatabase, store: &Path, items: Vec<Item>) -> Report {
     let outcome = local(&db.url(None), store, request(items), time_settings())
         .await
         .unwrap();
@@ -102,8 +102,14 @@ fn multipart_takeout(dir: &Path) -> [PathBuf; 3] {
     parts
 }
 
-fn files(outcome: &Outcome) -> &Vec<Value> {
-    outcome.report["inventory"]["files"].as_array().unwrap()
+// Check the serialized inventory as held by the operation and CLI.
+fn files(outcome: &Report) -> Vec<Value> {
+    outcome
+        .inventory
+        .files
+        .iter()
+        .map(|file| serde_json::to_value(file).unwrap())
+        .collect()
 }
 
 fn accounting(file: &Value, source: &str) -> Accounting {
@@ -121,7 +127,7 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
     let parts = multipart_takeout(&export);
     let store = dir.path().join("store");
     let outcome = stage(&db, &store, vec![detected(&export)]).await;
-    assert_eq!(outcome.report["result"], json!(OperationResult::Ok));
+    assert_eq!(outcome.result, Some(OperationResult::Ok));
     let files = files(&outcome);
     assert_eq!(files.len(), 3);
 
@@ -167,11 +173,10 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
     assert_eq!((chrome.framed, chrome.read, chrome.new), (2, 2, 2));
     let second = accounting(&files[1], "google.keep");
     assert_eq!((second.framed, second.new), (1, 1));
-    let total: Accounting =
-        serde_json::from_value(outcome.report["counts"]["accounting"].clone()).unwrap();
+    let total: Accounting = outcome.counts.as_ref().unwrap().accounting.clone();
     assert_eq!(total.balanced(), Ok(()));
     assert_eq!(total.new, 4);
-    assert_eq!(outcome.report["counts"]["stored_without_parser"], 1);
+    assert_eq!(outcome.counts.as_ref().unwrap().stored_without_parser, 1);
 
     let mut conn = <PgConnection as sqlx::Connection>::connect(&db.url(None))
         .await
@@ -204,7 +209,7 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
     assert_eq!(stored.result, Some(OperationResult::Ok));
     assert_eq!(stored.actor, "operator");
     assert_eq!(stored.scope["account"], "owner@example.test");
-    assert_eq!(stored.inventory, outcome.report["inventory"]);
+    assert_eq!(stored.inventory.inventory, outcome.inventory);
     assert!(stored.end_seq >= stored.start_seq);
 }
 
@@ -451,7 +456,7 @@ async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
             operation: interrupted,
             actor: "operator".into(),
             scope: request.scope(),
-            inventory: first.report["inventory"].clone(),
+            inventory: first.inventory.clone(),
         })
         .await
         .unwrap();
@@ -470,7 +475,7 @@ async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
         interrupted,
         &request,
         plan,
-        &first.report["inventory"],
+        &first.inventory.clone().into(),
         begun,
     )
     .await
@@ -478,10 +483,10 @@ async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
     assert!(resumed.failures.is_empty(), "{:?}", resumed.failures);
     // Nothing finished is read or stored again, and the accounting is kept.
     assert_eq!(material_count(&mut ctx.read_conn).await, before);
-    assert_eq!(resumed.report["counts"], first.report["counts"]);
+    assert_eq!(resumed.counts, first.counts);
     assert_eq!(
-        resumed.report["inventory"]["files"][1]["material"],
-        first.report["inventory"]["files"][1]["material"]
+        resumed.inventory.files[1].material,
+        first.inventory.files[1].material
     );
     let stored = sinex_store::stages::show(&mut ctx.read_conn, interrupted)
         .await
@@ -578,19 +583,15 @@ async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
     let (interrupted, ()) = tokio::join!(staging, interrupt);
     let interrupted = interrupted.unwrap();
     drop(first);
-    assert_eq!(
-        interrupted.report["result"],
-        json!(OperationResult::StoppedEarly)
-    );
+    assert_eq!(interrupted.result, Some(OperationResult::StoppedEarly));
     let saved = sinex_store::stages::show(&mut watcher, operation)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(saved.result, Some(OperationResult::StoppedEarly));
-    let checkpoints = saved.inventory["checkpoints"].as_object().unwrap();
+    let checkpoints = &saved.inventory.checkpoints;
     assert_eq!(checkpoints.len(), 1, "{checkpoints:?}");
-    let before: Accounting =
-        serde_json::from_value(checkpoints.values().next().unwrap()["accounting"].clone()).unwrap();
+    let before = &checkpoints.values().next().unwrap().accounting;
     // The checkpoint is part of the file, and balances on its own.
     assert!(before.framed > 0 && before.framed < records, "{before:?}");
     before.balanced().unwrap();
@@ -614,7 +615,7 @@ async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
     .await
     .unwrap();
     assert!(resumed.failures.is_empty(), "{:?}", resumed.failures);
-    assert_eq!(resumed.report["result"], json!(OperationResult::Ok));
+    assert_eq!(resumed.result, Some(OperationResult::Ok));
     // Every record is accounted for once, before and after the interruption.
     let whole = accounting(&files(&resumed)[0], SOURCE);
     whole.balanced().unwrap();
@@ -625,8 +626,7 @@ async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
     );
     assert_eq!(whole.readings, records * per_record, "{whole:?}");
     assert_eq!((whole.new, whole.same), (whole.readings, 0), "{whole:?}");
-    let total: Accounting =
-        serde_json::from_value(resumed.report["counts"]["accounting"].clone()).unwrap();
+    let total: Accounting = resumed.counts.as_ref().unwrap().accounting.clone();
     assert_eq!(total, whole);
     let ended = sinex_store::stages::show(&mut watcher, operation)
         .await
@@ -641,4 +641,9 @@ async fn material_count(conn: &mut PgConnection) -> i64 {
         .fetch_one(conn)
         .await
         .unwrap()
+}
+
+#[test]
+fn a_resume_requires_an_inventory_instead_of_discarding_saved_progress() {
+    assert!(serde_json::from_value::<SavedProgress>(json!({"checkpoints":{}})).is_err());
 }

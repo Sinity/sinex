@@ -138,6 +138,8 @@ A directory capture (a notes vault selection, a document root, a device's file t
 
 Capture survives everything downstream of it: the broker, the database, admission and upgrades.
 
+The session producer uses one dedicated async scheduler worker so transport tasks keep running while the main loop reads spools synchronously. Captures run on their own threads, and source startup and health snapshots use the blocking pool. The async worker count is independent of the host CPU count.
+
 - **Spool first.** Capture starts before any NATS or database connection and keeps spooling while either is down. Only a local fault (a failed spool write) ends capture, and that becomes a health error.
 - **Sending follows the producer client.** Capture programs outside the daemon send through the [producer client](producers.md#the-producer-client): saved before sent, retried forever, material acknowledged before the events that cite it, and [refusals](producers.md#refusals) that advance the binding instead of stalling it. Only acknowledged, closed segments behind the committed cursor are removed from a spool.
 - **Fairness.** Each pass publishes or reads a bounded number of materials per binding, in turn, in the session producer and in the daemon's binding reader alike, so no binding drains completely while others wait. Backlog is counted incrementally from cursor offsets.

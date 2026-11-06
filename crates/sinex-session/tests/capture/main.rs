@@ -6,6 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+fn hello_runtime() -> tokio::runtime::Runtime {
+    // The synchronous test waits while the handshake responder runs in the background.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
 struct Session {
     child: Option<Child>,
 }
@@ -324,7 +333,7 @@ fn capture_deadline_reaps_clipboard_and_audio_children() {
 #[devkit::test]
 fn run_deadline_reaps_both_clipboard_selections() {
     let nats = devkit::nats::test_nats().unwrap();
-    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
@@ -348,7 +357,7 @@ fn run_deadline_reaps_both_clipboard_selections() {
 fn run_signals_join_capture_threads_and_reap_children() {
     for signal in ["INT", "TERM"] {
         let nats = devkit::nats::test_nats().unwrap();
-        let _runtime = tokio::runtime::Runtime::new().unwrap();
+        let _runtime = hello_runtime();
         let _hello = _runtime.block_on(hello::hello(
             &nats,
             &sinex_protocol::Subjects::new(nats.prefix()),
@@ -373,7 +382,7 @@ fn run_signals_join_capture_threads_and_reap_children() {
 #[devkit::test]
 fn publishing_errors_leave_capture_children_running_until_stopped() {
     let nats = devkit::nats::test_nats().unwrap();
-    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
@@ -397,7 +406,7 @@ fn publishing_errors_leave_capture_children_running_until_stopped() {
 #[devkit::test]
 fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_continues() {
     let nats = devkit::nats::test_nats().unwrap();
-    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
@@ -450,7 +459,7 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
 #[devkit::test]
 fn drain_without_spools_exits_without_starting_session_captures() {
     let nats = devkit::nats::test_nats().unwrap();
-    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),
@@ -474,7 +483,7 @@ fn drain_without_spools_exits_without_starting_session_captures() {
 fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowledged_bytes() {
     use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
     let nats = devkit::nats::test_nats().unwrap();
-    let _runtime = tokio::runtime::Runtime::new().unwrap();
+    let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
         &nats,
         &sinex_protocol::Subjects::new(nats.prefix()),

@@ -19,6 +19,7 @@ pub mod payload;
 pub mod privacy;
 pub mod query;
 pub mod source;
+pub mod stage;
 pub mod time_settings;
 
 pub use accounting::Accounting;

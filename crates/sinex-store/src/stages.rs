@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sinex_model::DbCheck;
 use sinex_model::lifecycle::OperationResult;
+use sinex_model::stage::{Checkpoint, Counts, Inventory, SavedProgress};
 use sinex_model::{InputRef, Manifest, MaterialId, ObservationFacts, OperationId, RevisionChange};
 use sqlx::PgConnection;
 
@@ -19,7 +20,7 @@ pub async fn begin(
     operation: OperationId,
     actor: &str,
     scope: &Value,
-    inventory: &Value,
+    inventory: &Inventory,
 ) -> Result<()> {
     sqlx::query!(
         r#"INSERT INTO core.operations (id, kind, actor, scope, start_seq, progress)
@@ -28,7 +29,7 @@ pub async fn begin(
         KIND,
         actor,
         scope,
-        inventory,
+        serde_json::to_value(inventory).map_err(|e| Error::Invalid(e.to_string()))?,
     )
     .execute(conn)
     .await?;
@@ -40,7 +41,7 @@ pub async fn begin(
 pub async fn progress(
     conn: &mut PgConnection,
     operation: OperationId,
-    inventory: &Value,
+    inventory: &Inventory,
 ) -> Result<()> {
     let updated = sqlx::query!(
         r#"UPDATE core.operations
@@ -48,7 +49,7 @@ pub async fn progress(
              THEN $2 || jsonb_build_object('checkpoints', progress->'checkpoints') ELSE $2 END
            WHERE id = $1 AND kind = $3 AND result IS NULL"#,
         operation.0,
-        inventory,
+        serde_json::to_value(inventory).map_err(|e| Error::Invalid(e.to_string()))?,
         KIND,
     )
     .execute(conn)
@@ -69,7 +70,7 @@ pub async fn checkpoint(
     conn: &mut PgConnection,
     operation: OperationId,
     binding: &str,
-    checkpoint: &Value,
+    checkpoint: &Checkpoint,
 ) -> Result<()> {
     let updated = sqlx::query!(
         r#"UPDATE core.operations
@@ -79,7 +80,7 @@ pub async fn checkpoint(
            WHERE id = $1 AND kind = $4 AND result IS NULL"#,
         operation.0,
         binding,
-        checkpoint,
+        serde_json::to_value(checkpoint).map_err(|e| Error::Invalid(e.to_string()))?,
         KIND,
     )
     .execute(conn)
@@ -124,9 +125,9 @@ pub async fn end(
     conn: &mut PgConnection,
     operation: OperationId,
     result: OperationResult,
-    counts: &Value,
-    inventory: &Value,
-    refusals: &Value,
+    counts: &Counts,
+    inventory: &Inventory,
+    refusals: &[String],
 ) -> Result<()> {
     let updated = sqlx::query!(
         r#"UPDATE core.operations SET result = $2, counts = $3, refusals = $5,
@@ -136,9 +137,9 @@ pub async fn end(
            WHERE id = $1 AND kind = $6"#,
         operation.0,
         result.as_db(),
-        counts,
-        inventory,
-        refusals,
+        serde_json::to_value(counts).map_err(|e| Error::Invalid(e.to_string()))?,
+        serde_json::to_value(inventory).map_err(|e| Error::Invalid(e.to_string()))?,
+        serde_json::to_value(refusals).map_err(|e| Error::Invalid(e.to_string()))?,
         KIND,
         OperationResult::Ok.as_db(),
     )
@@ -216,9 +217,9 @@ pub struct Stage {
     /// `None` while it has not ended: running, or interrupted and waiting
     /// for `resume`.
     pub result: Option<OperationResult>,
-    pub counts: Value,
-    pub inventory: Value,
-    pub refusals: Value,
+    pub counts: Option<Counts>,
+    pub inventory: SavedProgress,
+    pub failures: Vec<String>,
     pub start_seq: Option<i64>,
     pub end_seq: Option<i64>,
 }
@@ -257,9 +258,19 @@ impl TryFrom<Row> for Stage {
             at: sinex_model::Timestamp(r.at),
             scope: r.scope,
             result,
-            counts: r.counts,
-            inventory: r.progress,
-            refusals: r.refusals,
+            counts: if result.is_none() && (r.counts.is_null() || r.counts == serde_json::json!({}))
+            {
+                None
+            } else {
+                Some(
+                    serde_json::from_value(r.counts)
+                        .map_err(|e| Error::Invalid(format!("stage counts: {e}")))?,
+                )
+            },
+            inventory: serde_json::from_value(r.progress)
+                .map_err(|e| Error::Invalid(format!("stage progress: {e}")))?,
+            failures: serde_json::from_value(r.refusals)
+                .map_err(|e| Error::Invalid(format!("stage failures: {e}")))?,
             start_seq: r.start_seq,
             end_seq: r.end_seq,
         })
