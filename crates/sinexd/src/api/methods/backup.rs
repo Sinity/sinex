@@ -96,7 +96,7 @@ impl Api {
                 let mut producer_cuts = Vec::new();
                 if let Some((client, subjects, producers)) = &self.backup_producers {
                     let results =
-                        futures::future::join_all(producers.iter().map(|producer| async {
+                        futures::future::join_all(producers.iter().map(|producer| async move {
                             (
                                 producer,
                                 sinex_transport::backup::Frozen::freeze(
