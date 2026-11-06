@@ -14,6 +14,7 @@ use sinex_model::lifecycle::{MaterialStatus, OperationResult};
 use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod backups;
 mod event_indexes;
 mod library_curation;
 mod lifecycle;

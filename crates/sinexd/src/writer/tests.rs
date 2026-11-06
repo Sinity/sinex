@@ -639,3 +639,73 @@ async fn reconnect_reclaims_and_reloads_privacy(db: devkit::pg::TestDatabase) {
     drop(handle);
     writer.await.unwrap();
 }
+
+#[devkit::test]
+async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    let bytes = b"bytes protected by the two actual writer holds";
+    let name = blobs.put(bytes).unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
+        .bind(&name)
+        .bind(bytes.len() as i64)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
+        .await
+        .unwrap();
+    let before = std::fs::read(root.path().join("segments/current.hb")).unwrap();
+    let (handle, queues) = channels();
+    let writer = tokio::spawn(run(
+        url.clone(),
+        claim(PgConnection::connect(&url).await.unwrap())
+            .await
+            .unwrap(),
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        Some(blobs.clone()),
+    ));
+    let one = handle.backup_hold("one").await.unwrap();
+    let two = handle.backup_hold("two").await.unwrap();
+    sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1")
+        .bind(&name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    // Mirror the durable marker committed by a real tombstone.
+    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
+        .await
+        .unwrap();
+    handle.backup_release(one.id, "operator").await.unwrap();
+    handle
+        .submit(Priority::Live, batch("while-second-hold-is-open"))
+        .await
+        .unwrap();
+    assert_eq!(
+        &std::fs::read(root.path().join("segments/current.hb")).unwrap()[..before.len()],
+        before
+    );
+    handle.backup_release(two.id, "operator").await.unwrap();
+    handle
+        .submit(Priority::Live, batch("after-last-release"))
+        .await
+        .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM core.blobs WHERE hash=$1")
+        .bind(&name)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(status, "removed");
+    assert_ne!(
+        &std::fs::read(root.path().join("segments/current.hb")).unwrap()[..before.len()],
+        before
+    );
+    drop(handle);
+    writer.await.unwrap();
+}

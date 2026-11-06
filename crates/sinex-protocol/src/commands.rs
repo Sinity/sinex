@@ -608,6 +608,27 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        name: "backup",
+        summary: "Hold a core backup boundary, prepare a local immutable paired dump and segment artifact, release a hold, or list open holds. Producer custody is explicitly incomplete; archive custody belongs to the deployment.",
+        args: &[
+            pos("action", ArgKind::Text, "hold, prepare, release or list"),
+            pos_opt("hold", ArgKind::Text, "the hold UUID, with release"),
+            opt(
+                "output",
+                ArgKind::Text,
+                "a new absolute private artifact directory, with prepare",
+            ),
+            opt("page", ArgKind::Integer, "open holds per page, with list"),
+            opt(
+                "cursor",
+                ArgKind::Text,
+                "continue the previous open-hold page",
+            ),
+        ],
+        access: Access::Operator,
+        mcp: false,
+    },
+    Command {
         name: "stage",
         summary: "Hand Sinex files, directories or databases to read once. Each file is read by the parser named, or by the one parser whose declared structure it has; with none or several it is stored with no parser and the candidates listed. Returns the operation and the inventory of every member at once.",
         args: &[

@@ -367,9 +367,12 @@ in
     };
 
     backup = {
-      dumpDir = mkOption { type = types.path; default = "${cfg.stateDir}/dumps"; };
-      keysDir = mkOption { type = types.path; default = "${cfg.stateDir}/key-dumps"; };
-      startAt = mkOption { type = types.str; default = "daily"; };
+      artifactDir = mkOption {
+        type = types.path;
+        default = "${cfg.stateDir}/backups";
+        description = "Private immutable core artifacts and their paired archive receipts; successful bulky staging is released after both Borg archives are verified.";
+      };
+      startAt = mkOption { type = types.either types.str (types.listOf types.str); default = "daily"; };
       repo = mkOption {
         type = types.nullOr types.str;
         default = null;
@@ -484,6 +487,12 @@ in
         inherit (cfg) tags activity project_attribution rhythm;
       };
 
+      assertions = [{
+        assertion = (cfg.backup.repo == null) == (cfg.backup.keysRepo == null)
+          && (cfg.backup.repo == null || cfg.backup.repo != cfg.backup.keysRepo);
+        message = "Sinex automatic core backup requires separate main and wrapped-key repositories together.";
+      }];
+
       systemd.tmpfiles.rules = [
         "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
         # Group mode 2770 marks the store root as shared with producers on this
@@ -497,8 +506,7 @@ in
         # Scratch the daemon writes while reading an input (an Outlook PST
         # converted to mbox files); /tmp may be a small tmpfs.
         "d ${cfg.stateDir}/tmp 0750 ${cfg.user} ${cfg.group} -"
-        "d ${cfg.backup.dumpDir} 0750 ${cfg.user} ${cfg.group} -"
-        "d ${cfg.backup.keysDir} 0700 ${cfg.user} ${cfg.group} -"
+        "d ${cfg.backup.artifactDir} 0700 ${cfg.user} ${cfg.group} -"
         "d ${cfg.database.dataDir} 0700 postgres postgres -"
       ] ++ optionals cfg.noCow [
         "h ${cfg.database.dataDir} - - - - +C"
@@ -632,7 +640,7 @@ in
         # Configured read grants and the NATS capability must change together.
         restartIfChanged = true;
         # Tesseract reads text from screen segments (screen.text).
-        path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils ];
+        path = [ pkgs.tesseract pkgs.poppler-utils pkgs.coreutils postgres ];
         serviceConfig = restartPolicy // {
           User = cfg.user;
           Group = cfg.group;
@@ -750,44 +758,11 @@ in
         '';
       };
 
-      # Daily dump: everything except the sealed key table, which is dumped on
-      # its own and backed up to a separate repository.
-      systemd.services.sinex-dump = {
-        description = "Sinex database dump";
-        after = [ "postgresql.service" ];
-        startAt = cfg.backup.startAt;
-        serviceConfig = { Type = "oneshot"; User = cfg.user; Group = cfg.group; UMask = "0077"; };
-        script = ''
-          ${postgres}/bin/pg_dump -d sinex -Fc --exclude-table-data=privacy.data_keys \
-            -f ${cfg.backup.dumpDir}/sinex.dump.tmp
-          mv ${cfg.backup.dumpDir}/sinex.dump.tmp ${cfg.backup.dumpDir}/sinex.dump
-          ${postgres}/bin/pg_dump -d sinex -Fc --data-only -t privacy.data_keys \
-            -f ${cfg.backup.keysDir}/data-keys.dump.tmp
-          mv ${cfg.backup.keysDir}/data-keys.dump.tmp ${cfg.backup.keysDir}/data-keys.dump
-        '';
-      };
+      systemd.services.sinex-backup = mkIf (cfg.backup.repo != null && cfg.backup.keysRepo != null)
+        (import ./backup.nix { inherit cfg pkgs; }).service;
+      services.borgbackup.jobs = mkIf (cfg.backup.repo != null && cfg.backup.keysRepo != null)
+        (import ./backup.nix { inherit cfg pkgs; }).jobs;
 
-      services.borgbackup.jobs = mkMerge [
-        (mkIf (cfg.backup.repo != null) {
-          sinex = {
-            paths = [ cfg.storeDir cfg.backup.dumpDir ];
-            repo = cfg.backup.repo;
-            encryption = { mode = "repokey-blake2"; passCommand = cfg.backup.passCommand; };
-            compression = "auto,zstd";
-            startAt = cfg.backup.startAt;
-            preHook = "systemctl start sinex-dump.service";
-          };
-        })
-        (mkIf (cfg.backup.keysRepo != null) {
-          sinex-keys = {
-            paths = [ cfg.backup.keysDir ];
-            repo = cfg.backup.keysRepo;
-            encryption = { mode = "repokey-blake2"; passCommand = cfg.backup.passCommand; };
-            startAt = cfg.backup.startAt;
-            preHook = "systemctl start sinex-dump.service";
-          };
-        })
-      ];
     })
 
     (mkIf node.enable {

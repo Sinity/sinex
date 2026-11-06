@@ -1,4 +1,5 @@
 //! The API against a real database and the real writer.
+mod backups;
 mod exact_payloads;
 mod sql_boundary;
 mod versions;

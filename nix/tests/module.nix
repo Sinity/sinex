@@ -50,7 +50,23 @@ let
   defaultSessionGrant = (producerGrants {
     services.sinex.session.producer = "session-fixture";
   }).session-fixture;
+  backup = evaluate {
+    services.sinex.backup = {
+      repo = "/repos/main";
+      keysRepo = "/repos/keys";
+      passCommand = "cat /run/fixture-borg-pass";
+      startAt = [ ];
+    };
+  };
   tests = [
+    (backup.services.borgbackup.jobs.sinex.paths == [ "." ])
+    (backup.services.borgbackup.jobs.sinex.startAt == [ ])
+    (backup.services.borgbackup.jobs.sinex-keys.startAt == [ ])
+    (backup.services.borgbackup.jobs.sinex.failOnWarnings)
+    (backup.services.borgbackup.jobs.sinex-keys.failOnWarnings)
+    (backup.systemd.services.sinex-backup.serviceConfig.RuntimeDirectoryMode == "0700")
+    (fails { services.sinex.backup.repo = "/repos/only-main"; })
+    (fails { services.sinex.backup.repo = "/repos/same"; services.sinex.backup.keysRepo = "/repos/same"; })
     (builtins.tryEval (evaluate { }).system.build.toplevel.drvPath).success
     (defaultSessionGrant.write == null)
     (defaultSessionGrant.kind_prefixes == [ ] && defaultSessionGrant.classes == [ ])
@@ -101,6 +117,7 @@ let
   ];
 in
 assert lib.all (result: result) tests;
-pkgs.runCommand "sinex-module-tests" { } ''
+pkgs.runCommand "sinex-module-tests" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+  python3 ${./backup-reader.py} ${../backup-reader.py}
   mkdir "$out"
 ''

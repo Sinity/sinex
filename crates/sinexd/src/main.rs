@@ -4,6 +4,7 @@
 mod admin;
 mod analysis;
 mod api;
+mod backup;
 mod binding_reader;
 mod binding_runner;
 mod build_identity;

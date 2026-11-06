@@ -136,27 +136,47 @@ The stores are the backup unit, and the deployment chooses the backup tool; Sine
 
 Worktrees, caches and scratch are outside backups. NATS state is not backed up: committed changes are republished from PostgreSQL with the same commit positions, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md)).
 
-The current NixOS Borg jobs run their dump hooks without establishing the online hold described below. A consistent cold backup keeps `sinexd` and other content-store writers stopped from before the main and key dumps until both Borg jobs finish. The cold restore VM exercises that boundary. The automatic schedules alone do not provide a consistent online backup boundary.
+The native preparation described below covers the PostgreSQL core and its cited segment bytes. It declares producer custody **incomplete**. Copying an outside producer's current spool or checkpoint separately does not prove it can resend everything after the restored core boundary: a newer checkpoint can already have discarded acknowledgments absent from that core copy. A complete producer backup needs the producer owner to freeze a checkpoint no later than the core cut together with the original pending frames and required spool ranges. Unreachable producers remain named missing coverage. A core backup never advertises that stronger recovery guarantee.
 
 ### Holds and the boundary
 
-A backup records its boundary: the dump's commit position and schema version, the segment extents it covers, the producer spool positions, and the backup archive's identity. The key dump and the main dump share the boundary.
+A backup records the dump's commit position and schema version, the blob-only change counter, and the committed segment prefixes it protects. Both the main and wrapped-key dumps belong to one exported PostgreSQL snapshot of the same database; the keys are the `privacy.data_keys` table, not a second database.
 
 ```
-sinexctl backup hold             # records the boundary, returns HOLD
-<copy with the deployment's tool>
+sinexctl backup hold
+sinexctl backup list --page 100
+sinexctl backup prepare --output /private/backups/new-run
 sinexctl backup release HOLD
 ```
 
-- The hold records the boundary before the copy starts and returns a hold ID; release ends it.
-- **A hold never expires.** Status shows each open hold with its age, so a forgotten hold is visible rather than silently ended.
-- **Tombstoning never removes an extent an open hold covers.** The punch is marked; when the last hold covering the extent is released, the writer punches it at its next group, without waiting for the segment to reopen. The punch when a segment opens covers a crash ([architecture.md](architecture.md#durability-order)).
+These operations require the operator token. The daemon computes the operation's actor. `hold` commits the boundary and operation before returning its UUID; `release` records its own operation and preserves the original boundary. Open holds have no expiry. `status` reports their count and oldest creation time, and `backup list` pages through every open hold with `--cursor`.
+
+`prepare` creates a fresh hold and exports its snapshot inside the same writer job, after the hold commits and before another admission advances either counter. It then lets the writer continue while the snapshot exporter stays alive for both real `pg_dump` calls. The new output directory must be absolute, private and writable by the daemon; an existing attempt is refused. The artifact contains:
+
+- `main/sinex.dump`, with wrapped-key table data excluded;
+- `main/segments/`, containing only the committed prefixes, copied with bounded memory while later appends continue;
+- `keys/data-keys.dump`, containing the wrapped-key table data from that same snapshot;
+- the same versioned `manifest.json` in both parts, with the hold, database identity, source revision, file lengths and byte digests.
+
+Live extent descriptors are checked against the copied encoded bytes, including sealed encodings, before a root `manifest.json` is published and synced. The main dump still contains private database state, so both parts need protected staging and encrypted archives. No plaintext material keys are exported.
+
+Before publication, a lost exporter, short segment, corrupt extent, failed dump or cancellation leaves an incomplete directory and an open hold. The early `boundary.json` names the hold without claiming completion. A fresh SQL snapshot cannot be attached to an older hold, and an incomplete directory cannot silently become a different run. The operator can inspect the retained attempt, start a fresh one, and explicitly release abandoned holds. A prepared local artifact is not an acknowledgment from Borg or from a producer.
+
+Tombstoning and orphan cleanup do not punch any extent covered by an open hold. Multiple holds compose: release of the last covering hold dirties the deferred work, which the writer attempts at its next ordinary group without reopening the segment. Ordinary recovery checks the same durable holds before replaying a punch.
+
+### The deployed archive pair
+
+The NixOS `sinex-backup` service owns preparation and the two Borg calls. `backup.artifactDir` is private to the daemon; the old independently scheduled dump flow is removed. A host supplies separate `backup.repo` and `backup.keysRepo` repositories together and the protected pass command. The service's `backup.startAt` accepts a calendar or a list; `[]` lets an existing host coordinator be the sole scheduler. The sibling Borg jobs have no independent timers. Initialize the two encrypted repositories through the deployment's Borg owner before enabling the schedule; the native jobs do not initialize repositories. Each job compares their actual repository IDs before creation, so aliases cannot put key bytes in the main repository even as a failed archive.
+
+Both archives are named `sinex-core-HOLD` in their respective repositories and carry the identical manifest. The service reads each actual archive's identity after successful creation, verifies both names against the hold, and retains their pair in `complete.json`. Only then does it release the hold and remove that run's bulky staging copies. `latest-complete.json` points to this receipt; it is not a choice of unrelated latest archives. Before both archives complete, a warning, failed sibling or interruption preserves the artifact and hold for inspection. A later release or cleanup failure retains the completed artifact and its receipts; the recorded hold state says whether release committed. Borg's warning failure and `.failed` archive behavior remain intact.
+
+The privileged Borg process enters the selected part through directory descriptors that reject symlinks in every parent and pin its working directory. Its ordinary Linux walk does not follow file or directory symlinks. Root-owned control and archive receipts stay separate from daemon-owned artifacts; metadata writes and staging cleanup through artifact paths run as the daemon user. The keys part is never a main-archive input.
 
 Backup expiry belongs to the deployment's backup tool and never deletes Sinex data. Any copy that leaves the machine is encrypted.
 
 ### Restore
 
-Restore is an ordinary rebuild from a backup plus the retained materials, not a repair path: start Sinex against the restored store, and the restored state answers exactly as the original did at the boundary.
+Restore is an ordinary rebuild from a backup plus the retained materials, not a repair path. Select the main and key archives by their shared hold and actual archive identities, compare their manifests and restore both dumps and the segment prefixes. The restored core answers exactly as it did at the boundary. Its snapshot includes the then-open hold; that hold remains visible until the restore owner verifies the copy and explicitly releases it. It never expires on restart. Producer recovery remains separate from the core-only artifact's explicit incomplete custody.
 
 - the same event IDs, payloads, lifecycle states and positions at the boundary;
 - exact bytes traced from any event;
