@@ -63,6 +63,55 @@ pub(crate) fn record_boundary(
         .map_err(|e| e.to_string())
 }
 
+/// libpq expands a URI passed as dbname, but treats PGDATABASE as a plain name.
+/// Passwords remain exclusively in the child's environment, including a URL
+/// query password, which has precedence over the user-info password in SQLx.
+fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command, String> {
+    let mut command = tokio::process::Command::new(program);
+    let uri = database.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.eq_ignore_ascii_case("postgres") || scheme.eq_ignore_ascii_case("postgresql")
+    });
+    if !uri {
+        command.env("PGDATABASE", database);
+        return Ok(command);
+    }
+    let mut url = reqwest::Url::parse(database)
+        .map_err(|_| "invalid PostgreSQL connection URI".to_owned())?;
+    let mut password = url
+        .password()
+        .map(|encoded| {
+            percent_encoding::percent_decode_str(encoded)
+                .decode_utf8()
+                .map(|password| password.into_owned())
+                .map_err(|_| "PostgreSQL password is not UTF-8".to_owned())
+        })
+        .transpose()?;
+    if url.password().is_some() {
+        url.set_password(None)
+            .map_err(|_| "cannot remove PostgreSQL URI password".to_owned())?;
+    }
+    let mut public = Vec::new();
+    for (key, value) in url.query_pairs() {
+        if key == "password" {
+            password = Some(value.into_owned());
+        } else {
+            public.push((key.into_owned(), value.into_owned()));
+        }
+    }
+    url.set_query(None);
+    if !public.is_empty() {
+        url.query_pairs_mut().extend_pairs(public);
+    }
+    command
+        .env_remove("PGDATABASE")
+        .arg("--dbname")
+        .arg(url.as_str());
+    if let Some(password) = password {
+        command.env("PGPASSWORD", password);
+    }
+    Ok(command)
+}
+
 async fn dump(
     snapshot: &Snapshot,
     output: &Path,
@@ -75,14 +124,14 @@ async fn dump(
     } else {
         "main/sinex.dump"
     };
-    let stderr = file(&output.join(if keys {
+    let stderr_path = output.join(if keys {
         "keys/pg_dump.log"
     } else {
         "main/pg_dump.log"
-    }))?;
-    let mut command = tokio::process::Command::new("pg_dump");
+    });
+    let stderr = file(&stderr_path)?;
+    let mut command = pg_command("pg_dump", snapshot.database_url())?;
     command
-        .env("PGDATABASE", snapshot.database_url())
         .arg("--no-password")
         .arg("--format=custom")
         .arg(format!("--snapshot={}", snapshot.exported))
@@ -104,8 +153,12 @@ async fn dump(
         }
     };
     if !status.success() {
+        let diagnostic = std::fs::read_to_string(&stderr_path)
+            .unwrap_or_else(|error| format!("cannot read private dump diagnostic: {error}"));
         return Err(format!(
-            "pg_dump failed ({status}); see the artifact's private pg_dump.log"
+            "pg_dump failed ({status}): {}; private log {}",
+            diagnostic.trim(),
+            stderr_path.display(),
         ));
     }
     File::open(output.join(name))

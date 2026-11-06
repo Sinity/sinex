@@ -205,7 +205,8 @@ impl Snapshot {
         })
     }
 
-    /// Passed only in the child environment, never in command arguments or a manifest.
+    /// Keep the original connection URI private. Child adapters must remove its
+    /// password before constructing arguments; manifests never contain it.
     pub fn database_url(&self) -> &str {
         &self.database_url
     }

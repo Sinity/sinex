@@ -108,8 +108,8 @@ async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
         .execute(&mut conn)
         .await
         .unwrap();
-    let status = tokio::process::Command::new("pg_restore")
-        .env("PGDATABASE", &url)
+    let status = pg_command("pg_restore", &url)
+        .unwrap()
         .args(["--no-password", "--exit-on-error", "--data-only"])
         .arg(artifact.join("keys/data-keys.dump"))
         .status()
@@ -399,8 +399,8 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
     context.close().await.unwrap();
     // This database and every filesystem path in this test are disposable
     // fixtures. The restore uses only the paired immutable artifact.
-    let status = tokio::process::Command::new("pg_restore")
-        .env("PGDATABASE", &url)
+    let status = pg_command("pg_restore", &url)
+        .unwrap()
         .args([
             "--no-password",
             "--clean",
@@ -413,8 +413,8 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
         .await
         .unwrap();
     assert!(status.success());
-    let status = tokio::process::Command::new("pg_restore")
-        .env("PGDATABASE", &url)
+    let status = pg_command("pg_restore", &url)
+        .unwrap()
         .args(["--no-password", "--data-only", "--exit-on-error"])
         .arg(artifact.join("keys/data-keys.dump"))
         .status()
@@ -473,4 +473,85 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
     assert!(!encoded.contains("after-cut-record"));
     drop(sink);
     context.close().await.unwrap();
+}
+
+#[devkit::test]
+fn libpq_uri_passwords_stay_in_the_child_environment_and_plain_names_stay_plain() {
+    use std::ffi::OsStr;
+    for (uri, expected) in [
+        (
+            "POSTGRESQL://neutral:synthetic+%2B%25%2F%40%E7%A7%98%E5%AF%86@localhost/database?sslmode=require&application_name=neutral",
+            "synthetic++%/@秘密",
+        ),
+        (
+            "postgresql://neutral:userinfo%2Bignored@localhost/database?password=first%2Bignored&sslmode=require&password=last%2B%25%2F%40%E7%A7%98%E5%AF%86&application_name=neutral",
+            "last+%/@秘密",
+        ),
+        (
+            "postgresql://neutral@localhost/database?password=left+right&sslmode=require&application_name=neutral",
+            "left right",
+        ),
+    ] {
+        for program in ["pg_dump", "pg_restore"] {
+            let command = pg_command(program, uri).unwrap();
+            let command = command.as_std();
+            let args = command.get_args().collect::<Vec<_>>();
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[0], OsStr::new("--dbname"));
+            let public = reqwest::Url::parse(args[1].to_str().unwrap()).unwrap();
+            assert!(public.password().is_none());
+            let pairs = public.query_pairs().collect::<Vec<_>>();
+            assert!(!pairs.iter().any(|(key, _)| key == "password"));
+            assert!(
+                pairs
+                    .iter()
+                    .any(|(key, value)| key == "sslmode" && value == "require")
+            );
+            assert!(
+                pairs
+                    .iter()
+                    .any(|(key, value)| key == "application_name" && value == "neutral")
+            );
+            let password = command
+                .get_envs()
+                .find(|(key, _)| *key == "PGPASSWORD")
+                .unwrap()
+                .1;
+            assert_eq!(password, Some(OsStr::new(expected)));
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(key, _)| *key == "PGDATABASE")
+                    .unwrap()
+                    .1,
+                None
+            );
+        }
+    }
+    let command = pg_command("pg_dump", "neutral_database").unwrap();
+    assert_eq!(command.as_std().get_args().count(), 0);
+    assert_eq!(
+        command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == "PGDATABASE")
+            .unwrap()
+            .1,
+        Some(OsStr::new("neutral_database"))
+    );
+    let command = pg_command(
+        "pg_dump",
+        "postgresql:///database?host=%2Fsynthetic%2Fsocket",
+    )
+    .unwrap();
+    assert_eq!(
+        command.as_std().get_args().next(),
+        Some(OsStr::new("--dbname"))
+    );
+    assert!(
+        !command
+            .as_std()
+            .get_envs()
+            .any(|(key, _)| key == "PGPASSWORD")
+    );
 }
