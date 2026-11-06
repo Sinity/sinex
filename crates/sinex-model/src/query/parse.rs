@@ -66,7 +66,10 @@ struct Binder<'a> {
 }
 impl Binder<'_> {
     fn resolve_info(&self, info: &FieldInfo, at: usize) -> Result<FieldRef, QueryError> {
-        if let Origin::Catalog { unit, field } = &info.origin {
+        // Renamed outputs keep their logical slot name and original type lineage.
+        if let Origin::Catalog { unit, field } = &info.origin
+            && info.field.name == *field
+        {
             let alias = Alias::from_name(unit);
             let table = Table::from_name(unit)
                 .or(alias.map(|_| Table::Events))
