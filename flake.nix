@@ -27,10 +27,10 @@
         rustc = toolchain;
       };
       llvmTools = "${toolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin";
-      postgres = pkgs.postgresql_18.withPackages (p: [
-        p.timescaledb
-        p.pgvector
-      ]);
+      postgres = import ./nix/postgresql.nix {
+        postgresql = pkgs.postgresql_18;
+        extensions = p: [ p.pgvector ];
+      };
       server = rustPlatform.buildRustPackage {
         pname = "sinex";
         version = "0.1.0";
@@ -139,11 +139,13 @@
         default = package;
         sinexd = package;
         sinexctl = package;
+        postgresql = postgres;
       };
       nixosModules.default = import ./nix/module.nix self;
       # VM tests: the deployed stack, a satellite capture node, the restore
       # drill. Built on demand, not by `package`.
       checks.${system} = {
+        postgresql-uuid-bounds = import ./nix/tests/postgresql-uuid-bounds.nix { inherit pkgs postgres; };
         module = import ./nix/tests/module.nix self pkgs;
         vm-stack = pkgs.testers.runNixOSTest (import ./nix/tests/stack.nix self);
         vm-topology = pkgs.testers.runNixOSTest (import ./nix/tests/topology.nix self);

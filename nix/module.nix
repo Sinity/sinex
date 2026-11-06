@@ -136,7 +136,10 @@ in
     database = {
       package = mkOption {
         type = types.package;
-        default = (if config.services.postgresql.enableJIT then pkgs.postgresql_18.withJIT else pkgs.postgresql_18).withPackages (p: [ p.timescaledb p.pgvector ]);
+        default = import ./postgresql.nix {
+          postgresql = if config.services.postgresql.enableJIT then pkgs.postgresql_18.withJIT else pkgs.postgresql_18;
+          extensions = p: [ p.pgvector ];
+        };
       };
       dataDir = mkOption {
         type = types.path;
