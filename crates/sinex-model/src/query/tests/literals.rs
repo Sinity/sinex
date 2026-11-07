@@ -31,6 +31,53 @@ fn declared_context() -> Context {
     context
 }
 
+#[devkit::test]
+fn later_kind_filters_type_only_the_selected_rows() {
+    let context = declared_context();
+    for selection in [
+        "events | sort by payload.mixed | limit 1",
+        "events | sort by payload.mixed | group by payload.mixed | first 1",
+    ] {
+        let query = bind(
+            &format!("{selection} | where event_type = example.text | fields payload.mixed"),
+            &context,
+        )
+        .unwrap();
+        let Stage::Sort(keys) = &query.stages[0] else {
+            panic!("sort before the row selection")
+        };
+        let SortBy::Operand(value) = &keys[0].key else {
+            panic!("payload sort")
+        };
+        assert_eq!(value.field_type().unwrap(), FieldType::Json);
+        if let Stage::GroupFirst { keys, .. } = &query.stages[1] {
+            assert_eq!(keys[0].field_type().unwrap(), FieldType::Json);
+        }
+        let Some(Stage::Fields(columns)) = query.stages.last() else {
+            panic!("projection after the kind filter")
+        };
+        assert_eq!(columns[0].field_type().unwrap(), FieldType::Text);
+        let error = bind(
+            &format!("{selection} | where event_type = example.text | agg sum(payload.mixed)"),
+            &context,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("numeric"), "{error}");
+    }
+    let query = bind(
+        "events | sort by payload.mixed | where event_type = example.text",
+        &context,
+    )
+    .unwrap();
+    let Stage::Sort(keys) = &query.stages[0] else {
+        panic!("sort without a row selection")
+    };
+    let SortBy::Operand(value) = &keys[0].key else {
+        panic!("payload sort")
+    };
+    assert_eq!(value.field_type().unwrap(), FieldType::Text);
+}
+
 fn field_types(query: &Query, name: &str) -> Vec<FieldType> {
     fn collect(expr: &Expr, name: &str, types: &mut Vec<FieldType>) {
         match expr {

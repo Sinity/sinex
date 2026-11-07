@@ -122,6 +122,8 @@ sinexctl 'events where event_type = command.executed | agg sum(payload.duration_
 - A path shared by several schemas can be used without an event-type filter when its
   declared types agree. Unknown paths and conflicting types are errors positioned in
   the query.
+  A filter after `limit` or per-group `first` does not change the payload types used
+  to select those rows.
 - `sum` and `avg` need numbers; `min` and `max` need ordered scalar values. Numeric
   payload fields sort numerically.
 - Text, boolean, numeric and timestamp comparisons keep their declared types. Quoting
