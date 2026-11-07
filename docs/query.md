@@ -130,8 +130,9 @@ sinexctl 'events where event_type = command.executed | agg sum(payload.duration_
   Grouped columns and expanded saved queries retain the shared binder's output types.
   A comparison on a text list matches any member; `!=` excludes every matching member.
   An empty list has no matching member.
-- `source` and `event_type` accept `*` identifier patterns with either quoted or unquoted
-  spelling. Payload equality treats `*` literally; `~` and `^` take literal operands.
+- Equality on `source`, `event_type` and payload values treats `*` literally, with
+  either quoted or unquoted spelling. Use `glob(value, pattern)` for wildcard matching;
+  `~` and `^` take literal operands.
   A dynamic JSON field keeps the original scalar until execution knows the current
   projected value's type; incompatible and absent values stay unknown.
 - An unknown value stays unknown (null), and an unknown list stays unknown.
