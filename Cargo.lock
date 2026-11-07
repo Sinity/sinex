@@ -290,7 +290,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "authored"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "blake3",
  "proptest",
@@ -1043,7 +1043,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "blake3",
  "clap",
@@ -1061,7 +1061,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2303,7 +2303,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -2357,7 +2357,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "historical-query-format-v1"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "blake3",
  "jiff",
@@ -3574,7 +3574,7 @@ dependencies = [
 [[package]]
 name = "query-language"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "blake3",
  "jiff",
@@ -3764,7 +3764,7 @@ dependencies = [
 [[package]]
 name = "ranking"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 
 [[package]]
 name = "redox_syscall"
@@ -3807,7 +3807,7 @@ dependencies = [
 [[package]]
 name = "references"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -4417,7 +4417,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "signal-delivery"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "futures-util",
  "serde_json",
@@ -4449,7 +4449,7 @@ dependencies = [
 [[package]]
 name = "signals"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#122ac8bf4bc2f790ad56facb977a0293e87ea28e"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#42f3ab72b2862f1d850e4e7671337347605121b7"
 dependencies = [
  "blake3",
  "jiff",
