@@ -91,6 +91,31 @@ fn a_command_word_is_never_a_search() {
 fn a_misspelled_table_is_refused_with_a_suggestion() {
     let e = err("comands where since:7d");
     assert!(e.message.contains("commands"), "{e}");
+    let e = err("comands");
+    assert!(e.not_built, "{e}");
+    assert!(e.message.contains("try `commands`"), "{e}");
+    assert_eq!(q("commands").source.alias().unwrap().name, "commands");
+    assert!(matches!(q(r#""comands""#).filter, Some(Expr::Words(_))));
+    assert!(matches!(
+        q("events where comands").filter,
+        Some(Expr::Words(_))
+    ));
+}
+
+#[devkit::test]
+fn projected_sets_require_matching_types_in_the_product_catalog() {
+    let context = ctx();
+    let catalog = syntax::catalog(&context);
+    for operator in ["union", "intersect", "except", "diff"] {
+        let incompatible =
+            format!("events | fields id | {operator} (events | fields text(id) as id)");
+        let error = syntax::parse(&incompatible, &context).unwrap_err();
+        assert!(error.message.contains("same projected fields and types"));
+        let compatible =
+            format!("events | fields text(id) as id | {operator} (events | fields text(id) as id)");
+        let parsed = syntax::parse(&compatible, &context).unwrap();
+        query_language::bind::bind(&parsed, &catalog).unwrap();
+    }
 }
 
 #[devkit::test]
