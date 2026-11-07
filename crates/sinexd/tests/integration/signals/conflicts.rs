@@ -49,6 +49,35 @@ async fn a_firing_whose_reading_was_replayed_is_withdrawn_then_cites_the_new_rea
         &["sinex.signals", "query.request"],
     )
     .await;
+    // Hold only the original reading's pending firing until the public replay
+    // has archived it. The evaluator persists millisecond deadlines; the next
+    // checkpoint then releases that exact firing, while a rearmed firing keeps
+    // the rule's genuine five-second delay. i64::MAX is the evaluator's
+    // no-wakeup boundary; the replay's commit wakes the next step.
+    for statement in [
+        r#"CREATE FUNCTION test_hold_original_firing() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+        DECLARE original uuid; pending record; replayed boolean; due bigint;
+        BEGIN
+            IF NEW.host <> 'fixture' THEN RETURN NEW; END IF;
+            SELECT id INTO original FROM core.events
+            WHERE event_type='operator.mark' AND payload->>'text'='synthetic replayed occurrence'
+            ORDER BY commit_seq LIMIT 1;
+            IF original IS NULL THEN RETURN NEW; END IF;
+            SELECT EXISTS(SELECT 1 FROM audit.archived WHERE event_id=original AND reason='replay') INTO replayed;
+            FOR pending IN SELECT key,value FROM jsonb_each(NEW.state#>'{evaluator,pending}') LOOP
+                IF EXISTS(SELECT 1 FROM jsonb_array_elements(pending.value->'basis') basis
+                          WHERE basis#>>'{evidence,id}'=original::text) THEN
+                    due := CASE WHEN replayed THEN (NEW.state#>>'{evaluator,now}')::bigint + 1
+                                ELSE 9223372036854775807 END;
+                    NEW.state := jsonb_set(NEW.state, ARRAY['evaluator','pending',pending.key,'due'], to_jsonb(due));
+                END IF;
+            END LOOP;
+            RETURN NEW;
+        END $$"#,
+        "CREATE TRIGGER test_hold_original_firing BEFORE UPDATE ON core.signal_checkpoints FOR EACH ROW EXECUTE FUNCTION test_hold_original_firing()",
+    ] {
+        sqlx::query(statement).execute(&mut conn).await.unwrap();
+    }
     let mut held = rule("held", "notice");
     held["for"] = json!(5000);
     ok(
@@ -66,6 +95,17 @@ async fn a_firing_whose_reading_was_replayed_is_withdrawn_then_cites_the_new_rea
         1,
     )
     .await;
+    let held_due: Vec<i64> = sqlx::query_scalar(
+        "SELECT (pending.value->>'due')::bigint FROM core.signal_checkpoints checkpoint CROSS JOIN LATERAL jsonb_each(checkpoint.state#>'{evaluator,pending}') pending WHERE checkpoint.host='fixture' AND EXISTS (SELECT 1 FROM jsonb_array_elements(pending.value->'basis') basis JOIN core.events original ON original.id=(basis#>>'{evidence,id}')::uuid WHERE original.event_type='operator.mark' AND original.payload->>'text'='synthetic replayed occurrence')",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        held_due,
+        vec![i64::MAX],
+        "the original firing is still held before replay"
+    );
     ok(
         &socket,
         json!({"method":"replay","event-type":["operator.mark"]}),
