@@ -84,7 +84,15 @@ impl Session {
         let mut log = String::new();
         let mut failed = 0;
         let mut line = String::new();
+        // A fixture watchdog, below the default 120s nextest termination budget,
+        // leaves time for evidence and child cleanup; it is not a product deadline.
+        let until = Instant::now() + Duration::from_secs(30);
         loop {
+            assert!(
+                Instant::now() < until,
+                "publication observation budget expired: expected {count}, observed {failed}; {}",
+                self.evidence("waiting for publishing failure")
+            );
             let read = reader.read_line(&mut line).unwrap();
             self.stderr_read += read as u64;
             if read == 0 || !line.ends_with('\n') {
