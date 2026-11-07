@@ -6,15 +6,15 @@ use std::collections::BTreeMap;
 fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
     for text in [
         "events where event_type = command.executed AND payload.exit_code > x",
-        "events where payload.exit_code > 0 AND event_type = command.executed sum(payload.command)",
-        "events where event_type = command.executed AND payload.no_such_field exists",
+        "events where payload.exit_code > 0 AND event_type = command.executed | agg sum(payload.command)",
+        "events where event_type = command.executed AND payload.no_such_field:known",
         "events where event_type = command.executed AND payload.exit_code ~ x",
-        "events where event_type = command.executed group by day(payload.exit_code)",
+        "events where event_type = command.executed | group by day(payload.exit_code)",
     ] {
         assert!(!err(text).not_built, "{text}");
     }
     let query = q(
-        "events where payload.exit_code >= 0 AND event_type = command.executed sum(payload.duration_ns)",
+        "events where payload.exit_code >= 0 AND event_type = command.executed | agg sum(payload.duration_ns)",
     );
     assert!(matches!(query.stages[0], Stage::Group(_)));
     let completions = complete("events where event_type = command.executed AND payload.dur");
@@ -27,8 +27,8 @@ fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
     );
     assert_eq!(completions[0].field_type, "integer");
     for text in [
-        "events where event_type = command.* AND payload.dur",
-        "events where event_type = [command.executed, command.fused] AND payload.dur",
+        "events where glob(event_type, \"command.*\") = true AND payload.dur",
+        "events where event_type = (command.executed |command.fused) AND payload.dur",
     ] {
         assert!(
             complete(text)
@@ -42,10 +42,10 @@ fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
 
 #[devkit::test]
 fn saved_parameters_cannot_introduce_conditions_or_change_the_question_shape() {
-    let saved = SavedQuery {
-        name: "by-directory".into(),
-        query: "commands where cwd = $root AND exit_code >= $code".into(),
-        parameters: vec![
+    let saved = SavedQuery::from_text(
+        "by-directory".into(),
+        "commands where cwd = $root AND exit_code >= $code".into(),
+        vec![
             Parameter {
                 name: "root".into(),
                 field_type: ParameterType::Text,
@@ -55,11 +55,13 @@ fn saved_parameters_cannot_introduce_conditions_or_change_the_question_shape() {
                 field_type: ParameterType::Integer,
             },
         ],
-    };
+        &ctx(),
+    )
+    .unwrap();
     saved.validate(&ctx()).unwrap();
     let definitions = BTreeMap::from([(saved.name.clone(), saved)]);
     let bound = bind_saved(
-        r#"query:by-directory(root="x\" or source exists", code=1) count"#,
+        r#"query:by-directory(root="x\" or source exists", code=1) | count"#,
         &ctx(),
         &definitions,
     )
@@ -89,7 +91,7 @@ fn saved_parameters_cannot_introduce_conditions_or_change_the_question_shape() {
 #[devkit::test]
 fn fill_resolves_bounds_and_keeps_later_group_filters() {
     let query = q(
-        "commands where when in last 3d group by day(when), cwd count fill where count >= 1 sort day",
+        "commands where when in last 3d | group by day(when), cwd | count | fill | where count >= 1 | sort by day",
     );
     let Stage::Group(g) = &query.stages[0] else {
         panic!()
@@ -99,14 +101,14 @@ fn fill_resolves_bounds_and_keeps_later_group_filters() {
     assert_eq!(fill.to.as_second() - fill.from.as_second(), 3 * 86400);
     assert!(read_as(&query).contains("empty time buckets"));
     assert!(
-        err("commands group by day(when) count fill")
+        err("commands | group by day(when) | count | fill")
             .message
             .contains("lower time bound")
     );
     assert!(
-        err("commands since 7d group by cwd count fill")
+        err("commands where since:7d | group by cwd | count | fill")
             .message
-            .contains("time-bucket")
+            .contains("time bucket")
     );
 }
 
@@ -123,41 +125,52 @@ fn time_citations_require_absolute_time_and_marks_have_positive_numbers() {
     ));
     assert!(parse_reference("sinex:window/2026-09-14T09:00:00Z/2026-09-14T08:00:00Z").is_err());
     assert!(matches!(
-        q("recall mark 2 ±5m").source,
+        native_q("recall mark 2 ±5m").source,
         Source::RecallMark {
             number: 2,
             window: 300.0
         }
     ));
-    assert!(err("recall mark 0").message.contains("positive"));
+    assert!(native_err("recall mark 0").message.contains("one"));
 }
 
 #[devkit::test]
 fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
-    let saved = SavedQuery {
-        name: "typed".into(),
-        query: "commands where payload.command = $value".into(),
-        parameters: vec![Parameter {
+    let saved = SavedQuery::from_text(
+        "typed".into(),
+        "commands where payload.command = $value".into(),
+        vec![Parameter {
             name: "value".into(),
             field_type: ParameterType::Text,
         }],
-    };
+        &ctx(),
+    )
+    .unwrap();
     saved.validate(&ctx()).unwrap();
     let definitions = BTreeMap::from([("typed".into(), saved.clone())]);
     let bound = bind_saved("query:typed(value=123)", &ctx(), &definitions).unwrap();
     assert!(matches!(bound.filter,Some(Expr::Compare { rhs:Value::Text(ref s),.. }) if s == "123"));
     for query in [
-        "events fields id,$value",
-        "events sort when,$value",
+        "events | fields id,$value",
+        "events | sort by when,$value",
         "events where $value = x",
         "query:$value",
     ] {
-        let mut invalid = saved.clone();
-        invalid.query = query.into();
-        assert!(invalid.validate(&ctx()).is_err(), "{query}");
+        assert!(
+            SavedQuery::from_text(
+                saved.name.clone(),
+                query.into(),
+                saved.parameters.clone(),
+                &ctx()
+            )
+            .and_then(|invalid| invalid.validate(&ctx()))
+            .is_err(),
+            "{query}"
+        );
     }
     let mut enumeration = saved;
     enumeration.query = "events where class = $value".into();
+    enumeration.template = native::parse(&enumeration.query, &ctx()).unwrap().into();
     enumeration.validate(&ctx()).unwrap();
     let definitions = BTreeMap::from([("typed".into(), enumeration)]);
     assert!(bind_saved("query:typed(value=open)", &ctx(), &definitions).is_ok());
@@ -167,11 +180,16 @@ fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
 #[devkit::test]
 fn unrepresentable_time_ranges_are_errors_without_panicking() {
     for text in [
-        "events since 99999999999999999999999999999d",
+        "events where since:99999999999999999999999999999d",
         "recall 9999-12-30T12:00:00Z ±999999999d",
         "events where when in last -9223372036854775808 days",
     ] {
-        assert!(bind(text, &ctx()).is_err(), "{text}");
+        assert!(
+            native::parse(text, &ctx())
+                .and_then(|template| template.bind(&ctx()))
+                .is_err(),
+            "{text}"
+        );
     }
 }
 
@@ -185,15 +203,20 @@ fn each_boolean_branch_uses_its_selected_event_schema() {
 #[devkit::test]
 fn event_type_globs_select_the_schemas_used_for_payload_fields() {
     assert!(
+        err("events where event_type = metric.* AND payload.value > 0")
+            .message
+            .contains("payload.value")
+    );
+    assert!(
         bind(
-            "events where event_type = metric.* AND payload.value > 0",
+            r#"events where glob(event_type, "metric.*") = true AND payload.value > 0"#,
             &ctx()
         )
         .is_ok()
     );
     assert!(
         bind(
-            "events where event_type = [metric.*, health.figure] sum(payload.numerator)",
+            r#"events where (glob(event_type, "metric.*") = true OR event_type = health.figure) | agg sum(payload.numerator)"#,
             &ctx()
         )
         .is_ok()
@@ -202,7 +225,7 @@ fn event_type_globs_select_the_schemas_used_for_payload_fields() {
 
 #[devkit::test]
 fn recall_last_payload_conditions_use_the_session_schema() {
-    let query = q("recall last where payload.host = synthetic");
+    let query = native_q("recall last where payload.host = synthetic");
     assert!(matches!(
         query.source,
         Source::RecallLast {
@@ -216,7 +239,7 @@ fn recall_last_payload_conditions_use_the_session_schema() {
         }
     ));
     assert!(
-        err("recall last where payload.command = synthetic")
+        native_err("recall last where payload.command = synthetic")
             .message
             .contains("not declared")
     );
@@ -227,7 +250,7 @@ fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
     for condition in [
         "payload.cwds ~ tide",
         "payload.cwds ^ /src",
-        "payload.cwds = [/src/tide, /src/other]",
+        "payload.cwds = (/src/tide |/src/other)",
         "payload.cwds != /src/tide",
     ] {
         assert!(
@@ -251,8 +274,8 @@ fn text_list_fields_compare_members_without_treating_the_array_as_json_text() {
 #[devkit::test]
 fn min_and_max_refuse_payload_values_without_an_ordered_scalar_aggregate() {
     for query in [
-        "events where event_type = shell.session min(payload.cwds)",
-        "events where event_type = shell.session max(payload.cwds)",
+        "events where event_type = shell.session | agg min(payload.cwds)",
+        "events where event_type = shell.session | agg max(payload.cwds)",
     ] {
         assert!(err(query).message.contains("ordered scalar"));
     }
@@ -260,14 +283,16 @@ fn min_and_max_refuse_payload_values_without_an_ordered_scalar_aggregate() {
 
 #[devkit::test]
 fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
-    let saved = SavedQuery {
-        name: "bad".into(),
-        query: "events where source = $source AND when < not-a-time".into(),
-        parameters: vec![Parameter {
+    let saved = SavedQuery::from_text(
+        "bad".into(),
+        "events where source = $source AND when < not-a-time".into(),
+        vec![Parameter {
             name: "source".into(),
             field_type: ParameterType::Text,
         }],
-    };
+        &ctx(),
+    )
+    .unwrap();
     let definitions = BTreeMap::from([("bad".into(), saved)]);
     let invocation = format!("query:bad(source=\"{}\")", "界".repeat(40));
     let error = bind_saved(&invocation, &ctx(), &definitions).unwrap_err();
@@ -283,8 +308,8 @@ fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
 
 #[devkit::test]
 fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
-    let query = q(
-        "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z AND when < 2026-09-15T04:00:00Z group by day(when) count fill",
+    let query = native_q(
+        "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z AND when < 2026-09-15T04:00:00Z | group by day(when) | count | fill",
     );
     let Stage::Group(group) = query.stages.last().unwrap() else {
         panic!()
@@ -293,7 +318,7 @@ fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
     assert_eq!(fill.from, ts("2026-09-14T04:00:00Z"));
     assert_eq!(fill.to, ts("2026-09-15T04:00:00Z"));
     assert!(
-        err("recall yesterday group by day(seen) count fill")
+        native_err("recall yesterday | group by day(seen) | count | fill")
             .message
             .contains("lower time bound")
     );
@@ -321,27 +346,31 @@ fn saved_query_names_use_the_same_tokens_as_the_query_parser() {
 fn saved_definitions_check_fields_and_stages_before_arguments_are_supplied() {
     for query in [
         "events where nonexistent = $value",
-        "events where source = $value fields nonexistent",
-        "events where source = $value sort nonexistent",
-        "events where source = $value group by nonexistent count",
+        "events where source = $value | fields nonexistent",
+        "events where source = $value | sort by nonexistent",
+        "events where source = $value | group by nonexistent | count",
         "events where event_type = command.executed AND payload.nonexistent = $value",
         "events where event_type = command.executed AND payload.exit_code = $value",
-        "events where source = $value group by source count where nonexistent > 0",
+        "events where source = $value | group by source | count | where nonexistent > 0",
     ] {
-        let saved = SavedQuery {
-            name: "invalid".into(),
-            query: query.into(),
-            parameters: vec![Parameter {
+        let saved = SavedQuery::from_text(
+            "invalid".into(),
+            query.into(),
+            vec![Parameter {
                 name: "value".into(),
                 field_type: ParameterType::Text,
             }],
-        };
-        assert!(saved.validate(&ctx()).is_err(), "{query}");
+            &ctx(),
+        );
+        assert!(
+            saved.and_then(|saved| saved.validate(&ctx())).is_err(),
+            "{query}"
+        );
     }
-    let saved = SavedQuery {
-        name: "between".into(),
-        query: "events where when >= $start AND when < $end".into(),
-        parameters: vec![
+    let saved = SavedQuery::from_text(
+        "between".into(),
+        "events where when >= $start AND when < $end".into(),
+        vec![
             Parameter {
                 name: "start".into(),
                 field_type: ParameterType::Time,
@@ -351,20 +380,24 @@ fn saved_definitions_check_fields_and_stages_before_arguments_are_supplied() {
                 field_type: ParameterType::Time,
             },
         ],
-    };
+        &ctx(),
+    )
+    .unwrap();
     saved.validate(&ctx()).unwrap();
 }
 
 #[devkit::test]
 fn saved_queries_can_invoke_an_author_qualified_definition() {
-    let saved = SavedQuery {
-        name: "shared".into(),
-        query: "events where source = $source count".into(),
-        parameters: vec![Parameter {
+    let saved = SavedQuery::from_text(
+        "shared".into(),
+        "events where source = $source | count".into(),
+        vec![Parameter {
             name: "source".into(),
             field_type: ParameterType::Text,
         }],
-    };
+        &ctx(),
+    )
+    .unwrap();
     let definitions = BTreeMap::from([("shared@operator".into(), saved)]);
     assert!(
         bind_saved(
@@ -374,14 +407,16 @@ fn saved_queries_can_invoke_an_author_qualified_definition() {
         )
         .is_ok()
     );
-    let indirect = SavedQuery {
-        name: "indirect".into(),
-        query: "query:shared@operator(source=$source) fields nonexistent".into(),
-        parameters: vec![Parameter {
+    let indirect = SavedQuery::from_text(
+        "indirect".into(),
+        "query:shared@operator(source=$source) | fields nonexistent".into(),
+        vec![Parameter {
             name: "source".into(),
             field_type: ParameterType::Text,
         }],
-    };
+        &ctx(),
+    )
+    .unwrap();
     assert!(indirect.validate_with(&ctx(), &definitions).is_err());
     assert_eq!(
         crate::query::saved::reference_name("query:shared@operator"),
@@ -410,25 +445,27 @@ fn saved_text_parameters_validate_in_constrained_scalar_positions() {
         "events where weekday(when) = $value",
         "events where month(when) = $value",
         "events where month_day(when) = $value",
-        "events where event_type = $value fields payload.command",
+        "events where event_type = $value | fields payload.command",
         "events where event_type = metric.figure AND payload.grain = $value",
     ] {
-        let saved = SavedQuery {
-            name: "constrained".into(),
-            query: query.into(),
-            parameters: vec![Parameter {
+        let saved = SavedQuery::from_text(
+            "constrained".into(),
+            query.into(),
+            vec![Parameter {
                 name: "value".into(),
                 field_type: ParameterType::Text,
             }],
-        };
+            &ctx(),
+        )
+        .unwrap();
         saved
             .validate(&ctx())
             .unwrap_or_else(|error| panic!("{query}: {error}"));
     }
-    let saved = SavedQuery {
-        name: "overlap".into(),
-        query: "events where overlaps $start .. $end".into(),
-        parameters: vec![
+    let saved = SavedQuery::from_text(
+        "overlap".into(),
+        "events where overlaps $start .. $end".into(),
+        vec![
             Parameter {
                 name: "start".into(),
                 field_type: ParameterType::Time,
@@ -438,55 +475,68 @@ fn saved_text_parameters_validate_in_constrained_scalar_positions() {
                 field_type: ParameterType::Time,
             },
         ],
-    };
+        &ctx(),
+    )
+    .unwrap();
     saved.validate(&ctx()).unwrap();
-    let saved = SavedQuery {
-        name: "position".into(),
-        query: "events as of seq $position".into(),
-        parameters: vec![Parameter {
+    let saved = SavedQuery::from_text(
+        "position".into(),
+        "events | as of seq $position".into(),
+        vec![Parameter {
             name: "position".into(),
             field_type: ParameterType::Integer,
         }],
-    };
+        &ctx(),
+    )
+    .unwrap();
     saved.validate(&ctx()).unwrap();
 }
 
 #[devkit::test]
 fn saved_literal_arguments_are_checked_without_placeholder_values() {
-    let base = SavedQuery {
-        name: "base".into(),
-        query: "events where class = $value".into(),
-        parameters: vec![Parameter {
+    let base = SavedQuery::from_text(
+        "base".into(),
+        "events where class = $value".into(),
+        vec![Parameter {
             name: "value".into(),
             field_type: ParameterType::Text,
         }],
-    };
+        &ctx(),
+    )
+    .unwrap();
     let definitions = BTreeMap::from([("base".into(), base)]);
-    let mut saved = SavedQuery {
-        name: "literal".into(),
-        query: "query:base(value=unknown)".into(),
-        parameters: vec![],
-    };
+    let mut saved = SavedQuery::from_text(
+        "literal".into(),
+        "query:base(value=unknown)".into(),
+        vec![],
+        &ctx(),
+    )
+    .unwrap();
     assert!(saved.validate_with(&ctx(), &definitions).is_err());
     saved.query = "query:base(value=guarded)".into();
+    saved.template = native::parse(&saved.query, &ctx()).unwrap().into();
     saved.validate_with(&ctx(), &definitions).unwrap();
 }
 
 #[devkit::test]
 fn nested_parameters_take_examples_from_the_field_that_uses_them() {
-    let base = SavedQuery {
-        name: "base".into(),
-        query: "commands where cwd ^ $class".into(),
-        parameters: vec![Parameter {
+    let base = SavedQuery::from_text(
+        "base".into(),
+        "commands where cwd ^ $class".into(),
+        vec![Parameter {
             name: "class".into(),
             field_type: ParameterType::Text,
         }],
-    };
-    let saved = SavedQuery {
-        name: "nested".into(),
-        query: "query:base(class=$class)".into(),
-        parameters: base.parameters.clone(),
-    };
+        &ctx(),
+    )
+    .unwrap();
+    let saved = SavedQuery::from_text(
+        "nested".into(),
+        "query:base(class=$class)".into(),
+        base.parameters.clone(),
+        &ctx(),
+    )
+    .unwrap();
     saved
         .validate_with(&ctx(), &BTreeMap::from([("base".into(), base)]))
         .unwrap();
@@ -497,17 +547,19 @@ fn event_type_parameters_use_fields_from_their_own_question() {
     for query in [
         r#"events where event_type = $kind AND payload.command ~ "payload.absent""#,
         "events where event_type = $kind AND payload.command ~ payload.absent",
-        "events where event_type = $kind AND payload.command exists near (events where event_type = state.interval AND payload.subject_id exists) within 1h",
-        "events where event_type = command.executed AND payload.command exists near (events where event_type = $kind AND payload.subject_id exists) within 1h",
+        "events where event_type = $kind AND payload.command:known | join near (events where event_type = state.interval AND payload.subject_id:known) within 1h",
+        "events where event_type = command.executed AND payload.command:known | join near (events where event_type = $kind AND payload.subject_id:known) within 1h",
     ] {
-        let saved = SavedQuery {
-            name: "by-kind".into(),
-            query: query.into(),
-            parameters: vec![Parameter {
+        let saved = SavedQuery::from_text(
+            "by-kind".into(),
+            query.into(),
+            vec![Parameter {
                 name: "kind".into(),
                 field_type: ParameterType::Text,
             }],
-        };
+            &ctx(),
+        )
+        .unwrap();
         saved
             .validate(&ctx())
             .unwrap_or_else(|error| panic!("{query}: {error}"));
@@ -528,14 +580,16 @@ fn typed_saved_arguments_keep_their_type_when_quoted() {
             "true",
         ),
     ] {
-        let saved = SavedQuery {
-            name: "typed".into(),
-            query: query.into(),
-            parameters: vec![Parameter {
+        let saved = SavedQuery::from_text(
+            "typed".into(),
+            query.into(),
+            vec![Parameter {
                 name: "value".into(),
                 field_type: declaration,
             }],
-        };
+            &ctx(),
+        )
+        .unwrap();
         let definitions = BTreeMap::from([("typed".into(), saved)]);
         let invocation = format!("query:typed(value=\"{value}\")");
         bind_saved(&invocation, &ctx(), &definitions)
@@ -545,21 +599,29 @@ fn typed_saved_arguments_keep_their_type_when_quoted() {
 
 #[devkit::test]
 fn event_type_parameters_check_each_invocation_and_require_one_coherent_schema() {
-    let saved = SavedQuery {
-        name: "by-kind".into(),
-        query: "events where event_type = $kind AND payload.command ~ synthetic".into(),
-        parameters: vec![Parameter {
+    let saved = SavedQuery::from_text(
+        "by-kind".into(),
+        "events where event_type = $kind AND payload.command ~ synthetic".into(),
+        vec![Parameter {
             name: "kind".into(),
             field_type: ParameterType::Text,
         }],
-    };
+        &ctx(),
+    )
+    .unwrap();
     saved.validate(&ctx()).unwrap();
     let definitions = BTreeMap::from([("by-kind".into(), saved.clone())]);
     assert!(bind_saved("query:by-kind(kind=command.executed)", &ctx(), &definitions).is_ok());
     assert!(bind_saved("query:by-kind(kind=window.focused)", &ctx(), &definitions).is_err());
-    let invalid = SavedQuery {
-        query: "events where event_type = $kind AND payload.never_declared exists".into(),
-        ..saved
-    };
-    assert!(invalid.validate(&ctx()).is_err());
+    let invalid = SavedQuery::from_text(
+        saved.name.clone(),
+        "events where event_type = $kind AND payload.never_declared:known".into(),
+        saved.parameters.clone(),
+        &ctx(),
+    );
+    assert!(
+        invalid
+            .and_then(|invalid| invalid.validate(&ctx()))
+            .is_err()
+    );
 }

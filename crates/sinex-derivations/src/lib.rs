@@ -291,6 +291,7 @@ pub trait Keyed: Send + Sync {
         &self,
         _: &Value,
         _: &[Event],
+        _: Option<&sinex_model::event_types::analysis::AnalysisRequest>,
         _: &Env,
     ) -> Option<sinex_model::event_types::analysis::QuerySelection> {
         None
@@ -392,6 +393,7 @@ pub trait AnyKeyed: Send + Sync {
         &self,
         _: &Value,
         _: &[Event],
+        _: Option<&sinex_model::event_types::analysis::AnalysisRequest>,
         _: &Env,
     ) -> Option<sinex_model::event_types::analysis::QuerySelection> {
         None
@@ -460,9 +462,10 @@ impl<K: Keyed> AnyKeyed for K {
         &self,
         key: &Value,
         inputs: &[Event],
+        request: Option<&sinex_model::event_types::analysis::AnalysisRequest>,
         env: &Env,
     ) -> Option<sinex_model::event_types::analysis::QuerySelection> {
-        Keyed::selected_query(self, key, inputs, env)
+        Keyed::selected_query(self, key, inputs, request, env)
     }
     fn exact_inputs(&self, key: &Value, env: &Env) -> Option<Vec<EventId>> {
         Keyed::exact_inputs(self, key, env)

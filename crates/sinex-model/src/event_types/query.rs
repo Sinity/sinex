@@ -36,12 +36,14 @@ pub struct Mark {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[serde(deny_unknown_fields)]
-#[event(version = 2, type = "query.saved", key = ["name", "by"], replace = newer, time = written_at, quality = intrinsic)]
+#[event(version = 3, type = "query.saved", key = ["name", "by"], replace = newer, time = written_at, quality = intrinsic)]
 pub struct Saved {
     #[event(class = guarded)]
     pub name: String,
     #[event(class = guarded)]
     pub query: String,
+    #[event(class = guarded)]
+    pub template: crate::query::saved::Definition,
     #[event(class = guarded)]
     pub parameters: Vec<Parameter>,
     #[event(class = guarded)]

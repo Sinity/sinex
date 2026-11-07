@@ -6,6 +6,9 @@ use sinex_model::{Class, EventId};
 /// Presentation pages never restrict these inputs.
 #[derive(Clone, Debug)]
 pub struct SelectedInputs {
+    /// Source-owned request projection checked by the asynchronous caller.
+    /// Its original input event remains unchanged beside this typed product.
+    pub request: Option<sinex_model::event_types::analysis::AnalysisRequest>,
     pub value: Value,
     pub parents: Vec<EventId>,
     pub class: Class,

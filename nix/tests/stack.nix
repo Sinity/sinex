@@ -29,6 +29,8 @@ self: {
       enable = true;
       database.sharedBuffers = "128MB";
       nats.daemonPasswordFile = "/etc/sinex-test/nats-daemon";
+      # The login-shell agent may stage this synthetic export, not its siblings.
+      stagingRoots = [ "/etc/sinex-test/library_export.csv" ];
       nats.producers.session-machine = {
         passwordFile = "/etc/sinex-test/nats-session";
         writeFamily = "sinex";
@@ -126,6 +128,10 @@ self: {
 
     with subtest("the operator's login shell reaches the daemon"):
         machine.succeed("su - alice -c 'sinexctl status'")
+
+    with subtest("the staging grant does not include neighboring fixture files"):
+        refusal = machine.fail("su - alice -c 'sinexctl stage --parser goodreads --follow /etc/sinex-test/nats-session' 2>&1")
+        assert "outside the places an agent may stage from" in refusal, refusal
 
     with subtest("an export staged through the running daemon is read without stopping it"):
         machine.succeed("su - alice -c 'sinexctl stage --parser goodreads --follow /etc/sinex-test/library_export.csv'")

@@ -6,6 +6,13 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
     let at = Timestamp::from_unix_secs(1_000).unwrap();
     let selection = QuerySelection {
         query: "recall last".into(),
+        definitions: Default::default(),
+        original_question: None,
+        template: sinex_model::query::native::parse(
+            "recall last",
+            &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+        )
+        .unwrap(),
         now: at,
         read_as: None,
         zone: "UTC".into(),
@@ -52,6 +59,7 @@ fn recall_pack_keeps_complete_selected_rows_and_exact_parents() {
     let rows:Vec<Value> = parents.iter().enumerate().map(|(index,parent)| json!({"id":parent,"event_type":"command.executed","source":"synthetic.shell","when":at,"payload":{"command":format!("synthetic command {index}")}})).collect();
     let answer = json!({"rows":rows,"total":10_001,"resolved":{"commit_seq":42},"recall":{"from":at,"to":at}});
     let selected = SelectedInputs {
+        request: None,
         value: answer.clone(),
         parents,
         class: Class::Guarded,
@@ -105,6 +113,13 @@ async fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitt
         requested_at: at,
         selection: Some(QuerySelection {
             query: "recall last".into(),
+            definitions: Default::default(),
+            original_question: None,
+            template: sinex_model::query::native::parse(
+                "recall last",
+                &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            )
+            .unwrap(),
             now: at,
             read_as: None,
             zone: "Etc/UTC".into(),
@@ -169,18 +184,20 @@ async fn recall_keys_keep_only_the_existing_request_identity_and_read_the_admitt
     assert_eq!(keys, vec![json!({"request":request.request})]);
     assert_eq!(keys[0].as_object().unwrap().len(), 1);
     let selected = RecallProducts
-        .selected_query(&keys[0], std::slice::from_ref(&input), &env)
+        .selected_query(&keys[0], std::slice::from_ref(&input), None, &env)
         .unwrap();
     assert_eq!(Some(selected), request.selection);
     assert!(
-        RecallProducts.selected_query(&keys[0], &[], &env).is_none(),
+        RecallProducts
+            .selected_query(&keys[0], &[], None, &env)
+            .is_none(),
         "the key never substitutes for admitted request evidence"
     );
     let mut wrong = input.clone();
     wrong.payload["request"] = json!("different request");
     assert!(
         RecallProducts
-            .selected_query(&keys[0], &[wrong], &env)
+            .selected_query(&keys[0], &[wrong], None, &env)
             .is_none()
     );
 }
@@ -205,6 +222,13 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
         requested_at: at,
         selection: Some(QuerySelection {
             query: "recall last".into(),
+            definitions: Default::default(),
+            original_question: None,
+            template: sinex_model::query::native::parse(
+                "recall last",
+                &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            )
+            .unwrap(),
             now: at,
             read_as: None,
             zone: "Etc/UTC".into(),
@@ -231,12 +255,12 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
     )
     .unwrap();
     let canonical_key = key(&request.request);
-    assert!(request_input(&canonical_key, std::slice::from_ref(&input)).is_ok());
+    assert!(request_input(&canonical_key, std::slice::from_ref(&input), None).is_ok());
 
     let mut forged = input.clone();
     forged.payload["request"] = json!("forged");
     assert!(
-        request_input(&key("forged"), std::slice::from_ref(&forged))
+        request_input(&key("forged"), std::slice::from_ref(&forged), None)
             .unwrap_err()
             .contains("identity")
     );
@@ -258,7 +282,7 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
         let mut changed = input.clone();
         *changed.payload.pointer_mut(pointer).unwrap() = value;
         assert!(
-            request_input(&canonical_key, &[changed])
+            request_input(&canonical_key, &[changed], None)
                 .unwrap_err()
                 .contains("identity"),
             "{pointer}"
@@ -268,7 +292,7 @@ fn recall_refuses_forged_identity_or_changed_canonical_selector_fields() {
     let mut refreshed = input;
     refreshed.payload["selection"]["selected"]["_fingerprint"] = json!("second");
     assert!(
-        request_input(&canonical_key, &[refreshed]).is_ok(),
+        request_input(&canonical_key, &[refreshed], None).is_ok(),
         "the fingerprint changes evidence, not selector identity"
     );
 }

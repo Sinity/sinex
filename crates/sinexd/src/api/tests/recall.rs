@@ -96,7 +96,7 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     let (_, listed) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"shell-sessions sort start"}),
+        json!({"method":"query","query":"shell-sessions | sort by start"}),
     )
     .await;
     assert_eq!(listed["outcome"], "ok", "{listed}");
@@ -145,11 +145,11 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     let (_, during) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"commands during (shell-sessions where cwds ^ /src/tide)"}),
+        json!({"method":"query","query":"commands where during (shell-sessions where cwds ^ /src/tide) at match.when"}),
     )
     .await;
     assert_eq!(during["result"]["total"], 3, "{during}");
-    let (_, containing) = call(&w,Some(READ),json!({"method":"query","query":"shell-sessions containing (commands where cwd = /src/tide/tools)"})).await;
+    let (_, containing) = call(&w,Some(READ),json!({"method":"query","query":"shell-sessions where containing (commands where cwd = /src/tide/tools) at match.when"})).await;
     assert_eq!(containing["result"]["total"], 1, "{containing}");
 }
 
@@ -302,7 +302,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
     let (_, counted) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"recall last count"}),
+        json!({"method":"query","query":"recall last | count"}),
     )
     .await;
     assert_eq!(counted["result"]["total"], 1, "{counted}");
@@ -440,7 +440,7 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
     let (_, changed) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"query-save","name":"remember-tide","query":"events fields id"}),
+        json!({"method":"query-save","name":"remember-tide","query":"events | fields id"}),
     )
     .await;
     assert_eq!(changed["outcome"], "ok", "{changed}");
@@ -571,7 +571,13 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
     for (index, class) in [Class::Open, Class::Guarded].into_iter().enumerate() {
         let definition = sinex_model::event_types::query::Saved {
             name: format!("synthetic-definition-{index}"),
-            query: "events fields id".into(),
+            query: "events | fields id".into(),
+            template: sinex_model::query::native::parse(
+                "events | fields id",
+                &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            )
+            .unwrap()
+            .into(),
             parameters: vec![],
             by: "synthetic".into(),
             written_at: Timestamp::from_unix_secs(1_789_372_800 + 120 + index as i64).unwrap(),
@@ -622,7 +628,7 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
     assert!(
         ordinary
             .iter()
-            .any(|row| row["payload"]["query"] == "events fields id")
+            .any(|row| row["payload"]["query"] == "events | fields id")
     );
     let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","until":"2026-09-14T09:00:00Z","page":1});
     let (_, public) = call(&w, Some(READ), request.clone()).await;
@@ -736,7 +742,7 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
     let (_, historical) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":format!("recall last as of seq {before}"),"page":1}),
+        json!({"method":"query","query":format!("recall last | as of seq {before}"),"page":1}),
     )
     .await;
     assert_eq!(historical["outcome"], "ok", "{historical}");
@@ -762,7 +768,7 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
         packs
     );
     let cursor = historical["result"]["page"]["cursor"].as_str().unwrap();
-    let (_,next) = call(&w,Some(READ),json!({"method":"query","query":format!("recall last as of seq {before}"),"page":1,"cursor":cursor})).await;
+    let (_,next) = call(&w,Some(READ),json!({"method":"query","query":format!("recall last | as of seq {before}"),"page":1,"cursor":cursor})).await;
     assert_eq!(next["outcome"], "ok", "{next}");
     assert_eq!(next["result"]["resolved"], historical["result"]["resolved"]);
     let (_, current) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;

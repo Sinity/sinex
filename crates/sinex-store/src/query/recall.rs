@@ -198,10 +198,7 @@ async fn latest(
     };
     let (text, values) = {
         let compiled = super::compile_query(conn, ctx, seq, &selector).await?;
-        let mut rows = SqlFragment::text(format!(
-            "SELECT {} FROM (",
-            super::json_object(&compiled.columns)
-        ));
+        let mut rows = SqlFragment::text(format!("SELECT {} FROM (", compiled.json_object()));
         rows.append(compiled.answer).push(") q");
         rows.render()
     };
@@ -271,19 +268,16 @@ async fn mark_links(
         if let Some(cwd) = mark["payload"]["cwd"].as_str() {
             text.push_str(&format!(" AND cwd = {}", quote(cwd)));
         }
-        text.push_str(" sort when desc limit 1");
+        text.push_str(" | sort by when desc | limit 1");
         questions.push(("command", text));
     }
     let mut links = serde_json::Map::new();
     for (name, text) in questions {
-        let text = format!("{text} fields id,event_type,source,key,material,offset,output");
+        let text = format!("{text} | fields id,event_type,source,key,material,offset,output");
         let query = sinex_model::query::bind(&text, &ctx).map_err(|e| Error::Invalid(e.message))?;
         let (text, values) = {
             let compiled = super::compile_query(conn, &ctx, seq, &query).await?;
-            let mut sql = SqlFragment::text(format!(
-                "SELECT {} FROM (",
-                super::json_object(&compiled.columns)
-            ));
+            let mut sql = SqlFragment::text(format!("SELECT {} FROM (", compiled.json_object()));
             sql.append(compiled.answer).push(") q");
             sql.render()
         };

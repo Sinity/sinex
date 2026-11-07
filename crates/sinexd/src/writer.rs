@@ -80,6 +80,16 @@ enum WriterJob {
         refusals: Vec<Value>,
     },
     Stage(StageWrite),
+    BackupHold {
+        operation: OperationId,
+        actor: String,
+        snapshot: bool,
+    },
+    BackupRelease {
+        hold: OperationId,
+        operation: OperationId,
+        actor: String,
+    },
 }
 
 /// A staged binding's accounting once a batch commits, short of admission's
@@ -131,6 +141,10 @@ enum Done {
     Admitted(Outcome),
     Replayed(Vec<Outcome>, Diff),
     Lifecycle(Step),
+    Backup(
+        sinex_model::backup::Hold,
+        Option<Box<sinex_store::backup::Snapshot>>,
+    ),
 }
 
 struct Job {
@@ -142,6 +156,7 @@ struct Job {
 /// Where producers hand batches to the writer.
 #[derive(Clone)]
 pub(crate) struct WriterHandle {
+    source_publication: sinex_transport::backup::Publication,
     derivations: Arc<tokio::sync::Mutex<()>>,
     signals: Arc<tokio::sync::Mutex<()>>,
     curation: Arc<tokio::sync::Mutex<()>>,
@@ -155,6 +170,10 @@ pub(crate) struct WriterHandle {
 pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 impl WriterHandle {
+    pub(crate) fn source_publication(&self) -> sinex_transport::backup::Publication {
+        self.source_publication.clone()
+    }
+
     pub(crate) async fn lock_signals(&self) -> tokio::sync::OwnedMutexGuard<()> {
         self.signals.clone().lock_owned().await
     }
@@ -292,6 +311,67 @@ impl WriterHandle {
         Ok(())
     }
 
+    pub(crate) async fn backup_hold(
+        &self,
+        actor: &str,
+    ) -> Result<sinex_model::backup::Hold, WriteError> {
+        match self
+            .send(
+                Priority::Derived,
+                WriterJob::BackupHold {
+                    operation: OperationId::new(),
+                    actor: actor.into(),
+                    snapshot: false,
+                },
+            )
+            .await?
+        {
+            Done::Backup(hold, _) => Ok(hold),
+            _ => unreachable!("a backup hold returns its boundary"),
+        }
+    }
+
+    pub(crate) async fn backup_snapshot(
+        &self,
+        actor: &str,
+    ) -> Result<sinex_store::backup::Snapshot, WriteError> {
+        match self
+            .send(
+                Priority::Derived,
+                WriterJob::BackupHold {
+                    operation: OperationId::new(),
+                    actor: actor.into(),
+                    snapshot: true,
+                },
+            )
+            .await?
+        {
+            Done::Backup(_, Some(snapshot)) => Ok(*snapshot),
+            _ => unreachable!("a backup preparation returns its exported snapshot"),
+        }
+    }
+
+    pub(crate) async fn backup_release(
+        &self,
+        hold: OperationId,
+        actor: &str,
+    ) -> Result<sinex_model::backup::Hold, WriteError> {
+        match self
+            .send(
+                Priority::Derived,
+                WriterJob::BackupRelease {
+                    hold,
+                    operation: OperationId::new(),
+                    actor: actor.into(),
+                },
+            )
+            .await?
+        {
+            Done::Backup(hold, _) => Ok(hold),
+            _ => unreachable!("a backup release returns its retained boundary"),
+        }
+    }
+
     /// Run one batch of a lifecycle operation in its own transaction.
     pub(crate) async fn lifecycle_step(
         &self,
@@ -369,6 +449,7 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
     let (bulk, bulk_rx) = mpsc::channel(DEPTH);
     (
         WriterHandle {
+            source_publication: Default::default(),
             derivations: Arc::new(tokio::sync::Mutex::new(())),
             signals: Arc::new(tokio::sync::Mutex::new(())),
             curation: Arc::new(tokio::sync::Mutex::new(())),
@@ -431,6 +512,7 @@ pub(crate) async fn run_notifying(
 ) {
     connection = connection.with_blobs(store.clone());
     let store = store.as_ref();
+    let mut released_punches = false;
     loop {
         let job = tokio::select! {
             biased;
@@ -439,6 +521,19 @@ pub(crate) async fn run_notifying(
             Some(job) = queues.bulk.recv() => job,
             else => return,
         };
+        // Release dirties deferred physical work. The next ordinary writer group
+        // attempts it; no reopen, timer, or second owner is needed.
+        if released_punches && let Some(store) = store {
+            if let Err(error) = lifecycle::remove_unreferenced(&mut connection, store).await {
+                tracing_punch_error(&error);
+            }
+            if let Err(error) =
+                sinex_store::blobs::finish_deleting_extents(&mut connection, store).await
+            {
+                tracing_punch_error(&error);
+            }
+            released_punches = false;
+        }
         let queue_time = job.queued_at.elapsed();
         let offered = match &job.work {
             WriterJob::Admit(batch)
@@ -534,6 +629,25 @@ pub(crate) async fn run_notifying(
             } => lifecycle_end(&mut connection, operation, &refusals)
                 .await
                 .map(Done::Admitted),
+            WriterJob::BackupHold {
+                operation,
+                actor,
+                snapshot,
+            } => backup_hold(&mut connection, &url, operation, &actor, snapshot).await,
+            WriterJob::BackupRelease {
+                hold,
+                operation,
+                actor,
+            } => {
+                let result = sinex_store::backup::release(&mut connection, hold, operation, &actor)
+                    .await
+                    .map(|hold| Done::Backup(hold, None))
+                    .map_err(store_error);
+                if result.is_ok() {
+                    released_punches = true;
+                }
+                result
+            }
             WriterJob::Stage(write) => stage_write(&mut connection, write)
                 .await
                 .map(Done::Admitted),
@@ -1153,3 +1267,40 @@ async fn lifecycle_end(
 
 #[cfg(test)]
 mod tests;
+
+// A failed punch remains marked in PostgreSQL and ordinary reopen retries it.
+fn tracing_punch_error(error: &sinex_store::Error) {
+    eprintln!("deferred backup punch: {error}");
+}
+
+async fn backup_hold(
+    connection: &mut AdmissionContext,
+    url: &str,
+    operation: OperationId,
+    actor: &str,
+    snapshot: bool,
+) -> Result<Done, WriteError> {
+    let (hold, created) = sinex_store::backup::hold(connection, operation, actor)
+        .await
+        .map_err(store_error)?;
+    let snapshot = if snapshot {
+        if !created {
+            return Err(WriteError::Refused(
+                "a fresh exported snapshot needs a fresh backup operation".into(),
+            ));
+        }
+        // This is still one writer job. No admission can advance the cut until
+        // pg_export_snapshot has taken its first consistent read after the hold commit.
+        let exporter = PgConnection::connect(url)
+            .await
+            .map_err(|error| WriteError::Unavailable(error.to_string()))?;
+        Some(Box::new(
+            sinex_store::backup::Snapshot::export(exporter, hold.clone(), url.to_owned())
+                .await
+                .map_err(store_error)?,
+        ))
+    } else {
+        None
+    };
+    Ok(Done::Backup(hold, snapshot))
+}

@@ -56,10 +56,17 @@ impl Blobs {
             sqlx::query_scalar!("SELECT descriptor FROM core.blob_extents WHERE deleting")
                 .fetch_all(&mut *conn)
                 .await?;
-        let punches = descriptors
-            .iter()
-            .map(|bytes| Extent::decode(bytes))
-            .collect::<hashed_blobs::Result<Vec<_>>>()?;
+        let prefixes = crate::backup::open_prefixes(conn).await?;
+        let mut punches = Vec::new();
+        for descriptor in &descriptors {
+            let extent = Extent::decode(descriptor)?;
+            if prefixes
+                .get(&extent.segment)
+                .is_none_or(|end| extent.offset >= *end)
+            {
+                punches.push(extent);
+            }
+        }
         {
             let mut state = self.state()?;
             if state.writer.is_none() {
@@ -73,9 +80,16 @@ impl Blobs {
             }
         }
         if !punches.is_empty() {
-            sqlx::query!("DELETE FROM core.blob_extents WHERE deleting")
-                .execute(conn)
-                .await?;
+            let hashes: Vec<String> = punches
+                .iter()
+                .map(|extent| extent.hash.to_string())
+                .collect();
+            sqlx::query!(
+                "DELETE FROM core.blob_extents WHERE deleting AND hash=ANY($1)",
+                &hashes
+            )
+            .execute(conn)
+            .await?;
         }
         Ok(())
     }
@@ -132,7 +146,6 @@ pub async fn delete_unreferenced_extents(
     conn: &mut sqlx::PgConnection,
     blobs: &Blobs,
 ) -> Result<Vec<String>> {
-    let mut found = Vec::new();
     // A fresh in-process store may already hold preparations made by a test or import.
     let receipt = {
         let mut tx = conn.begin().await?;
@@ -150,8 +163,20 @@ pub async fn delete_unreferenced_extents(
         .execute(&mut *conn)
         .await?;
     }
+    finish_deleting_extents(conn, blobs).await
+}
+
+/// Only previously marked orphan extents are eligible; do not flush or inspect new preparations.
+pub async fn finish_deleting_extents(
+    conn: &mut sqlx::PgConnection,
+    blobs: &Blobs,
+) -> Result<Vec<String>> {
+    let mut found = Vec::new();
+    let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE x.deleting AND NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash) ORDER BY x.hash").fetch_all(&mut *conn).await?;
     for name in names {
-        blobs.delete(&name)?;
+        if !blobs.delete(conn, &name).await? {
+            continue;
+        }
         sqlx::query!(
             "DELETE FROM core.blob_extents WHERE hash=$1 AND deleting",
             name

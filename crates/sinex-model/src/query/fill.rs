@@ -56,7 +56,7 @@ pub(super) fn bind(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                         .keys
                         .iter()
                         .filter_map(|k| {
-                            if let Operand::TimeFn(func, field) = k {
+                            if let Operand::TimeFn(func, field) = k.unnamed() {
                                 Some((*func, field))
                             } else {
                                 None

@@ -2,13 +2,13 @@ use super::*;
 
 #[devkit::test]
 fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
-    let query = q("shell-sessions where cwds ^ /src/tide sort start desc");
+    let query = q("shell-sessions where cwds ^ /src/tide | sort by start desc");
     assert_eq!(query.source.alias().unwrap().kinds, &["shell.session"]);
     assert!(matches!(
-        q("recall last").source,
+        native_q("recall last").source,
         Source::RecallLast { filter: None }
     ));
-    let query = q(r#"recall last where cwds ^ "/src/tide (notes)""#);
+    let query = native_q(r#"recall last where cwds ^ "/src/tide (notes)""#);
     assert!(matches!(
         query.source,
         Source::RecallLast { filter: Some(_) }
@@ -31,7 +31,7 @@ fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
     );
     assert!(q("shell-sessions where cwds != /src/tide").filter.is_some());
     assert!(matches!(
-        q("recall mark").source,
+        native_q("recall mark").source,
         Source::RecallMark { number: 1, .. }
     ));
 }

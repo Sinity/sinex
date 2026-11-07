@@ -57,8 +57,14 @@ impl AnyKeyed for RecallProducts {
             equal: vec![("request".into(), key.get("request")?.clone())],
         }]))
     }
-    fn selected_query(&self, key: &Value, inputs: &[Event], _: &Env) -> Option<QuerySelection> {
-        request_input(key, inputs).ok()?.1.selection
+    fn selected_query(
+        &self,
+        key: &Value,
+        inputs: &[Event],
+        request: Option<&AnalysisRequest>,
+        _: &Env,
+    ) -> Option<QuerySelection> {
+        request_input(key, inputs, request).ok()?.1.selection
     }
     fn nearby_inputs(&self, input: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
         (input.event_type != "analysis.request").then(|| {
@@ -72,7 +78,7 @@ impl AnyKeyed for RecallProducts {
         KeyState::Closed
     }
     fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
-        let reason = match request_input(key, inputs) {
+        let reason = match request_input(key, inputs, None) {
             Ok(_) => "recall requires its selected query inputs".into(),
             Err(error) => error,
         };
@@ -147,6 +153,7 @@ fn validate_request(request: &AnalysisRequest) -> Result<(), String> {
 fn request_input<'a>(
     key: &Value,
     inputs: &'a [Event],
+    projected: Option<&AnalysisRequest>,
 ) -> Result<(&'a Event, AnalysisRequest), String> {
     let id = key["request"]
         .as_str()
@@ -159,14 +166,25 @@ fn request_input<'a>(
                 && event.payload["operation"] == "recall"
         })
         .ok_or("recall request event is unavailable")?;
-    let request =
-        serde_json::from_value(event.payload.clone()).map_err(|error| error.to_string())?;
+    let request = if let Some(request) = projected {
+        if request.request != id {
+            return Err("checked request projection belongs to a different immutable input".into());
+        }
+        request.clone()
+    } else {
+        if event.kind_version != <AnalysisRequest as sinex_model::EventPayload>::VERSION {
+            return Err(
+                "historical recall request needs its checked owning read projection".into(),
+            );
+        }
+        serde_json::from_value(event.payload.clone()).map_err(|error| error.to_string())?
+    };
     validate_request(&request)?;
     Ok((event, request))
 }
 
 fn compute(key: &Value, inputs: &[Event], selected: &SelectedInputs) -> Result<Event, String> {
-    let (request_event, request) = request_input(key, inputs)?;
+    let (request_event, request) = request_input(key, inputs, selected.request.as_ref())?;
     let selection = request
         .selection
         .as_ref()

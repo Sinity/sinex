@@ -1,3 +1,6 @@
+-- Undo the online backup upgrade before exercising its forward application.
+DROP FUNCTION core.backup_covers(text,bigint);
+DROP TABLE core.backup_segments, core.backup_holds;
 -- Undo the library curation upgrade.
 DROP TABLE core.library_shown;
 -- Undo parser-free staging before exercising the forward upgrade.

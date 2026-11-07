@@ -7,6 +7,8 @@ pub mod catalog;
 pub mod cursor;
 mod fill;
 pub use catalog::QueryCatalog;
+pub mod historical;
+pub mod native;
 mod parse;
 mod read_as;
 pub mod saved;

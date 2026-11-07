@@ -75,6 +75,9 @@ impl Api {
                 let definition = SavedQuery {
                     name: name.clone(),
                     query: query.clone(),
+                    template: query::native::parse(&query, &self.context())
+                        .map_err(error)?
+                        .into(),
                     parameters: parameters.clone(),
                 };
                 definitions.insert(name.clone(), definition.clone());
@@ -83,6 +86,7 @@ impl Api {
                     .validate_with(&self.context(), &definitions)
                     .map_err(error)?;
                 QueryRecord::Saved(Saved {
+                    template: definition.template,
                     name,
                     query,
                     parameters,

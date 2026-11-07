@@ -36,7 +36,7 @@ async fn no_rules_preserve_credential_shaped_payloads_for_equal_grant_callers(
         let (status, reply) = call(
             &w,
             Some(token),
-            json!({"method":"query","query":"events sort when"}),
+            json!({"method":"query","query":"events | sort by when"}),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -62,7 +62,7 @@ async fn no_rules_preserve_credential_shaped_payloads_for_equal_grant_callers(
 #[devkit::test]
 async fn no_rules_preserve_nested_keys_in_follow_and_cursor_pages(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let request = HttpRequest::get("/v1/follow?query=events%20sort%20when")
+    let request = HttpRequest::get("/v1/follow?query=events%20%7C%20sort%20by%20when")
         .header("authorization", format!("Bearer {READ}"))
         .body(Body::empty())
         .unwrap();
@@ -86,13 +86,13 @@ async fn no_rules_preserve_nested_keys_in_follow_and_cursor_pages(db: devkit::pg
     let (_, first) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"events sort when","page":1}),
+        json!({"method":"query","query":"events | sort by when","page":1}),
     )
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
     assert_eq!(first["result"]["rows"][0]["payload"], expected[0]);
     let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
-    let next = json!({"method":"query","query":"events sort when","page":1,"cursor":cursor});
+    let next = json!({"method":"query","query":"events | sort by when","page":1,"cursor":cursor});
     for _ in 0..2 {
         let (_, reply) = call(&w, Some(READ), next.clone()).await;
         assert_eq!(reply["outcome"], "ok", "{reply}");

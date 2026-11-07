@@ -1,177 +1,462 @@
-//! Time joins: an inner query's rows and the lateral subquery that picks the
-//! nearest match for each outer row.
+//! Pair relations and order predicates over the actual output of an inner query.
+//! Joins retain every matching pair; a single positive order predicate also
+//! exposes one deterministic nearest witness without changing the outer grain.
 use super::*;
+use sinex_model::query::JoinOn;
+
+pub(super) struct Joined {
+    pub lateral: SqlFragment,
+    pub columns: Vec<(String, String)>,
+    pub hidden_columns: Vec<(String, String)>,
+    pub identity: Option<String>,
+    pub ordinal: Option<String>,
+    pub parents: Option<String>,
+}
 
 impl Compiler<'_> {
-    /// The rows of an inner query of a time join, as `_id`, `_t` (the time
-    /// the join measures), `_s` and `_e` (the span, when rows have one).
-    pub(super) fn inner(&mut self, q: &Query, at: TimePoint) -> Result<SqlFragment> {
-        let Source::Table { table, alias } = &q.source else {
-            return Err(invalid(
-                "the inner query of a time join selects rows of a table",
-            ));
-        };
-        let t = self.alias("i");
-        let a = self.alias("ia");
-        let cols = Cols::Base {
-            table: *table,
-            alias: *alias,
-            t,
-            a,
-        };
-        let mut conds = self.base_conditions(&cols);
-        if let Some(f) = &q.filter {
-            conds.push(self.expr(&cols, f)?);
-        }
-        let mut laterals = Vec::new();
-        for stage in &q.stages {
-            match stage {
-                Stage::Where(e) => conds.push(self.expr(&cols, e)?),
-                Stage::Join(j) => laterals.push(self.join(&cols, j, laterals.len())?.0),
-                Stage::AsOf(_) => {}
-                _ => {
+    fn inner_compiler(&self, query: &Query) -> Result<Compiler<'_>> {
+        for stage in &query.stages {
+            if let Stage::AsOf(context) = stage {
+                if !matches!(context,sinex_model::query::AsOf::Seq(position) if *position == self.seq)
+                {
                     return Err(invalid(
-                        "the inner query of a time join takes filters and joins only",
+                        "an inner query's as of context must resolve to the outer read position",
                     ));
                 }
             }
         }
-        let when = self.main_time(&cols)?;
-        let span = self.span(&cols);
-        let point = match (at, &span) {
-            (TimePoint::When, _) => when.clone(),
-            (TimePoint::Start, Some((s, _, _))) => s.clone(),
-            (TimePoint::End, Some((_, e, _))) => e.clone(),
-            (_, None) => {
-                return Err(invalid(
-                    "`at start` and `at end` need inner rows with a span",
-                ));
-            }
-        };
-        let mut f = SqlFragment::text("SELECT ");
-        f.push(Self::template(&cols, fields::tiebreak(*table)))
-            .push(" AS _id, ")
-            .append(point)
-            .push(" AS _t, ");
-        match span {
-            Some((s, e, inclusive)) => {
-                f.append(s)
-                    .push(" AS _s, ")
-                    .append(e)
-                    .push(format!(" AS _e, {inclusive} AS _inclusive"));
-            }
-            None => {
-                f.append(when)
-                    .push(" AS _s, NULL::timestamptz AS _e, false AS _inclusive");
-            }
-        }
-        f.push(" FROM ")
-            .push(Self::template(&cols, fields::from(*table)));
-        for l in laterals {
-            f.push(" ").append(l);
-        }
-        if !conds.is_empty() {
-            f.push(" WHERE ").append(SqlFragment::join(conds, " AND "));
-        }
-        Ok(f)
+        let mut compiler = Compiler::new(self.ctx, self.seq);
+        compiler.calendar = self.calendar.clone();
+        Ok(compiler)
     }
 
-    /// A time join as a lateral subquery picking the nearest match; rows
-    /// without one drop out (a semijoin: several matches never multiply a
-    /// row). Returns the join and the columns it adds.
-    pub(super) fn join(
-        &mut self,
-        outer: &Cols,
-        j: &Join,
-        n: usize,
-    ) -> Result<(SqlFragment, Vec<(String, String)>)> {
-        let inner = self.inner(&j.inner, j.at)?;
-        let jl = self.alias("j");
-        let suffix = if n == 0 {
-            String::new()
-        } else {
-            format!("_{}", n + 1)
-        };
-        let ot = self.main_time(outer)?;
-        let mut f = SqlFragment::text("JOIN LATERAL (SELECT ");
-        let mut columns = Vec::new();
-        let secs = || V::Double(j.within_secs);
-        match j.kind {
-            JoinKind::Near | JoinKind::Before | JoinKind::After => {
-                f.push(format!("{jl}._id AS near, extract(epoch from ("))
-                    .append(ot.clone());
-                f.push(format!(" - {jl}._t)) AS \"offset\" FROM ("))
-                    .append(inner)
-                    .push(format!(") {jl} WHERE "));
-                match j.kind {
-                    JoinKind::Near => {
-                        f.push(format!("{jl}._t >= "))
-                            .append(ot.clone())
-                            .push(" - make_interval(secs => ")
-                            .param(secs())
-                            .push(format!(") AND {jl}._t <= "))
-                            .append(ot.clone())
-                            .push(" + make_interval(secs => ")
-                            .param(secs())
-                            .push(format!(") ORDER BY abs(extract(epoch from ({jl}._t - "))
-                            .append(ot)
-                            .push(format!("))), {jl}._t, {jl}._id LIMIT 1"));
-                    }
-                    JoinKind::Before => {
-                        // The outer row happened before the inner one.
-                        f.push(format!("{jl}._t > "))
-                            .append(ot.clone())
-                            .push(format!(" AND {jl}._t <= "))
-                            .append(ot)
-                            .push(" + make_interval(secs => ")
-                            .param(secs())
-                            .push(format!(") ORDER BY {jl}._t, {jl}._id LIMIT 1"));
-                    }
-                    _ => {
-                        f.push(format!("{jl}._t < "))
-                            .append(ot.clone())
-                            .push(format!(" AND {jl}._t >= "))
-                            .append(ot)
-                            .push(" - make_interval(secs => ")
-                            .param(secs())
-                            .push(format!(") ORDER BY {jl}._t DESC, {jl}._id LIMIT 1"));
-                    }
-                }
-                columns.push((format!("near{suffix}"), format!("{jl}.near")));
-                columns.push((format!("offset{suffix}"), format!("{jl}.\"offset\"")));
-            }
-            JoinKind::During => {
-                f.push(format!("{jl}._id AS m FROM ("))
-                    .append(inner)
-                    .push(format!(") {jl} WHERE {jl}._s IS NOT NULL AND "))
-                    .append(ot.clone())
-                    .push(format!(" >= {jl}._s AND ({jl}._e IS NULL OR "))
-                    .append(ot.clone())
-                    .push(format!(" < {jl}._e OR ({jl}._inclusive AND "))
-                    .append(ot)
-                    .push(format!(" = {jl}._e)) ORDER BY {jl}._s, {jl}._id LIMIT 1"));
-                columns.push((format!("during{suffix}"), format!("{jl}.m")));
-            }
-            JoinKind::Containing => {
-                let (os, oe, inclusive) = self
-                    .span(outer)
-                    .ok_or_else(|| invalid("`containing` needs outer rows with a span: sessions, intervals, commands or runs"))?;
-                f.push(format!("{jl}._id AS m FROM ("))
-                    .append(inner)
-                    .push(format!(") {jl} WHERE {jl}._t >= "))
-                    .append(os)
-                    .push(" AND (")
-                    .append(oe.clone())
-                    .push(format!(
-                        " IS NULL OR {jl}._t {} ",
-                        if inclusive { "<=" } else { "<" }
-                    ))
-                    .append(oe)
-                    .push(format!(") ORDER BY {jl}._t, {jl}._id LIMIT 1"));
-                columns.push((format!("containing{suffix}"), format!("{jl}.m")));
+    fn compile_inner(&self, join: &Join) -> Result<(Compiled, std::collections::BTreeSet<String>)> {
+        let original = self.inner_compiler(&join.inner)?.compile(&join.inner)?;
+        let display = original
+            .columns
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        if join.required.iter().all(|name| {
+            display.contains(name) || !join.columns.iter().any(|column| column.column() == *name)
+        }) {
+            return Ok((original, display));
+        }
+        let mut names = original.columns.clone();
+        names.extend(
+            join.required
+                .iter()
+                .filter(|name| !display.contains(*name))
+                .cloned(),
+        );
+        let mut projected = vec![];
+        for name in names {
+            if let Some(column) = join.columns.iter().find(|column| column.column() == name) {
+                projected.push(column.clone());
+            } else if name == "snippet" {
+                projected.push(Operand::Named {
+                    operand: Box::new(Operand::Field(FieldRef::TypedGroup(
+                        sinex_model::query::BoundColumn::generated("snippet", FieldType::Text),
+                    ))),
+                    name,
+                });
             }
         }
-        f.push(format!(") {jl} ON true"));
-        Ok((f, columns))
+        let mut query = (*join.inner).clone();
+        query.stages.push(Stage::Fields(projected));
+        Ok((self.inner_compiler(&query)?.compile(&query)?, display))
+    }
+
+    fn matched_point(at: TimePoint) -> bool {
+        matches!(
+            at,
+            TimePoint::MatchWhen | TimePoint::MatchStart | TimePoint::MatchEnd
+        )
+    }
+
+    fn join_point(&self, outer: &Cols, at: TimePoint) -> Result<SqlFragment> {
+        let (start, end, _, _) = self.span_metadata(outer)?;
+        Ok(match at {
+            TimePoint::Start => start,
+            TimePoint::End => end,
+            _ => self.main_time(outer)?,
+        })
+    }
+
+    fn inner_point(at: TimePoint, i: &str) -> String {
+        match at {
+            TimePoint::MatchWhen => format!("{i}.\"_t\""),
+            TimePoint::MatchStart => format!("CASE WHEN {i}.\"_has_span\" THEN {i}.\"_s\" END"),
+            TimePoint::MatchEnd => format!("CASE WHEN {i}.\"_has_span\" THEN {i}.\"_e\" END"),
+            _ => format!("{i}.\"_s\""),
+        }
+    }
+
+    fn row_identity(cols: &Cols) -> String {
+        match cols {
+            Cols::Base { table, .. } => Self::template(cols, fields::tiebreak(*table)),
+            Cols::Named { r, .. } => format!("{r}.\"_id\""),
+        }
+    }
+
+    fn join_condition(
+        &self,
+        outer: &Cols,
+        on: &JoinOn,
+        inner: &Compiled,
+        i: &str,
+    ) -> Result<SqlFragment> {
+        let (relation, within, at, outer_point, inner_point) = match on {
+            JoinOn::Key { left, right } => {
+                let (left, left_kind) = self.field(outer, left)?;
+                let right_kind = Kind::Typed(
+                    Operand::Field(right.clone())
+                        .field_type()
+                        .map_err(|error| invalid(error.to_string()))?,
+                );
+                let right_column = inner.output_column(&right.name())?;
+                return self.compare_operands(
+                    left,
+                    left_kind,
+                    Op::Eq,
+                    SqlFragment::text(format!("{i}.{right_column}")),
+                    right_kind,
+                );
+            }
+            JoinOn::Order {
+                relation,
+                within_secs,
+                at,
+            } => (
+                *relation,
+                within_secs.as_deref(),
+                *at,
+                self.join_point(outer, *at)?,
+                Self::inner_point(*at, i),
+            ),
+        };
+        let mut conditions = vec![];
+        let mut condition = SqlFragment::text("(");
+        match relation {
+            JoinKind::Near => {
+                condition
+                    .push("CASE WHEN ")
+                    .append(outer_point.clone())
+                    .push(format!(
+                        " IS NULL OR ({inner_point}) IS NULL THEN NULL::boolean ELSE true END"
+                    ));
+            }
+            JoinKind::Before | JoinKind::After => {
+                condition
+                    .append(outer_point.clone())
+                    .push(if relation == JoinKind::Before {
+                        " < "
+                    } else {
+                        " > "
+                    })
+                    .push(&inner_point);
+            }
+            JoinKind::During => {
+                if Self::matched_point(at) {
+                    condition.push(format!(
+                        "CASE WHEN NOT {i}.\"_has_span\" THEN NULL::boolean ELSE "
+                    ));
+                }
+                condition
+                    .append(outer_point.clone())
+                    .push(format!(" >= {i}.\"_s\" AND ({i}.\"_e\" IS NULL OR "))
+                    .append(outer_point.clone())
+                    .push(format!(" < {i}.\"_e\" OR ({i}.\"_inclusive\" AND "))
+                    .append(outer_point.clone())
+                    .push(format!(" = {i}.\"_e\"))"));
+                if Self::matched_point(at) {
+                    condition.push(" END");
+                }
+            }
+            JoinKind::Containing => {
+                let (start, end, inclusive, has_span) = self.span_metadata(outer)?;
+                if Self::matched_point(at) {
+                    condition
+                        .push("CASE WHEN ")
+                        .append(self.main_time(outer)?)
+                        .push(" IS NULL OR NOT ")
+                        .append(has_span)
+                        .push(" THEN NULL::boolean ELSE (")
+                        .push(&inner_point)
+                        .push(") >= ")
+                        .append(start)
+                        .push(" AND (")
+                        .append(end.clone())
+                        .push(" IS NULL OR (")
+                        .push(&inner_point)
+                        .push(") < ")
+                        .append(end.clone())
+                        .push(" OR (")
+                        .append(inclusive)
+                        .push(" AND (")
+                        .push(&inner_point)
+                        .push(") = ")
+                        .append(end)
+                        .push(")) END");
+                } else {
+                    condition
+                        .push(&inner_point)
+                        .push(" >= ")
+                        .append(start)
+                        .push(" AND (")
+                        .append(end.clone())
+                        .push(" IS NULL OR (CASE WHEN ")
+                        .push(format!(
+                            "{i}.\"_has_span\" AND {i}.\"_e\" IS NULL THEN false ELSE {i}.\"_e\" < "
+                        ))
+                        .append(end.clone())
+                        .push(format!(" OR ({i}.\"_e\" = "))
+                        .append(end)
+                        .push(" AND (")
+                        .append(inclusive)
+                        .push(format!(" OR NOT {i}.\"_inclusive\")) END))"));
+                }
+            }
+        }
+        condition.push(")");
+        conditions.push(condition);
+        if let Some(seconds) = within {
+            let mut window = SqlFragment::text("abs(extract(epoch from (");
+            let distance_point = if relation == JoinKind::During && Self::matched_point(at) {
+                format!("{i}.\"_s\"")
+            } else {
+                inner_point
+            };
+            window
+                .push(distance_point)
+                .push(" - ")
+                .append(outer_point)
+                .push("))) <= ")
+                .param(V::String(Some(seconds.into())))
+                .push("::numeric");
+            conditions.push(window);
+        }
+        Ok(SqlFragment::join(conditions, " AND "))
+    }
+
+    /// A true candidate wins; absent that, any unknown comparison keeps the
+    /// semijoin unknown. The inner query is evaluated once.
+    pub(super) fn order_predicate(&self, outer: &Cols, join: &Join) -> Result<SqlFragment> {
+        let (inner, _display) = self.compile_inner(join)?;
+        let condition = self.join_condition(outer, &join.on, &inner, "order_inner")?;
+        let known = match &join.on {
+            JoinOn::Key { left, .. } => self.field(outer, left)?.0,
+            JoinOn::Order { at, .. } => self.join_point(outer, *at)?,
+        };
+        let mut sql = SqlFragment::text(
+            "(SELECT CASE WHEN bool_or(order_candidate.predicate) IS TRUE THEN true WHEN count(*) FILTER (WHERE order_candidate.predicate IS NULL) > 0 OR ",
+        );
+        sql.append(known)
+            .push(" IS NULL THEN NULL::boolean ELSE false END FROM (SELECT ")
+            .append(condition)
+            .push(" AS predicate FROM (")
+            .append(inner.answer)
+            .push(") order_inner) order_candidate)");
+        Ok(sql)
+    }
+
+    /// Event contributors of successful positive order predicates. Ordinary
+    /// predicates add none; negation never invents a positive witness.
+    pub(super) fn predicate_parents(&self, outer: &Cols, expression: &Expr) -> Result<SqlFragment> {
+        match expression {
+            Expr::Order(join) => {
+                let (inner, _display) = self.compile_inner(join)?;
+                let condition = self.join_condition(outer, &join.on, &inner, "proof_inner")?;
+                let mut out = SqlFragment::text(
+                    "ARRAY(SELECT DISTINCT unnest(proof_inner.\"_parents\") FROM (",
+                );
+                out.append(inner.answer)
+                    .push(") proof_inner WHERE ")
+                    .append(condition)
+                    .push(")");
+                Ok(out)
+            }
+            Expr::And(left, right) | Expr::Or(left, right) => {
+                let left = self.predicate_parents(outer, left)?;
+                let right = self.predicate_parents(outer, right)?;
+                // Calling this helper for a scalar-only condition emits no
+                // second evaluation of that predicate.
+                let empty = "ARRAY[]::uuid[]";
+                if left.render().0 == empty && right.render().0 == empty {
+                    return Ok(SqlFragment::text(empty));
+                }
+                let mut out = SqlFragment::text("(CASE WHEN ");
+                out.append(self.expr(outer, expression)?)
+                    .push(" IS TRUE THEN ARRAY(SELECT DISTINCT unnest(")
+                    .append(left)
+                    .push(" || ")
+                    .append(right)
+                    .push(")) ELSE ARRAY[]::uuid[] END)");
+                Ok(out)
+            }
+            _ => Ok(SqlFragment::text("ARRAY[]::uuid[]")),
+        }
+    }
+
+    /// Exactly one positive top-level order exposes a witness. This is the
+    /// same AND-only traversal used by shared scope binding and evaluation.
+    pub(super) fn order_witnesses(
+        &mut self,
+        outer: &Cols,
+        expression: &Expr,
+    ) -> Result<Vec<Joined>> {
+        match expression.exposed_order() {
+            Some(join) => Ok(vec![self.join_lateral(outer, join, true)?]),
+            None => Ok(vec![]),
+        }
+    }
+
+    fn join_distance(&self, outer: &Cols, on: &JoinOn, i: &str) -> Result<Option<SqlFragment>> {
+        let JoinOn::Order { relation, at, .. } = on else {
+            return Ok(None);
+        };
+        let inner_point = if *relation == JoinKind::During && Self::matched_point(*at) {
+            format!("{i}.\"_s\"")
+        } else {
+            Self::inner_point(*at, i)
+        };
+        let mut out = SqlFragment::text(format!("extract(epoch from (({inner_point}) - "));
+        out.append(self.join_point(outer, *at)?).push("))");
+        Ok(Some(out))
+    }
+
+    pub(super) fn join(&mut self, outer: &Cols, join: &Join, _n: usize) -> Result<Joined> {
+        self.join_lateral(outer, join, false)
+    }
+
+    fn join_lateral(&mut self, outer: &Cols, join: &Join, nearest: bool) -> Result<Joined> {
+        let (inner, display) = self.compile_inner(join)?;
+        let i = self.alias("joined");
+        let condition = self.join_condition(outer, &join.on, &inner, &i)?;
+        let distance = self.join_distance(outer, &join.on, &i)?;
+        let order: Vec<String> = inner
+            .keys
+            .iter()
+            .map(|(key, descending)| {
+                format!(
+                    "inner_order.{} {} NULLS LAST",
+                    quote(key),
+                    if *descending { "DESC" } else { "ASC" }
+                )
+            })
+            .collect();
+        let mut relation = SqlFragment::text("SELECT inner_order.*, row_number() OVER (ORDER BY ");
+        relation
+            .push(order.join(", "))
+            .push(") AS \"_ordinal\" FROM (")
+            .append(inner.answer.clone())
+            .push(") inner_order");
+        if let Some(distance) = &distance {
+            let mut candidates = SqlFragment::text(format!("SELECT {i}.*, "));
+            candidates
+                .append(distance.clone())
+                .push(format!(" AS \"_distance\", false AS \"_coarse\" FROM ("))
+                .append(relation)
+                .push(format!(") {i}"));
+            relation = candidates;
+        }
+        let mut lateral = SqlFragment::text(if nearest {
+            "LEFT JOIN LATERAL (SELECT "
+        } else {
+            "JOIN LATERAL (SELECT "
+        });
+        lateral.push(format!("{i}.*"));
+        lateral
+            .push(" FROM (")
+            .append(relation)
+            .push(format!(") {i} WHERE "))
+            .append(condition);
+        if nearest {
+            lateral.push(" ORDER BY ");
+            if join.pick.is_empty() {
+                if distance.is_some() {
+                    lateral.push(format!("abs({i}.\"_distance\"), "));
+                }
+            } else {
+                let mut renamed = inner
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| (name.clone(), format!("_value{index}")))
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                for (logical, physical) in [
+                    ("match.id", "_id"),
+                    ("match.distance", "_distance"),
+                    ("match.coarse", "_coarse"),
+                ] {
+                    renamed.insert(logical.into(), physical.into());
+                }
+                let candidate = Cols::Named {
+                    r: i.clone(),
+                    table: join.inner.source.table(),
+                    grouped: false,
+                    renamed,
+                    ordinal: None,
+                };
+                for key in &join.pick {
+                    let SortBy::Operand(operand) = &key.key else {
+                        return Err(invalid(
+                            "witness choice needs explicit candidate expressions",
+                        ));
+                    };
+                    lateral
+                        .append(self.operand(&candidate, operand)?.0)
+                        .push(if key.descending {
+                            " DESC NULLS LAST, "
+                        } else {
+                            " ASC NULLS LAST, "
+                        });
+                }
+            }
+            lateral.push(format!("{i}.\"_id\" LIMIT 1"));
+        }
+        lateral.push(format!(") {i} ON true"));
+        let mut columns = vec![];
+        let mut hidden_columns = vec![];
+        for (index, name) in inner.columns.iter().enumerate() {
+            let column = (
+                format!("match.{name}"),
+                format!("{i}.{}", quote(&format!("_value{index}"))),
+            );
+            if display.contains(name) {
+                columns.push(column);
+            } else {
+                hidden_columns.push(column);
+            }
+        }
+        let expose_distance = match &join.on {
+            JoinOn::Order { within_secs, .. } => !nearest || within_secs.is_some(),
+            _ => false,
+        };
+        if expose_distance {
+            columns.push(("match.distance".into(), format!("{i}.\"_distance\"")));
+        }
+        Ok(Joined {
+            lateral,
+            columns,
+            hidden_columns,
+            identity: (!nearest).then(|| {
+                format!(
+                    "jsonb_build_array({}, {i}.\"_id\")::text",
+                    Self::row_identity(outer)
+                )
+            }),
+            ordinal: (!nearest).then(|| format!("{i}.\"_ordinal\"")),
+            parents: (!nearest).then(|| match outer {
+                Cols::Named { r, .. } => {
+                    format!("ARRAY(SELECT DISTINCT unnest({r}.\"_parents\" || {i}.\"_parents\"))")
+                }
+                Cols::Base { table, .. } if table.is_events() => format!(
+                    "ARRAY(SELECT DISTINCT unnest(ARRAY[{}]::uuid[] || {i}.\"_parents\"))",
+                    Self::row_identity(outer)
+                ),
+                _ => format!("{i}.\"_parents\""),
+            }),
+        })
     }
 }

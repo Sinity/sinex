@@ -12,16 +12,13 @@ pub async fn saved_records(conn: &mut PgConnection) -> Result<Vec<Saved>> {
     )
     .await?
     {
-        let Some(payload) = row
+        let Some(_) = row
             .payload
             .filter(|payload| payload.is_object() && payload.get("withheld").is_none())
         else {
             continue;
         };
-        records.push(
-            serde_json::from_value::<Saved>(payload)
-                .map_err(|error| Error::Invalid(error.to_string()))?,
-        );
+        records.push(super::representation::saved(conn, sinex_model::EventId(row.id)).await?);
     }
     records.sort_by(|a, b| (&a.name, &a.by).cmp(&(&b.name, &b.by)));
     Ok(records)
@@ -38,6 +35,7 @@ pub async fn saved_definitions(
             SavedQuery {
                 name: record.name,
                 query: record.query,
+                template: record.template,
                 parameters: record.parameters,
             },
         ));
@@ -67,7 +65,10 @@ pub async fn saved_definitions(
                 )
             }));
         };
-        next = sinex_model::query::saved::reference_name(&definition.query);
+        next = match definition.template.reference_name() {
+            Some(name) => Some(name),
+            _ => None,
+        };
         out.insert(name, (*definition).clone());
     }
     Ok(out)

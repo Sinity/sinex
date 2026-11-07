@@ -51,9 +51,20 @@ impl Description {
         description
     }
 
+    pub(crate) fn before_online_backups() -> Self {
+        let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| crate::backups::before(statement));
+        description
+            .after_tables
+            .retain(|statement| crate::backups::before(statement));
+        description
+    }
+
     /// The description just before the library curation upgrade.
     pub(crate) fn before_library_curation() -> Self {
-        let mut description = Self::current();
+        let mut description = Self::before_online_backups();
         description
             .tables
             .retain(|statement| crate::library_curation::before(statement));

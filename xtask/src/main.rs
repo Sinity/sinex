@@ -37,7 +37,8 @@ enum Cli {
         /// running any (a cloud environment's warm build).
         #[arg(long, conflicts_with = "args")]
         no_run: bool,
-        /// Further `cargo nextest run` arguments: packages, filters, names.
+        /// Further `cargo nextest run` arguments: native package and target
+        /// selection, filters, names and runner options.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -241,9 +242,8 @@ fn with_services(
     result
 }
 
-/// One build for every selection: tests always build from the workspace's
-/// feature resolution, so a focused run and a full run share their compiled
-/// test binaries. Package selection becomes a nextest filter.
+/// Cargo package and target selection bounds the build; nextest filters bound
+/// execution inside those targets. With no package selection, test the workspace.
 fn test(run: &mut Run, args: &[String], threads: Option<&str>) -> Result {
     with_services(run, |run, env| {
         let mut options = test_options(args, env.to_vec());
@@ -314,6 +314,8 @@ const VALUE_OPTIONS: &[&str] = &[
     "--example",
     "--target",
     "--exclude",
+    "--features",
+    "-F",
 ];
 
 fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
@@ -322,6 +324,7 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
         None => (args, &[][..]),
     };
     let mut packages = Vec::new();
+    let mut workspace = false;
     let mut filters = Vec::new();
     let mut names = Vec::new();
     let mut rest = Vec::new();
@@ -332,7 +335,7 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
             .strip_prefix("--package=")
             .or_else(|| arg.strip_prefix("-p").filter(|value| !value.is_empty()))
         {
-            packages.push(package.to_owned());
+            packages.push(package.strip_prefix('=').unwrap_or(package).to_owned());
         } else if matches!(arg, "-p" | "--package") {
             packages.extend(own.next().cloned());
         } else if let Some(filter) = arg
@@ -343,6 +346,7 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
         } else if matches!(arg, "-E" | "--filterset" | "--filter-expr") {
             filters.extend(own.next().cloned());
         } else if matches!(arg, "--workspace" | "--all") {
+            workspace = true;
         } else if VALUE_OPTIONS.contains(&arg) {
             rest.push(arg.to_owned());
             rest.extend(own.next().cloned());
@@ -352,7 +356,13 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
             names.push(arg.to_owned());
         }
     }
-    let mut selected = vec!["--locked".to_owned(), "--workspace".to_owned()];
+    let mut selected = vec!["--locked".to_owned()];
+    if workspace || packages.is_empty() {
+        selected.push("--workspace".to_owned());
+    }
+    for package in &packages {
+        selected.extend(["-p".to_owned(), package.clone()]);
+    }
     selected.extend(rest);
     if packages.is_empty() {
         for filter in &filters {
@@ -360,23 +370,16 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
         }
         selected.extend(names.iter().cloned());
     } else {
-        let scope = packages
-            .iter()
-            .map(|package| format!("package(={package})"))
-            .collect::<Vec<_>>()
-            .join(" | ");
-        // Name filters and filtersets narrow the selected packages.
+        // Preserve how name filters and filtersets combine inside the packages
+        // Cargo selected, without turning package selection into a build-wide filter.
         let narrowing = filters
             .iter()
             .map(|filter| format!("({filter})"))
             .chain(names.iter().map(|name| format!("test({name})")))
             .collect::<Vec<_>>();
-        let filter = if narrowing.is_empty() {
-            scope
-        } else {
-            format!("({scope}) & ({})", narrowing.join(" | "))
-        };
-        selected.extend(["-E".to_owned(), filter]);
+        if !narrowing.is_empty() {
+            selected.extend(["-E".to_owned(), narrowing.join(" | ")]);
+        }
     }
     selected.extend(binary.iter().cloned());
     Nextest {

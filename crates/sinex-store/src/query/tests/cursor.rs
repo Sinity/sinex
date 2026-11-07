@@ -2,8 +2,14 @@ use super::*;
 
 async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) -> Result<Answer> {
     let fixed = context_for_page(conn, ctx, &page, text).await?;
-    let bound = bind(text, &fixed).unwrap();
-    run(conn, text, Some(&bound), &fixed, &page).await
+    if sinex_model::query::native::is_command(text) {
+        let operation = sinex_model::query::native::parse(text, &fixed)
+            .map_err(|error| crate::Error::Invalid(error.to_string()))?;
+        run_operation(conn, text, &operation, &fixed, &page).await
+    } else {
+        let bound = bind(text, &fixed).unwrap();
+        run(conn, text, Some(&bound), &fixed, &page).await
+    }
 }
 
 #[devkit::test]
@@ -16,7 +22,7 @@ async fn continuation_keeps_relative_time_at_the_original_logical_day(
     world(&mut conn).await;
     let before = Context::utc("2026-09-14T12:00:00Z".parse().unwrap());
     let after = Context::utc("2026-09-15T12:00:00Z".parse().unwrap());
-    let text = "commands where when in today sort when";
+    let text = "commands where when in today | sort by when";
     let first = ask_at(
         &mut conn,
         text,
@@ -59,7 +65,7 @@ async fn continuation_refuses_changed_time_settings_and_a_different_bound_ast(
         .unwrap();
     world(&mut conn).await;
     let ctx = ctx();
-    let text = "commands sort when";
+    let text = "commands | sort by when";
     let first = ask_at(
         &mut conn,
         text,
@@ -139,7 +145,7 @@ async fn duplicate_projected_rows_cannot_cancel_the_view_change_check(
         .await
         .unwrap();
     let ids = runs(&mut conn).await;
-    let text = "runs sort started fields status";
+    let text = "runs | sort by started | fields status";
     let first = ask_at(
         &mut conn,
         text,
@@ -310,7 +316,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
     let read = tokio::spawn(async move {
         ask_at(
             &mut conn,
-            "events near (runs where status = running) within 1h sort when",
+            "events where near (runs where status = running) within 1h | sort by when",
             &ctx(),
             Page {
                 size: Some(100),
@@ -350,7 +356,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
     );
     let after = ask_at(
         &mut watch,
-        "events near (runs where status = running) within 1h sort when",
+        "events where near (runs where status = running) within 1h | sort by when",
         &ctx(),
         Page::default(),
     )
@@ -368,11 +374,15 @@ async fn provenance_walks_refuse_stages_the_reader_does_not_execute(db: devkit::
         .await
         .unwrap();
     let ids = world(&mut conn).await;
-    let text = format!("trace {} limit 1", ids[0].0);
+    let text = format!("trace {} | limit 1", ids[0].0);
     let error = ask_at(&mut conn, &text, &ctx(), Page::default())
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("do not support query stages"));
+    assert!(
+        error
+            .to_string()
+            .contains("provenance walks do not support")
+    );
 }
 
 /// Mutable metadata changes invalidate its captured epoch even when the changed
@@ -385,7 +395,7 @@ async fn a_metadata_change_invalidates_the_cursor_and_a_fresh_question_observes_
         .await
         .unwrap();
     let ids = runs(&mut conn).await;
-    let text = "runs sort started fields id,status";
+    let text = "runs | sort by started | fields id,status";
     let first = ask_at(
         &mut conn,
         text,
@@ -439,7 +449,7 @@ async fn cursor_secret_is_not_public_sql_and_open_paging_needs_no_unlock(
     );
     let first = ask_at(
         &mut conn,
-        "commands sort exit_code desc fields command",
+        "commands | sort by exit_code desc | fields command",
         &ctx(),
         Page {
             size: Some(2),
@@ -450,7 +460,7 @@ async fn cursor_secret_is_not_public_sql_and_open_paging_needs_no_unlock(
     .unwrap();
     let next = ask_at(
         &mut conn,
-        "commands sort exit_code desc fields command",
+        "commands | sort by exit_code desc | fields command",
         &ctx(),
         Page {
             size: Some(3),
@@ -468,8 +478,8 @@ async fn canonical_equivalent_questions_keep_one_keyset(db: devkit::pg::TestData
         .await
         .unwrap();
     world(&mut conn).await;
-    let a = "commands where exit_code >= 0 AND cwd exists sort when fields command";
-    let b = "commands where cwd exists AND exit_code >= 0 sort when fields command";
+    let a = "commands where exit_code >= 0 AND cwd:known | sort by when | fields command";
+    let b = "commands where cwd:known AND exit_code >= 0 | sort by when | fields command";
     let first = ask_at(
         &mut conn,
         a,
@@ -507,8 +517,8 @@ async fn sql_matches_shared_unknown_and_wildcard_predicates(db: devkit::pg::Test
         ("commands where exit_code:*", 5),
         ("commands where exit_code = unknown", 0),
         ("commands where NOT exit_code = unknown", 0),
-        ("commands where exit_code = [unknown,0]", 2),
-        ("commands where exit_code != [unknown,0]", 0),
+        ("commands where exit_code = (unknown | 0)", 2),
+        ("commands where exit_code != (unknown | 0)", 0),
     ] {
         let answer = ask_at(&mut conn, text, &ctx(), Page::default())
             .await

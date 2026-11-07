@@ -19,17 +19,17 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
     let (_, body) = call(
         &w,
         Some(READ),
-        json!({"method":"query","query":"events sort when"}),
+        json!({"method":"query","query":"events | sort by when"}),
     )
     .await;
     let reference = body["result"]["rows"][0]["id"].as_str().unwrap().to_owned();
-    let mut snapshots = vec![(format!("events as of seq {before}"), 3u64)];
+    let mut snapshots = vec![(format!("events | as of seq {before}"), 3u64)];
     let stamp: time::OffsetDateTime = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&w.reads)
         .await
         .unwrap();
     let stamp = jiff::Timestamp::from_nanosecond(stamp.unix_timestamp_nanos()).unwrap();
-    let time_before = format!("events as of {stamp}");
+    let time_before = format!("events | as of {stamp}");
     assert_eq!(totals(&w, &time_before).await, 3);
     let mut moved_at = vec![];
     for (method, total) in [("archive", 2u64), ("restore", 3), ("archive", 2)] {
@@ -53,7 +53,7 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
         for (question, expected) in &snapshots {
             assert_eq!(totals(&w, question).await, *expected, "{question}");
         }
-        snapshots.push((format!("events as of seq {position}"), total));
+        snapshots.push((format!("events | as of seq {position}"), total));
         assert_eq!(
             totals(&w, &time_before).await,
             3,
@@ -66,18 +66,18 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
         let current_time =
             jiff::Timestamp::from_nanosecond(current_time.unix_timestamp_nanos()).unwrap();
         assert_eq!(
-            totals(&w, &format!("events as of {current_time}")).await,
+            totals(&w, &format!("events | as of {current_time}")).await,
             total
         );
-        let archived = format!("archive as of seq {position}");
+        let archived = format!("archive | as of seq {position}");
         assert_eq!(
             totals(&w, &archived).await,
             if method == "archive" { 1 } else { 0 }
         );
     }
-    let archived_at = format!("archive as of seq {}", moved_at[0]);
+    let archived_at = format!("archive | as of seq {}", moved_at[0]);
     assert_eq!(totals(&w, &archived_at).await, 1);
-    let restored_at = format!("archive as of seq {}", moved_at[1]);
+    let restored_at = format!("archive | as of seq {}", moved_at[1]);
     assert_eq!(totals(&w, &restored_at).await, 0);
     sqlx::query("DELETE FROM core.commit_log")
         .execute(&w.reads)
@@ -88,6 +88,6 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
         3,
         "hot-log pruning must not erase time truth"
     );
-    let after_first_archive = format!("events as of seq {}", moved_at[0]);
+    let after_first_archive = format!("events | as of seq {}", moved_at[0]);
     assert_eq!(totals(&w, &after_first_archive).await, 2);
 }

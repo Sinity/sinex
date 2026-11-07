@@ -27,7 +27,73 @@ pub enum ParameterType {
 pub struct SavedQuery {
     pub name: String,
     pub query: String,
+    pub template: Definition,
     pub parameters: Vec<Parameter>,
+}
+
+/// Current writes use Current. FormatOne is constructed only by the immutable
+/// historical source reader and authenticated owning read projection.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(tag = "format", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Definition {
+    Current {
+        body: native::Template,
+    },
+    FormatOne {
+        body: historical_query_format_v1::ast::Query,
+        origin_text_hash: String,
+        origin_body_hash: String,
+    },
+}
+impl From<native::Template> for Definition {
+    fn from(body: native::Template) -> Self {
+        Self::Current { body }
+    }
+}
+impl Definition {
+    pub(super) fn from_format_one(
+        body: historical_query_format_v1::ast::Query,
+        authored: &str,
+    ) -> Self {
+        let origin_body_hash = Self::body_hash(&body);
+        Self::FormatOne {
+            body,
+            origin_text_hash: blake3::hash(authored.as_bytes()).to_hex().to_string(),
+            origin_body_hash,
+        }
+    }
+    fn body_hash(body: &historical_query_format_v1::ast::Query) -> String {
+        blake3::hash(&serde_json::to_vec(body).expect("decoded historical syntax serializes"))
+            .to_hex()
+            .to_string()
+    }
+    pub fn check_source(&self, authored: &str) -> Result<(), QueryError> {
+        if let Self::FormatOne {
+            body,
+            origin_text_hash,
+            origin_body_hash,
+        } = self
+            && (*origin_text_hash != blake3::hash(authored.as_bytes()).to_hex().as_str()
+                || *origin_body_hash != Self::body_hash(body))
+        {
+            return Err(QueryError::new(
+                "historical saved definition does not match its source proof",
+            ));
+        }
+        Ok(())
+    }
+    pub fn reference_name(&self) -> Option<String> {
+        match self {
+            Self::Current { body } => match &body.relation.source {
+                syntax::Source::Saved { name, .. } => Some(name.clone()),
+                _ => None,
+            },
+            Self::FormatOne { body, .. } => match &body.source {
+                historical_query_format_v1::ast::Source::Saved { name, .. } => Some(name.clone()),
+                _ => None,
+            },
+        }
+    }
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -100,6 +166,21 @@ fn sample(p: &Parameter) -> syntax::Value {
     }
 }
 impl SavedQuery {
+    pub fn from_text(
+        name: String,
+        query: String,
+        parameters: Vec<Parameter>,
+        ctx: &Context,
+    ) -> Result<Self, QueryError> {
+        let template = native::parse(&query, ctx)?;
+        Ok(Self {
+            name,
+            query,
+            template: template.into(),
+            parameters,
+        })
+    }
+
     pub fn validate(&self, ctx: &Context) -> Result<(), QueryError> {
         self.validate_with(ctx, &BTreeMap::new())
     }
@@ -108,8 +189,8 @@ impl SavedQuery {
         ctx: &Context,
         definitions: &BTreeMap<String, SavedQuery>,
     ) -> Result<(), QueryError> {
-        let input = self.validation_ast(ctx)?;
-        let input = expand(
+        let input = self.validation_ast()?;
+        let input = expand_definition(
             input,
             ctx,
             definitions,
@@ -117,15 +198,12 @@ impl SavedQuery {
             &mut false,
             true,
         )?;
-        super::parse::validate_syntax(input, ctx).map(|_| ())
+        input.validate(ctx).map(|_| ())
     }
     pub fn validate_parameters(&self) -> Result<(), QueryError> {
-        // Syntax validation has no time interpretation. A context supplies only
-        // the same bundled field catalog used by public query discovery.
-        let ctx = Context::utc(jiff::Timestamp::UNIX_EPOCH);
-        self.validation_ast(&ctx).map(|_| ())
+        self.validation_ast().map(|_| ())
     }
-    fn validation_ast(&self, ctx: &Context) -> Result<syntax::Query, QueryError> {
+    fn validation_ast(&self) -> Result<Definition, QueryError> {
         if !valid_name(&self.name) {
             return Err(QueryError::new(
                 "saved query name uses letters, numbers, _ or -",
@@ -139,15 +217,14 @@ impl SavedQuery {
                 ));
             }
         }
-        substitute(self, &args, ctx, true)
+        substitute(self, &args, true)
     }
 }
 fn substitute(
     saved: &SavedQuery,
     args: &BTreeMap<String, syntax::Value>,
-    ctx: &Context,
     validating: bool,
-) -> Result<syntax::Query, QueryError> {
+) -> Result<Definition, QueryError> {
     for name in args.keys() {
         if !saved.parameters.iter().any(|p| p.name == *name) {
             return Err(QueryError::new(format!(
@@ -168,7 +245,8 @@ fn substitute(
         }
         arguments.insert(p.name.clone(), value);
     }
-    let parsed = super::syntax::parse(&saved.query, ctx)?;
+    saved.template.check_source(&saved.query)?;
+    let parsed = saved.template.clone();
     let mut wire = serde_json::to_value(parsed).map_err(|e| QueryError::new(e.to_string()))?;
     let mut used = BTreeSet::new();
     replace_parameters(&mut wire, &arguments, &mut used, validating, false)?;
@@ -217,8 +295,25 @@ fn replace_parameters(
                     fields.get("op").and_then(serde_json::Value::as_str),
                     Some("lt" | "le")
                 );
+            let overlap = fields.get("kind").and_then(serde_json::Value::as_str)
+                == Some("extension")
+                && fields.get("name").and_then(serde_json::Value::as_str) == Some("overlaps");
             for (name, v) in fields {
-                replace_parameters(v, args, used, validating, upper || name == "to")?;
+                if overlap && name == "arguments" {
+                    if let serde_json::Value::Array(arguments) = v {
+                        for (index, argument) in arguments.iter_mut().enumerate() {
+                            replace_parameters(
+                                argument,
+                                args,
+                                used,
+                                validating,
+                                upper || index == 1,
+                            )?;
+                        }
+                    }
+                } else {
+                    replace_parameters(v, args, used, validating, upper || name == "to")?;
+                }
             }
         }
         _ => {}
@@ -232,12 +327,28 @@ pub fn reference_name(text: &str) -> Option<String> {
         _ => None,
     }
 }
-pub fn bind_saved(
+pub fn template_saved(
     text: &str,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
-) -> Result<Query, QueryError> {
-    let input = super::syntax::parse(text, ctx)?;
+) -> Result<native::Template, QueryError> {
+    resolve_template(native::parse(text, ctx)?, ctx, saved)
+}
+
+pub fn resolve_template(
+    input: native::Template,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+) -> Result<native::Template, QueryError> {
+    with_resolved(input, ctx, saved, Ok)
+}
+
+fn with_resolved<T>(
+    input: native::Template,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+    finish: impl FnOnce(native::Template) -> Result<T, QueryError>,
+) -> Result<T, QueryError> {
     let mut expanded_definition = false;
     let result = expand(
         input,
@@ -247,7 +358,7 @@ pub fn bind_saved(
         &mut expanded_definition,
         false,
     )
-    .and_then(|expanded| super::parse::bind_syntax(expanded, ctx));
+    .and_then(finish);
     result.map_err(|mut error| {
         // Definition spans belong to the stored question, not its invocation.
         if expanded_definition {
@@ -256,20 +367,127 @@ pub fn bind_saved(
         error
     })
 }
-fn expand(
-    mut input: syntax::Query,
+pub fn bind_saved(
+    text: &str,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+) -> Result<Query, QueryError> {
+    with_resolved(native::parse(text, ctx)?, ctx, saved, |template| {
+        template.bind(ctx)
+    })
+}
+
+fn expand_definition(
+    input: Definition,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
     seen: &mut BTreeSet<String>,
     expanded_definition: &mut bool,
     validating: bool,
-) -> Result<syntax::Query, QueryError> {
-    if let syntax::Source::Saved {
+) -> Result<native::Template, QueryError> {
+    match input {
+        Definition::Current { body } => {
+            expand(body, ctx, saved, seen, expanded_definition, validating)
+        }
+        Definition::FormatOne { body, .. } => {
+            expand_historical(body, ctx, saved, seen, expanded_definition, validating)
+        }
+    }
+}
+
+pub(super) fn resolve_historical(
+    input: historical_query_format_v1::ast::Query,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+) -> Result<native::Template, QueryError> {
+    expand_historical(input, ctx, saved, &mut BTreeSet::new(), &mut false, false)
+}
+
+pub(super) fn expand_historical(
+    mut input: historical_query_format_v1::ast::Query,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+    seen: &mut BTreeSet<String>,
+    expanded_definition: &mut bool,
+    validating: bool,
+) -> Result<native::Template, QueryError> {
+    use historical_query_format_v1::ast as old;
+    if let old::Source::Saved {
         name,
         arguments,
         condition,
         ..
     } = input.source.clone()
+    {
+        *expanded_definition = true;
+        if !seen.insert(name.clone()) {
+            return Err(QueryError::new(format!("saved query cycle at {name}")));
+        }
+        let definition = saved
+            .get(&name)
+            .ok_or_else(|| QueryError::new(format!("no saved query named {name}")))?;
+        let mut args = BTreeMap::new();
+        for argument in arguments {
+            let value = serde_json::from_value(
+                serde_json::to_value(argument.value)
+                    .map_err(|error| QueryError::new(error.to_string()))?,
+            )
+            .map_err(|error| QueryError::new(error.to_string()))?;
+            if args.insert(argument.parameter.clone(), value).is_some() {
+                return Err(QueryError::new(format!(
+                    "parameter {} was given twice",
+                    argument.parameter
+                )));
+            }
+        }
+        let target = substitute(definition, &args, validating)?;
+        let result = match target {
+            Definition::FormatOne { mut body, .. } => {
+                if let Some(condition) = condition {
+                    body.stages.push(old::Stage {
+                        span: condition.span,
+                        kind: old::StageKind::Where { condition },
+                    });
+                }
+                body.stages.append(&mut input.stages);
+                body.attach.append(&mut input.attach);
+                expand_historical(body, ctx, saved, seen, expanded_definition, validating)
+            }
+            Definition::Current { body } => {
+                let base = expand(body, ctx, saved, seen, expanded_definition, validating)?;
+                super::historical::convert_around_current(
+                    input,
+                    base,
+                    ctx,
+                    saved,
+                    seen,
+                    expanded_definition,
+                    validating,
+                )
+            }
+        };
+        seen.remove(&name);
+        return result;
+    }
+    // Nested relations have independent output grain and are expanded before
+    // the format converter sees their temporal/projection semantics.
+    super::historical::convert_expanded(input, ctx, saved, seen, expanded_definition, validating)
+}
+
+fn expand(
+    mut input: native::Template,
+    ctx: &Context,
+    saved: &BTreeMap<String, SavedQuery>,
+    seen: &mut BTreeSet<String>,
+    expanded_definition: &mut bool,
+    validating: bool,
+) -> Result<native::Template, QueryError> {
+    if let syntax::Source::Saved {
+        name,
+        arguments,
+        condition,
+        ..
+    } = input.relation.source.clone()
     {
         *expanded_definition = true;
         if !seen.insert(name.clone()) {
@@ -287,31 +505,49 @@ fn expand(
                 )));
             }
         }
-        let mut expanded = substitute(definition, &args, ctx, validating)?;
+        let definition = substitute(definition, &args, validating)?;
+        let mut expanded = expand_definition(
+            definition,
+            ctx,
+            saved,
+            seen,
+            expanded_definition,
+            validating,
+        )?;
         if let Some(condition) = condition {
-            expanded.stages.push(syntax::Stage {
+            expanded.relation.transforms.push(syntax::Transform {
                 span: condition.span,
-                kind: syntax::StageKind::Where { condition },
+                kind: syntax::TransformKind::Where { condition },
             });
         }
-        expanded.stages.append(&mut input.stages);
-        expanded.attach.append(&mut input.attach);
+        expanded
+            .relation
+            .transforms
+            .append(&mut input.relation.transforms);
+        expanded.relation.attach.append(&mut input.relation.attach);
         let out = expand(expanded, ctx, saved, seen, expanded_definition, validating);
         seen.remove(&name);
         return out;
     }
-    for stage in &mut input.stages {
-        if let syntax::StageKind::Temporal { query, .. }
-        | syntax::StageKind::Combine { query, .. } = &mut stage.kind
+    for transform in &mut input.relation.transforms {
+        if let syntax::TransformKind::Combine { query, .. }
+        | syntax::TransformKind::Join { query, .. }
+        | syntax::TransformKind::Diff { query, .. } = &mut transform.kind
         {
-            **query = expand(
-                (**query).clone(),
+            let inner = expand(
+                native::Template::query((**query).clone()),
                 ctx,
                 saved,
                 seen,
                 expanded_definition,
                 validating,
             )?;
+            if inner.operation.is_some() {
+                return Err(QueryError::new(
+                    "native commands cannot be nested as query relations",
+                ));
+            }
+            **query = inner.relation;
         }
     }
     Ok(input)

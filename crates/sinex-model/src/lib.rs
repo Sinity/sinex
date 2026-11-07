@@ -6,6 +6,7 @@
 extern crate self as sinex_model;
 
 pub mod accounting;
+pub mod backup;
 pub mod batch;
 pub mod clock;
 pub mod event;

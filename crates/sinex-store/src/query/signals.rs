@@ -42,7 +42,7 @@ pub async fn standing_query(
         let definitions = saved::saved_definitions(conn, &name).await?;
         sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?
     } else {
-        sinex_model::query::bind(text, &ctx)?
+        sinex_model::query::native::parse(text, &ctx)?.bind(&ctx)?
     };
     ctx.catalog
         .as_ref()
@@ -133,12 +133,14 @@ pub async fn standing_query(
         selector
             .stages
             .retain(|stage| !matches!(stage, Stage::Fields(_)));
-        selector.stages.push(Stage::Fields(vec![FieldRef::Field(
-            Table::Events.field("id").expect("event ID field"),
-        )]));
+        selector
+            .stages
+            .push(Stage::Fields(vec![Operand::Field(FieldRef::Field(
+                Table::Events.field("id").expect("event ID field"),
+            ))]));
         let (sql, params) = {
             let compiled = super::compile_query(conn, &ctx, seq, &selector).await?;
-            let mut sql = SqlFragment::text("SELECT q.id FROM (");
+            let mut sql = SqlFragment::text("SELECT DISTINCT unnest(q.\"_parents\") FROM (");
             sql.append(compiled.answer).push(") q");
             sql.render()
         };
@@ -163,7 +165,7 @@ pub async fn standing_query(
                 let compiled = super::compile_query(conn, &ctx, seq, &bound).await?;
                 let mut sql = SqlFragment::text(format!(
                     "SELECT jsonb_build_object('identity',q.\"_row_identity\",'row',{}) FROM (",
-                    json_object(&compiled.columns)
+                    compiled.json_object()
                 ));
                 sql.append(compiled.answer).push(") q");
                 sql.render()

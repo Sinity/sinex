@@ -69,7 +69,7 @@ async fn continuation_keeps_its_field_types_when_another_version_registers(
         .unwrap();
     let d = register(&mut conn, 9, json!({"type":"integer"})).await;
     points(&mut conn, &d).await;
-    let text = "events where event_type = example.point sort payload.value fields payload.value, payload.at";
+    let text = "events where event_type = example.point | sort by payload.value | fields payload.value, payload.at";
     let first = ask_page(
         &mut conn,
         text,

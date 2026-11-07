@@ -9,6 +9,12 @@ expressions, sealed cursors and the shared query laws belong to the common
 crate; how the CLI, MCP and HTTP carry a query is in [interfaces](interfaces.md); what a
 record and a citation identify is in [events](events.md#identity).
 
+Relation transforms use explicit pipes: `commands where since:7d | group by cwd | agg sum(duration) as elapsed | sort by elapsed desc`. `F:VALUE` uses the field's declared natural match, while `F = VALUE` is exact comparison. Use `F:known` and `F:unknown` for presence tests, and `(A | B)` for a set of values. `glob(text, pattern)` performs case-sensitive whole-text matching with `*` as its only wildcard; `%`, `_` and backslash are literal. For example, `events where glob(source, "terminal.*") = true` selects that source family, while `source = "terminal.*"` names that exact source.
+
+`| group by F | first N` selects the first N original rows in each group, preserving the incoming order and each row's identity and provenance. It keeps the original row fields for later filters and projections.
+
+`recall`, `trace`, `parents` and `descendants` are Sinex operations. Their adapters carry ordinary shared relation bodies and transforms in a typed template; they are not source variants of the shared query language. For example, `recall yesterday | fields when, text` uses a recall operation and a shared projection.
+
 The same query text runs on every surface. An answer carries its rows, the total, the
 resolved read context (clock, zone, commit position), a continuation, and `read_as`, the
 question read back as a sentence. A query over events with a time span also carries the
@@ -17,8 +23,8 @@ coverage is not complete is marked `lower bound` ([completeness](sources.md#comp
 decided target):
 
 ```sh
-sinexctl 'commands where cwd ^ /src/tide AND when in last 7d sort when desc'
-sinexctl explain 'shell-sessions where cwds ^ /src/tide sort start desc'
+sinexctl 'commands where cwd ^ /src/tide AND when in last 7d | sort by when desc'
+sinexctl explain 'shell-sessions where cwds ^ /src/tide | sort by start desc'
 sinexctl find rate limit
 ```
 
@@ -68,13 +74,13 @@ years (29 February matches only 29 February and answers "no such day" in other y
 
 Archived visibility is a relation and read-context choice: `events` excludes
 readings archived at the selected position; `archive` exposes archive history.
-`as of POSITION` selects historical visibility at that exact commit. It does
+`| as of POSITION` selects historical visibility at that exact commit. It does
 not make every archived reading part of ordinary `events`, and current privacy
 and tombstone policy still applies. There is no separate `archived` table name
 or global include-archived switch.
 
 ```sh
-sinexctl 'gaps where binding = desktop.clipboard sort from'
+sinexctl 'gaps where binding = desktop.clipboard | sort by from'
 sinexctl 'shapes where source = health.samsung'
 sinexctl 'failures where source = health.samsung'
 ```
@@ -101,6 +107,8 @@ each source's records are rows of their own, so counts across sources are per so
 
 Use `similar:sinex:ev/<embedding-id>` with a stored `text.embedding` reference. It ranks the filtered event relation in that exact vector space and retains rows without a vector at unknown rank. It is a positive ranking directive in the root AND conditions; OR, NOT and conflicting references are explicit refusals. The reference obeys grants and the selected read position. This supplied-vector path enables no model provider.
 
+Event relations also expose `start` and `end` for actual declared spans; a point event has unknown span bounds, and an ongoing span has an unknown end. `snippet` is the generated search excerpt, available to explicit projections; it is unknown when the relation has no ranked search.
+
 ### Typed payload fields
 
 Payload paths come from the kind registry, including nested objects, optional fields and
@@ -108,7 +116,7 @@ timestamp fields. Filtering on an event type selects its schema:
 
 ```sh
 sinexctl 'events where event_type = command.executed AND payload.exit_code > 0'
-sinexctl 'events where event_type = command.executed sum(payload.duration_ns)'
+sinexctl 'events where event_type = command.executed | agg sum(payload.duration_ns)'
 ```
 
 - A path shared by several schemas can be used without an event-type filter when its
@@ -160,8 +168,8 @@ sinexctl 'events where event_type = command.executed sum(payload.duration_ns)'
 range:
 
 ```sh
-sinexctl 'commands where when in last 7d group by day(when) count fill'
-sinexctl 'commands where when in last 7d group by day(when), cwd count fill where count > 0'
+sinexctl 'commands where when in last 7d | group by day(when) | count | fill'
+sinexctl 'commands where when in last 7d | group by day(when), cwd | count | fill | where count > 0'
 ```
 
 - The grouping needs one time-bucket key and a finite range on its time field. A lower
@@ -180,9 +188,9 @@ sinexctl 'commands where when in last 7d group by day(when), cwd count fill wher
 
 ## Joins and relations
 
-- `near`, `before`, `after`, `during` and `containing` keep one outer row when any inner
-  match exists and return the nearest match and its signed offset. Ties break
-  deterministically; an all-pairs result declares its changed grain.
+- The conditions `near (Q)`, `before (Q)`, `after (Q)`, `during (Q)` and `containing (Q)` retain an outer row when any inner match exists. An omitted distance is unbounded.
+- `| join near (Q) within 5m` and the other order joins return one row per matching pair. Inner output fields appear as `match.FIELD`; an inner projection defines which fields are available. `| join (Q) on F = G` pairs equal exact keys.
+- `at start` and `at when` select the outer row's start, while `at end` selects its end. The inner relation supplies its own point or span. An unknown required endpoint stays unknown.
 - Point-in-span and span overlap are distinct. Open intervals are provisional;
   coarse-precision records carry their precision.
 - An inner relation with its own read-context stage runs at that context or is refused
@@ -206,7 +214,7 @@ outer read snapshot. `hour()` continues to name the local clock hour.
 - **An answer resolves once:** `now`, the zone, the day start, the query text and its
   bindings, schema and definition versions, grants and the commit position. Every page
   shares them.
-- `as of POSITION` reads visibility at that commit, including archive, restore, replay
+- `| as of POSITION` reads visibility at that commit, including archive, restore, replay
   and tombstone ([as-of reads](lifecycle.md#as-of-reads)).
 - Continuations are sealed to the question and the caller-visible context. A changed
   definition, grant or incompatible change refuses with `stale_cursor` and says how to
@@ -249,7 +257,7 @@ THIS. THIS IS WHAT I MEANT"
 (cc-queued:3b0038ec-234c-44b8-bb88-fe222b44fe0f@2026-07-09T20:06Z).
 
 ```sh
-sinexctl 'commands where cwd ^ $directory since $period count' \
+sinexctl 'commands where cwd ^ $directory AND since:$period | count' \
   save in-directory --parameter directory:text --parameter period:duration
 sinexctl 'query:in-directory(directory="/src/tide", period=7d)'
 sinexctl 'queries'
@@ -268,11 +276,12 @@ sinexctl 'queries'
   structure; a quoted value holding query punctuation stays one value. Every declared
   parameter is used and supplied exactly once. Missing, duplicate, unused and wrong-type
   arguments, recursion and incompatible stages are refused.
-- Saving checks fields and stages with typed placeholder values; invocation binds the
-  supplied values into the parsed question before execution. A parameter that selects an
+- Saving parses the definition once into a typed operation template and checks fields and stages with typed placeholder values; invocation substitutes scalar nodes into that template before execution. The original authored text remains separate evidence. A parameter that selects an
   event type leaves the schema unknown at save time, so payload fields whose types differ
   across schemas need a fixed event-type selection.
 - Relative times resolve at invocation and stay fixed for the continuation.
+- Saved request material records its input format. Current requests carry a typed executable template. Reading immutable format 1 material uses its frozen decoder and retains the decoded definition with proof of its authored source. Invocation expands that historical definition's saved dependencies before converting it to a current executable template, so a named dependency continues to resolve dynamically. Stored selections retain their exact dependency snapshots and original question identity. The owning reader validates the captured source and kind declarations before projecting historical payloads into current executable definitions; captured events keep their original payload and kind version.
+
 - Later stages operate on the saved question's result, including grouped rows. Nested
   references record composition edges, which take part in version checks and completion.
 - An archived definition is unavailable, and a changed definition invalidates the
@@ -383,4 +392,4 @@ that route ([cross-system queries](https://github.com/Sinity/polylogue/blob/mast
   and cannot read a withheld field or key.
 
 
-A scalar's quotes preserve its spelling, not a second comparison mode. Source and event-type identifier patterns use their declared wildcard semantics with either spelling; payload equality compares literal values, including a literal `*`. Contains and prefix operators take literal text. Declared scalar types govern conversion. A schemaless JSON field instead uses the scalar type of each value: numeric rows compare numerically, strings preserve exact spelling such as `001`, and boolean equality uses canonical `true` or `false`. Missing, non-scalar or incompatible values produce unknown truth, including beneath `NOT`.
+A scalar's quotes preserve its spelling, not a second comparison mode. Equality compares literal identifiers and payload values, including a literal `*`. Wildcard matching is explicit with `glob(value, pattern)`, whose only wildcard is `*`. Contains and prefix operators take literal text. Declared scalar types govern conversion. A schemaless JSON field instead uses the scalar type of each value: numeric rows compare numerically, strings preserve exact spelling such as `001`, and boolean equality uses canonical `true` or `false`. Missing, non-scalar or incompatible values produce unknown truth, including beneath `NOT`.

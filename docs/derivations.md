@@ -15,6 +15,7 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 - A **per-event derivation** maps one admitted input to zero or more outputs.
 - A **keyed derivation** computes the complete output set of one key (a period, a scope, an episode) from the inputs it selects, including intervals that overlap its period.
 - Derivations read only committed events, in commit order. Inside `sinexd` they read PostgreSQL and admit directly; outside, they are durable subscribers of the [confirmed stream](producers.md#the-confirmed-stream) and send their outputs back through the ingress. Both obey every rule on this page.
+- Paged readers choose event identities and apply their row and byte budgets before fetching payloads. A separate materialized fetch loads payloads for that ID batch once, with chunk exclusion, before joining its page metadata. Compressed chunks are read for the selected batch rather than once per identity or through an unrestricted historical join.
 - The daemon does the I/O; the `sinex-derivations` crate computes from supplied values, so every computation is testable without a database.
 - Admission commits a derivation's outputs, the replacement of the key's previous output set, the derivation's saved position, its read ranges and the downstream dirty marks in one transaction.
 - Dirty keys are marked in the same transaction as the inputs that dirty them. There is no separate invalidation stream.

@@ -234,7 +234,7 @@ async fn a_missing_server_is_retried_once_when_it_appears() {
     let mut watched = rule("held-group", "notice");
     watched["interrupt"] = json!(true);
     watched["query"] = json!(
-        "events where event_type = operator.mark AND payload.text = \"synthetic watched input\" group by event_type count"
+        "events where event_type = operator.mark AND payload.text = \"synthetic watched input\" | group by event_type | count"
     );
     ok(
         &socket,

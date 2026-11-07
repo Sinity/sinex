@@ -11,7 +11,7 @@ use std::{collections::BTreeMap, future::Future, pin::Pin};
 const BATCH: usize = 2048;
 
 pub async fn initialize(conn: &mut sqlx::PgConnection) -> Result<()> {
-    sqlx::query("CREATE TEMP TABLE IF NOT EXISTS sinex_query_days (setting text NOT NULL, ordinal bigint NOT NULL, day text NOT NULL, week text, weekday text NOT NULL, month text NOT NULL, month_day text NOT NULL, from_ns numeric NOT NULL, until_ns numeric NOT NULL, PRIMARY KEY(setting,ordinal)) ON COMMIT PRESERVE ROWS").execute(&mut *conn).await?;
+    sqlx::query("CREATE TEMP TABLE IF NOT EXISTS sinex_query_days (setting text NOT NULL, ordinal bigint NOT NULL, day text NOT NULL, week text, weekday text NOT NULL, month text NOT NULL, year bigint NOT NULL, month_day text NOT NULL, week_from_ns numeric, month_from_ns numeric, from_ns numeric NOT NULL, until_ns numeric NOT NULL, PRIMARY KEY(setting,ordinal)) ON COMMIT PRESERVE ROWS").execute(&mut *conn).await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS sinex_query_days_start ON sinex_query_days(setting,from_ns)",
     )
@@ -34,10 +34,27 @@ pub(crate) fn setting(ctx: &Context) -> String {
     format!("{} {}", ctx.zone_name(), ctx.day_start)
 }
 
-fn calendar_operand(operand: &Operand) -> Option<(TimeFn, FieldRef)> {
+fn calendar_operands(operand: &Operand, out: &mut Vec<(TimeFn, FieldRef)>) {
     match operand {
-        Operand::TimeFn(func, field) if *func != TimeFn::Hour => Some((*func, field.clone())),
-        _ => None,
+        Operand::TimeFn(func, field) if *func != TimeFn::Hour => out.push((*func, field.clone())),
+        Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
+            calendar_operands(left, out);
+            calendar_operands(right, out);
+        }
+        Operand::CaseEqual { left, right, value } => {
+            calendar_operands(left, out);
+            calendar_operands(right, out);
+            calendar_operands(value, out);
+        }
+        Operand::Text(value)
+        | Operand::Absolute(value)
+        | Operand::Length(value)
+        | Operand::Named { operand: value, .. } => calendar_operands(value, out),
+        Operand::Literal {
+            value: Value::Operand(value),
+            ..
+        } => calendar_operands(value, out),
+        _ => {}
     }
 }
 fn expression_operands(e: &Expr, out: &mut Vec<(TimeFn, FieldRef)>) {
@@ -47,16 +64,14 @@ fn expression_operands(e: &Expr, out: &mut Vec<(TimeFn, FieldRef)>) {
             expression_operands(b, out);
         }
         Expr::Not(e) => expression_operands(e, out),
-        Expr::Compare { lhs, .. } | Expr::Exists(lhs) | Expr::Within { lhs, .. } => {
-            if let Some(op) = calendar_operand(lhs) {
-                out.push(op);
+        Expr::Compare { lhs, rhs, .. } => {
+            calendar_operands(lhs, out);
+            if let Value::Operand(rhs) = rhs {
+                calendar_operands(rhs, out);
             }
         }
-        Expr::Truth { operand, .. } => {
-            if let Some(op) = calendar_operand(operand) {
-                out.push(op);
-            }
-        }
+        Expr::Exists(lhs) | Expr::Within { lhs, .. } => calendar_operands(lhs, out),
+        Expr::Truth { operand, .. } => calendar_operands(operand, out),
         _ => {}
     }
 }
@@ -79,19 +94,30 @@ fn stage_operands(stage: &Stage) -> Vec<(TimeFn, FieldRef)> {
     let mut out = Vec::new();
     match stage {
         Stage::Where(e) => expression_operands(e, &mut out),
+        Stage::GroupFirst { keys, .. } => {
+            for key in keys {
+                calendar_operands(key, &mut out);
+            }
+        }
         Stage::Group(g) => {
             for key in &g.keys {
-                if let Some(op) = calendar_operand(key) {
-                    out.push(op);
+                calendar_operands(key, &mut out);
+            }
+            for aggregate in &g.aggregates {
+                if let Some(argument) = &aggregate.argument {
+                    calendar_operands(argument, &mut out);
                 }
+            }
+        }
+        Stage::Fields(columns) => {
+            for column in columns {
+                calendar_operands(column, &mut out);
             }
         }
         Stage::Sort(keys) => {
             for key in keys {
-                if let SortBy::Operand(op) = &key.key
-                    && let Some(op) = calendar_operand(op)
-                {
-                    out.push(op);
+                if let SortBy::Operand(op) = &key.key {
+                    calendar_operands(op, &mut out);
                 }
             }
         }
@@ -156,6 +182,63 @@ pub(crate) async fn compile_with_stats(
     Ok((Compiler::with_calendar(ctx, seq).compile(q)?, prepare.stats))
 }
 
+impl Compiler<'_> {
+    /// A projected calendar label retains its shared bucket boundary.
+    pub(super) fn time_bucket_label(
+        &self,
+        func: TimeFn,
+        value: SqlFragment,
+    ) -> Result<SqlFragment> {
+        let (label, boundary) = match func {
+            TimeFn::Day => ("day", "from_ns"),
+            TimeFn::Week => ("week", "week_from_ns"),
+            TimeFn::Month => ("month", "month_from_ns"),
+            _ => return Err(invalid("this calendar label does not yield a time bucket")),
+        };
+        let setting = self
+            .calendar
+            .as_ref()
+            .ok_or_else(|| invalid("logical-day SQL requires shared boundary preparation"))?;
+        let mut out = SqlFragment::text(format!(
+            "(SELECT to_timestamp(trunc(d.{boundary}/1000000000)::double precision) + (mod(d.{boundary},1000000000)/1000)::bigint * interval '1 microsecond' FROM pg_temp.sinex_query_days d WHERE d.setting="
+        ));
+        out.param(V::String(Some(setting.clone())))
+            .push(format!(" AND d.{label}="))
+            .append(value)
+            .push(" ORDER BY d.from_ns LIMIT 1)");
+        Ok(out)
+    }
+    /// Calendar arithmetic uses the instant at the shared bucket boundary.
+    pub(super) fn time_bucket(&self, func: TimeFn, t: SqlFragment) -> Result<SqlFragment> {
+        let column = match func {
+            TimeFn::Day => "from_ns",
+            TimeFn::Week => "week_from_ns",
+            TimeFn::Month => "month_from_ns",
+            _ => {
+                return Err(invalid(
+                    "this calendar function does not yield a time bucket",
+                ));
+            }
+        };
+        let setting = self
+            .calendar
+            .as_ref()
+            .ok_or_else(|| invalid("logical-day SQL requires shared boundary preparation"))?;
+        let mut ns = SqlFragment::text("(extract(epoch from ");
+        ns.append(t).push(")*1000000000)");
+        let mut out = SqlFragment::text(format!(
+            "(SELECT to_timestamp(trunc(d.{column}/1000000000)::double precision) + (mod(d.{column},1000000000)/1000)::bigint * interval '1 microsecond' FROM pg_temp.sinex_query_days d WHERE d.setting="
+        ));
+        out.param(V::String(Some(setting.clone())))
+            .push(" AND d.from_ns<=")
+            .append(ns.clone())
+            .push(" AND ")
+            .append(ns)
+            .push("<d.until_ns ORDER BY d.from_ns DESC LIMIT 1)");
+        Ok(out)
+    }
+}
+
 #[derive(serde::Serialize)]
 struct Boundary {
     ordinal: i64,
@@ -163,7 +246,10 @@ struct Boundary {
     week: Option<String>,
     weekday: &'static str,
     month: String,
+    year: i16,
     month_day: String,
+    week_from_ns: Option<String>,
+    month_from_ns: Option<String>,
     from_ns: String,
     until_ns: String,
 }
@@ -184,6 +270,14 @@ impl Preparation<'_> {
         if func == TimeFn::Week && monday.is_none() {
             return Err(invalid("week is outside the supported calendar"));
         }
+        let month = Date::new(date.year(), date.month(), 1).map_err(|e| invalid(e.to_string()))?;
+        let bucket_start = |date: Option<Date>, required: bool| -> Result<Option<String>> {
+            match date.map(|date| self.day.day(date)).transpose() {
+                Ok(bounds) => Ok(bounds.map(|bounds| bounds.start.as_nanosecond().to_string())),
+                Err(error) if required => Err(invalid(error.to_string())),
+                Err(_) => Ok(None),
+            }
+        };
         let ordinal = query_language::time::days_between(jiff::civil::date(1970, 1, 1), date)
             .map_err(|e| invalid(e.to_string()))?;
         const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -193,6 +287,9 @@ impl Preparation<'_> {
             week: monday.map(|d| d.to_string()),
             weekday: DAYS[date.weekday().to_monday_zero_offset() as usize],
             month: format!("{:04}-{:02}", date.year(), date.month()),
+            year: date.year(),
+            week_from_ns: bucket_start(monday, func == TimeFn::Week)?,
+            month_from_ns: bucket_start(Some(month), func == TimeFn::Month)?,
             month_day: format!("{:02}-{:02}", date.month(), date.day()),
             from_ns: bounds.start.as_nanosecond().to_string(),
             until_ns: bounds.end.as_nanosecond().to_string(),
@@ -204,7 +301,7 @@ impl Preparation<'_> {
         }
         self.stats.max_boundary_batch = self.stats.max_boundary_batch.max(rows.len());
         let rows = serde_json::to_string(&rows).map_err(|e| invalid(e.to_string()))?;
-        sqlx::query("INSERT INTO pg_temp.sinex_query_days(setting,ordinal,day,week,weekday,month,month_day,from_ns,until_ns) SELECT $1,r.* FROM jsonb_to_recordset($2::jsonb) AS r(ordinal bigint,day text,week text,weekday text,month text,month_day text,from_ns numeric,until_ns numeric) ON CONFLICT(setting,ordinal) DO NOTHING").bind(&self.setting).bind(rows).execute(conn).await?;
+        sqlx::query("INSERT INTO pg_temp.sinex_query_days(setting,ordinal,day,week,weekday,month,year,month_day,week_from_ns,month_from_ns,from_ns,until_ns) SELECT $1,r.* FROM jsonb_to_recordset($2::jsonb) AS r(ordinal bigint,day text,week text,weekday text,month text,year bigint,month_day text,week_from_ns numeric,month_from_ns numeric,from_ns numeric,until_ns numeric) ON CONFLICT(setting,ordinal) DO NOTHING").bind(&self.setting).bind(rows).execute(conn).await?;
         Ok(())
     }
     async fn interval(
@@ -261,17 +358,27 @@ impl Preparation<'_> {
             return self.interval(conn, from, to, func).await;
         }
         let mut selected = prefix.clone();
-        selected.stages.retain(|s| !matches!(s, Stage::Fields(_)));
-        selected.stages.push(Stage::Fields(vec![field.clone()]));
+        selected
+            .stages
+            .push(Stage::Fields(vec![Operand::Field(field.clone())]));
         let (sql, params) = {
             let compiled = Compiler::with_calendar(self.ctx, self.seq).compile(&selected)?;
-            let field = format!("q.{}", quote(&field.name()));
-            let mut input = SqlFragment::text(format!(
-                "SELECT DISTINCT (extract(epoch from {field})*1000000000)::numeric::text FROM ("
-            ));
+            let mut value = SqlFragment::text(compiled.output_column(&field.name())?);
+            if let FieldRef::TypedGroup(column) = field
+                && let Some(func @ (TimeFn::Day | TimeFn::Week | TimeFn::Month)) =
+                    column.time_function()
+            {
+                value =
+                    Compiler::with_calendar(self.ctx, self.seq).time_bucket_label(func, value)?;
+            }
+            let mut input = SqlFragment::text("SELECT DISTINCT (extract(epoch from ");
             input
+                .append(value.clone())
+                .push(")*1000000000)::numeric::text FROM (")
                 .append(compiled.answer)
-                .push(format!(") q WHERE {field} IS NOT NULL"));
+                .push(") q WHERE ")
+                .append(value)
+                .push(" IS NOT NULL");
             self.cursor += 1;
             let mut statement = SqlFragment::text(format!(
                 "DECLARE sinex_day_inputs_{} NO SCROLL CURSOR FOR ",
@@ -362,7 +469,7 @@ impl Preparation<'_> {
                         .keys
                         .iter()
                         .find_map(|key| {
-                            if let Operand::TimeFn(func, _) = key {
+                            if let Operand::TimeFn(func, _) = key.unnamed() {
                                 Some(*func)
                             } else {
                                 None

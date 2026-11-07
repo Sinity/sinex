@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 mod database;
 pub mod migration;
-pub use database::{commit_pending_extents, delete_unreferenced_extents};
+pub use database::{commit_pending_extents, delete_unreferenced_extents, finish_deleting_extents};
 pub use hashed_blobs::DEFAULT_FRAME as BLOB_FRAME_BYTES;
 
 /// Explicit budgets supplied by an unlocked operation.
@@ -277,11 +277,30 @@ impl Blobs {
         )?)
     }
     /// The caller has already committed the deleting marker. Recovery repeats this punch.
-    pub fn delete(&self, name: &str) -> Result<()> {
+    pub async fn delete(&self, conn: &mut sqlx::PgConnection, name: &str) -> Result<bool> {
+        let descriptor = sqlx::query_scalar!(
+            "SELECT descriptor FROM core.blob_extents WHERE hash=$1",
+            name
+        )
+        .fetch_optional(&mut *conn)
+        .await?;
+        let extent = descriptor.as_deref().map(Extent::decode).transpose()?;
+        if let Some(extent) = &extent {
+            if crate::backup::covers(conn, &extent.segment, extent.offset).await? {
+                return Ok(false);
+            }
+        }
+        self.punch(name, extent.as_ref())?;
+        Ok(true)
+    }
+    fn punch(&self, name: &str, recorded: Option<&Extent>) -> Result<()> {
         let hash = parse(name)?;
         self.sync_pending()?;
         let mut state = self.state()?;
-        if let Some(extent) = state.extents.get(&hash).cloned() {
+        if let Some(extent) = recorded
+            .cloned()
+            .or_else(|| state.extents.get(&hash).cloned())
+        {
             if state.writer.is_none() {
                 state.writer = Some(SegmentWriter::open(
                     self.root(),

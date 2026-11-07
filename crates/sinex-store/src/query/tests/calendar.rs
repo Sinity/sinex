@@ -38,7 +38,7 @@ async fn sql_logical_days_use_first_fold_boundary_and_preserve_nested_grouping(
     );
     let grouped = at(
         &mut conn,
-        "runs where producer ^ calendar-fold group by day(started) count sort day",
+        "runs where producer ^ calendar-fold | group by day(started) | count | sort by day",
         &ctx,
     )
     .await;
@@ -49,9 +49,9 @@ async fn sql_logical_days_use_first_fold_boundary_and_preserve_nested_grouping(
             .unwrap()
             .clone()
     );
-    let nested=at(&mut conn,"runs where producer ^ calendar-fold group by producer min(started) group by day(min_started) count sort day",&ctx).await;
+    let nested=at(&mut conn,"runs where producer ^ calendar-fold | group by producer | agg min(started) | group by day(min_started) | count | sort by day",&ctx).await;
     assert_eq!(nested.rows, grouped.rows);
-    let filled=at(&mut conn,"runs where producer ^ calendar-fold AND started in 2026-10-24 group by day(started) count fill",&ctx).await;
+    let filled=at(&mut conn,"runs where producer ^ calendar-fold AND started in 2026-10-24 | group by day(started) | count | fill",&ctx).await;
     assert_eq!(
         filled.rows,
         json!([{"day":"2026-10-24","count":1,"coverage":"recorded"}])
@@ -123,7 +123,7 @@ async fn calendar_preparation_streams_more_than_two_batches_without_a_date_cap(
         .unwrap();
     let ctx = clock(jiff::civil::Time::constant(4, 0, 0, 0), "UTC");
     let query = bind(
-        "runs where producer = calendar-batch group by day(started) count",
+        "runs where producer = calendar-batch | group by day(started) | count",
         &ctx,
     )
     .unwrap();
@@ -159,7 +159,7 @@ async fn grouped_prefix_limit_keeps_its_selection_when_preparing_a_hidden_time(
     point(&mut conn, "calendar-prefix-a", "2030-01-01T12:00:00Z").await;
     point(&mut conn, "calendar-prefix-z", "2000-01-01T12:00:00Z").await;
     let ctx = clock(jiff::civil::Time::constant(4, 0, 0, 0), "UTC");
-    let query = "runs where producer ^ calendar-prefix group by producer min(started) limit 1 group by day(min_started) count";
+    let query = "runs where producer ^ calendar-prefix | group by producer | agg min(started) | limit 1 | group by day(min_started) | count";
     let answer = at(&mut conn, query, &ctx).await;
     assert_eq!(
         answer.rows,
@@ -168,7 +168,7 @@ async fn grouped_prefix_limit_keeps_its_selection_when_preparing_a_hidden_time(
             .unwrap()
             .clone()
     );
-    let projected=at(&mut conn,"runs where producer ^ calendar-prefix group by producer min(started) limit 1 fields min_started",&ctx).await;
+    let projected=at(&mut conn,"runs where producer ^ calendar-prefix | group by producer | agg min(started) | limit 1 | fields min_started",&ctx).await;
     assert!(
         projected.rows[0]["min_started"]
             .as_str()

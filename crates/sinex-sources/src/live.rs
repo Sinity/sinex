@@ -325,17 +325,31 @@ where
 {
     let mut selected_at = Instant::now();
     let mut declaration = declaration(lives);
-    let mut producer = None;
+    let mut producer: Option<Producer> = None;
+    let mut participant = None;
+    let backup_bindings = Arc::new(std::sync::Mutex::new(
+        lives
+            .iter()
+            .map(|live| live.binding.clone())
+            .collect::<Vec<_>>(),
+    ));
     let mut retry = Retry::default();
     let mut configuration_error = None;
     loop {
         if selected_at.elapsed() >= Duration::from_secs(60) {
+            let _publication = match producer.as_ref() {
+                Some(producer) => Some(producer.publication().enter().await),
+                None => None,
+            };
             match select() {
                 Ok(plan) => {
                     if extend(lives, plan, positions, &failed) {
                         health_bindings.send_replace(monitored(lives));
                         declaration = self::declaration(lives);
+                        participant = None;
                         producer = None;
+                        *backup_bindings.lock().unwrap() =
+                            lives.iter().map(|live| live.binding.clone()).collect();
                         if let Some(reason) = configuration_error.take() {
                             for live in lives.iter() {
                                 let mut health = live.health.lock().unwrap();
@@ -365,11 +379,21 @@ where
             .await
             {
                 Ok(connected) => {
-                    producer = Some(if connection.upload {
+                    let connected = if connection.upload {
                         connected.upload_bytes(store.clone())
                     } else {
                         connected
-                    });
+                    };
+                    let state = positions.to_owned();
+                    let bindings = backup_bindings.clone();
+                    participant = Some(
+                        connected
+                            .backup_participant(Arc::new(move |cancel| {
+                                backup::capture(Some(&state), &bindings.lock().unwrap(), &cancel)
+                            }))
+                            .await?,
+                    );
+                    producer = Some(connected);
                     retry.recovered(&connection.producer);
                 }
                 Err(Error::Configuration(reason)) => {
@@ -386,6 +410,7 @@ where
                 }
             }
         }
+        let _participant = participant.as_ref();
         let connected = producer.as_mut().expect("connected above");
         for live in lives.iter() {
             connected.monitor(&live.binding.name, live.health.clone());
@@ -444,6 +469,7 @@ where
             }
         }
         if reconnect {
+            participant = None;
             producer = None;
             continue;
         }
@@ -466,6 +492,8 @@ async fn produce_spool(
     positions: &Path,
     live: &mut Live,
 ) -> Result<bool, Error> {
+    let publication = producer.publication();
+    let _publication = publication.enter().await;
     let recovering = Producer::unacknowledged_position(&live.binding.name, positions)?.is_some();
     let position = producer
         .position(&live.binding.name, positions, store)
@@ -527,6 +555,8 @@ pub async fn drain(
     positions: &Path,
     bindings: Vec<(&'static InputFormat, Binding)>,
 ) -> Result<(), String> {
+    let publication = producer.publication();
+    let _publication = publication.enter().await;
     for (format, binding) in bindings {
         let position = producer
             .position(&binding.name, positions, store)
@@ -601,6 +631,7 @@ pub async fn drain(
     Ok(())
 }
 
+mod backup;
 mod health;
 mod notifier;
 
@@ -641,3 +672,12 @@ pub fn options(pairs: &[String]) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Acquire native retained source spools for the daemon's already frozen reader.
+/// Its checkpoint belongs to the exported core snapshot, rather than a producer file.
+pub fn capture_backup(
+    bindings: &[Binding],
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<sinex_transport::backup::Captured, String> {
+    backup::capture(None, bindings, cancelled)
+}

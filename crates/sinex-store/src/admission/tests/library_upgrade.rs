@@ -16,7 +16,8 @@ async fn the_curation_upgrade_refuses_a_database_holding_library_records(
 ) {
     refused_from(
         db,
-        sinex_schema::VERSION - 1,
+        sinex_schema::version_before("library_curation")
+            .expect("the library curation step is declared"),
         "library records predate the curation record",
     )
     .await;
@@ -63,6 +64,14 @@ async fn refused_from(db: devkit::pg::TestDatabase, previous_version: i32, messa
     )
     .unwrap();
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
+    // The fixture stands before library curation and later backup custody.
+    sqlx::raw_sql(
+        "DROP FUNCTION core.backup_covers(text, bigint);
+         DROP TABLE core.backup_segments, core.backup_holds;",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
     sqlx::query("UPDATE sinex_schema.applied SET version = $1")
         .bind(previous_version)
         .execute(&mut conn)

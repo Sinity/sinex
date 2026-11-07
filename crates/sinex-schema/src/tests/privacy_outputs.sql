@@ -1,3 +1,6 @@
+-- Undo later online backup custody before replaying the named forward chain.
+DROP FUNCTION core.backup_covers(text, bigint);
+DROP TABLE core.backup_segments, core.backup_holds;
 -- This fixture stands before source expectations, parser-free staging and
 -- library curation. Source expectations replaces its table; undo the other
 -- later additions before replaying that forward chain.

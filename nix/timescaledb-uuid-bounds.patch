@@ -1,0 +1,29 @@
+--- a/src/hypertable_restrict_info.c
++++ b/src/hypertable_restrict_info.c
+@@ -512,6 +512,17 @@
+ 		List *int64_values = NIL;
+ 		ListCell *lc;
+ 		Oid valuetype = dimvalues->type;
++		/* UUIDv7 time coordinates discard the suffix within each millisecond.
++		 * Strict UUID bounds therefore include their boundary millisecond for
++		 * pruning, and cannot prove the original UUID predicate true. */
++		bool approximate_uuid = valuetype == UUIDOID && dri->dimension->partitioning == NULL;
++		if (approximate_uuid)
++		{
++			if (strategy == BTGreaterStrategyNumber)
++				strategy = BTGreaterEqualStrategyNumber;
++			else if (strategy == BTLessStrategyNumber)
++				strategy = BTLessEqualStrategyNumber;
++		}
+ 
+ 		foreach (lc, dimvalues->values)
+ 		{
+@@ -541,6 +552,8 @@
+ 		proven_true_by_hri = dimension_restrict_info_open_add((DimensionRestrictInfoOpen *) dri,
+ 															  strategy,
+ 															  dimvalues);
++		if (approximate_uuid)
++			proven_true_by_hri = false;
+ 	}
+ 
+ 	if (proven_true_by_hri)

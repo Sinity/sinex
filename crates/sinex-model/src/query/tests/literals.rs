@@ -200,8 +200,8 @@ fn branch_narrowing_and_late_catalog_binding_preserve_raw_scalar_text() {
 #[devkit::test]
 fn grouped_repeated_and_saved_outputs_use_their_entering_column_types() {
     for text in [
-        "commands group by cwd count where cwd = 001 AND count >= 2",
-        "commands group by cwd count group by cwd sum(count) where cwd = 001 AND sum_count >= 2",
+        "commands | group by cwd | count | where cwd = 001 AND count >= 2",
+        "commands | group by cwd | count | group by cwd | agg sum(count) | where cwd = 001 AND sum_count >= 2",
     ] {
         let query = q(text);
         assert_eq!(values(&query, "cwd"), [&Value::Text("001".into())]);
@@ -212,21 +212,23 @@ fn grouped_repeated_and_saved_outputs_use_their_entering_column_types() {
         };
         assert_eq!(values(&query, count), [&Value::Text("2".into())]);
     }
-    let query = q("events group by source count where source = \"terminal.*\"");
+    let query = q("events | group by source | count | where source = \"terminal.*\"");
     assert_eq!(
         values(&query, "source"),
-        [&Value::Glob("terminal.*".into())]
+        [&Value::Text("terminal.*".into())]
     );
-    let query = q("commands group by cwd min(command) where min_command = 001");
+    let query = q("commands | group by cwd | agg min(command) | where min_command = 001");
     assert_eq!(values(&query, "min_command"), [&Value::Text("001".into())]);
 
-    let saved = crate::query::saved::SavedQuery {
-        name: "by-directory".into(),
-        query: "commands group by cwd count".into(),
-        parameters: vec![],
-    };
+    let saved = crate::query::saved::SavedQuery::from_text(
+        "by-directory".into(),
+        "commands | group by cwd | count".into(),
+        vec![],
+        &ctx(),
+    )
+    .unwrap();
     let query = crate::query::saved::bind_saved(
-        "query:by-directory where cwd = \"001\" AND count >= \"2\"",
+        "query:by-directory | where cwd = \"001\" AND count >= \"2\"",
         &ctx(),
         &BTreeMap::from([(saved.name.clone(), saved)]),
     )
@@ -237,10 +239,13 @@ fn grouped_repeated_and_saved_outputs_use_their_entering_column_types() {
 
 #[devkit::test]
 fn promoted_and_grouped_boolean_time_columns_keep_their_actual_types() {
-    let query = q("events near (commands) within 5m where offset >= \"001.50\"");
-    assert_eq!(values(&query, "offset"), [&Value::Text("001.50".into())]);
+    let query = q("events | join near (commands) within 5m | where match.duration >= \"001.50\"");
+    assert_eq!(
+        values(&query, "match.duration"),
+        [&Value::Text("001.50".into())]
+    );
     let context = declared_context();
-    let query = bind("events where event_type = example.text group by payload.flag, payload.at count where payload_flag = false AND payload_at = 2026-09-14T10:00:00Z", &context).unwrap();
+    let query = bind("events where event_type = example.text | group by payload.flag as payload_flag, payload.at as payload_at | count | where payload_flag = false AND payload_at = 2026-09-14T10:00:00Z", &context).unwrap();
     assert_eq!(values(&query, "payload_flag"), [&Value::Bool(false)]);
     assert_eq!(
         values(&query, "payload_at"),
@@ -249,8 +254,9 @@ fn promoted_and_grouped_boolean_time_columns_keep_their_actual_types() {
 }
 
 #[devkit::test]
-fn quoted_identifier_patterns_offer_the_same_declared_payload_completions() {
-    let completions = complete("events where event_type = \"command.*\" AND payload.dur");
+fn explicit_identifier_patterns_offer_declared_payload_completions() {
+    let completions =
+        complete("events where glob(event_type, \"command.*\") = true AND payload.dur");
     assert!(
         completions
             .iter()

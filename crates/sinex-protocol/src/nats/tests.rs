@@ -28,6 +28,7 @@ fn producer_permissions_name_only_its_own_subjects() {
         publish,
         [
             "sinex.ingress.phone",
+            "_SINEX_BACKUP.phone.>",
             "sinex.connect.phone",
             "sinex.recorded.phone",
             "sinex.materials.phone",
@@ -40,7 +41,15 @@ fn producer_permissions_name_only_its_own_subjects() {
             "_INBOX.phone.>"
         ]
     );
-    assert_eq!(subscribe, ["sinex.ack.phone", "_INBOX.phone.>"]);
+    assert_eq!(
+        subscribe,
+        [
+            "sinex.ack.phone",
+            "sinex.backup.phone",
+            "_SINEX_BACKUP.phone.>",
+            "_INBOX.phone.>"
+        ]
+    );
     let config = s.authorization(("sinexd", "pw"), &[("phone", "p\"w")], &[]);
     assert!(
         config.contains(r#"user: "phone", password: "p\"w""#),
@@ -187,7 +196,15 @@ fn confirmed_consumer_permissions_are_exact_and_never_allow_admin_or_raw_reads()
         || subject.contains("DELETE")
         || subject.contains("MSG.GET")
         || subject.contains("sinex-other")));
-    assert_eq!(subscribe, vec!["sinex.ack.replica", "_INBOX.replica.>"]);
+    assert_eq!(
+        subscribe,
+        vec![
+            "sinex.ack.replica",
+            "sinex.backup.replica",
+            "_SINEX_BACKUP.replica.>",
+            "_INBOX.replica.>"
+        ]
+    );
 }
 
 #[devkit::test]
@@ -226,4 +243,18 @@ fn recorded_continuations_are_optional_comparisons_without_an_identity_override(
             "{field}"
         );
     }
+}
+
+#[devkit::test]
+fn backup_reply_authority_does_not_alias_any_ordinary_producer_inbox() {
+    let subjects = Subjects::sinex();
+    let (publish, subscribe) = subjects.producer_permissions("backup", None);
+    assert!(
+        !publish
+            .iter()
+            .chain(&subscribe)
+            .any(|subject| subject == "_SINEX_BACKUP.>")
+    );
+    assert_eq!(subjects.backup_inbox("phone"), "_SINEX_BACKUP.phone");
+    assert!(subscribe.contains(&"sinex.backup.backup".into()));
 }

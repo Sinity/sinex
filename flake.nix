@@ -27,10 +27,10 @@
         rustc = toolchain;
       };
       llvmTools = "${toolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin";
-      postgres = pkgs.postgresql_18.withPackages (p: [
-        p.timescaledb
-        p.pgvector
-      ]);
+      postgres = import ./nix/postgresql.nix {
+        postgresql = pkgs.postgresql_18;
+        extensions = p: [ p.pgvector ];
+      };
       server = rustPlatform.buildRustPackage {
         pname = "sinex";
         version = "0.1.0";
@@ -67,6 +67,11 @@
           # database exists and provisions the one the store's queries need.
           cargo build --offline --locked -p sinex-schema --target-dir target --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget}
           target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
+          # Install a complete devkit template under its project/schema identity.
+          export DEVKIT_PG_TEMPLATE="sinex_template_$(target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema hash)"
+          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE foundation RENAME TO $DEVKIT_PG_TEMPLATE"
+          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE $DEVKIT_PG_TEMPLATE WITH IS_TEMPLATE true"
+          export DATABASE_URL="postgresql:///$DEVKIT_PG_TEMPLATE?host=$PGHOST&port=$PGPORT"
         '';
         cargoBuildFlags = [
           "-p"
@@ -79,7 +84,6 @@
         doCheck = true;
         preCheck = ''
           export DEVKIT_PG_SOCKET="$PGHOST"
-          export DEVKIT_PG_TEMPLATE=foundation
         '';
         # The memory test measures its process's peak RSS, so it needs a
         # process of its own, which nextest gives it and `cargo test` does not.
@@ -139,11 +143,13 @@
         default = package;
         sinexd = package;
         sinexctl = package;
+        postgresql = postgres;
       };
       nixosModules.default = import ./nix/module.nix self;
       # VM tests: the deployed stack, a satellite capture node, the restore
       # drill. Built on demand, not by `package`.
       checks.${system} = {
+        postgresql-uuid-bounds = import ./nix/tests/postgresql-uuid-bounds.nix { inherit pkgs postgres; };
         module = import ./nix/tests/module.nix self pkgs;
         vm-stack = pkgs.testers.runNixOSTest (import ./nix/tests/stack.nix self);
         vm-topology = pkgs.testers.runNixOSTest (import ./nix/tests/topology.nix self);

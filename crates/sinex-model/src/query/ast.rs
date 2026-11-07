@@ -87,6 +87,7 @@ pub enum Reference {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
+    Order(Box<Join>),
     Truth {
         value: query_language::semantics::Truth,
         operand: Operand,
@@ -106,6 +107,11 @@ pub enum Expr {
     Exists(Operand),
     /// Full-text words or a phrase.
     Words(Words),
+    /// Natural word matching restricted to one projected text field.
+    FieldWords {
+        operand: Operand,
+        words: Words,
+    },
     /// A half-open time range on a time operand: `[from, to)`.
     Within {
         lhs: Operand,
@@ -116,13 +122,6 @@ pub enum Expr {
     Overlaps {
         from: Timestamp,
         to: Option<Timestamp>,
-    },
-    /// The difference of two time fields: `seen - when > 1d`.
-    TimeDiff {
-        a: FieldRef,
-        b: FieldRef,
-        op: Op,
-        seconds: f64,
     },
 }
 
@@ -140,6 +139,32 @@ pub struct Words {
 pub enum Operand {
     Field(FieldRef),
     TimeFn(TimeFn, FieldRef),
+    Literal {
+        value: Value,
+        kind: query_language::catalog::FieldKind,
+    },
+    Arithmetic {
+        operator: query_language::ast::Arithmetic,
+        left: Box<Operand>,
+        right: Box<Operand>,
+        kind: query_language::catalog::FieldKind,
+    },
+    Length(Box<Operand>),
+    Absolute(Box<Operand>),
+    Text(Box<Operand>),
+    Glob {
+        left: Box<Operand>,
+        right: Box<Operand>,
+    },
+    CaseEqual {
+        left: Box<Operand>,
+        right: Box<Operand>,
+        value: Box<Operand>,
+    },
+    Named {
+        operand: Box<Operand>,
+        name: String,
+    },
 }
 
 impl Operand {
@@ -147,20 +172,81 @@ impl Operand {
         match self {
             Operand::Field(f) => f.name(),
             Operand::TimeFn(func, f) => format!("{}({})", func.name(), f.name()),
+            Operand::Literal { value, .. } => format!("{value:?}"),
+            Operand::Arithmetic {
+                operator,
+                left,
+                right,
+                ..
+            } => format!("({} {} {})", left.name(), operator.symbol(), right.name()),
+            Operand::Length(value) => format!("len({})", value.name()),
+            Operand::Absolute(value) => format!("abs({})", value.name()),
+            Operand::Text(value) => format!("text({})", value.name()),
+            Operand::Glob { left, right } => format!("glob({}, {})", left.name(), right.name()),
+            Operand::CaseEqual { left, right, value } => format!(
+                "case_eq({}, {}, {})",
+                left.name(),
+                right.name(),
+                value.name()
+            ),
+            Operand::Named { name, .. } => name.clone(),
         }
     }
 
+    /// The shared semantic kind, before physical payload narrowing.
+    pub fn kind(&self) -> query_language::catalog::FieldKind {
+        use query_language::catalog::FieldKind as K;
+        match self {
+            Self::Field(FieldRef::Native(field)) => super::syntax::field_kind(field.field_type()),
+            Self::Field(FieldRef::Field(field)) => super::syntax::field_kind(field.ty),
+            Self::Field(FieldRef::TypedPayload { ty, .. }) => super::syntax::field_kind(*ty),
+            Self::Field(FieldRef::TypedGroup(column)) => column.info().field.kind.clone(),
+            Self::Field(_) => K::Json,
+            Self::TimeFn(TimeFn::Hour | TimeFn::Year, _) | Self::Length(_) => K::Integer,
+            Self::TimeFn(TimeFn::Day | TimeFn::Week | TimeFn::Month, _) => K::Time,
+            Self::TimeFn(_, _) => K::Text,
+            Self::Literal { kind, .. } | Self::Arithmetic { kind, .. } => kind.clone(),
+            Self::CaseEqual { value, .. } => value.kind(),
+            Self::Absolute(value) => value.kind(),
+            Self::Text(_) => K::Text,
+            Self::Glob { .. } => K::Bool,
+            Self::Named { operand, .. } => operand.kind(),
+        }
+    }
+    pub fn field_type(&self) -> Result<super::FieldType, super::QueryError> {
+        super::typed::operand_type(self)
+    }
+    pub fn unnamed(&self) -> &Self {
+        match self {
+            Self::Named { operand, .. } => operand.unnamed(),
+            other => other,
+        }
+    }
     /// The column name a grouped stage gives this key.
     pub fn column(&self) -> String {
         match self {
-            Operand::Field(f) => f.name().replace('.', "_"),
+            Operand::Field(f) => f.name(),
             Operand::TimeFn(func, _) => func.name().to_string(),
+            Operand::Literal { .. } => "value".into(),
+            Operand::Arithmetic {
+                operator,
+                left,
+                right,
+                ..
+            } => format!("{}_{}_{}", left.column(), operator.word(), right.column()),
+            Operand::Length(_) => "len".into(),
+            Operand::Absolute(_) => "abs".into(),
+            Operand::Text(_) => "text".into(),
+            Operand::CaseEqual { .. } => "case_eq".into(),
+            Operand::Glob { .. } => "glob".into(),
+            Operand::Named { name, .. } => name.clone(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FieldRef {
+    Native(NativeField),
     Field(&'static Field),
     /// `payload.a.b`: a path into the payload.
     Payload(Vec<String>),
@@ -173,6 +259,40 @@ pub enum FieldRef {
     Group(String),
     /// A shared-bound output column whose physical type is refreshed by binding.
     TypedGroup(BoundColumn),
+}
+
+/// Product-owned values generated from the source relation's reading context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeField {
+    Identity,
+    Snippet,
+    SpanStart,
+    SpanEnd,
+}
+impl NativeField {
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "id" => Self::Identity,
+            "snippet" => Self::Snippet,
+            "start" => Self::SpanStart,
+            "end" => Self::SpanEnd,
+            _ => return None,
+        })
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Identity => "id",
+            Self::Snippet => "snippet",
+            Self::SpanStart => "start",
+            Self::SpanEnd => "end",
+        }
+    }
+    pub fn field_type(self) -> super::FieldType {
+        match self {
+            Self::Identity | Self::Snippet => super::FieldType::Text,
+            _ => super::FieldType::Time,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -193,8 +313,50 @@ impl BoundColumn {
     pub fn field_type(&self) -> Option<super::FieldType> {
         self.physical
     }
+    /// Calendar label lineage retained through projection and grouping.
+    pub fn time_function(&self) -> Option<TimeFn> {
+        use query_language::scope::{FieldInfo, Origin, TypeRule};
+        fn function(info: &FieldInfo) -> Option<TimeFn> {
+            match &info.origin {
+                Origin::Group { input, .. } | Origin::Matched { input } => function(input),
+                Origin::Function {
+                    arguments,
+                    rule: TypeRule::Input(index),
+                    ..
+                } => arguments.get(*index).and_then(function),
+                Origin::Aggregate {
+                    inputs,
+                    rule: TypeRule::Input(index),
+                    ..
+                } => inputs.get(*index).and_then(function),
+                Origin::Function {
+                    name,
+                    rule: TypeRule::Fixed,
+                    ..
+                } => TimeFn::from_name(name),
+                _ => None,
+            }
+        }
+        function(&self.info)
+    }
     pub(super) fn info(&self) -> &query_language::scope::FieldInfo {
         &self.info
+    }
+    pub fn generated(name: impl Into<String>, ty: super::FieldType) -> Self {
+        Self {
+            info: std::sync::Arc::new(query_language::scope::FieldInfo {
+                field: query_language::catalog::Field {
+                    name: name.into(),
+                    kind: super::syntax::field_kind(ty),
+                    ..Default::default()
+                },
+                origin: query_language::scope::Origin::Generated,
+            }),
+            physical: Some(ty),
+        }
+    }
+    pub(super) fn clear_binding(&mut self) {
+        self.physical = None;
     }
     pub(super) fn bind(&mut self, ty: super::FieldType) {
         self.physical = Some(ty);
@@ -204,6 +366,7 @@ impl BoundColumn {
 impl FieldRef {
     pub fn name(&self) -> String {
         match self {
+            FieldRef::Native(field) => field.name().into(),
             FieldRef::Field(f) => f.name.to_string(),
             FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } => {
                 format!("payload.{}", path.join("."))
@@ -222,16 +385,18 @@ pub enum TimeFn {
     Weekday,
     Month,
     MonthDay,
+    Year,
 }
 
 impl TimeFn {
-    pub const ALL: [TimeFn; 6] = [
+    pub const ALL: [TimeFn; 7] = [
         TimeFn::Day,
         TimeFn::Hour,
         TimeFn::Week,
         TimeFn::Weekday,
         TimeFn::Month,
         TimeFn::MonthDay,
+        TimeFn::Year,
     ];
 
     pub fn name(self) -> &'static str {
@@ -242,6 +407,7 @@ impl TimeFn {
             TimeFn::Weekday => "weekday",
             TimeFn::Month => "month",
             TimeFn::MonthDay => "month_day",
+            TimeFn::Year => "year",
         }
     }
 
@@ -267,7 +433,6 @@ pub enum Value {
     /// A text parameter checked for its type while saving a definition.
     PlaceholderText(String),
     /// A text value with `*` wildcards.
-    Glob(String),
     Integer(i64),
     Number(f64),
     Bool(bool),
@@ -275,6 +440,8 @@ pub enum Value {
     Id(Uuid),
     /// Any of: `field = [a, b]`.
     List(Vec<Value>),
+    /// A value evaluated on the current row rather than a supplied literal.
+    Operand(Box<Operand>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -285,19 +452,40 @@ pub enum Stage {
     Join(Join),
     AsOf(AsOf),
     Group(Group),
+    /// Select original rows by their order within each key group.
+    GroupFirst {
+        keys: Vec<Operand>,
+        count: u64,
+    },
     Sort(Vec<SortKey>),
     Limit(u64),
-    Fields(Vec<FieldRef>),
+    Fields(Vec<Operand>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Join {
-    pub kind: JoinKind,
+    pub on: JoinOn,
+    /// Empty selects the language's nearest witness; explicit keys select first.
+    pub pick: Vec<SortKey>,
     pub inner: Box<Query>,
-    /// Which time of an inner row the join measures from.
-    pub at: TimePoint,
-    /// The window, for `near`, `before` and `after`.
-    pub within_secs: Option<f64>,
+    /// Every visible column of the bound inner relation, with physical lineage.
+    pub columns: Vec<Operand>,
+    /// Matched fields actually read by the containing native relation.
+    pub required: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum JoinOn {
+    /// Current pair and semijoin predicates share the declared time anchors.
+    Order {
+        relation: JoinKind,
+        within_secs: Option<String>,
+        at: TimePoint,
+    },
+    Key {
+        left: FieldRef,
+        right: FieldRef,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -326,6 +514,9 @@ pub enum TimePoint {
     When,
     Start,
     End,
+    MatchWhen,
+    MatchStart,
+    MatchEnd,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -350,15 +541,19 @@ pub struct Fill {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Aggregate {
     pub function: AggFn,
-    pub field: Option<FieldRef>,
+    pub argument: Option<Operand>,
+    pub name: Option<String>,
 }
 
 impl Aggregate {
     /// The column the aggregate becomes: `count`, `sum_duration`.
     pub fn column(&self) -> String {
-        match &self.field {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
+        match &self.argument {
             None => self.function.name().to_string(),
-            Some(f) => format!("{}_{}", self.function.name(), f.name().replace('.', "_")),
+            Some(f) => format!("{}_{}", self.function.name(), f.column()),
         }
     }
 }
@@ -467,6 +662,70 @@ impl Query {
     }
 }
 impl Expr {
+    /// Search terms in this relation, excluding negated predicates and inner queries.
+    pub fn positive_words(&self) -> Vec<&Words> {
+        fn original_text(info: &query_language::scope::FieldInfo) -> bool {
+            use query_language::scope::Origin;
+            match &info.origin {
+                Origin::Catalog { field, .. } => field == "text",
+                Origin::Group { input, .. } => original_text(input),
+                _ => false,
+            }
+        }
+        match self {
+            Self::Words(words) => vec![words],
+            Self::FieldWords { operand, words }
+                if match operand {
+                    Operand::Field(FieldRef::Field(field)) => field.name == "text",
+                    Operand::Field(FieldRef::TypedGroup(column)) => original_text(column.info()),
+                    _ => false,
+                } =>
+            {
+                vec![words]
+            }
+            Self::And(left, right) | Self::Or(left, right) => {
+                let mut words = left.positive_words();
+                words.extend(right.positive_words());
+                words
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn positive_order_count(&self) -> usize {
+        match self {
+            Self::Order(_) => 1,
+            Self::And(left, right) => {
+                (left.positive_order_count() + right.positive_order_count()).min(2)
+            }
+            _ => 0,
+        }
+    }
+    /// Only one order under positive AND conditions exposes its chosen row.
+    /// Every predicate operand still reads the relation entering that filter.
+    pub fn exposed_order(&self) -> Option<&Join> {
+        if self.positive_order_count() != 1 {
+            return None;
+        }
+        match self {
+            Self::Order(join) => Some(join),
+            Self::And(left, right) => left.exposed_order().or_else(|| right.exposed_order()),
+            _ => None,
+        }
+    }
+    pub(super) fn exposed_order_mut(&mut self) -> Option<&mut Join> {
+        if self.positive_order_count() != 1 {
+            return None;
+        }
+        match self {
+            Self::Order(join) => Some(join),
+            Self::And(left, right) => left
+                .exposed_order_mut()
+                .or_else(|| right.exposed_order_mut()),
+            _ => None,
+        }
+    }
+
     /// Remove rank directives structurally before compiling the predicate.
     pub fn predicate(&self) -> Option<Expr> {
         match self {

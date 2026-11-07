@@ -6,3 +6,5 @@ pub mod frame_bytes;
 pub mod replies;
 
 pub mod producer;
+
+pub mod backup;

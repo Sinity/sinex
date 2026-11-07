@@ -8,7 +8,7 @@ async fn fill_keeps_missing_buckets_unknown_and_composes_with_paging_and_filters
         .await
         .unwrap();
     world(&mut conn).await;
-    let text = "commands where when in 2026-09 group by day(when) count fill";
+    let text = "commands where when in 2026-09 | group by day(when) | count | fill";
     let answer = ask(&mut conn, text).await;
     assert_eq!(answer.total, 30);
     let recorded = answer
@@ -25,7 +25,7 @@ async fn fill_keeps_missing_buckets_unknown_and_composes_with_paging_and_filters
             .filter(|r| r["day"] != "2026-09-14")
             .all(|r| r["count"].is_null() && r["coverage"] == "no_data")
     );
-    let filtered = ask(&mut conn, &format!("{text} where count > 0")).await;
+    let filtered = ask(&mut conn, &format!("{text} | where count > 0")).await;
     assert_eq!(filtered.total, 1);
     let first = ask_page(
         &mut conn,
@@ -48,7 +48,7 @@ async fn fill_keeps_missing_buckets_unknown_and_composes_with_paging_and_filters
     assert_eq!(second.rows[0]["day"], "2026-09-04");
     let dimensions = ask(
         &mut conn,
-        "commands where when in 2026-09 group by day(when), cwd count fill",
+        "commands where when in 2026-09 | group by day(when), cwd | count | fill",
     )
     .await;
     assert_eq!(dimensions.total, 120);
@@ -62,10 +62,10 @@ async fn typed_payload_aggregates_preserve_unknown_and_sort_as_numbers(
         .await
         .unwrap();
     world(&mut conn).await;
-    let a = ask(&mut conn,"events where event_type = command.executed sum(payload.exit_code) count(payload.exit_code)").await;
+    let a = ask(&mut conn,"events where event_type = command.executed | agg sum(payload.exit_code), count(payload.exit_code)").await;
     assert_eq!(a.rows[0]["sum_payload_exit_code"], 2);
     assert_eq!(a.rows[0]["count_payload_exit_code"], 4);
-    let a = ask(&mut conn,"events where event_type = command.executed fields payload.exit_code sort payload.exit_code desc").await;
+    let a = ask(&mut conn,"events where event_type = command.executed | fields payload.exit_code | sort by payload.exit_code desc").await;
     assert_eq!(a.rows[0]["payload.exit_code"], 1);
     assert!(a.rows.last().unwrap()["payload.exit_code"].is_null());
 }
@@ -80,7 +80,7 @@ async fn source_views_distinguish_unknown_continuity_and_drift_from_no_changes(
     world(&mut conn).await;
     let a = ask(
         &mut conn,
-        "sources fields source,continuity,gaps,drift,record_failures",
+        "sources | fields source,continuity,gaps,drift,record_failures",
     )
     .await;
     assert_eq!(a.total, 2);
@@ -102,7 +102,7 @@ async fn fill_uses_wall_clock_days_through_a_change_of_offset(db: devkit::pg::Te
         jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
-    let text = "commands where when in 2026-10 group by day(when) count fill";
+    let text = "commands where when in 2026-10 | group by day(when) | count | fill";
     let q = bind(text, &ctx).unwrap();
     let a = run(&mut conn, text, Some(&q), &ctx, &Page::default())
         .await
@@ -110,7 +110,7 @@ async fn fill_uses_wall_clock_days_through_a_change_of_offset(db: devkit::pg::Te
     assert_eq!(a.total, 31);
     assert_eq!(a.rows[24]["day"], "2026-10-25");
     assert_eq!(a.rows[30]["day"], "2026-10-31");
-    let text = "commands where when in 2026-10 group by week(when) count fill";
+    let text = "commands where when in 2026-10 | group by week(when) | count | fill";
     let q = bind(text, &ctx).unwrap();
     let a = run(&mut conn, text, Some(&q), &ctx, &Page::default())
         .await
@@ -127,7 +127,7 @@ async fn a_live_run_keeps_unrecorded_buckets_unknown(db: devkit::pg::TestDatabas
     sqlx::query("INSERT INTO registry.sources(name,shapes,version,event_types,purpose,expectation,silent_after) VALUES ('terminal.atuin',ARRAY['live-stream'],1,ARRAY['command.executed'],'synthetic query test','continuous',interval '2 days')").execute(&mut conn).await.unwrap();
     let unknown = ask(
         &mut conn,
-        "sources where source = terminal.atuin fields continuity",
+        "sources where source = terminal.atuin | fields continuity",
     )
     .await;
     assert_eq!(unknown.rows[0]["continuity"], "unknown");
@@ -139,7 +139,7 @@ async fn a_live_run_keeps_unrecorded_buckets_unknown(db: devkit::pg::TestDatabas
     .unwrap();
     let a = ask(
         &mut conn,
-        "events where source = terminal.atuin AND when in 2026-09 group by day(when) count fill",
+        "events where source = terminal.atuin AND when in 2026-09 | group by day(when) | count | fill",
     )
     .await;
     assert_eq!(a.rows[11]["coverage"], "no_data");
@@ -184,7 +184,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
         Class::Open,
     )
     .unwrap();
-    let source_question = "sources fields source,drift sort source";
+    let source_question = "sources | fields source,drift | sort by source";
     let before_record = ask_page(
         &mut conn,
         source_question,
@@ -213,7 +213,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     sqlx::query("INSERT INTO core.runs (id,name,host,started_at,ended_at) VALUES ($1,'synthetic','synthetic','2026-09-14T08:30:00Z','2026-09-14T08:45:00Z')").bind(batch.run.0).execute(&mut conn).await.unwrap();
     let a = ask(
         &mut conn,
-        "sources where source = terminal.atuin fields source,continuity,gaps,drift",
+        "sources where source = terminal.atuin | fields source,continuity,gaps,drift",
     )
     .await;
     assert_eq!(a.total, 1);
@@ -227,7 +227,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     assert_eq!(gaps.rows[0]["end"], "2026-09-14T08:00:00+00:00");
     let drift = ask(
         &mut conn,
-        "drift where source = terminal.atuin fields id,payload",
+        "drift where source = terminal.atuin | fields id,payload",
     )
     .await;
     assert_eq!(drift.total, 1);
@@ -251,7 +251,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     .await;
     let now = ask(
         &mut conn,
-        "sources where source = terminal.atuin fields drift",
+        "sources where source = terminal.atuin | fields drift",
     )
     .await;
     assert_eq!(now.rows[0]["drift"]["count"], 0);
@@ -272,14 +272,14 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
     }
     let old = ask(
         &mut conn,
-        &format!("drift where source = terminal.atuin fields id as of seq {before}"),
+        &format!("drift where source = terminal.atuin | fields id | as of seq {before}"),
     )
     .await;
     assert_eq!(old.total, 1);
     let old = ask(
         &mut conn,
         &format!(
-            "drift where source = terminal.atuin fields id as of seq {}",
+            "drift where source = terminal.atuin | fields id | as of seq {}",
             before_record_position
         ),
     )
@@ -301,11 +301,13 @@ async fn text_lists_compare_members_and_return_the_declared_array(db: devkit::pg
         ("payload.cwds ~ TiDe", 1),
         ("payload.cwds ^ /src/o", 1),
         (r#"payload.cwds ~ ",""#, 0),
-        ("payload.cwds = [/src/absent, /src/other]", 1),
+        ("payload.cwds = (/src/absent | /src/other)", 1),
     ] {
         let answer = ask(
             &mut conn,
-            &format!("events where event_type = shell.session AND {condition} fields payload.cwds"),
+            &format!(
+                "events where event_type = shell.session AND {condition} | fields payload.cwds"
+            ),
         )
         .await;
         assert_eq!(answer.total, total, "{condition}");
@@ -367,14 +369,14 @@ async fn filled_recall_keeps_recorded_buckets_before_its_window_and_intersects_f
         .unwrap();
     world(&mut conn).await;
     spanning_session(&mut conn).await;
-    let answer = ask(&mut conn, "recall sinex:window/2026-09-14T08:30:00Z/2026-09-14T09:00:00Z group by day(when) count fill").await;
+    let answer = ask(&mut conn, "recall sinex:window/2026-09-14T08:30:00Z/2026-09-14T09:00:00Z | group by day(when) | count | fill").await;
     assert_eq!(answer.total, 2);
     assert_eq!(answer.rows[0]["day"], "2026-09-13");
     assert_eq!(answer.rows[0]["count"], 1);
     assert_eq!(answer.rows[0]["coverage"], "recorded");
     assert_eq!(answer.rows[1]["day"], "2026-09-14");
     assert!(answer.rows[1]["count"].is_null());
-    let answer = ask(&mut conn, "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z AND when < 2026-09-15T04:00:00Z group by day(when) count fill").await;
+    let answer = ask(&mut conn, "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z AND when < 2026-09-15T04:00:00Z | group by day(when) | count | fill").await;
     assert_eq!(answer.total, 1);
     assert_eq!(answer.rows[0]["day"], "2026-09-14");
     assert_eq!(answer.rows[0]["count"], 10);
@@ -444,7 +446,7 @@ async fn source_gaps_page_without_embedding_run_history(db: devkit::pg::TestData
         assert_eq!(admitted.admitted, 1);
         tx.commit().await.unwrap();
     }
-    let text = "gaps where source = terminal.atuin sort start";
+    let text = "gaps where source = terminal.atuin | sort by start";
     let mut cursor = None;
     let mut rows = Vec::new();
     loop {
@@ -472,7 +474,7 @@ async fn source_gaps_page_without_embedding_run_history(db: devkit::pg::TestData
     );
     let sources = ask(
         &mut conn,
-        "sources where source = terminal.atuin fields gaps",
+        "sources where source = terminal.atuin | fields gaps",
     )
     .await;
     assert_eq!(sources.rows[0]["gaps"], 3);

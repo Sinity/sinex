@@ -1,5 +1,7 @@
 use super::*;
 
+mod selection;
+
 fn options(args: &[&str]) -> Nextest {
     let Cli::Test { args, .. } =
         Cli::try_parse_from(["xtask", "test"].into_iter().chain(args.iter().copied())).unwrap()
@@ -26,27 +28,45 @@ fn test_selection_preserves_the_original_name_filter() {
 }
 
 #[devkit::test]
-fn package_selection_becomes_a_filter_over_the_workspace_build() {
-    for (args, filter) in [
+fn package_selection_limits_the_cargo_build() {
+    for (args, expected) in [
         (
             vec!["-p", "sinex-sources", "session_socket"],
-            "(package(=sinex-sources)) & (test(session_socket))",
+            vec![
+                "--locked",
+                "-p",
+                "sinex-sources",
+                "-E",
+                "test(session_socket)",
+            ],
         ),
         (
             vec!["-psinex-sources", "session_socket"],
-            "(package(=sinex-sources)) & (test(session_socket))",
+            vec![
+                "--locked",
+                "-p",
+                "sinex-sources",
+                "-E",
+                "test(session_socket)",
+            ],
         ),
         (
             vec!["--package=sinex-sources", "-E", "test(session_socket)"],
-            "(package(=sinex-sources)) & ((test(session_socket)))",
+            vec![
+                "--locked",
+                "-p",
+                "sinex-sources",
+                "-E",
+                "(test(session_socket))",
+            ],
         ),
         (
             vec!["--package", "sinex-model", "-p", "sinex-protocol"],
-            "package(=sinex-model) | package(=sinex-protocol)",
+            vec!["--locked", "-p", "sinex-model", "-p", "sinex-protocol"],
         ),
     ] {
         let got = options(&args);
-        assert_eq!(got.args, ["--locked", "--workspace", "-E", filter]);
+        assert_eq!(got.args, expected);
         assert!(!got.allow_no_tests);
     }
 }
@@ -66,12 +86,11 @@ fn package_selection_keeps_other_options_and_binary_arguments() {
         got.args,
         [
             "--locked",
-            "--workspace",
+            "-p",
+            "sinexd",
             "--lib",
             "--test-threads",
             "2",
-            "-E",
-            "package(=sinexd)",
             "--",
             "--nocapture"
         ]
@@ -91,6 +110,41 @@ fn test_selection_filtersets_keep_the_workspace_unless_package_is_selected() {
 #[devkit::test]
 fn test_selection_does_not_repeat_explicit_workspace_selection() {
     assert_eq!(options(&["--workspace"]).args, ["--locked", "--workspace"]);
+}
+
+#[devkit::test]
+fn explicit_workspace_target_and_feature_selection_keeps_cargo_meaning() {
+    assert_eq!(
+        options(&[
+            "--workspace",
+            "-psinexd",
+            "--lib",
+            "--bin",
+            "sinexd",
+            "--features",
+            "sinex-sources/full",
+            "-F",
+            "sinex-protocol/cli",
+        ])
+        .args,
+        [
+            "--locked",
+            "--workspace",
+            "-p",
+            "sinexd",
+            "--lib",
+            "--bin",
+            "sinexd",
+            "--features",
+            "sinex-sources/full",
+            "-F",
+            "sinex-protocol/cli",
+        ],
+    );
+    assert_eq!(
+        options(&["-p=sinexd", "--lib", "--bin=sinexd"]).args,
+        ["--locked", "-p", "sinexd", "--lib", "--bin=sinexd"],
+    );
 }
 
 #[devkit::test]

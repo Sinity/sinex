@@ -62,7 +62,7 @@ impl Blobs {
         tx.commit().await?;
         self.acknowledge(receipt)?;
         if row.status == "deleting" {
-            self.delete(&hash.to_string())?;
+            self.delete(conn, &hash.to_string()).await?;
         }
         Ok(())
     }

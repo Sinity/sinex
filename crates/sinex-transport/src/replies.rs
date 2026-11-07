@@ -196,6 +196,47 @@ where
         None => Ok(()),
     }
 }
+/// Keep an owner operation observable while native capture seals a latched generation.
+/// Each wait marker needs acknowledgment; a disconnected requester cancels the future.
+pub(crate) async fn respond_json_wait<T, F>(
+    client: &Client,
+    inbox: String,
+    build: F,
+    idle: Duration,
+) -> Result<(), ReplyError>
+where
+    T: Serialize + Send + 'static,
+    F: std::future::Future<Output = Option<T>> + Send,
+{
+    let stream = stream_id(&inbox);
+    let flow = format!("{inbox}.flow");
+    let mut acks = client.subscribe(flow.clone()).await.map_err(transport)?;
+    client.flush().await.map_err(transport)?;
+    tokio::pin!(build);
+    loop {
+        tokio::select! {
+            value=&mut build => return match value {Some(value)=>publish_with_acks(client,inbox,stream,acks,value,idle).await,None=>Ok(())},
+            message=acks.next()=> {
+                let Some(message)=message else {return Err(ReplyError::Closed);};
+                if matches!(serde_json::from_slice::<FlowAck>(&message.payload),Ok(FlowAck::Cancel {stream:found}) if found==stream) {return Err(ReplyError::Cancelled);}
+            }
+            _=tokio::time::sleep(idle/2)=> {
+                client.publish_with_reply(inbox.clone(),flow.clone(),frame_bytes(&ReplyFrame::Waiting {stream:stream.clone()})?.into()).await.map_err(transport)?;
+                tokio::time::timeout(idle,async {
+                    while let Some(message)=acks.next().await {
+                        match serde_json::from_slice::<FlowAck>(&message.payload) {
+                            Ok(FlowAck::Waiting {stream:found}) if found==stream=>return Ok(()),
+                            Ok(FlowAck::Cancel {stream:found}) if found==stream=>return Err(ReplyError::Cancelled),
+                            _=>{},
+                        }
+                    }
+                    Err(ReplyError::Closed)
+                }).await.map_err(|_|ReplyError::Idle)??;
+            }
+        }
+    }
+}
+
 async fn publish_with_acks<T: Serialize + Send + 'static>(
     client: &Client,
     inbox: String,
@@ -331,7 +372,17 @@ pub async fn request_bytes<T: DeserializeOwned + Send + 'static>(
     if !sinex_protocol::nats::valid_producer(producer) {
         return Err(protocol("invalid authenticated producer identity"));
     }
-    let inbox = format!("_INBOX.{producer}.{}", uuid::Uuid::now_v7().simple());
+    request_inbox(client, subject, format!("_INBOX.{producer}"), body, idle).await
+}
+
+pub(crate) async fn request_inbox<T: DeserializeOwned + Send + 'static>(
+    client: &Client,
+    subject: impl Into<String> + Send,
+    prefix: String,
+    body: Vec<u8>,
+    idle: Duration,
+) -> Result<T, ReplyError> {
+    let inbox = format!("{prefix}.{}", uuid::Uuid::now_v7().simple());
     let stream = stream_id(&inbox);
     let flow_subject = format!("{inbox}.flow");
     let mut messages = client.subscribe(inbox.clone()).await.map_err(transport)?;
@@ -368,6 +419,23 @@ pub async fn request_bytes<T: DeserializeOwned + Send + 'static>(
             let frame: ReplyFrame = serde_json::from_slice(&message.payload)
                 .map_err(|_| protocol("not a framed reply"))?;
             match frame {
+                ReplyFrame::Waiting { stream: found } => {
+                    if found != stream || sequence != 0 || offset != 0 {
+                        return Err(protocol("invalid operation wait marker"));
+                    }
+                    client
+                        .publish(
+                            flow_subject.clone(),
+                            serde_json::to_vec(&FlowAck::Waiting {
+                                stream: stream.clone(),
+                            })
+                            .map_err(|e| ReplyError::Json(e.to_string()))?
+                            .into(),
+                        )
+                        .await
+                        .map_err(transport)?;
+                    continue;
+                }
                 ReplyFrame::Data {
                     stream: found,
                     sequence: found_sequence,

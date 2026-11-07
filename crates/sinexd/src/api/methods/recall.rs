@@ -59,63 +59,97 @@ impl Api {
                 .map_err(|e| e.to_string())?
                 .into_values(),
         ));
+        let explicit_identity = identity.is_some();
         let question = match identity {
-            Some(value) => value,
+            Some(value) => Ok(value),
             None => sinex_store::query::continuation::query_identity(text, &ctx)
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| e.to_string()),
         };
-        let question_id =
-            sinex_store::query::continuation::identity("recall", &question, &caller.grants)
-                .map_err(|e| e.to_string())?;
+        let mut question_id = question
+            .as_ref()
+            .ok()
+            .map(|question| {
+                sinex_store::query::continuation::identity("recall", question, &caller.grants)
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()?;
         let seal = sinex_store::query::continuation::seal_key(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
-        let prior = if let Some(raw) = &page.cursor {
-            match sinex_store::query::continuation::open(&seal, raw, question_id, &ctx) {
-                Ok(c) => Some(c),
-                Err(error) => {
-                    let bound = query::saved::reference_name(text).map(|name| name);
-                    let historical = if let Some(name) = bound {
+        let mut captured_pack = None;
+        let prior =
+            if let Some(raw) = &page.cursor {
+                let authenticated = sinex_store::query::continuation::authenticate(&seal, raw)
+                    .map_err(|error| error.to_string())?;
+                if let Some(metadata) = authenticated.context().versions.get("sinex.recall") {
+                    let selected: PackSelection =
+                        serde_json::from_str(metadata).map_err(|error| error.to_string())?;
+                    let pack = crate::analysis::load_pack(&mut conn, &selected.pack)
+                        .await?
+                        .ok_or("recall cursor's stored context is unavailable")?;
+                    let selection: sinex_model::event_types::analysis::QuerySelection =
+                        serde_json::from_value(pack.payload["analysis"]["selected"].clone())
+                            .map_err(|error| error.to_string())?;
+                    sinex_store::query::check_selected_question(&mut conn, text, &selection)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    if !explicit_identity && let Some(original) = &selection.original_question {
+                        question_id = Some(
+                            sinex_store::query::continuation::identity(
+                                "recall",
+                                original,
+                                &caller.grants,
+                            )
+                            .map_err(|error| error.to_string())?,
+                        );
+                    }
+                    captured_pack = Some(pack);
+                    Some(
+                        sinex_store::query::continuation::bind_authenticated(
+                            authenticated,
+                            question_id.ok_or_else(|| {
+                                question.as_ref().err().cloned().unwrap_or_else(|| {
+                                    "recall question identity is unavailable".into()
+                                })
+                            })?,
+                            &ctx,
+                        )
+                        .map_err(|error| error.to_string())?,
+                    )
+                } else {
+                    let historical = if let Some(name) = query::saved::reference_name(text) {
                         let definitions = queries::definitions(&mut conn, &name).await?;
                         query::saved::bind_saved(text, &ctx, &definitions)
-                            .map_err(|e| e.to_string())?
+                            .map_err(|error| error.to_string())?
                     } else {
-                        query::bind(text, &ctx).map_err(|e| e.to_string())?
+                        query::native::parse(text, &ctx)
+                            .and_then(|operation| operation.bind(&ctx))
+                            .map_err(|error| error.to_string())?
                     };
                     if historical
                         .stages
                         .iter()
-                        .any(|s| matches!(s, query::Stage::AsOf(_)))
+                        .any(|stage| matches!(stage, query::Stage::AsOf(_)))
                     {
                         return self
                             .recall_preview(&mut conn, caller, text, &ctx, &page, None)
                             .await;
                     }
-                    return Err(error.to_string());
+                    return Err("invalid recall cursor".into());
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
+        let question_id = question_id.ok_or_else(|| {
+            question
+                .as_ref()
+                .err()
+                .cloned()
+                .unwrap_or_else(|| "recall question identity is unavailable".into())
+        })?;
         let pack = if let Some(cursor) = &prior {
             ctx.now = cursor.context.clock.now;
-            let selected: PackSelection = serde_json::from_str(
-                cursor
-                    .context
-                    .versions
-                    .get("sinex.recall")
-                    .ok_or("invalid recall cursor")?,
-            )
-            .map_err(|e| e.to_string())?;
-            let pack = crate::analysis::load_pack(&mut conn, &selected.pack)
-                .await?
-                .ok_or("recall cursor's stored context is unavailable")?;
-            let selection = serde_json::from_value(pack.payload["analysis"]["selected"].clone())
-                .map_err(|error| error.to_string())?;
-            sinex_store::query::check_selected_question(&mut conn, text, &selection)
-                .await
-                .map_err(|e| e.to_string())?;
-            pack
+            captured_pack.expect("an authenticated recall cursor loaded its pack")
         } else {
             let selection = sinex_store::query::resolve_recall(&mut conn, text, &ctx)
                 .await

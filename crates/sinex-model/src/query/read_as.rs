@@ -27,6 +27,12 @@ pub fn read_as(q: &Query) -> String {
                 as_of = true;
                 out.push_str(&format!("as Sinex knew them at commit {s}"));
             }
+            Stage::GroupFirst { keys, count } => {
+                out.push_str(&format!(
+                    "the first {count} in each group by {}",
+                    keys.iter().map(operand).collect::<Vec<_>>().join(", ")
+                ));
+            }
             Stage::Group(g) => {
                 if g.fill.is_some() {
                     out.push_str("including empty time buckets with their coverage, ");
@@ -65,7 +71,7 @@ pub fn read_as(q: &Query) -> String {
             }
             Stage::Limit(n) => out.push_str(&format!("the first {n}")),
             Stage::Fields(fields) => {
-                let names: Vec<String> = fields.iter().map(FieldRef::name).collect();
+                let names: Vec<String> = fields.iter().map(operand).collect();
                 out.push_str(&format!("showing {}", names.join(", ")));
             }
         }
@@ -140,6 +146,7 @@ fn reference_text(r: &Reference) -> String {
 
 fn expr(e: &Expr) -> String {
     match e {
+        Expr::Order(j) => format!("having a match {}", join(j)),
         Expr::Truth {
             value,
             operand: field,
@@ -152,8 +159,6 @@ fn expr(e: &Expr) -> String {
                 Op::Eq => {
                     if matches!(rhs, Value::List(_)) {
                         "is one of"
-                    } else if matches!(rhs, Value::Glob(_)) {
-                        "matches"
                     } else {
                         "is"
                     }
@@ -169,6 +174,10 @@ fn expr(e: &Expr) -> String {
             format!("{} {verb} {}", operand(lhs), comparison_value(rhs, lhs))
         }
         Expr::Exists(o) => format!("{} is known", operand(o)),
+        Expr::FieldWords {
+            operand: field,
+            words,
+        } => format!("{} matches words {}", operand(field), words.words.join(" ")),
         Expr::Words(w) => {
             let text = w.words.join(" ");
             let star = if w.prefix { "…" } else { "" };
@@ -186,15 +195,6 @@ fn expr(e: &Expr) -> String {
             Some(to) => format!("its span overlaps {from} until {to}"),
             None => format!("its span contains {from}"),
         },
-        Expr::TimeDiff { a, b, op, seconds } => {
-            format!(
-                "{} minus {} {} {}s",
-                a.name(),
-                b.name(),
-                op.symbol(),
-                seconds
-            )
-        }
     }
 }
 
@@ -214,6 +214,36 @@ fn operand(o: &Operand) -> String {
             func.name().replace('_', " "),
             field_phrase(f)
         ),
+        Operand::Literal { value: literal, .. } => value(literal),
+        Operand::Arithmetic {
+            operator,
+            left,
+            right,
+            ..
+        } => format!(
+            "({} {} {})",
+            operand(left),
+            operator.symbol(),
+            operand(right)
+        ),
+        Operand::Length(inner) => format!("the length of {}", operand(inner)),
+        Operand::Absolute(inner) => format!("the magnitude of {}", operand(inner)),
+        Operand::Text(inner) => format!("the text of {}", operand(inner)),
+        Operand::Glob { left, right } => format!(
+            "{} matches the case-sensitive pattern {}",
+            operand(left),
+            operand(right)
+        ),
+        Operand::CaseEqual { left, right, value } => format!(
+            "{} when {} is {}",
+            operand(value),
+            operand(left),
+            operand(right)
+        ),
+        Operand::Named {
+            operand: inner,
+            name,
+        } => format!("{} as {name}", operand(inner)),
     }
 }
 
@@ -229,7 +259,7 @@ fn comparison_value(v: &Value, lhs: &Operand) -> String {
         Operand::Field(FieldRef::Field(field)) => Some(field.ty),
         Operand::Field(FieldRef::TypedPayload { ty, .. }) => Some(*ty),
         Operand::Field(FieldRef::TypedGroup(column)) => column.field_type(),
-        Operand::TimeFn(TimeFn::Hour, _) => Some(super::FieldType::Integer),
+        Operand::TimeFn(TimeFn::Hour | TimeFn::Year, _) => Some(super::FieldType::Integer),
         _ => None,
     };
     if matches!(
@@ -238,6 +268,7 @@ fn comparison_value(v: &Value, lhs: &Operand) -> String {
     ) {
         match v {
             Value::Text(raw) => return raw.clone(),
+            Value::Operand(o) => return operand(o),
             Value::List(items) => {
                 return format!(
                     "[{}]",
@@ -258,12 +289,12 @@ fn value(v: &Value) -> String {
     match v {
         Value::Unknown => "unknown".into(),
         Value::Text(s) | Value::PlaceholderText(s) => format!("\"{s}\""),
-        Value::Glob(s) => format!("\"{s}\""),
         Value::Integer(i) => i.to_string(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Time(t) => time(t),
         Value::Id(id) => id.to_string(),
+        Value::Operand(o) => operand(o),
         Value::List(items) => {
             let items: Vec<String> = items.iter().map(value).collect();
             format!("[{}]", items.join(", "))
@@ -272,31 +303,72 @@ fn value(v: &Value) -> String {
 }
 
 fn aggregate(a: &Aggregate) -> String {
-    match &a.field {
+    match &a.argument {
         None => "the count".to_string(),
         Some(f) => format!(
             "the {} of {}",
             a.function.name().replace('_', " "),
-            field_phrase(f)
+            operand(f)
         ),
     }
 }
 
 fn join(j: &Join) -> String {
     let inner = read_as(&j.inner);
-    let point = match j.at {
-        TimePoint::When => "",
-        TimePoint::Start => " (their start)",
-        TimePoint::End => " (their end)",
+    let (relation, within, point) = match &j.on {
+        JoinOn::Key { left, right } => {
+            return format!(
+                "paired with [{inner}] where {} equals {}",
+                left.name(),
+                right.name()
+            );
+        }
+        JoinOn::Order {
+            relation,
+            within_secs,
+            at,
+        } => (*relation, within_secs.as_deref(), *at),
     };
-    match (j.kind, j.within_secs) {
-        (JoinKind::Near, Some(s)) => format!("that happened within {s}s of [{inner}]{point}"),
-        (JoinKind::Before, Some(s)) => format!("that happened up to {s}s before [{inner}]{point}"),
-        (JoinKind::After, Some(s)) => format!("that happened up to {s}s after [{inner}]{point}"),
-        (JoinKind::During, _) => format!("that happened during [{inner}]"),
-        (JoinKind::Containing, _) => format!("whose span contains [{inner}]{point}"),
-        (kind, None) => format!("{} [{inner}]", kind.name()),
-    }
+    let anchor = match point {
+        TimePoint::When => "at their occurrence",
+        TimePoint::Start => "at their span start",
+        TimePoint::End => "at their end",
+        TimePoint::MatchWhen => "at the matched occurrence",
+        TimePoint::MatchStart => "at the matched span start",
+        TimePoint::MatchEnd => "at the matched span end",
+    };
+    let window = within
+        .map(|seconds| format!(" within {seconds}s"))
+        .unwrap_or_default();
+    let choice = if j.pick.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", choosing first by {}",
+            j.pick
+                .iter()
+                .map(|key| {
+                    let expression = match &key.key {
+                        SortBy::Rank => "relevance".into(),
+                        SortBy::Operand(value) => operand(value),
+                    };
+                    format!(
+                        "{expression} {}",
+                        if key.descending {
+                            "descending"
+                        } else {
+                            "ascending"
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "paired {} [{inner}]{window}, {anchor}{choice}",
+        relation.name()
+    )
 }
 
 fn time(t: &Timestamp) -> String {

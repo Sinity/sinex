@@ -2,49 +2,49 @@ use super::*;
 use sinex_model::{Class, EventId, MaterialId, RunId};
 use sqlx::{Connection, Executor};
 
-/// Current declarations separated from unversioned historical version one.
-pub(crate) const CURRENT_VERSION_TWO: &[&str] = &[
-    "activity.window",
-    "activity.session",
-    "activity.span",
-    "input.coverage",
-    "tag.applied",
-    "conversation.day",
-    "work.act",
-    "work.episode",
-    "work.suspension",
-    "work.resumption",
-    "context.pack",
-    "activity.day",
-    "activity.project_span",
-    "analysis.request",
-    "analysis.panel",
-    "recipe.answer",
-    "analysis.finding",
-    "input.bout",
-    "input.workload",
-    "rhythm.deviation",
-    "reference.about",
+/// Exact current declarations separated from unversioned historical version one.
+pub(crate) const CURRENT_KINDS: &[(&str, u64)] = &[
+    ("activity.window", 2),
+    ("activity.session", 2),
+    ("activity.span", 2),
+    ("input.coverage", 2),
+    ("tag.applied", 2),
+    ("conversation.day", 2),
+    ("work.act", 2),
+    ("work.episode", 2),
+    ("work.suspension", 2),
+    ("work.resumption", 2),
+    ("context.pack", 2),
+    ("activity.day", 2),
+    ("activity.project_span", 2),
+    ("analysis.request", 3),
+    ("analysis.panel", 2),
+    ("recipe.answer", 2),
+    ("analysis.finding", 2),
+    ("input.bout", 2),
+    ("input.workload", 2),
+    ("rhythm.deviation", 2),
+    ("reference.about", 2),
 ];
 
 #[test]
-fn current_kind_map_separates_known_version_two_from_unknown_version_one() {
-    assert_eq!(CURRENT_VERSION_TWO.len(), 21);
-    let names: std::collections::BTreeSet<_> = CURRENT_VERSION_TWO.iter().collect();
-    assert_eq!(names.len(), CURRENT_VERSION_TWO.len());
-    for name in CURRENT_VERSION_TWO {
+fn current_kind_map_separates_known_versions_from_unknown_version_one() {
+    assert_eq!(CURRENT_KINDS.len(), 21);
+    let names: std::collections::BTreeSet<_> = CURRENT_KINDS.iter().map(|(name, _)| name).collect();
+    assert_eq!(names.len(), CURRENT_KINDS.len());
+    for &(name, version) in CURRENT_KINDS {
         let current = (sinex_model::event_types::find(name).unwrap().declaration)();
         assert_eq!(
             current.kind,
             KindRef {
-                name: (*name).into(),
-                version: 2
+                name: name.into(),
+                version
             }
         );
         assert!(current.payload_schema.is_some());
         assert!(current.key_rule.is_some());
         assert!(current.time_rule.is_some());
-        let historical = KindDeclaration::historical((*name).into());
+        let historical = KindDeclaration::historical(name.into());
         assert_eq!(historical.kind.version, 1);
         assert!(historical.payload_schema.is_none());
         assert!(historical.key_rule.is_none());
@@ -53,19 +53,19 @@ fn current_kind_map_separates_known_version_two_from_unknown_version_one() {
 }
 
 pub(crate) async fn assert_historical_and_current(conn: &mut PgConnection) {
-    let references: Vec<_> = CURRENT_VERSION_TWO
+    let references: Vec<_> = CURRENT_KINDS
         .iter()
-        .flat_map(|name| {
-            [1, 2].map(|version| KindRef {
-                name: (*name).into(),
+        .flat_map(|&(name, current_version)| {
+            [1, current_version].map(|version| KindRef {
+                name: name.into(),
                 version,
             })
         })
         .collect();
     let saved = load(conn, &references).await.unwrap();
     assert_eq!(saved.len(), references.len());
-    for name in CURRENT_VERSION_TWO {
-        let historical = KindDeclaration::historical((*name).into());
+    for &(name, _) in CURRENT_KINDS {
+        let historical = KindDeclaration::historical(name.into());
         assert_eq!(
             saved[&historical.kind], historical,
             "{name} historical metadata stays unknown"

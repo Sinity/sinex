@@ -10,6 +10,17 @@ use serde_json::{Map, Value};
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Status,
+    Backup {
+        action: String,
+        #[serde(default)]
+        hold: Option<String>,
+        #[serde(default)]
+        output: Option<String>,
+        #[serde(default)]
+        page: Option<u64>,
+        #[serde(default)]
+        cursor: Option<String>,
+    },
     #[serde(rename = "sources-discover")]
     SourcesDiscover,
     Signal {
@@ -434,6 +445,7 @@ impl Request {
     pub fn method(&self) -> &'static str {
         match self {
             Request::Status => "status",
+            Request::Backup { .. } => "backup",
             Request::SourcesDiscover => "sources-discover",
             Request::Signal { .. } => "signal",
             Request::Kinds { .. } => "kinds",

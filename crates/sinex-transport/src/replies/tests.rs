@@ -127,6 +127,7 @@ async fn large_json_is_serialized_once_in_server_sized_units_and_verified_before
                 ReplyFrame::Data { .. } => frames += 1,
                 ReplyFrame::End { .. } => break,
                 ReplyFrame::Abort { .. } => panic!("unexpected abort"),
+                ReplyFrame::Waiting { .. } => panic!("unexpected wait marker"),
             }
         }
     }

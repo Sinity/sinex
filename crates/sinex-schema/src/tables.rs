@@ -572,6 +572,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
     }
     tables.push(crate::source_declarations::TABLE.into());
     tables.extend(crate::library_curation::tables());
+    tables.extend(crate::backups::tables());
     tables.extend(crate::vectors::tables());
     tables.extend(crate::owner_protocol::statements());
     tables
@@ -584,6 +585,7 @@ pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
     out.extend(crate::query_cursors::triggers());
     out.extend(crate::source_declarations::hooks());
+    out.extend(crate::backups::hooks());
     for table in ["core.events"] {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",

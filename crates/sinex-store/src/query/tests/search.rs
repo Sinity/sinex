@@ -28,7 +28,11 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
     ] {
         assert_eq!(ask(&mut conn, text).await.total, 0, "{text}");
     }
-    let rows = ask(&mut conn, "cargo fields event_type,text sort event_type").await;
+    let rows = ask(
+        &mut conn,
+        "cargo | fields event_type,text,snippet | sort by event_type",
+    )
+    .await;
     assert_eq!(rows.total, 3);
     for row in rows.rows {
         assert!(row["text"].as_str().unwrap().contains("strasse café café"));
@@ -56,7 +60,7 @@ async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
                 "{grants}: {text}"
             );
         }
-        let answer = ask(&mut conn, "events fields text").await;
+        let answer = ask(&mut conn, "events | fields text").await;
         if grants.is_empty() {
             for row in answer.rows {
                 assert!(row["text"].is_null());
@@ -212,4 +216,96 @@ async fn search_answers_and_position_hold_while_trigram_rewrite_runs(db: devkit:
         assert_eq!(answers, &rewritten, "answers before step {stage}");
     }
     assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
+}
+
+#[devkit::test]
+async fn trigram_rewrite_visits_each_id_within_one_uuid_millisecond(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let payloads = [
+        (
+            "command.imported",
+            json!({"command":"cargo test", "hostname":"synthetic", "n":0}),
+        ),
+        (
+            "journal.entry",
+            json!({"cursor":"synthetic", "message":"cargo test"}),
+        ),
+        (
+            "lake.observed",
+            json!({"observed_at":"2026-09-14T08:00:00Z", "lane":"synthetic", "host":"synthetic", "seq":1, "payload":{"message":"cargo test"}}),
+        ),
+    ];
+    let events = payloads
+        .into_iter()
+        .enumerate()
+        .map(|(index, (kind, payload))| {
+            let mut event = (sinex_model::event_types::find(kind).unwrap().build)(
+                &payload,
+                "synthetic.search",
+                Origin::Record {
+                    location: RecordLocation {
+                        material: MaterialId::new(),
+                        anchor: 0,
+                    },
+                    output_index: 0,
+                },
+                ReadingOrder(1),
+                [1; 32],
+                Class::Open,
+            )
+            .unwrap();
+            // All three UUIDv7 identities share their timestamp; their low bits
+            // still order distinct records across one-row rewrite batches.
+            event.id = EventId(Uuid::from_u128(
+                0x01900000_0000_7000_8000_000000000001 + index as u128,
+            ));
+            event
+        })
+        .collect();
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(
+        &Batch {
+            run: RunId::new(),
+            kind: BatchKind::Api {
+                actor: "synthetic".into(),
+            },
+            records: vec![RecordOutcome::Events {
+                location: None,
+                events,
+            }],
+            archive: vec![],
+        },
+        &NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    catch_up_search_text(&mut conn).await.unwrap();
+    let expected = flags(&mut conn).await;
+    assert_eq!(
+        expected,
+        [
+            ("command.imported".into(), true),
+            ("journal.entry".into(), false),
+            ("lake.observed".into(), false)
+        ]
+    );
+    crate::test_schema::downgrade(&mut conn).await;
+    crate::test_schema::remove_version_4(&mut conn).await;
+    sqlx::query("UPDATE sinex_schema.applied SET version=2")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sinex_schema::apply(&mut conn).await.unwrap();
+    loop {
+        use sinex_schema::online::Progress;
+        match sinex_schema::online::step(&mut conn, 1).await.unwrap() {
+            Progress::Done => break,
+            Progress::Waiting => panic!("the fixture owns the rewrite"),
+            Progress::Advanced { .. } | Progress::Finished { .. } => {}
+        }
+    }
+    assert_eq!(flags(&mut conn).await, expected);
 }

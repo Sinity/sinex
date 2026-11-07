@@ -103,7 +103,7 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
     ingest(&mut ctx, &mut readers).await;
     let commands = ask(
         &mut ctx,
-        "events where event_type = command.imported sort when",
+        "events where event_type = command.imported | sort by when",
     )
     .await;
     assert_eq!(commands.total, 5);
@@ -124,7 +124,7 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
     );
     let day = ask(
         &mut ctx,
-        "events where event_type = command.imported since 2026-09-13 until 2026-09-14",
+        "events where event_type = command.imported AND since:2026-09-13 AND until:2026-09-14",
     )
     .await;
     assert_eq!(
@@ -148,7 +148,11 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
         "events where event_type = command.executed AND state = present AND payload.command = \"rm notes-old.txt\"",
     ).await;
     assert_eq!(present.total, 0);
-    let books_before = ask(&mut ctx, "events where event_type = book.status sort when").await;
+    let books_before = ask(
+        &mut ctx,
+        "events where event_type = book.status | sort by when",
+    )
+    .await;
     assert_eq!(books_before.total, 3);
     let before: Vec<_> = commands
         .rows
@@ -171,7 +175,7 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
     assert!(report.events_read > 0);
     let after = ask(
         &mut ctx,
-        "events where event_type = command.imported sort when",
+        "events where event_type = command.imported | sort by when",
     )
     .await;
     assert_eq!(
@@ -277,7 +281,7 @@ async fn kestrel_presence_updates_replace_readings_and_replay_keeps_the_latest(
     ingest(&mut ctx, &mut readers).await;
     let latest = ask(
         &mut ctx,
-        "events where event_type = presence.span sort when",
+        "events where event_type = presence.span | sort by when",
     )
     .await;
     assert_eq!(latest.total, 5);
@@ -297,7 +301,7 @@ async fn kestrel_presence_updates_replace_readings_and_replay_keeps_the_latest(
     assert!(report.events_read > 0);
     let after = ask(
         &mut ctx,
-        "events where event_type = presence.span sort when",
+        "events where event_type = presence.span | sort by when",
     )
     .await;
     assert_eq!(

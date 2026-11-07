@@ -12,6 +12,7 @@ use sinex_store::query::{Answer, Page};
 use sqlx::PgPool;
 
 mod analysis;
+mod backup;
 mod forecast;
 mod fusion;
 mod kinds;
@@ -26,6 +27,7 @@ mod signals;
 pub(crate) struct Api {
     pub reads: PgPool,
     pub writer: Option<WriterHandle>,
+    pub backup_producers: Option<(async_nats::Client, sinex_protocol::Subjects, Vec<String>)>,
     /// The content store.
     pub blobs: sinex_store::Blobs,
     pub zone: jiff::tz::TimeZone,
@@ -216,6 +218,16 @@ impl Api {
             }
             Request::Fields { kind, page, cursor } => {
                 self.kind_fields(caller, kind, page, cursor, true).await
+            }
+            Request::Backup {
+                action,
+                hold,
+                output,
+                page,
+                cursor,
+            } => {
+                self.backup(caller, &action, hold, output, page, cursor)
+                    .await
             }
             Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
@@ -654,19 +666,8 @@ impl Api {
                     Ok(seal) => seal,
                     Err(e) => return refused(e.to_string()),
                 };
-                let question = match sinex_store::query::continuation::query_identity(text, &ctx)
-                    .and_then(|question| {
-                        sinex_store::query::continuation::identity(
-                            "recall",
-                            &question,
-                            &caller.grants,
-                        )
-                    }) {
-                    Ok(question) => question,
-                    Err(e) => return refused(e.to_string()),
-                };
-                if sinex_store::query::continuation::open(&seal, raw, question, &ctx)
-                    .is_ok_and(|cursor| cursor.context.versions.contains_key("sinex.recall"))
+                if sinex_store::query::continuation::authenticate(&seal, raw)
+                    .is_ok_and(|cursor| cursor.context().versions.contains_key("sinex.recall"))
                 {
                     drop(conn);
                     return self.recall(caller, text, page).await;
@@ -693,7 +694,18 @@ impl Api {
                 return self.recall(caller, text, page).await;
             }
         }
-        match sinex_store::query::run(&mut conn, text, None, &ctx, &page).await {
+        let result = if query::native::is_command(text) {
+            match query::native::parse(text, &ctx) {
+                Ok(operation) => {
+                    sinex_store::query::run_operation(&mut conn, text, &operation, &ctx, &page)
+                        .await
+                }
+                Err(error) => return query_refusal(text, error),
+            }
+        } else {
+            sinex_store::query::run(&mut conn, text, None, &ctx, &page).await
+        };
+        match result {
             Ok(answer) => data(answer_json(answer)),
             Err(sinex_store::Error::Query(error)) => query_refusal(text, error),
             Err(e) => refused(e.to_string()),
@@ -716,6 +728,9 @@ impl Api {
     async fn status(&self, caller: &Caller) -> Result<Value, String> {
         let mut conn = self.acquire(caller).await.map_err(|e| e.to_string())?;
         let row = sinex_store::diagnostics::positions(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let open_backup_holds = sinex_store::backup::open_summary(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
         let telemetry = sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE)
@@ -793,7 +808,7 @@ impl Api {
         let sources = match self
             .query(
                 caller,
-                "sources sort binding",
+                "sources | sort by binding",
                 Page {
                     size: Some(1000),
                     cursor: None,
@@ -842,6 +857,7 @@ impl Api {
             "ingress_refusals_24h": refusals,
             "producer_errors": producer_errors,
             "writer": self.writer.is_some(),
+            "backup_holds": { "open":open_backup_holds.0,"oldest":open_backup_holds.1 },
             "zone": self.context().zone_name(),
             "day_start": self.day_start.to_string(),
             "sources": sources,

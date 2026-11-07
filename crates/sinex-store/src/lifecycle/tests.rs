@@ -1352,7 +1352,7 @@ async fn as_of_reads_exact(db: devkit::pg::TestDatabase) {
     for (position, live) in (start..=end).zip(&expected) {
         let answer = crate::query::run(
             &mut conn,
-            &format!("events where source = history fields id as of seq {position}"),
+            &format!("events where source = history | fields id | as of seq {position}"),
             None,
             &at,
             &crate::query::Page::default(),

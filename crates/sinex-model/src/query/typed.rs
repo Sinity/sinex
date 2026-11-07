@@ -1,8 +1,8 @@
 //! Payload fields come from the same Rust schemas that admission registers.
 use super::*;
-use query_language::scope::{FieldInfo, Origin, TemporalOutput, TypeRule};
+use query_language::scope::{FieldInfo, Origin, TypeRule};
 use serde_json::Value as Json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
@@ -86,21 +86,21 @@ pub fn complete(text: &str) -> Vec<Completion> {
         .filter(|c| c.kind == query_language::complete::CompletionKind::Field)
         .map(|c| c.value.clone())
         .collect();
-    // Complete one field-exists atom to inspect the already parsed kind filter.
+    // Complete one known-value atom to inspect the already parsed kind filter.
     // The shared completer owns the unfinished-token replacement span.
     if let Some(candidate) = offered
         .iter()
         .find(|c| c.kind == query_language::complete::CompletionKind::Field)
     {
         let probe = format!(
-            "{}{} exists{}",
+            "{}{}:known{}",
             &text[..candidate.replace.start],
             candidate.value,
             &text[candidate.replace.end..]
         );
         if let Ok(parsed) = super::syntax::parse(&probe, &ctx) {
             fn mentioned(c: &query_language::ast::Condition, out: &mut BTreeSet<String>) {
-                use query_language::ast::{ConditionKind as C, Operand as O, Value as V};
+                use query_language::ast::{ConditionKind as C, Expression as O, Value as V};
                 match &c.kind {
                     C::And { conditions } | C::Or { conditions } => {
                         for c in conditions {
@@ -108,9 +108,29 @@ pub fn complete(text: &str) -> Vec<Completion> {
                         }
                     }
                     C::Compare {
-                        operand: O::Field { name },
+                        left: O::Function { name, arguments },
                         op: Op::Eq,
-                        value,
+                        right:
+                            O::Value {
+                                value: V::Scalar { text, .. },
+                            },
+                    } if name == "glob" && text == "true" => {
+                        if let [
+                            O::Field { name },
+                            O::Value {
+                                value: V::Scalar { text: pattern, .. },
+                            },
+                        ] = arguments.as_slice()
+                        {
+                            if name == "event_type" {
+                                out.extend(pattern_kinds(pattern, None));
+                            }
+                        }
+                    }
+                    C::Compare {
+                        left: O::Field { name },
+                        op: Op::Eq,
+                        right: O::Value { value },
                     }
                     | C::Match { field: name, value }
                         if name == "event_type" =>
@@ -123,12 +143,8 @@ pub fn complete(text: &str) -> Vec<Completion> {
                                     }
                                 }
                                 V::Scalar { text, .. } => {
-                                    let v = if text.contains('*') {
-                                        Value::Glob(text.clone())
-                                    } else {
-                                        Value::Text(text.clone())
-                                    };
-                                    if let Some(selected) = selected_value(&v, None) {
+                                    let v = Value::Text(text.clone());
+                                    if let Some(selected) = selected_value(&v) {
                                         out.extend(selected);
                                     }
                                 }
@@ -196,54 +212,31 @@ pub fn complete(text: &str) -> Vec<Completion> {
         .collect()
 }
 
-fn glob_matches(pattern: &str, text: &str) -> bool {
-    let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
-    let (mut p, mut t, mut star, mut retry) = (0, 0, None, 0);
-    while t < text.len() {
-        if p < pattern.len() && pattern[p] == text[t] {
-            p += 1;
-            t += 1;
-        } else if p < pattern.len() && pattern[p] == b'*' {
-            star = Some(p);
-            p += 1;
-            retry = t;
-        } else if let Some(last) = star {
-            p = last + 1;
-            retry += 1;
-            t = retry;
-        } else {
-            return false;
-        }
-    }
-    while p < pattern.len() && pattern[p] == b'*' {
-        p += 1;
-    }
-    p == pattern.len()
+fn pattern_kinds(pattern: &str, ctx: Option<&Context>) -> BTreeSet<String> {
+    let names = match ctx.and_then(|ctx| ctx.catalog.as_ref()) {
+        Some(catalog) => catalog
+            .declarations
+            .iter()
+            .map(|(kind, _)| kind.name.clone())
+            .collect::<BTreeSet<_>>(),
+        None => crate::event_types::ALL
+            .iter()
+            .map(|kind| kind.event_type.to_owned())
+            .collect(),
+    };
+    names
+        .into_iter()
+        .filter(|name| query_language::glob::matches(name, pattern))
+        .collect()
 }
 
-fn selected_value(value: &Value, ctx: Option<&Context>) -> Option<BTreeSet<String>> {
+fn selected_value(value: &Value) -> Option<BTreeSet<String>> {
     match value {
         Value::Text(s) => Some(BTreeSet::from([s.clone()])),
-        Value::Glob(pattern) => Some(
-            match ctx.and_then(|ctx| ctx.catalog.as_ref()) {
-                Some(catalog) => catalog
-                    .declarations
-                    .iter()
-                    .map(|(kind, _)| kind.name.clone())
-                    .collect::<BTreeSet<_>>(),
-                None => crate::event_types::ALL
-                    .iter()
-                    .map(|kind| kind.event_type.to_owned())
-                    .collect(),
-            }
-            .into_iter()
-            .filter(|name| glob_matches(pattern, name))
-            .collect(),
-        ),
         Value::List(values) => {
             let mut out = BTreeSet::new();
             for value in values {
-                out.extend(selected_value(value, ctx)?);
+                out.extend(selected_value(value)?);
             }
             Some(out)
         }
@@ -254,10 +247,24 @@ fn selected_value(value: &Value, ctx: Option<&Context>) -> Option<BTreeSet<Strin
 fn selected(e: &Expr, ctx: &Context) -> Option<BTreeSet<String>> {
     match e {
         Expr::Compare {
+            lhs: Operand::Glob { left, right },
+            op: Op::Eq,
+            rhs: Value::Bool(true),
+        } => match (&**left, &**right) {
+            (
+                Operand::Field(FieldRef::Field(field)),
+                Operand::Literal {
+                    value: Value::Text(pattern),
+                    ..
+                },
+            ) if field.name == "event_type" => Some(pattern_kinds(pattern, Some(ctx))),
+            _ => None,
+        },
+        Expr::Compare {
             lhs: Operand::Field(FieldRef::Field(f)),
             op: Op::Eq,
             rhs,
-        } if f.name == "event_type" => selected_value(rhs, Some(ctx)),
+        } if f.name == "event_type" => selected_value(rhs),
         Expr::And(a, b) => match (selected(a, ctx), selected(b, ctx)) {
             (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
             (a, b) => a.or(b),
@@ -333,8 +340,10 @@ fn field(
             };
         }
         FieldRef::TypedGroup(column) => {
-            let ty = physical_type(column.info(), kinds, ctx)?;
-            column.bind(ty);
+            if column.field_type().is_none() {
+                let ty = physical_type(column.info(), kinds, ctx)?;
+                column.bind(ty);
+            }
         }
         FieldRef::Group(_) => {
             return Err(QueryError::new(
@@ -357,7 +366,7 @@ fn physical_kind(kind: &query_language::catalog::FieldKind) -> FieldType {
         K::Json => FieldType::Json,
         K::List(item) => match &**item {
             K::Reference => FieldType::IdList,
-            K::Text | K::Match | K::Substring | K::Words | K::Subtree => FieldType::TextList,
+            K::Text | K::Exact | K::Substring | K::Words | K::Subtree => FieldType::TextList,
             _ => FieldType::Json,
         },
         _ => FieldType::Text,
@@ -389,6 +398,7 @@ fn physical_type(
                 .and_then(|alias| alias.field(field))
                 .or_else(|| table.field(field))
                 .map(|field| field.ty)
+                .or_else(|| NativeField::from_name(field).map(NativeField::field_type))
                 .ok_or_else(|| {
                     QueryError::new(format!(
                         "bound field {unit}.{field} has no physical adapter"
@@ -398,16 +408,16 @@ fn physical_type(
         Origin::Group { input, .. } => physical_type(input, kinds, ctx),
         Origin::Aggregate {
             inputs,
-            rule: TypeRule::Input,
+            rule: TypeRule::Input(index),
             ..
         }
         | Origin::Function {
             arguments: inputs,
-            rule: TypeRule::Input,
+            rule: TypeRule::Input(index),
             ..
         } => physical_type(
             inputs
-                .first()
+                .get(*index)
                 .ok_or_else(|| QueryError::new("bound input lineage is missing"))?,
             kinds,
             ctx,
@@ -419,28 +429,19 @@ fn physical_type(
         } => {
             // These are the existing SQL calendar columns, not another scope rule.
             match TimeFn::from_name(name) {
-                Some(TimeFn::Hour) => Ok(FieldType::Integer),
+                Some(TimeFn::Hour | TimeFn::Year) => Ok(FieldType::Integer),
                 Some(_) => Ok(FieldType::Text),
-                None => Err(QueryError::not_built(
-                    0,
-                    format!("{name}() has no physical adapter"),
-                )),
+                None => Ok(physical_kind(&info.field.kind)),
             }
         }
-        Origin::Temporal {
-            output: TemporalOutput::Match,
-            ..
-        } => Ok(FieldType::Id),
-        Origin::Temporal {
-            output: TemporalOutput::Offset,
-            ..
-        } => Ok(FieldType::Number),
+        Origin::Matched { input } => physical_type(input, &None, ctx),
         _ => Ok(physical_kind(&info.field.kind)),
     }
 }
 
 fn output_type(field: &FieldRef) -> Result<FieldType, QueryError> {
     match field {
+        FieldRef::Native(field) => Ok(field.field_type()),
         FieldRef::Field(field) => Ok(field.ty),
         FieldRef::TypedPayload { ty, .. } => Ok(*ty),
         FieldRef::TypedGroup(column) => column
@@ -452,6 +453,29 @@ fn output_type(field: &FieldRef) -> Result<FieldType, QueryError> {
     }
 }
 
+pub(super) fn operand_type(value: &Operand) -> Result<FieldType, QueryError> {
+    Ok(match value {
+        Operand::Field(field) => output_type(field)?,
+        Operand::TimeFn(TimeFn::Hour | TimeFn::Year, _) | Operand::Length(_) => FieldType::Integer,
+        Operand::TimeFn(_, _) => FieldType::Text,
+        Operand::Literal { kind, .. } | Operand::Arithmetic { kind, .. } => physical_kind(kind),
+        Operand::Absolute(value)
+            if matches!(
+                &**value,
+                Operand::Literal {
+                    value: Value::Unknown,
+                    ..
+                }
+            ) =>
+        {
+            FieldType::Number
+        }
+        Operand::CaseEqual { value, .. } | Operand::Absolute(value) => operand_type(value)?,
+        Operand::Glob { .. } => FieldType::Bool,
+        Operand::Text(_) => FieldType::Text,
+        Operand::Named { operand, .. } => operand_type(operand)?,
+    })
+}
 fn operand(
     o: &mut Operand,
     kinds: &Option<BTreeSet<String>>,
@@ -467,33 +491,131 @@ fn operand(
                 *ty = FieldType::Time;
             }
             let ty = output_type(f)?;
-            if ty != FieldType::Time && !(ctx.catalog.is_some() && ty == FieldType::Json) {
+            let bucket = matches!(f, FieldRef::TypedGroup(column) if matches!(column.time_function(), Some(TimeFn::Day | TimeFn::Week | TimeFn::Month)));
+            if ty != FieldType::Time && !bucket && !(ctx.catalog.is_some() && ty == FieldType::Json)
+            {
                 return Err(QueryError::new("time functions require a time field"));
+            }
+            Ok(())
+        }
+        Operand::Literal { .. } => Ok(()),
+        Operand::Named { operand: inner, .. } => operand(inner, kinds, ctx),
+        Operand::Text(inner) => {
+            operand(inner, kinds, ctx)?;
+            if !matches!(
+                operand_type(inner)?,
+                FieldType::Text
+                    | FieldType::Path
+                    | FieldType::Id
+                    | FieldType::Enum(_)
+                    | FieldType::Json
+            ) {
+                return Err(QueryError::new("text requires text or an identifier"));
+            }
+            Ok(())
+        }
+        Operand::Absolute(inner) => {
+            operand(inner, kinds, ctx)?;
+            if !matches!(
+                &**inner,
+                Operand::Literal {
+                    value: Value::Unknown,
+                    ..
+                }
+            ) && !matches!(operand_type(inner)?, FieldType::Integer | FieldType::Number)
+            {
+                return Err(QueryError::new("abs requires a number, money or duration"));
+            }
+            Ok(())
+        }
+        Operand::Length(inner) => {
+            operand(inner, kinds, ctx)?;
+            if !matches!(
+                operand_type(inner)?,
+                FieldType::Text
+                    | FieldType::TextList
+                    | FieldType::Path
+                    | FieldType::PathList
+                    | FieldType::IdList
+                    | FieldType::Enum(_)
+                    | FieldType::Json
+            ) {
+                return Err(QueryError::new("len requires text or a list"));
+            }
+            Ok(())
+        }
+        Operand::Arithmetic {
+            operator,
+            left,
+            right,
+            kind,
+        } => {
+            operand(left, kinds, ctx)?;
+            operand(right, kinds, ctx)?;
+            *kind = query_language::scope::arithmetic_kind(*operator, &left.kind(), &right.kind())
+                .ok_or_else(|| {
+                    QueryError::new("arithmetic operands have incompatible physical dimensions")
+                })?;
+            Ok(())
+        }
+        Operand::Glob { left, right } => {
+            for value in [left, right] {
+                operand(value, kinds, ctx)?;
+                if !matches!(
+                    operand_type(value)?,
+                    FieldType::Text
+                        | FieldType::Path
+                        | FieldType::Id
+                        | FieldType::Enum(_)
+                        | FieldType::Json
+                ) {
+                    return Err(QueryError::new("glob requires text values"));
+                }
+            }
+            Ok(())
+        }
+        Operand::CaseEqual { left, right, value } => {
+            operand(left, kinds, ctx)?;
+            operand(right, kinds, ctx)?;
+            operand(value, kinds, ctx)?;
+            let expected = operand_type(left)?;
+            if let Operand::Literal { value, kind } = &mut **right {
+                validate_value(value, expected, ctx)?;
+                *kind = super::syntax::field_kind(expected);
             }
             Ok(())
         }
     }
 }
-fn validate_value(
-    v: &mut Value,
-    ty: FieldType,
-    identifier_pattern: bool,
-    ctx: &Context,
-) -> Result<(), QueryError> {
+fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
+    if let Value::Operand(value) = v {
+        let actual = operand_type(value)?;
+        if actual == ty
+            || matches!(
+                (actual, ty),
+                (
+                    FieldType::Integer | FieldType::Number,
+                    FieldType::Integer | FieldType::Number
+                )
+            )
+            || actual == FieldType::Json
+            || ty == FieldType::Json
+        {
+            return Ok(());
+        }
+        return Err(QueryError::new(
+            "comparison expressions have incompatible physical types",
+        ));
+    }
     if matches!(v, Value::Unknown) {
         return Ok(());
     }
     if matches!(v, Value::Number(number) if !number.is_finite()) {
         return Err(QueryError::new("a numeric value must be finite"));
     }
-    if matches!(v, Value::Glob(_)) && !identifier_pattern {
-        return Err(QueryError::new(
-            "wildcards require a registered source or event_type field",
-        ));
-    }
     if let Value::List(values) = v {
         for value in values {
-            validate_value(value, ty, identifier_pattern, ctx)?;
+            validate_value(value, ty, ctx)?;
         }
         return Ok(());
     }
@@ -502,10 +624,6 @@ fn validate_value(
         return Ok(());
     }
     if let Value::Text(text) = v {
-        if identifier_pattern && text.contains('*') {
-            *v = Value::Glob(text.clone());
-            return Ok(());
-        }
         let parsed = match ty {
             FieldType::Integer => {
                 if query_language::number::is_integer(text) {
@@ -558,7 +676,7 @@ fn validate_value(
             | (FieldType::Bool, Value::Bool(_))
             | (FieldType::Id | FieldType::IdList, Value::Id(_))
     );
-    if valid || (identifier_pattern && matches!(v, Value::Glob(_))) {
+    if valid {
         Ok(())
     } else {
         Err(QueryError::new(format!(
@@ -567,19 +685,6 @@ fn validate_value(
         )))
     }
 }
-fn identifier_origin(info: &FieldInfo) -> bool {
-    match &info.origin {
-        Origin::Catalog { field, .. } => matches!(field.as_str(), "source" | "event_type"),
-        Origin::Group { input, .. } => identifier_origin(input),
-        Origin::Aggregate {
-            rule: TypeRule::Input,
-            inputs,
-            ..
-        } => inputs.first().is_some_and(identifier_origin),
-        _ => false,
-    }
-}
-
 fn normalize_output_literal(
     value: &mut Value,
     info: &FieldInfo,
@@ -595,10 +700,15 @@ fn normalize_output_literal(
         Origin::Group { input, .. } => return normalize_output_literal(value, input, ctx),
         Origin::Aggregate {
             inputs,
-            rule: TypeRule::Input,
+            rule: TypeRule::Input(index),
+            ..
+        }
+        | Origin::Function {
+            arguments: inputs,
+            rule: TypeRule::Input(index),
             ..
         } => {
-            if let Some(input) = inputs.first() {
+            if let Some(input) = inputs.get(*index) {
                 return normalize_output_literal(value, input, ctx);
             }
         }
@@ -637,6 +747,170 @@ fn normalize_output_literal(
     Ok(())
 }
 
+fn check_join(
+    join: &mut Join,
+    kinds: &Option<BTreeSet<String>>,
+    ctx: &Context,
+) -> Result<(), QueryError> {
+    let mut inner_kinds = join.inner.source.alias().map(|alias| {
+        alias
+            .kinds
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect::<BTreeSet<_>>()
+    });
+    for expression in join.inner.filter.iter().chain(
+        join.inner
+            .stages
+            .iter()
+            .take_while(|stage| !matches!(stage, Stage::Group(_)))
+            .filter_map(|stage| {
+                if let Stage::Where(expression) = stage {
+                    Some(expression)
+                } else {
+                    None
+                }
+            }),
+    ) {
+        if let Some(selected) = selected(expression, ctx) {
+            inner_kinds = Some(inner_kinds.map_or(selected.clone(), |kinds| {
+                kinds.intersection(&selected).cloned().collect()
+            }));
+        }
+    }
+    fn candidate_fields(value: &Operand, out: &mut BTreeSet<String>) {
+        match value {
+            Operand::Field(field) | Operand::TimeFn(_, field) => {
+                let name = field.name();
+                if !matches!(
+                    name.as_str(),
+                    "match.id" | "match.coarse" | "match.distance"
+                ) {
+                    out.insert(name);
+                }
+            }
+            Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
+                candidate_fields(left, out);
+                candidate_fields(right, out);
+            }
+            Operand::CaseEqual { left, right, value } => {
+                candidate_fields(left, out);
+                candidate_fields(right, out);
+                candidate_fields(value, out);
+            }
+            Operand::Text(value)
+            | Operand::Absolute(value)
+            | Operand::Length(value)
+            | Operand::Named { operand: value, .. } => candidate_fields(value, out),
+            Operand::Literal {
+                value: Value::Operand(value),
+                ..
+            } => candidate_fields(value, out),
+            _ => {}
+        }
+    }
+    let mut pick_fields = BTreeSet::new();
+    for key in &join.pick {
+        if let SortBy::Operand(value) = &key.key {
+            candidate_fields(value, &mut pick_fields);
+        }
+    }
+    for name in pick_fields {
+        if !join.required.contains(&name) {
+            join.required.push(name);
+        }
+    }
+    let inner_schema = check_schema(&mut join.inner, ctx, &join.required)?;
+    fn implicit_column(
+        column: &mut Operand,
+        schema: &PhysicalSchema,
+        kinds: &Option<BTreeSet<String>>,
+        ctx: &Context,
+        required: bool,
+    ) -> Result<(), QueryError> {
+        match column {
+            Operand::Named {
+                operand: column, ..
+            } => implicit_column(column, schema, kinds, ctx, required),
+            Operand::Field(field @ (FieldRef::Payload(_) | FieldRef::TypedPayload { .. })) => {
+                let path = match field {
+                    FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } => path.clone(),
+                    _ => unreachable!(),
+                };
+                // The shared catalog is the union of declared payload paths.
+                // Implicit matched columns absent in this selected kind remain
+                // dynamic JSON; explicit inner projections were checked above.
+                let ty = if required {
+                    field_type(&path, kinds, ctx)?
+                } else {
+                    field_type(&path, kinds, ctx).unwrap_or(FieldType::Json)
+                };
+                *field = FieldRef::TypedPayload { path, ty };
+                Ok(())
+            }
+            _ => {
+                seed_operand(column, schema);
+                operand(column, kinds, ctx)
+            }
+        }
+    }
+    for column in &mut join.columns {
+        let name = column.column();
+        if !join.required.contains(&name) && !inner_schema.contains_key(&name) {
+            if let Operand::Named { operand, .. } = column {
+                if let Operand::Field(
+                    value @ (FieldRef::Payload(_) | FieldRef::TypedPayload { .. }),
+                ) = &mut **operand
+                {
+                    let path = match value {
+                        FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } => {
+                            path.clone()
+                        }
+                        _ => unreachable!(),
+                    };
+                    *value = FieldRef::TypedPayload {
+                        path,
+                        ty: FieldType::Json,
+                    };
+                    continue;
+                }
+            }
+        }
+        implicit_column(
+            column,
+            &inner_schema,
+            &inner_kinds,
+            ctx,
+            join.required.contains(&name),
+        )?;
+    }
+    let mut candidates = inner_schema.clone();
+    for column in &join.columns {
+        candidates
+            .entry(column.column())
+            .or_insert(operand_type(column)?);
+    }
+    candidates.insert("match.id".into(), FieldType::Id);
+    candidates.insert("match.distance".into(), FieldType::Number);
+    candidates.insert("match.coarse".into(), FieldType::Bool);
+    for key in &mut join.pick {
+        if let SortBy::Operand(value) = &mut key.key {
+            seed_operand(value, &candidates);
+            operand(value, &inner_kinds, ctx)?;
+        }
+    }
+    if let JoinOn::Key { left, right } = &mut join.on {
+        field(left, kinds, ctx)?;
+        if let FieldRef::TypedGroup(column) = right {
+            if let Some(ty) = inner_schema.get(column.name()) {
+                column.bind(*ty);
+            }
+        }
+        field(right, &inner_kinds, ctx)?;
+    }
+    Ok(())
+}
+
 fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
     let narrowed = selected(e, ctx).map(|selected| {
         kinds.as_ref().map_or(selected.clone(), |ks| {
@@ -645,6 +919,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
     });
     let kinds = if narrowed.is_some() { &narrowed } else { kinds };
     match e {
+        Expr::Order(join) => check_join(join, kinds, ctx)?,
         Expr::Truth { operand: field, .. } => operand(field, kinds, ctx)?,
         Expr::And(a, b) | Expr::Or(a, b) => {
             expr(a, kinds, ctx)?;
@@ -653,8 +928,14 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
         Expr::Not(e) => expr(e, kinds, ctx)?,
         Expr::Compare { lhs, op, rhs } => {
             operand(lhs, kinds, ctx)?;
+            if let Value::Operand(value) = rhs {
+                operand(value, kinds, ctx)?;
+            }
             if let Operand::Field(
-                FieldRef::TypedPayload { .. } | FieldRef::TypedGroup(_) | FieldRef::Field(_),
+                FieldRef::Native(_)
+                | FieldRef::TypedPayload { .. }
+                | FieldRef::TypedGroup(_)
+                | FieldRef::Field(_),
             ) = lhs
             {
                 let ty = output_type(match lhs {
@@ -680,15 +961,10 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 {
                     return Err(QueryError::new("this payload field cannot be ordered"));
                 }
-                let identifier_pattern = matches!(op, Op::Eq | Op::Ne)
-                    && matches!(lhs, Operand::Field(FieldRef::TypedGroup(column)) if identifier_origin(column.info()));
                 if let Operand::Field(FieldRef::TypedGroup(column)) = lhs {
                     normalize_output_literal(rhs, column.info(), ctx)?;
                 }
-                // Native identifier patterns are already bound by the parser.
-                let identifier_pattern = identifier_pattern
-                    || matches!(lhs, Operand::Field(FieldRef::Field(field)) if matches!(field.name, "source" | "event_type") && matches!(op, Op::Eq | Op::Ne));
-                validate_value(rhs, ty, identifier_pattern, ctx)?;
+                validate_value(rhs, ty, ctx)?;
                 if let Operand::Field(FieldRef::TypedPayload { path, .. }) = lhs {
                     let available = definitions(ctx);
                     let definitions: Vec<_> = available
@@ -740,24 +1016,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                 }
             }
         }
-        Expr::Exists(o) => operand(o, kinds, ctx)?,
-        Expr::TimeDiff { a, b, .. } => {
-            field(a, kinds, ctx)?;
-            field(b, kinds, ctx)?;
-            for field in [&mut *a, &mut *b] {
-                if let FieldRef::TypedPayload { ty, .. } = field
-                    && *ty == FieldType::Json
-                {
-                    *ty = FieldType::Time;
-                }
-            }
-            for field in [&*a, &*b] {
-                let ty = output_type(field)?;
-                if ty != FieldType::Time && !(ctx.catalog.is_some() && ty == FieldType::Json) {
-                    return Err(QueryError::new("time differences require time fields"));
-                }
-            }
-        }
+        Expr::Exists(o) | Expr::FieldWords { operand: o, .. } => operand(o, kinds, ctx)?,
         Expr::Words(_) | Expr::Overlaps { .. } | Expr::Similar { .. } => {}
     }
     Ok(())
@@ -811,7 +1070,361 @@ fn select_query_parameter(query: &mut Query, name: &str) -> bool {
     changed
 }
 
+fn mark_join_requirements(query: &mut Query, extra: &[String]) {
+    fn operand(value: &Operand, out: &mut BTreeSet<String>) {
+        match value {
+            Operand::Field(field) | Operand::TimeFn(_, field) => {
+                if let Some(name) = field.name().strip_prefix("match.") {
+                    out.insert(name.to_owned());
+                }
+            }
+            Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
+                operand(left, out);
+                operand(right, out);
+            }
+            Operand::CaseEqual { left, right, value } => {
+                operand(left, out);
+                operand(right, out);
+                operand(value, out);
+            }
+            Operand::Text(value)
+            | Operand::Absolute(value)
+            | Operand::Length(value)
+            | Operand::Named { operand: value, .. } => operand(value, out),
+            Operand::Literal {
+                value: Value::Operand(value),
+                ..
+            } => operand(value, out),
+            _ => {}
+        }
+    }
+    fn expression(value: &Expr, out: &mut BTreeSet<String>) {
+        match value {
+            Expr::And(left, right) | Expr::Or(left, right) => {
+                expression(left, out);
+                expression(right, out);
+            }
+            Expr::Not(value) => expression(value, out),
+            Expr::Compare { lhs, rhs, .. } => {
+                operand(lhs, out);
+                if let Value::Operand(rhs) = rhs {
+                    operand(rhs, out);
+                }
+            }
+            Expr::Exists(value)
+            | Expr::Within { lhs: value, .. }
+            | Expr::Truth { operand: value, .. }
+            | Expr::FieldWords { operand: value, .. } => operand(value, out),
+            _ => {}
+        }
+    }
+    fn clear_orders(value: &mut Expr) {
+        match value {
+            Expr::Order(join) => join.required.clear(),
+            Expr::And(left, right) | Expr::Or(left, right) => {
+                clear_orders(left);
+                clear_orders(right);
+            }
+            Expr::Not(value) => clear_orders(value),
+            _ => {}
+        }
+    }
+    fn assign(join: &mut Join, names: &mut BTreeSet<String>, pair: bool) {
+        let mut produced = join
+            .columns
+            .iter()
+            .map(Operand::column)
+            .collect::<BTreeSet<_>>();
+        if matches!(
+            join.on,
+            JoinOn::Order {
+                within_secs: Some(_),
+                ..
+            }
+        ) || (pair && matches!(join.on, JoinOn::Order { .. }))
+        {
+            produced.insert("distance".into());
+        }
+        join.required = names.intersection(&produced).cloned().collect();
+        names.retain(|name| !produced.contains(name));
+        if let JoinOn::Key { right, .. } = &join.on {
+            join.required.push(right.name());
+        }
+    }
+    if let Some(value) = &mut query.filter {
+        clear_orders(value);
+    }
+    for stage in &mut query.stages {
+        if let Stage::Where(value) = stage {
+            clear_orders(value);
+        }
+    }
+    let mut names = extra
+        .iter()
+        .filter_map(|name| name.strip_prefix("match.").map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    // Work back to the producer of each matched column. A later join
+    // overwrites the names it exposes, while other input fields survive.
+    for stage in query.stages.iter_mut().rev() {
+        match stage {
+            Stage::Where(value) => {
+                if let Some(join) = value.exposed_order_mut() {
+                    assign(join, &mut names, false);
+                }
+                // Conditions read the input witness, before this filter exposes
+                // a replacement. Their requirements belong to earlier producers.
+                expression(value, &mut names);
+            }
+            Stage::Join(join) => {
+                assign(join, &mut names, true);
+                if let JoinOn::Key { left, .. } = &join.on {
+                    if let Some(name) = left.name().strip_prefix("match.") {
+                        names.insert(name.to_owned());
+                    }
+                }
+            }
+            Stage::GroupFirst { keys, .. } | Stage::Fields(keys) => {
+                for key in keys {
+                    operand(key, &mut names);
+                }
+            }
+            Stage::Sort(values) => {
+                for value in values {
+                    if let SortBy::Operand(value) = &value.key {
+                        operand(value, &mut names);
+                    }
+                }
+            }
+            Stage::Group(value) => {
+                for value in &value.keys {
+                    operand(value, &mut names);
+                }
+                for value in &value.aggregates {
+                    if let Some(value) = &value.argument {
+                        operand(value, &mut names);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(value) = &mut query.filter {
+        if let Some(join) = value.exposed_order_mut() {
+            assign(join, &mut names, false);
+        }
+    }
+}
+
+type PhysicalSchema = BTreeMap<String, FieldType>;
+
+fn seed_operand(value: &mut Operand, schema: &PhysicalSchema) {
+    match value {
+        Operand::Field(FieldRef::TypedGroup(column)) => {
+            if let Some(ty) = schema.get(column.name()) {
+                column.bind(*ty);
+            }
+        }
+        Operand::TimeFn(_, FieldRef::TypedGroup(column)) => {
+            if let Some(ty) = schema.get(column.name()) {
+                column.bind(*ty);
+            }
+        }
+        Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
+            seed_operand(left, schema);
+            seed_operand(right, schema);
+        }
+        Operand::CaseEqual { left, right, value } => {
+            seed_operand(left, schema);
+            seed_operand(right, schema);
+            seed_operand(value, schema);
+        }
+        Operand::Text(value)
+        | Operand::Absolute(value)
+        | Operand::Length(value)
+        | Operand::Named { operand: value, .. } => seed_operand(value, schema),
+        Operand::Literal {
+            value: Value::Operand(value),
+            ..
+        } => seed_operand(value, schema),
+        _ => {}
+    }
+}
+fn seed_expr(value: &mut Expr, schema: &PhysicalSchema) {
+    match value {
+        Expr::And(left, right) | Expr::Or(left, right) => {
+            seed_expr(left, schema);
+            seed_expr(right, schema);
+        }
+        Expr::Not(value) => seed_expr(value, schema),
+        Expr::Compare { lhs, rhs, .. } => {
+            seed_operand(lhs, schema);
+            if let Value::Operand(rhs) = rhs {
+                seed_operand(rhs, schema);
+            }
+        }
+        Expr::Exists(value)
+        | Expr::FieldWords { operand: value, .. }
+        | Expr::Within { lhs: value, .. }
+        | Expr::Truth { operand: value, .. } => seed_operand(value, schema),
+        Expr::Order(join) => {
+            if let JoinOn::Key {
+                left: FieldRef::TypedGroup(column),
+                ..
+            } = &mut join.on
+            {
+                if let Some(ty) = schema.get(column.name()) {
+                    column.bind(*ty);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+fn expose_join(schema: &mut PhysicalSchema, join: &Join) -> Result<(), QueryError> {
+    for column in &join.columns {
+        schema.insert(format!("match.{}", column.column()), operand_type(column)?);
+    }
+    if matches!(
+        join.on,
+        JoinOn::Order {
+            within_secs: Some(_),
+            ..
+        }
+    ) {
+        schema.insert("match.distance".into(), FieldType::Number);
+    }
+    Ok(())
+}
+fn expose_order(schema: &mut PhysicalSchema, value: &Expr) -> Result<(), QueryError> {
+    if let Some(join) = value.exposed_order() {
+        expose_join(schema, join)?;
+    }
+    Ok(())
+}
+
+/// Erase only the derived physical cache. Every admission rechecks it against
+/// the current declaration snapshot, including programmatically reused plans.
+fn clear_query_bindings(query: &mut Query) {
+    fn field(value: &mut FieldRef) {
+        if let FieldRef::TypedGroup(column) = value {
+            column.clear_binding();
+        }
+    }
+    fn operand(value: &mut Operand) {
+        match value {
+            Operand::Field(value) | Operand::TimeFn(_, value) => field(value),
+            Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
+                operand(left);
+                operand(right);
+            }
+            Operand::CaseEqual { left, right, value } => {
+                operand(left);
+                operand(right);
+                operand(value);
+            }
+            Operand::Text(value)
+            | Operand::Absolute(value)
+            | Operand::Length(value)
+            | Operand::Named { operand: value, .. } => operand(value),
+            Operand::Literal {
+                value: Value::Operand(value),
+                ..
+            } => operand(value),
+            _ => {}
+        }
+    }
+    fn join(value: &mut Join) {
+        clear_query_bindings(&mut value.inner);
+        for key in &mut value.pick {
+            if let SortBy::Operand(value) = &mut key.key {
+                operand(value);
+            }
+        }
+        for value in &mut value.columns {
+            operand(value);
+        }
+        if let JoinOn::Key { left, right } = &mut value.on {
+            field(left);
+            field(right);
+        }
+    }
+    fn expression(value: &mut Expr) {
+        match value {
+            Expr::And(left, right) | Expr::Or(left, right) => {
+                expression(left);
+                expression(right);
+            }
+            Expr::Not(value) => expression(value),
+            Expr::Order(value) => join(value),
+            Expr::Compare { lhs, rhs, .. } => {
+                operand(lhs);
+                if let Value::Operand(value) = rhs {
+                    operand(value);
+                }
+            }
+            Expr::Exists(value)
+            | Expr::FieldWords { operand: value, .. }
+            | Expr::Within { lhs: value, .. }
+            | Expr::Truth { operand: value, .. } => operand(value),
+            _ => {}
+        }
+    }
+    if let Some(value) = &mut query.filter {
+        expression(value);
+    }
+    if let Source::RecallLast {
+        filter: Some(value),
+    } = &mut query.source
+    {
+        expression(value);
+    }
+    for stage in &mut query.stages {
+        match stage {
+            Stage::Where(value) => expression(value),
+            Stage::Join(value) => join(value),
+            Stage::GroupFirst { keys, .. } => {
+                for key in keys {
+                    operand(key);
+                }
+            }
+            Stage::Fields(values) => {
+                for value in values {
+                    operand(value);
+                }
+            }
+            Stage::Sort(values) => {
+                for value in values {
+                    if let SortBy::Operand(value) = &mut value.key {
+                        operand(value);
+                    }
+                }
+            }
+            Stage::Group(value) => {
+                for value in &mut value.keys {
+                    operand(value);
+                }
+                for value in &mut value.aggregates {
+                    if let Some(value) = &mut value.argument {
+                        operand(value);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
+    check_schema(q, ctx, &[]).map(|_| ())
+}
+
+fn check_schema(
+    q: &mut Query,
+    ctx: &Context,
+    extra: &[String],
+) -> Result<PhysicalSchema, QueryError> {
+    mark_join_requirements(q, extra);
+    clear_query_bindings(q);
     // A template's event-type argument is checked when an invocation supplies it.
     // Its definition must be valid for at least one declared event type.
     if ctx.catalog.is_none() && select_query_parameter(&mut q.clone(), "") {
@@ -819,10 +1432,10 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
         for kind in crate::event_types::ALL {
             let mut trial = q.clone();
             select_query_parameter(&mut trial, kind.event_type);
-            match check(&mut trial, ctx) {
-                Ok(()) => {
+            match check_schema(&mut trial, ctx, extra) {
+                Ok(schema) => {
                     *q = trial;
-                    return Ok(());
+                    return Ok(schema);
                 }
                 Err(error) => {
                     first_error.get_or_insert(error);
@@ -858,35 +1471,82 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
             }));
         }
     }
+    let mut schema = q
+        .source
+        .table()
+        .fields()
+        .iter()
+        .map(|field| (field.name.to_owned(), field.ty))
+        .collect::<PhysicalSchema>();
+    if let Some(alias) = q.source.alias() {
+        schema.extend(
+            alias
+                .fields
+                .iter()
+                .map(|field| (field.name.to_owned(), field.ty)),
+        );
+    }
     if let Some(e) = &mut q.filter {
+        seed_expr(e, &schema);
         expr(e, &kinds, ctx)?;
+        expose_order(&mut schema, e)?;
     }
     for stage in &mut q.stages {
         match stage {
-            Stage::Where(e) => expr(e, &kinds, ctx)?,
-            Stage::Join(j) => {
-                check(&mut j.inner, ctx)?;
+            Stage::Where(e) => {
+                seed_expr(e, &schema);
+                expr(e, &kinds, ctx)?;
+                expose_order(&mut schema, e)?;
+            }
+            Stage::Join(join) => {
+                if let JoinOn::Key {
+                    left: FieldRef::TypedGroup(column),
+                    ..
+                } = &mut join.on
+                {
+                    if let Some(ty) = schema.get(column.name()) {
+                        column.bind(*ty);
+                    }
+                }
+                check_join(join, &kinds, ctx)?;
+                expose_join(&mut schema, join)?;
+                if matches!(join.on, JoinOn::Order { .. }) {
+                    schema.insert("match.distance".into(), FieldType::Number);
+                }
+            }
+            Stage::GroupFirst { keys, .. } => {
+                for key in keys {
+                    seed_operand(key, &schema);
+                    operand(key, &kinds, ctx)?;
+                }
             }
             Stage::Fields(fs) => {
+                let mut projected = PhysicalSchema::new();
                 for f in fs {
-                    field(f, &kinds, ctx)?;
+                    seed_operand(f, &schema);
+                    operand(f, &kinds, ctx)?;
+                    projected.insert(f.column(), operand_type(f)?);
                 }
+                schema = projected;
             }
             Stage::Sort(keys) => {
                 for k in keys {
                     if let SortBy::Operand(o) = &mut k.key {
+                        seed_operand(o, &schema);
                         operand(o, &kinds, ctx)?;
                     }
                 }
             }
             Stage::Group(g) => {
                 for k in &mut g.keys {
+                    seed_operand(k, &schema);
                     operand(k, &kinds, ctx)?;
                 }
                 for a in &mut g.aggregates {
-                    if let Some(f) = &mut a.field {
-                        field(f, &kinds, ctx)?;
-                        let ty = output_type(f)?;
+                    if let Some(argument) = &mut a.argument {
+                        seed_operand(argument, &schema);
+                        operand(argument, &kinds, ctx)?;
+                        let ty = operand_type(argument)?;
                         if matches!(a.function, AggFn::Min | AggFn::Max)
                             && matches!(
                                 ty,
@@ -913,9 +1573,30 @@ pub(super) fn check(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
                         }
                     }
                 }
+                let mut grouped = PhysicalSchema::new();
+                for key in &g.keys {
+                    grouped.insert(key.column(), operand_type(key)?);
+                }
+                for aggregate in &g.aggregates {
+                    let ty = match aggregate.function {
+                        AggFn::Count | AggFn::CountDistinct => FieldType::Integer,
+                        AggFn::Avg => FieldType::Number,
+                        _ => aggregate
+                            .argument
+                            .as_ref()
+                            .map(operand_type)
+                            .transpose()?
+                            .ok_or_else(|| QueryError::new("aggregate argument is missing"))?,
+                    };
+                    grouped.insert(aggregate.column(), ty);
+                }
+                if g.fill.is_some() {
+                    grouped.insert("coverage".into(), FieldType::Text);
+                }
+                schema = grouped;
             }
             _ => {}
         }
     }
-    Ok(())
+    Ok(schema)
 }
