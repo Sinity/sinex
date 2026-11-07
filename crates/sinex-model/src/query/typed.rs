@@ -279,6 +279,50 @@ fn selected(e: &Expr, ctx: &Context) -> Option<BTreeSet<String>> {
     }
 }
 
+/// The first scope types the source filter; each following scope types one stage.
+/// Later filters can narrow a row selection's output without changing its inputs.
+fn relation_kinds(query: &Query, ctx: &Context) -> Vec<Option<BTreeSet<String>>> {
+    fn narrow(kinds: &mut Option<BTreeSet<String>>, expression: &Expr, ctx: &Context) {
+        if let Some(selected) = selected(expression, ctx) {
+            *kinds = Some(kinds.as_ref().map_or(selected.clone(), |kinds| {
+                kinds.intersection(&selected).cloned().collect()
+            }));
+        }
+    }
+    let mut kinds = query
+        .source
+        .alias()
+        .map(|alias| alias.kinds.iter().map(|kind| (*kind).into()).collect());
+    if let Some(filter) = &query.filter {
+        narrow(&mut kinds, filter, ctx);
+    }
+    let mut scopes = Vec::with_capacity(query.stages.len() + 1);
+    let mut grouped = false;
+    for stages in query.stages.split_inclusive(|stage| {
+        matches!(
+            stage,
+            Stage::Limit(_) | Stage::GroupFirst { .. } | Stage::Group(_)
+        )
+    }) {
+        if !grouped {
+            for stage in stages {
+                if let Stage::Where(expression) = stage {
+                    narrow(&mut kinds, expression, ctx);
+                }
+            }
+        }
+        if scopes.is_empty() {
+            scopes.push(kinds.clone());
+        }
+        scopes.extend(std::iter::repeat_n(kinds.clone(), stages.len()));
+        grouped |= matches!(stages.last(), Some(Stage::Group(_)));
+    }
+    if scopes.is_empty() {
+        scopes.push(kinds);
+    }
+    scopes
+}
+
 fn field_type(
     path: &[String],
     kinds: &Option<BTreeSet<String>>,
@@ -752,32 +796,9 @@ fn check_join(
     kinds: &Option<BTreeSet<String>>,
     ctx: &Context,
 ) -> Result<(), QueryError> {
-    let mut inner_kinds = join.inner.source.alias().map(|alias| {
-        alias
-            .kinds
-            .iter()
-            .map(|kind| (*kind).to_owned())
-            .collect::<BTreeSet<_>>()
-    });
-    for expression in join.inner.filter.iter().chain(
-        join.inner
-            .stages
-            .iter()
-            .take_while(|stage| !matches!(stage, Stage::Group(_)))
-            .filter_map(|stage| {
-                if let Stage::Where(expression) = stage {
-                    Some(expression)
-                } else {
-                    None
-                }
-            }),
-    ) {
-        if let Some(selected) = selected(expression, ctx) {
-            inner_kinds = Some(inner_kinds.map_or(selected.clone(), |kinds| {
-                kinds.intersection(&selected).cloned().collect()
-            }));
-        }
-    }
+    let inner_kinds = relation_kinds(&join.inner, ctx)
+        .pop()
+        .expect("the source has a kind scope");
     fn candidate_fields(value: &Operand, out: &mut BTreeSet<String>) {
         match value {
             Operand::Field(field) | Operand::TimeFn(_, field) => {
@@ -1449,28 +1470,7 @@ fn check_schema(
         let kinds = Some(alias.kinds.iter().map(|s| (*s).into()).collect());
         expr(e, &kinds, ctx)?;
     }
-    let mut kinds: Option<BTreeSet<String>> = q
-        .source
-        .alias()
-        .map(|a| a.kinds.iter().map(|s| (*s).into()).collect());
-    for e in q.filter.iter().chain(
-        q.stages
-            .iter()
-            .take_while(|s| !matches!(s, Stage::Group(_)))
-            .filter_map(|s| {
-                if let Stage::Where(e) = s {
-                    Some(e)
-                } else {
-                    None
-                }
-            }),
-    ) {
-        if let Some(selected) = selected(e, ctx) {
-            kinds = Some(kinds.map_or(selected.clone(), |ks| {
-                ks.intersection(&selected).cloned().collect()
-            }));
-        }
-    }
+    let kind_scopes = relation_kinds(q, ctx);
     let mut schema = q
         .source
         .table()
@@ -1488,14 +1488,14 @@ fn check_schema(
     }
     if let Some(e) = &mut q.filter {
         seed_expr(e, &schema);
-        expr(e, &kinds, ctx)?;
+        expr(e, &kind_scopes[0], ctx)?;
         expose_order(&mut schema, e)?;
     }
-    for stage in &mut q.stages {
+    for (stage, kinds) in q.stages.iter_mut().zip(&kind_scopes[1..]) {
         match stage {
             Stage::Where(e) => {
                 seed_expr(e, &schema);
-                expr(e, &kinds, ctx)?;
+                expr(e, kinds, ctx)?;
                 expose_order(&mut schema, e)?;
             }
             Stage::Join(join) => {
@@ -1508,7 +1508,7 @@ fn check_schema(
                         column.bind(*ty);
                     }
                 }
-                check_join(join, &kinds, ctx)?;
+                check_join(join, kinds, ctx)?;
                 expose_join(&mut schema, join)?;
                 if matches!(join.on, JoinOn::Order { .. }) {
                     schema.insert("match.distance".into(), FieldType::Number);
@@ -1517,14 +1517,14 @@ fn check_schema(
             Stage::GroupFirst { keys, .. } => {
                 for key in keys {
                     seed_operand(key, &schema);
-                    operand(key, &kinds, ctx)?;
+                    operand(key, kinds, ctx)?;
                 }
             }
             Stage::Fields(fs) => {
                 let mut projected = PhysicalSchema::new();
                 for f in fs {
                     seed_operand(f, &schema);
-                    operand(f, &kinds, ctx)?;
+                    operand(f, kinds, ctx)?;
                     projected.insert(f.column(), operand_type(f)?);
                 }
                 schema = projected;
@@ -1533,19 +1533,19 @@ fn check_schema(
                 for k in keys {
                     if let SortBy::Operand(o) = &mut k.key {
                         seed_operand(o, &schema);
-                        operand(o, &kinds, ctx)?;
+                        operand(o, kinds, ctx)?;
                     }
                 }
             }
             Stage::Group(g) => {
                 for k in &mut g.keys {
                     seed_operand(k, &schema);
-                    operand(k, &kinds, ctx)?;
+                    operand(k, kinds, ctx)?;
                 }
                 for a in &mut g.aggregates {
                     if let Some(argument) = &mut a.argument {
                         seed_operand(argument, &schema);
-                        operand(argument, &kinds, ctx)?;
+                        operand(argument, kinds, ctx)?;
                         let ty = operand_type(argument)?;
                         if matches!(a.function, AggFn::Min | AggFn::Max)
                             && matches!(
