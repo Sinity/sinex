@@ -15,15 +15,22 @@ fn hello_runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+// One budget covers setup and all waits/iterations in a test. Kernel I/O waits
+// are not product latency failures; leave 30s of nextest's 120s for cleanup.
+fn fixture_deadline() -> Instant {
+    Instant::now() + Duration::from_secs(90)
+}
+
 struct Session {
     child: Option<Child>,
     stderr: tempfile::NamedTempFile,
     stderr_read: u64,
     reaped: bool,
+    until: Instant,
 }
 
 impl Session {
-    fn spawn(command: &mut Command) -> Self {
+    fn spawn(command: &mut Command, until: Instant) -> Self {
         // A stalled child must not block on stderr before its failure can be reported.
         let stderr = tempfile::NamedTempFile::new().unwrap();
         let child = command.stderr(stderr.reopen().unwrap()).spawn().unwrap();
@@ -32,6 +39,7 @@ impl Session {
             stderr,
             stderr_read: 0,
             reaped: false,
+            until,
         }
     }
 
@@ -84,13 +92,10 @@ impl Session {
         let mut log = String::new();
         let mut failed = 0;
         let mut line = String::new();
-        // A fixture watchdog, below the default 120s nextest termination budget,
-        // leaves time for evidence and child cleanup; it is not a product deadline.
-        let until = Instant::now() + Duration::from_secs(30);
         loop {
             assert!(
-                Instant::now() < until,
-                "publication observation budget expired: expected {count}, observed {failed}; {}",
+                Instant::now() < self.until,
+                "fixture watchdog expired observing publications: expected {count}, observed {failed}; {}",
                 self.evidence("waiting for publishing failure")
             );
             let read = reader.read_line(&mut line).unwrap();
@@ -120,7 +125,6 @@ impl Session {
     }
 
     fn finish(mut self) -> Output {
-        let until = Instant::now() + Duration::from_secs(5);
         loop {
             if self.child.as_mut().unwrap().try_wait().unwrap().is_some() {
                 let mut output = self.child.take().unwrap().wait_with_output().unwrap();
@@ -130,8 +134,8 @@ impl Session {
                 return output;
             }
             assert!(
-                Instant::now() < until,
-                "session did not stop promptly; {}",
+                Instant::now() < self.until,
+                "fixture watchdog expired waiting for session exit; {}",
                 self.evidence("waiting for session exit")
             );
             std::thread::sleep(Duration::from_millis(10));
@@ -286,14 +290,13 @@ exec sleep 30
     }
 
     fn started(&self, session: &mut Session, count: usize) {
-        let until = Instant::now() + Duration::from_secs(5);
         while self.pids().len() < count
             || self.descendants().len() < count
             || !self.root.join("heartbeat").exists()
         {
             assert!(
-                Instant::now() < until,
-                "fake capture child did not start; pids={:?}; descendants={:?}; heartbeat={:?}; {}",
+                Instant::now() < session.until,
+                "fixture watchdog expired waiting for fake capture readiness; pids={:?}; descendants={:?}; heartbeat={:?}; {}",
                 self.pids().into_iter().take(4).collect::<Vec<_>>(),
                 self.descendants().into_iter().take(4).collect::<Vec<_>>(),
                 std::fs::metadata(self.root.join("heartbeat")).map(|m| m.len()),
@@ -315,7 +318,6 @@ exec sleep 30
         let before = std::fs::metadata(self.root.join("heartbeat"))
             .unwrap()
             .len();
-        let until = Instant::now() + Duration::from_secs(5);
         while std::fs::metadata(self.root.join("heartbeat"))
             .unwrap()
             .len()
@@ -332,8 +334,8 @@ exec sleep 30
                 "publishing failure ended the session"
             );
             assert!(
-                Instant::now() < until,
-                "capture stopped after publishing failed; {}",
+                Instant::now() < session.until,
+                "fixture watchdog expired waiting for capture heartbeat; {}",
                 session.evidence("waiting for capture heartbeat after publishing failure")
             );
             std::thread::sleep(Duration::from_millis(10));
@@ -382,6 +384,7 @@ exec sleep 30
 
 #[devkit::test]
 fn capture_deadline_reaps_clipboard_and_audio_children() {
+    let until = fixture_deadline();
     for kind in ["clipboard", "media"] {
         let fixture = Fixture::new();
         let mut command = fixture.command();
@@ -392,7 +395,7 @@ fn capture_deadline_reaps_clipboard_and_audio_children() {
         if kind == "media" {
             command.args(["--option", "kind=audio", "--option", "segment=30"]);
         }
-        let output = Session::spawn(&mut command).finish();
+        let output = Session::spawn(&mut command, until).finish();
         assert!(
             output.status.success(),
             "{}",
@@ -404,6 +407,7 @@ fn capture_deadline_reaps_clipboard_and_audio_children() {
 
 #[devkit::test]
 fn run_deadline_reaps_both_clipboard_selections() {
+    let until = fixture_deadline();
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
@@ -412,7 +416,7 @@ fn run_deadline_reaps_both_clipboard_selections() {
         "fixture",
     ));
     let fixture = Fixture::new();
-    let output = Session::spawn(fixture.run(&nats).args(["--seconds", "1"])).finish();
+    let output = Session::spawn(fixture.run(&nats).args(["--seconds", "1"]), until).finish();
     assert!(
         output.status.success(),
         "{}",
@@ -424,6 +428,7 @@ fn run_deadline_reaps_both_clipboard_selections() {
 
 #[devkit::test]
 fn run_signals_join_capture_threads_and_reap_children() {
+    let until = fixture_deadline();
     for signal in ["INT", "TERM"] {
         let nats = devkit::nats::test_nats().unwrap();
         let _runtime = hello_runtime();
@@ -433,7 +438,7 @@ fn run_signals_join_capture_threads_and_reap_children() {
             "fixture",
         ));
         let fixture = Fixture::new();
-        let mut session = Session::spawn(&mut fixture.run(&nats));
+        let mut session = Session::spawn(&mut fixture.run(&nats), until);
         fixture.started(&mut session, 2);
         session.signal(signal);
         let output = session.finish();
@@ -448,6 +453,7 @@ fn run_signals_join_capture_threads_and_reap_children() {
 
 #[devkit::test]
 fn publishing_errors_leave_capture_children_running_until_stopped() {
+    let until = fixture_deadline();
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
@@ -457,7 +463,7 @@ fn publishing_errors_leave_capture_children_running_until_stopped() {
     ));
     let fixture = Fixture::new();
     // No ingress stream exists: publishing the captured synthetic line fails.
-    let mut session = Session::spawn(fixture.run(&nats).env("FAKE_EMIT", "1"));
+    let mut session = Session::spawn(fixture.run(&nats).env("FAKE_EMIT", "1"), until);
     fixture.started(&mut session, 2);
     let mut log = session.publishing_failed(2);
     fixture.keeps_capturing(&mut session);
@@ -470,6 +476,7 @@ fn publishing_errors_leave_capture_children_running_until_stopped() {
 
 #[devkit::test]
 fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_continues() {
+    let until = fixture_deadline();
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
@@ -479,9 +486,8 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
     ));
     let fixture = Fixture::new();
     let release = fixture.root.join("emit");
-    let mut session = Session::spawn(fixture.run(&nats).env("FAKE_DELAYED_EMIT", &release));
+    let mut session = Session::spawn(fixture.run(&nats).env("FAKE_DELAYED_EMIT", &release), until);
     fixture.started(&mut session, 2);
-    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let positions = std::fs::read_dir(fixture.root.join("state/positions"))
             .into_iter()
@@ -498,8 +504,8 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
             break;
         }
         assert!(
-            Instant::now() < deadline,
-            "both empty spool polls were not saved; {}",
+            Instant::now() < session.until,
+            "fixture watchdog expired waiting for saved empty spool polls; {}",
             session.evidence("waiting for saved empty spool polls")
         );
         std::thread::sleep(Duration::from_millis(10));
@@ -516,6 +522,7 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
 
 #[devkit::test]
 fn drain_without_spools_exits_without_starting_session_captures() {
+    let until = fixture_deadline();
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
@@ -524,7 +531,7 @@ fn drain_without_spools_exits_without_starting_session_captures() {
         "fixture",
     ));
     let fixture = Fixture::new();
-    let output = Session::spawn(fixture.run(&nats).arg("--drain")).finish();
+    let output = Session::spawn(fixture.run(&nats).arg("--drain"), until).finish();
     assert!(
         output.status.success(),
         "{}",
@@ -537,6 +544,7 @@ fn drain_without_spools_exits_without_starting_session_captures() {
 #[devkit::test]
 fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowledged_bytes() {
     use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
+    let until = fixture_deadline();
     let nats = devkit::nats::test_nats().unwrap();
     let _runtime = hello_runtime();
     let _hello = _runtime.block_on(hello::hello(
@@ -568,6 +576,7 @@ fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowle
             .run(&nats)
             .arg("--drain")
             .env_remove("WAYLAND_DISPLAY"),
+        until,
     )
     .finish();
     // There is no ingress stream, so finished data must remain available to retry.
@@ -588,6 +597,7 @@ fn drain_reads_a_stopped_spool_without_session_capabilities_and_keeps_unacknowle
 #[devkit::test]
 async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
     use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+    let until = fixture_deadline();
     let dir = tempfile::tempdir().unwrap();
     let journalctl = dir.path().join("journalctl");
     let child_pid_file = dir.path().join("child.pid");
@@ -611,8 +621,8 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
             .env("TEST_CHILD_PID", &child_pid_file)
             .process_group(0)
             .stdout(Stdio::null()),
+        until,
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
     let child = loop {
         assert!(
             daemon.child.as_mut().unwrap().try_wait().unwrap().is_none(),
@@ -623,7 +633,11 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
         {
             break pid;
         }
-        assert!(Instant::now() < deadline, "journal reader never started");
+        assert!(
+            Instant::now() < daemon.until,
+            "fixture watchdog expired waiting for journal reader; {}",
+            daemon.evidence("waiting for journal reader startup")
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     };
     assert!(
@@ -638,7 +652,11 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
             assert!(status.success(), "capture exited with {status}");
             break;
         }
-        assert!(Instant::now() < deadline, "capture did not stop");
+        assert!(
+            Instant::now() < daemon.until,
+            "fixture watchdog expired waiting for command exit; {}",
+            daemon.evidence("waiting for journal command exit")
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(
