@@ -60,6 +60,166 @@ async fn points(conn: &mut crate::AdmissionContext, d: &KindDeclaration) {
     tx.commit().await.unwrap();
 }
 
+async fn mixed_payloads(conn: &mut crate::AdmissionContext) -> [Uuid; 3] {
+    let declarations: Vec<_> = [
+        ("example.integer", json!({"type":"integer"})),
+        ("example.text", json!({"type":["string","null"]})),
+    ]
+    .into_iter()
+    .map(|(name, value)| {
+        let mut declaration = KindDeclaration::schemaless(
+            KindRef {
+                name: name.into(),
+                version: 1,
+            },
+            "example".into(),
+        );
+        declaration.payload_schema = Some(json!({
+            "type":"object",
+            "properties":{"value":value,"at":{"type":"string","format":"date-time"}},
+            "required":["value","at"]
+        }));
+        declaration.time_rule = Some(sinex_model::kinds::TimeRule::FirstPresent {
+            fields: vec!["at".into()],
+            quality: sinex_model::TimeQuality::Captured,
+        });
+        declaration
+    })
+    .collect();
+    let mut tx = conn.begin().await.unwrap();
+    sinex_schema::kinds::register(&mut tx, "example", &declarations)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let events: Vec<_> = [(0, json!(1)), (1, json!("1")), (1, Json::Null)]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (kind, value))| {
+            Event::submitted(
+                declarations[kind].kind.clone(),
+                json!({"value":value,"at":format!("2026-09-14T08:0{index}:00Z")}),
+                "example".into(),
+                Origin::Record {
+                    location: RecordLocation {
+                        material: MaterialId::new(),
+                        anchor: 0,
+                    },
+                    output_index: 0,
+                },
+                ReadingOrder(0),
+                [index as u8; 32],
+                Class::Open,
+            )
+        })
+        .collect();
+    let ids = events.iter().map(|event| event.id.0).collect::<Vec<_>>();
+    let batch = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Api {
+            actor: "test".into(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events,
+        }],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+    ids.try_into().unwrap()
+}
+
+async fn selection_before_kind_filter(db: devkit::pg::TestDatabase, grouped: bool, joined: bool) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = mixed_payloads(&mut conn).await;
+    // The oracle partitions and orders the original JSONB, never a text cast.
+    let (selection, oracle) = if grouped {
+        (
+            "events | sort by when, id | group by payload.value | first 1",
+            "SELECT id,event_type,ts_orig FROM (SELECT id,event_type,ts_orig,row_number() OVER (PARTITION BY payload->'value' ORDER BY ts_orig,id) AS chosen FROM core.events) rows WHERE chosen=1",
+        )
+    } else {
+        (
+            "events | sort by payload.value, when, id | limit 1",
+            "SELECT id,event_type,ts_orig FROM core.events ORDER BY payload->'value' ASC NULLS LAST,ts_orig,id LIMIT 1",
+        )
+    };
+    let original: Vec<Uuid> = sqlx::query_scalar(&format!(
+        "SELECT id FROM ({oracle}) selected ORDER BY ts_orig,id"
+    ))
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let unfiltered = ask(
+        &mut conn,
+        &format!("{selection} | sort by when, id | fields id"),
+    )
+    .await;
+    assert_eq!(unfiltered.total as usize, original.len());
+    assert_eq!(
+        column(&unfiltered, "id"),
+        original.iter().map(|id| json!(id)).collect::<Vec<_>>()
+    );
+    let expected: Vec<Uuid> = sqlx::query_scalar(&format!(
+        "SELECT id FROM ({oracle}) selected WHERE event_type='example.text' ORDER BY ts_orig,id"
+    ))
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        expected,
+        if grouped {
+            vec![ids[1], ids[2]]
+        } else {
+            vec![ids[2]]
+        }
+    );
+    let selected = format!("{selection} | where event_type = example.text");
+    let query = if joined {
+        format!(
+            "events where id = {} | join ({selected}) on event_type = event_type | sort by match.when, match.id | fields match.id as id",
+            ids[1]
+        )
+    } else {
+        format!("{selected} | sort by when, id | fields id")
+    };
+    let answer = ask(&mut conn, &query).await;
+    assert_eq!(answer.total as usize, expected.len(), "{query}");
+    assert_eq!(
+        answer.rows,
+        expected
+            .iter()
+            .map(|id| json!({"id":id}))
+            .collect::<Vec<_>>(),
+        "{query}"
+    );
+}
+
+#[devkit::test]
+async fn later_kind_filter_preserves_group_first_json_partitions(db: devkit::pg::TestDatabase) {
+    selection_before_kind_filter(db, true, false).await;
+}
+
+#[devkit::test]
+async fn later_kind_filter_preserves_sort_limit_json_order(db: devkit::pg::TestDatabase) {
+    selection_before_kind_filter(db, false, false).await;
+}
+
+#[devkit::test]
+async fn joined_later_kind_filter_preserves_group_first_json_partitions(
+    db: devkit::pg::TestDatabase,
+) {
+    selection_before_kind_filter(db, true, true).await;
+}
+
+#[devkit::test]
+async fn joined_later_kind_filter_preserves_sort_limit_json_order(db: devkit::pg::TestDatabase) {
+    selection_before_kind_filter(db, false, true).await;
+}
+
 #[devkit::test]
 async fn continuation_keeps_its_field_types_when_another_version_registers(
     db: devkit::pg::TestDatabase,
