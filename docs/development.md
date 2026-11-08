@@ -27,6 +27,13 @@ and compiler wrappers. The shell preserves an explicit `CARGO_TARGET_DIR`.
 When it is unset, an available `sinnix-cargo-target` helper may choose the
 output location; otherwise it uses `target/`.
 
+Declared AgentCTL operations clear an ambient `CARGO_TARGET_DIR` before entering
+the actual workspace's shell. The shell selects that checkout's isolated host
+target when `sinnix-cargo-target` is available, with dependency artifacts seeded
+by the host helper. For an explicit target experiment, pass
+`exec -- env CARGO_TARGET_DIR=... cargo ...`; this assignment runs after shell
+selection. Keep the experimental target exclusive to the same checkout.
+
 For local shared-crate development, run `cargo xtask link-common PATH`
 explicitly. Run `cargo xtask unlink-common` before committing either
 workspace lock, as described in the shared

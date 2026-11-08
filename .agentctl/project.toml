@@ -5,9 +5,9 @@ display_name = "Sinex"
 root_markers = ["Cargo.toml", "flake.nix", "xtask"]
 [environment]
 kind = "nix-develop"
-command = ["nix", "develop", "--command"]
-inherit = ["HOME", "USER", "LANG", "PATH", "TMPDIR", "XDG_RUNTIME_DIR", "CARGO_TARGET_DIR"]
-unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
+command = ["env", "-u", "CARGO_TARGET_DIR", "nix", "develop", "--command"]
+inherit = ["HOME", "USER", "LANG", "PATH", "TMPDIR", "XDG_RUNTIME_DIR"]
+unset = ["CARGO_TARGET_DIR", "DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
 [environment.values]
 # Each build uses two compiler workers.
 CARGO_BUILD_JOBS = "2"
