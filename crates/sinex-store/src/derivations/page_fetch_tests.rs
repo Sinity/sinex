@@ -312,15 +312,20 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
         .execute(&mut *conn)
         .await
         .unwrap();
-    let compressed: Vec<String> = sqlx::query_scalar(
-        "SELECT compress_relid::text FROM _timescaledb_catalog.compression_settings
-         WHERE relid IN (SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL",
+    // Compression relation names differ across template clones and fresh schemas.
+    // Match the catalog's physical relation identity to verbose EXPLAIN nodes.
+    let compressed: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT n.nspname::text, c.relname::text, format('%I.%I', n.nspname, c.relname)
+         FROM _timescaledb_catalog.compression_settings s
+         JOIN pg_class c ON c.oid=s.compress_relid
+         JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE s.relid IN (SELECT show_chunks('core.events'))",
     )
     .fetch_all(&mut *conn)
     .await
     .unwrap();
     let mut largest = 0_i64;
-    for table in compressed {
+    for (_, _, table) in &compressed {
         let batches: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
             .fetch_one(&mut *conn)
             .await
@@ -379,15 +384,20 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
         explain!("../commit_log/page.sql", 4_i64, 2_i64, i64::MAX),
     ];
     tx.rollback().await.unwrap();
-    fn work(node: &Value, payload: bool, batches: &mut f64, rows: &mut f64) {
+    fn work(
+        node: &Value,
+        payload: bool,
+        compressed: &[(String, String, String)],
+        batches: &mut f64,
+        rows: &mut f64,
+    ) {
         let payload = payload || node["Subplan Name"].as_str() == Some("CTE payload");
         let loops = node["Actual Loops"].as_f64().unwrap_or(0.0);
         if payload {
-            if node["Relation Name"]
-                .as_str()
-                .unwrap_or("")
-                .ends_with("_compressed")
-            {
+            if compressed.iter().any(|(schema, table, _)| {
+                node["Schema"].as_str() == Some(schema.as_str())
+                    && node["Relation Name"].as_str() == Some(table.as_str())
+            }) {
                 *batches += node["Actual Rows"].as_f64().unwrap_or(0.0) * loops;
             }
             if node["Custom Plan Provider"].as_str() == Some("ColumnarScan") {
@@ -398,7 +408,7 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
         }
         if let Some(children) = node["Plans"].as_array() {
             for child in children {
-                work(child, payload, batches, rows);
+                work(child, payload, compressed, batches, rows);
             }
         }
     }
@@ -408,7 +418,13 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
     {
         payload_lookup_is_bounded(&plan);
         let (mut batches, mut rows) = (0.0, 0.0);
-        work(&plan[0]["Plan"], false, &mut batches, &mut rows);
+        work(
+            &plan[0]["Plan"],
+            false,
+            &compressed,
+            &mut batches,
+            &mut rows,
+        );
         eprintln!(
             "compressed {query} payload work: row_groups={batches}, decompressed_rows={rows}"
         );
