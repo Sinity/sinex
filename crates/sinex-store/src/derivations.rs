@@ -226,10 +226,7 @@ async fn window_page(
     let (types, contains) = kind_arrays(&w.kinds);
     let (after_ts, after_seq) = after.unzip();
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index, e.parents,
-             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-             e.record_state, e.class, e.commit_seq, page.matched AS "matched!"
-           FROM core.events e JOIN (
+        r#"WITH page AS MATERIALIZED (
              SELECT p.id, p.matched FROM (
                SELECT q.id, count(*) OVER () AS matched,
                       (sum(q.size) OVER (ORDER BY q.ts_orig, q.commit_seq) - q.size)::bigint AS before
@@ -245,7 +242,18 @@ async fn window_page(
                  LIMIT $7
                ) q
              ) p WHERE p.before < $8::bigint
-           ) page ON page.id = e.id
+           ), payload AS MATERIALIZED (
+             SELECT payload_event.* FROM core.events payload_event
+             WHERE payload_event.id >= (SELECT id FROM page ORDER BY id LIMIT 1)
+               AND payload_event.id <= (SELECT id FROM page ORDER BY id DESC LIMIT 1)
+               AND payload_event.id = ANY(ARRAY(SELECT id FROM page))
+           )
+           SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor,
+             e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!",
+             e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!",
+             e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!",
+             e.commit_seq AS "commit_seq!", page.matched AS "matched!"
+           FROM page JOIN payload e ON e.id = page.id
            ORDER BY e.ts_orig, e.commit_seq"#,
         &types,
         w.start,
