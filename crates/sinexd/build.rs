@@ -1,21 +1,10 @@
 use std::process::Command;
 
+// The build identity comes from SINEX_BUILD: Nix supplies the real revision
+// and the development shell supplies a fixed one, so ordinary edits and Git
+// operations never rebuild sinexd. Plain Cargo outside both reads Git once.
 fn main() {
     println!("cargo:rerun-if-env-changed=SINEX_BUILD");
-    println!("cargo:rerun-if-changed=../../.git");
-    println!("cargo:rerun-if-changed=../");
-    for name in ["HEAD", "index"] {
-        if let Ok(path) = Command::new("git")
-            .args(["rev-parse", "--git-path", name])
-            .output()
-            && path.status.success()
-        {
-            println!(
-                "cargo:rerun-if-changed={}",
-                String::from_utf8_lossy(&path.stdout).trim()
-            );
-        }
-    }
     let supplied = std::env::var("SINEX_BUILD").ok();
     let build = supplied.or_else(|| {
         let commit = Command::new("git")
