@@ -181,8 +181,7 @@ producer frames and the query parser. Bounded replay of each target's corpus
 runs inside the ordinary test run; longer runs are a test profile over the
 same harness, not a separate command. The harness (`fuzz/`) is a workspace
 member, so its tests build in the same feature resolution as every other
-test. Ruling, 2026-03-12: "it MUST NOT be a
-separate command" (cc-queued:065c511c-e336-4e59-825b-eeefc71cdaae@2026-03-12T00:31:10Z).
+test. (ruling 2026-03-12, cc-queued:065c511c-e336-4e59-825b-eeefc71cdaae@2026-03-12T00:31:10Z).
 
 ## Benchmarks
 

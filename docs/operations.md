@@ -71,7 +71,7 @@ The daemon serves its API on a Unix socket and, for HTTP and the reader web, on 
 | loopback (default) | peer-uid check on the connection |
 | any other address | a token file; a non-loopback address without one refuses to start |
 
-Reaching Sinex from a phone or another machine (a tailnet address, a reverse proxy) is the deployment's choice, made by setting these options; Sinex has no remote-access feature of its own. Ruling, 2026-10-28: "this should not be part of the project … project should be configurable enough (in nix mainly, btw, tho this should boil donwn to actual config file and possibly envvars I guess)" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
+Reaching Sinex from a phone or another machine (a tailnet address, a reverse proxy) is the deployment's choice, made by setting these options; Sinex has no remote-access feature of its own. (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
 
 Clients find the daemon through `SINEX_ENDPOINT` (the socket or HTTP address) and `SINEX_TOKEN_FILE`, which the modules set for login shells. Integrations in other languages (Kitty, Neovim) read the one variable the deployment sets for them. Which callers hold which powers is [interfaces.md](interfaces.md).
 
@@ -111,7 +111,7 @@ services.sinex.captureNode = { enable = true; nats = "<sinex host>:4222"; keyFil
 
 ## Logical day
 
-One configurable day boundary per deployment, used by every day- and hour-grain value Sinex produces: queries, derivations, analysis, recall and briefs. Ruling, 2026-10-11: "yes it should be configurable, and default should be sth like 4AM maybe … need to design the system so that this works reliably, there are no unexpected exceptions" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
+One configurable day boundary per deployment, used by every day- and hour-grain value Sinex produces: queries, derivations, analysis, recall and briefs. (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
 
 | Option | Meaning | Default |
 |---|---|---|

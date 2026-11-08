@@ -4,13 +4,13 @@ The library is how the operator and agents keep, describe, organize, find, judge
 
 ## Purpose
 
-The library is a native workflow that makes other library applications dispensable. Importing another tool's files alone does not deliver it; adding, describing, organizing, finding, comparing and using media inside Sinex does. It is a general media library, not tied to any one tool. Ruling, 2026-10-18: "Stashbox was just an example of one kind of media library that would be mangeed by sinex. it's more general than stashbopx." (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:afc6b7b2-5100-4255-8ace-7d6b09ec801e).
+The library is a native workflow that makes other library applications dispensable. Importing another tool's files alone does not deliver it; adding, describing, organizing, finding, comparing and using media inside Sinex does. It is a general media library, not tied to any one tool. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:afc6b7b2-5100-4255-8ace-7d6b09ec801e).
 
 The principles that shape every feature below:
 
 - **Exact bytes and acquisition context are kept.** Item identity, byte identity and evidence that two copies correspond are three separate things.
-- **Primary data is on disk as materials, and the library is rebuildable from them by replay.** Ruling, 2026-06-04: "everything should be primarily on disk. ideally entire stash thingy would be rebuildable to the greatest extent" (cc-queued:6785a302-980f-4cd0-bc7c-b5e4b3f0f1e9@2026-06-04T16:15:54Z).
-- **Generated outputs are kept and reused, not regenerated.** Ruling, 2026-06-09: "why would we regen when it's right there?" (cc-queued:70929a29-e133-4051-9646-34e8505cb67f@2026-06-09T12:21:22Z).
+- **Primary data is on disk as materials, and the library is rebuildable from them by replay.** (ruling 2026-06-04, cc-queued:6785a302-980f-4cd0-bc7c-b5e4b3f0f1e9@2026-06-04T16:15:54Z).
+- **Generated outputs are kept and reused, not regenerated.** (ruling 2026-06-09, cc-queued:70929a29-e133-4051-9646-34e8505cb67f@2026-06-09T12:21:22Z).
 - **The library is built from ordinary sources and derivations**, and authored curation is Sinex's own authored input. There is no library service, database or plugin framework beside Sinex.
 - **Rendering uses existing media tools; queries use the one query language and its paging.** Nothing truncates a valid selection.
 - **Missing content, uncertainty and conflicts are reported, never hidden.** A successful command or an imported catalog is not evidence of a useful library.
@@ -406,7 +406,7 @@ Web views come from common `web-shell` and print the CLI and MCP call that repro
 
 ## Privacy
 
-The library is private. Ruling, 2026-10-11: "a media stashbox is not supposed to be public, obviously" (cc-queued:56c7f026-fd50-4480-b484-72f1299a534c@2026-10-11T17:33:01Z). Library content stays out of public artifacts, and test fixtures are synthetic.
+The library is private. (ruling 2026-10-11, cc-queued:56c7f026-fd50-4480-b484-72f1299a534c@2026-10-11T17:33:01Z). Library content stays out of public artifacts, and test fixtures are synthetic.
 
 - Library kinds declare [field hints](privacy.md#field-hints): `path` on copy paths, `free_text` on notes and descriptions, `caption` on captions, `person` on face labels, `url` on site URLs, `media` on renditions.
 - No library field is hidden by default. When the operator configures rules, the one output transform ([output parity](privacy.md#output-parity)) applies to every library read: items, shown values, search, previews, thumbnails, cached handoffs and old references.

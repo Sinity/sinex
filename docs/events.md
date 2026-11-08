@@ -6,8 +6,8 @@ An event is a **reading**: one interpretation of a **record** in a material, or 
 
 - **A record** is a datapoint in a material: a line, a row, a file, a message. It is located by its **record coordinates** `(material, anchor)`, the anchor being the byte offset where it starts, plus event type and **output index** when one record yields several events of one type.
 - **A reading** is the event that one read of a record produced. Reading the same record again (replay, a new parser version) makes a new reading with a new ID.
-- **At most one reading of each record is live.** A new live reading of a record archives the previous one; the others are kept as archived readings ([the lifecycle](lifecycle.md)). Ruling, 2026-10-27: "there cant be two distinct 'live' events for the same underlying" (cc-queued:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f@2026-10-27T23:04Z).
-- **History is implicit.** A record's history is its live and archived readings, grouped by record. There is no supersession pointer and no replacement table. Ruling, 2026-05-24: "you could take archived events and live core events as one table effectively, and group by the position within source material and source material id itself" (codex:019e309f-7614-7381-a8ac-f9080f304ee6@2026-05-24T17:18Z).
+- **At most one reading of each record is live.** A new live reading of a record archives the previous one; the others are kept as archived readings ([the lifecycle](lifecycle.md)). (ruling 2026-10-27, cc-queued:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f@2026-10-27T23:04Z).
+- **History is implicit.** A record's history is its live and archived readings, grouped by record. There is no supersession pointer and no replacement table. (ruling 2026-05-24, codex:019e309f-7614-7381-a8ac-f9080f304ee6@2026-05-24T17:18Z).
 
 Output indices are zero-based unsigned 64-bit integers on public interfaces. Stored coordinates use nonnegative SQL `bigint`; admission and citation lookup check that boundary without wrapping. Widening the representation preserves existing coordinate values and decimal citation suffixes.
 
@@ -29,7 +29,7 @@ Output indices are zero-based unsigned 64-bit integers on public interfaces. Sto
 | `record_state` | `present` or `removed` ([removed at source](#removed-at-source)) |
 | `payload` | typed by the kind's registered schema |
 
-**The ID is the reading's, never the content's.** There is no content-derived ID and no idempotency by ID, because a new read is a new observation. Ruling, 2026-05-07: "of course there's new uuidv7 - because it is new observaiton!" (cc:5fdffc35-be4a-457f-bb6b-4caa52b152c3:ae53f63b-8e16-4ec8-b34b-1fd830c88415). Ruling, 2026-03-06: "having new id is fine … if we reused id, that'd be a lie" (codex:019cbc74-e62a-7d93-987c-4848ca636a75@2026-03-06T00:00Z).
+**The ID is the reading's, never the content's.** There is no content-derived ID and no idempotency by ID, because a new read is a new observation. (ruling 2026-05-07, cc:5fdffc35-be4a-457f-bb6b-4caa52b152c3:ae53f63b-8e16-4ec8-b34b-1fd830c88415). (ruling 2026-03-06, codex:019cbc74-e62a-7d93-987c-4848ca636a75@2026-03-06T00:00Z).
 
 - **One origin** (the code's `one_origin`) is enforced four times: by the builder (no build without an origin), by the wire format (both and neither are refused), by a database CHECK, and by a non-empty parent-list type.
 - **Events are built only through the builder,** so origin, time and key rules cannot be bypassed by a struct literal.

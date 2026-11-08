@@ -254,10 +254,7 @@ outer read snapshot. `hour()` continues to name the local clock hour.
 
 ## Saved queries
 
-A query can be saved, named and invoked inside another query. Ruling, 2026-07-09:
-"saving a query in a database, and returning that as a result -- with proper ids …
-THIS. THIS IS WHAT I MEANT"
-(cc-queued:3b0038ec-234c-44b8-bb88-fe222b44fe0f@2026-07-09T20:06Z).
+A query can be saved, named and invoked inside another query. (ruling 2026-07-09, cc-queued:3b0038ec-234c-44b8-bb88-fe222b44fe0f@2026-07-09T20:06Z).
 
 ```sh
 sinexctl 'commands where cwd ^ $directory AND since:$period | count' \

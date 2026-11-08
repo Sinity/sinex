@@ -4,10 +4,10 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 
 ## Principles
 
-- **Every level is a stored event.** A derived event sits above its parents with exact parent links, so it is citable, archivable and derivable from, and the finest grain below it is kept ([the hierarchy](events.md#hierarchy)). There is no second analysis database, no separate result lifecycle and no "insights" stage. Ruling, 2026-08-31: "aggressively dissolve the insights concept" (cc-queued:62b956ba-3ea3-4693-8d71-9a36321c37a9@2026-08-31T05:41:13Z).
-- **Materialize when the inputs are admitted, not when someone asks.** A derivation computed on request names in its declaration why it cannot be maintained correctly as inputs arrive. Ruling, 2026-06-27: "we are supposed to materialize such analyses into proper schema we have … not dynamically (ofc if it cant be done (accurately, correctly))" (cc-queued:1944721d-4531-41be-8093-13454b62ebd6@2026-06-27T17:03:47Z).
-- **Never make things up.** Unknown time stays unknown; missing coverage is never a measured zero; a time overlap does not establish ownership, authorship, causation or attention. There are no free-floating confidence numbers or scalar scores: a method states its evidence, denominator and measured precision instead. Ruling, 2026-03-27: "I think 'confidence' stuff is menaningless slop" (cc-queued:14ea730a-aa86-433a-9bba-8be973977d5c@2026-03-27T08:47:07Z).
-- **Labels need construct validity.** A derived label or detection ships only when its declaration says what it measures, from which structured fields, with which denominator, and what agreement evidence supports it. Ruling, 2026-03-27: "these categoreis arent' evne sensible factoring of anything I do" (cc-queued:14ea730a-aa86-433a-9bba-8be973977d5c@2026-03-27T22:55:51Z).
+- **Every level is a stored event.** A derived event sits above its parents with exact parent links, so it is citable, archivable and derivable from, and the finest grain below it is kept ([the hierarchy](events.md#hierarchy)). There is no second analysis database, no separate result lifecycle and no "insights" stage. (ruling 2026-08-31, cc-queued:62b956ba-3ea3-4693-8d71-9a36321c37a9@2026-08-31T05:41:13Z).
+- **Materialize when the inputs are admitted, not when someone asks.** A derivation computed on request names in its declaration why it cannot be maintained correctly as inputs arrive. (ruling 2026-06-27, cc-queued:1944721d-4531-41be-8093-13454b62ebd6@2026-06-27T17:03:47Z).
+- **Never make things up.** Unknown time stays unknown; missing coverage is never a measured zero; a time overlap does not establish ownership, authorship, causation or attention. There are no free-floating confidence numbers or scalar scores: a method states its evidence, denominator and measured precision instead. (ruling 2026-03-27, cc-queued:14ea730a-aa86-433a-9bba-8be973977d5c@2026-03-27T08:47:07Z).
+- **Labels need construct validity.** A derived label or detection ships only when its declaration says what it measures, from which structured fields, with which denominator, and what agreement evidence supports it. (ruling 2026-03-27, cc-queued:14ea730a-aa86-433a-9bba-8be973977d5c@2026-03-27T22:55:51Z).
 - **No sampling.** Nothing in the derived layer samples; were sampling ever needed for a stream, it would be deterministic so that replay reproduces it.
 
 ## Two shapes, one runner
@@ -117,7 +117,7 @@ Counts are checked non-negative integers; durations are integer nanoseconds; ove
 
 ## Fusion
 
-Fusion joins readings of the same occurrence seen by several sources, for a source family whose definition is written. It is a derived layer over source records, which stay live. The base case is separate records with no fusion: where no family is defined, consumers read each source's records directly and say that counts across sources are per source. Ruling, 2026-10-28: "truly base case is actually jsut "separate records" withotu fusion. fusion needs to be actually defined/built, again, depends on actual sources" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
+Fusion joins readings of the same occurrence seen by several sources, for a source family whose definition is written. It is a derived layer over source records, which stay live. The base case is separate records with no fusion: where no family is defined, consumers read each source's records directly and say that counts across sources are per source. (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
 
 Handling may differ per family, because no single rule is right for every pair of sources. Fusing one shell command seen through zsh history, Atuin, Kitty and other sources into one derived layer is the motivating use.
 
@@ -231,13 +231,13 @@ Derivations that call a model provider are off (default; open operator question)
 They stay off until the features are redesigned purpose first: search ranking, OCR beyond the local engine, speech transcription with speaker separation, model-written [narratives](higher-layer.md#narratives) and the [narrative corpus](higher-layer.md#the-narrative-corpus), classification, episode labels, and [model suggestions](higher-layer.md#model-suggestions). The settled inputs to that design:
 
 - Cloud processing is acceptable on privacy; cost, latency and capability decide between providers.
-- Cost is an operating setting, not a design driver or an activation gate. Ruling, 2026-10-11: "it's not worth basing design of the projects on such considerations" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:07bbe1df-c4cd-4c59-b07e-540182d93fdd).
-- Local models are first-class providers. Ruling, 2026-05-30: "worthilwe to setup a SOTA-ish-for-my-own-hardware loocal stuff as well" (cc:34a46275-7b63-44c2-ac47-bdf5388514a7:8b965461-8556-4cef-96c5-2a92532222d1).
+- Cost is an operating setting, not a design driver or an activation gate. (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:07bbe1df-c4cd-4c59-b07e-540182d93fdd).
+- Local models are first-class providers. (ruling 2026-05-30, cc:34a46275-7b63-44c2-ac47-bdf5388514a7:8b965461-8556-4cef-96c5-2a92532222d1).
 - What reaches a provider follows the same [privacy](privacy.md) output rules as every other caller; there is no separate model allowlist.
 
 ### Local OCR
 
-Local OCR runs. It calls no provider and spends nothing, so the off switch above does not cover it. Ruling, 2026-10-18: "keep OCR tho" (cc-queued:01d1e6dc-4672-468a-83b4-1956ce71dea2@2026-10-18T16:54:35Z).
+Local OCR runs. It calls no provider and spends nothing, so the off switch above does not cover it. (ruling 2026-10-18, cc-queued:01d1e6dc-4672-468a-83b4-1956ce71dea2@2026-10-18T16:54:35Z).
 
 - It is a deterministic-tool derivation of `screen.text` from stored frames, and runs by default when the engine is installed. Its producer version includes the engine and the engine's version.
 - `screen.text` is searchable.
