@@ -407,8 +407,8 @@ pub struct ConfirmedEvent {
     pub class: Class,
     pub equivalence_key: Option<String>,
     pub payload: Option<Value>,
-    /// Why `payload` is absent, when it is. The event itself is stored whole;
-    /// read it from Sinex by ID.
+    /// Why `payload` is absent, when it is (and, for `Size`, `parents`). The
+    /// event itself is stored whole; read it from Sinex by ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub withheld: Option<Withheld>,
 }
@@ -419,8 +419,10 @@ pub struct ConfirmedEvent {
 pub enum Withheld {
     /// The event's class is `guarded` or `sealed`.
     Class,
-    /// The message with the payload would exceed the NATS server's message
-    /// size limit (`max_payload`).
+    /// The whole message would exceed the NATS server's message size limit
+    /// (`max_payload`): it carries the event's identity and position without
+    /// its payload or parents. `payload_bytes` is 0 when the payload was not
+    /// in the message anyway.
     Size { payload_bytes: u64, limit: u64 },
 }
 

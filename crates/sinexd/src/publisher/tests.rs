@@ -439,3 +439,59 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events(
         Published::default()
     );
 }
+
+/// Found on real data: a `presence.interval` derived from 26,903 events. It is
+/// guarded, so its payload was already withheld, and its parents alone passed
+/// the server's limit; the publisher retried that page for days.
+#[test]
+fn a_message_too_large_without_its_payload_goes_out_without_its_parents() {
+    let limit = 1_048_576;
+    let event = ConfirmedEvent {
+        commit_seq: 8_750_502,
+        id: EventId(uuid::Uuid::from_u128(1)),
+        event_type: "presence.interval".into(),
+        source: "derived".into(),
+        run: RunId(uuid::Uuid::from_u128(2)),
+        location: None,
+        output_index: 0,
+        parents: (0..30_000u128)
+            .map(|i| EventId(uuid::Uuid::from_u128(i + 10)))
+            .collect(),
+        ts_orig: None,
+        ts_quality: "exact".into(),
+        ts_coided: None,
+        ts_persisted: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+        record_state: "present".into(),
+        class: Class::Guarded,
+        equivalence_key: None,
+        payload: None,
+        withheld: Some(Withheld::Class),
+    };
+    let sent = fit(event.clone(), limit).unwrap();
+    let size = serde_json::to_vec(&Confirmed::Event(Box::new(sent.clone())))
+        .unwrap()
+        .len() as u64;
+    assert!(
+        size + HEADROOM <= limit,
+        "{size} bytes still exceed the limit"
+    );
+    assert_eq!(sent.parents, Vec::<EventId>::new());
+    assert_eq!(
+        sent.withheld,
+        Some(Withheld::Size {
+            payload_bytes: 0,
+            limit
+        })
+    );
+    assert_eq!((sent.id, sent.commit_seq), (event.id, event.commit_seq));
+
+    let small = ConfirmedEvent {
+        parents: vec![EventId(uuid::Uuid::from_u128(3))],
+        ..event
+    };
+    assert_eq!(
+        fit(small.clone(), limit).unwrap(),
+        small,
+        "a message that fits is unchanged"
+    );
+}

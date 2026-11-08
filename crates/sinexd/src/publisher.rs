@@ -260,26 +260,27 @@ async fn publish(
 /// Room left in a message for the headers and the metadata's own growth.
 const HEADROOM: u64 = 4 * 1024;
 
-/// The message as published: with its payload when the whole message fits the
-/// server's size limit, otherwise the event's metadata alone, saying why. The event is
-/// stored whole either way; no event is held back from the stream for its size.
+/// The message as published: whole when it fits the server's size limit,
+/// otherwise the event's identity and position alone, saying why. The size is
+/// measured whether or not the payload was already withheld for its class: a
+/// derived event's parents alone can pass the limit. The event is stored whole
+/// either way; no event is held back from the stream for its size.
 fn fit(mut event: ConfirmedEvent, limit: u64) -> Result<ConfirmedEvent, String> {
-    if event.payload.is_none() {
-        return Ok(event);
-    }
     let size = serde_json::to_vec(&Confirmed::Event(Box::new(event.clone())))
         .map_err(|e| e.to_string())?
         .len() as u64;
-    if size + HEADROOM > limit {
-        let payload_bytes = event
-            .payload
-            .take()
-            .map_or(0, |p| p.to_string().len() as u64);
-        event.withheld = Some(Withheld::Size {
-            payload_bytes,
-            limit,
-        });
+    if size + HEADROOM <= limit {
+        return Ok(event);
     }
+    let payload_bytes = event
+        .payload
+        .take()
+        .map_or(0, |p| p.to_string().len() as u64);
+    event.parents.clear();
+    event.withheld = Some(Withheld::Size {
+        payload_bytes,
+        limit,
+    });
     Ok(event)
 }
 
