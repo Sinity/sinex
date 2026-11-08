@@ -14,6 +14,16 @@ pub async fn run(conn: &mut PgConnection, statement: &str) -> Result<Vec<Json>> 
     }
     // A second statement cannot hide inside the wrapping subquery: it is a
     // syntax error there, and a prepared statement is one statement.
+    let reader_is_fenced: bool = sqlx::query_scalar(
+        "SELECT NOT has_function_privilege('sinex_reader', 'pg_catalog.set_config(text,text,boolean)', 'EXECUTE')",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if !reader_is_fenced {
+        return Err(Error::Invalid(
+            "read-only SQL is refused: the reader role can still change its role; run prepare-database as the database superuser".into(),
+        ));
+    }
     let mut tx = conn.begin().await?;
     sqlx::query!("SET TRANSACTION READ ONLY")
         .execute(&mut *tx)
@@ -22,6 +32,11 @@ pub async fn run(conn: &mut PgConnection, statement: &str) -> Result<Vec<Json>> 
         .execute(&mut *tx)
         .await?;
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
+        .execute(&mut *tx)
+        .await?;
+    // One statement may not occupy the database indefinitely; the server
+    // cancels it at this bound even if the caller has gone away.
+    sqlx::query("SET LOCAL statement_timeout = '120s'")
         .execute(&mut *tx)
         .await?;
     // Wrapping keeps column order (json, not jsonb) and refuses anything that

@@ -244,8 +244,23 @@ fn grants() -> Vec<String> {
         "REVOKE SELECT ON core.events, telemetry.events, core.search_text FROM sinex_reader"
             .to_string(),
     );
+    // Read-only SQL must not change its own role or settings: `set_config`
+    // would let it switch back to the owner role inside one statement. Only a
+    // superuser can revoke it from PUBLIC; anyone else fails loudly while the
+    // reader can still call it.
+    out.push(READER_CANNOT_SET_CONFIG.to_string());
     out
 }
+
+const READER_CANNOT_SET_CONFIG: &str = r#"DO $sql_reader$
+BEGIN
+  IF (SELECT rolsuper FROM pg_roles WHERE rolname=current_user) THEN
+    REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) FROM PUBLIC, sinex_reader;
+    GRANT EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) TO sinex_writer;
+  ELSIF has_function_privilege('sinex_reader','pg_catalog.set_config(text,text,boolean)','EXECUTE') THEN
+    RAISE EXCEPTION 'unsafe Sinex SQL reader: run prepare-database as the database superuser';
+  END IF;
+END $sql_reader$"#;
 
 fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))

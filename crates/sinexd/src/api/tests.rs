@@ -531,6 +531,20 @@ async fn sql_reads_as_the_reader_role(db: devkit::pg::TestDatabase) {
     assert_eq!(body["outcome"], json!("refused"));
 }
 
+#[devkit::test]
+async fn sql_cannot_switch_back_to_the_owner_role(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["ls"], 0).await;
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": "SELECT set_config('role', session_user, true) AS r, \
+               length(query_to_xml('SELECT count(*) FROM core.events', true, false, '')::text) AS n"}),
+    )
+    .await;
+    assert_eq!(body["outcome"], json!("refused"), "{body}");
+}
+
 /// Read the stream until `needle` appears, for at most ten seconds.
 async fn read_until(body: &mut Body, seen: &mut String, needle: &str) {
     let read = async {
