@@ -2,9 +2,9 @@ use super::*;
 use serde_json::Value;
 use sqlx::Executor;
 
-/// Six event chunks, each with eight distinct IDs in one millisecond. A
+/// Six event chunks, each with distinct IDs in one millisecond. A
 /// non-searchable event shares that millisecond, and one search row is orphaned.
-async fn fixture(conn: &mut PgConnection) -> Vec<(String, bool)> {
+async fn fixture(conn: &mut PgConnection, per_chunk: i32) -> Vec<(String, bool)> {
     sqlx::raw_sql(include_str!("../../tests/version_four.sql"))
         .execute(&mut *conn)
         .await
@@ -14,17 +14,17 @@ async fn fixture(conn: &mut PgConnection) -> Vec<(String, bool)> {
         .await
         .unwrap();
     conn.execute(
-        "CREATE TEMP TABLE numbered AS
+        format!("CREATE TEMP TABLE numbered AS
          SELECT n, (substr(h,1,8)||'-'||substr(h,9,4)||'-7000-8000-'||lpad(to_hex(n+1),12,'0'))::uuid AS id
-         FROM (SELECT n, lpad(to_hex(1800000000000::bigint+(n/8)*864000000::bigint),12,'0') AS h
-               FROM generate_series(0,47) n) q;
+         FROM (SELECT n, lpad(to_hex(1800000000000::bigint+(n/{per_chunk})*864000000::bigint),12,'0') AS h
+               FROM generate_series(0,{last}) n) q;
          INSERT INTO core.events (id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
          SELECT id, CASE WHEN n%3=0 THEN 'command.imported' ELSE 'journal.entry' END,
-           'test', uuidv7(), uuidv7(), 0, 'unknown', n+1, '{}', 1, decode(repeat('01',32),'hex'), 'open'
+           'test', uuidv7(), uuidv7(), 0, 'unknown', n+1, '{{}}', 1, decode(repeat('01',32),'hex'), 'open'
          FROM numbered ORDER BY n;
          INSERT INTO core.search_text (event_id,text) SELECT id, 'fixture '||n FROM numbered WHERE n<>7;
          INSERT INTO core.search_text (event_id,text)
-         SELECT (substr(id::text,1,24)||'ffffffffffff')::uuid, 'orphan' FROM numbered WHERE n=47;",
+         SELECT (substr(id::text,1,24)||'ffffffffffff')::uuid, 'orphan' FROM numbered WHERE n={last};", last=6*per_chunk-1).as_str(),
     )
     .await
     .unwrap();
@@ -92,12 +92,64 @@ fn assert_selected_id_lookup(plan: &Value) {
     assert!(scans > 0, "the plan must fetch event identities: {plan}");
 }
 
+fn assert_compressed_work(plan: &Value) {
+    fn walk(node: &Value, batches: &mut f64, decompressed: &mut f64) {
+        let loops = node["Actual Loops"].as_f64().unwrap_or(0.0);
+        if node["Relation Name"]
+            .as_str()
+            .unwrap_or("")
+            .ends_with("_compressed")
+        {
+            *batches += node["Actual Rows"].as_f64().unwrap_or(0.0) * loops;
+        }
+        if node["Custom Plan Provider"].as_str() == Some("ColumnarScan") {
+            *decompressed += (node["Actual Rows"].as_f64().unwrap_or(0.0)
+                + node["Rows Removed by Filter"].as_f64().unwrap_or(0.0))
+                * loops;
+        }
+        if let Some(children) = node["Plans"].as_array() {
+            for child in children {
+                walk(child, batches, decompressed);
+            }
+        }
+    }
+    let (mut batches, mut decompressed) = (0.0, 0.0);
+    walk(&plan[0]["Plan"], &mut batches, &mut decompressed);
+    assert!(
+        batches > 0.0 && batches <= 4.0,
+        "a four-ID page must fetch only its compressed row groups: {batches}, {plan}"
+    );
+    assert!(
+        decompressed <= 4000.0,
+        "the ID predicate must run after row-group pruning, not a whole chunk: {decompressed}, {plan}"
+    );
+}
+
 #[devkit::test]
 async fn search_rewrite_uses_bounded_event_lookups_in_custom_and_generic_plans(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let expected = fixture(&mut conn).await;
+    let expected = fixture(&mut conn, 8192).await;
+    // Every chunk must contain many compressed row groups, so chunk exclusion
+    // alone cannot satisfy the physical-work assertion.
+    let compressed: Vec<String> = sqlx::query_scalar(
+        "SELECT format('%I.%I', cc.schema_name, cc.table_name)
+         FROM _timescaledb_catalog.chunk c
+         JOIN _timescaledb_catalog.chunk cc ON cc.id=c.compressed_chunk_id
+         JOIN _timescaledb_catalog.hypertable h ON h.id=c.hypertable_id
+         WHERE h.schema_name='core' AND h.table_name='events'",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    for table in compressed {
+        let batches: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert!(batches >= 6, "fixture needs multiple compressed row groups");
+    }
     // These session settings exercise both prepared-plan choices and make a
     // history-wide hash join attractive; production changes no planner setting.
     conn.execute("SET enable_nestloop=off").await.unwrap();
@@ -120,14 +172,17 @@ async fn search_rewrite_uses_bounded_event_lookups_in_custom_and_generic_plans(
             } else {
                 "NULL".into()
             };
+            let mut tx = conn.begin().await.unwrap();
             let plan: Value = sqlx::query_scalar(&format!(
-                "EXPLAIN (FORMAT JSON) EXECUTE rewrite({mark},'{}',ARRAY['journal.entry'])",
+                "EXPLAIN (ANALYZE, VERBOSE, FORMAT JSON) EXECUTE rewrite({mark},'{}',ARRAY['journal.entry'])",
                 expected[3].0
             ))
-            .fetch_one(&mut conn)
+            .fetch_one(&mut *tx)
             .await
             .unwrap();
+            tx.rollback().await.unwrap();
             assert_selected_id_lookup(&plan);
+            assert_compressed_work(&plan);
         }
         conn.execute("DEALLOCATE rewrite").await.unwrap();
     }
@@ -139,7 +194,7 @@ async fn search_rewrite_preserves_exact_ids_and_rolls_back_mark_with_flags(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let expected = fixture(&mut conn).await;
+    let expected = fixture(&mut conn, 8).await;
     conn.execute(
         "CREATE FUNCTION pg_temp.fail_mark() RETURNS trigger LANGUAGE plpgsql AS
            $$ BEGIN RAISE EXCEPTION 'fixture mark failure'; END $$;

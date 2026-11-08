@@ -165,6 +165,15 @@ async fn bounded_payload_pages_equal_window_and_keep_exact_membership(
             .collect::<Vec<_>>(),
         ids
     );
+    let marker = crate::commit_log::after(&mut conn, 6, 1, i64::MAX)
+        .await
+        .unwrap();
+    assert!(marker.events.is_empty());
+    assert_eq!(
+        marker.up_to,
+        Some(7),
+        "an all-NULL event-ID page still advances"
+    );
 }
 
 fn payload_lookup_is_bounded(plan: &Value) {
@@ -280,5 +289,111 @@ async fn bounded_payload_queries_keep_excluding_batch_plans_on_compressed_histor
     ];
     for plan in plans {
         payload_lookup_is_bounded(&plan);
+    }
+}
+
+/// Selected rows share a compressed chunk with many later IDs. Chunk
+/// exclusion and output cardinality alone do not bound payload decompression.
+#[devkit::test]
+async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::TestDatabase) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let ids = fixture(&mut conn).await;
+    sqlx::query(
+        "INSERT INTO core.events (id,event_type,source,run_id,material_id,anchor,ts_orig,ts_quality,commit_seq,payload,reading_order,record_hash,kind_version,validation)
+         SELECT overlay(e.id::text placing lpad(to_hex(1000+n),12,'0') from 25 for 12)::uuid,
+           e.event_type,e.source,e.run_id,uuidv7(),0,e.ts_orig,e.ts_quality,1000+n,e.payload,1,e.record_hash,e.kind_version,e.validation
+         FROM core.events e CROSS JOIN generate_series(1,12000) n WHERE e.id=$1",
+    )
+    .bind(ids[5].0)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query("SELECT compress_chunk(c) FROM show_chunks('core.events') c")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    macro_rules! explain {
+        ($file:literal $(, $arg:expr)* $(,)?) => {{
+            let statement = format!("EXPLAIN (ANALYZE, VERBOSE, FORMAT JSON) {}", include_str!($file));
+            sqlx::query_scalar::<_, Value>(&statement)$(.bind($arg))*
+                .fetch_one(&mut *tx).await.unwrap()
+        }};
+    }
+    let types = vec![LogEntry::EVENT_TYPE.to_owned()];
+    let start = OffsetDateTime::from_unix_timestamp(1_800_000_004).unwrap();
+    let end = start + time::Duration::days(1);
+    let plans = [
+        explain!(
+            "sql/window_page.sql",
+            &types,
+            Some(start),
+            Some(end),
+            vec![serde_json::json!({})],
+            None::<OffsetDateTime>,
+            None::<i64>,
+            2_i64,
+            i64::MAX
+        ),
+        explain!(
+            "sql/value_page.sql",
+            vec!["selected".to_owned()],
+            "label",
+            &types,
+            start,
+            end,
+            None::<String>,
+            None::<OffsetDateTime>,
+            None::<i64>,
+            2_i64,
+            i64::MAX
+        ),
+        explain!("sql/after_seq.sql", &types, 4_i64, 2_i64, i64::MAX),
+        explain!(
+            "sql/exact_page.sql",
+            vec![ids[4].0, ids[5].0],
+            0_i64,
+            2_i64,
+            i64::MAX,
+            None::<Uuid>
+        ),
+        explain!("../commit_log/page.sql", 4_i64, 2_i64, i64::MAX),
+    ];
+    tx.rollback().await.unwrap();
+    fn work(node: &Value, payload: bool, batches: &mut f64, rows: &mut f64) {
+        let payload = payload || node["Subplan Name"].as_str() == Some("CTE payload");
+        let loops = node["Actual Loops"].as_f64().unwrap_or(0.0);
+        if payload {
+            if node["Relation Name"]
+                .as_str()
+                .unwrap_or("")
+                .ends_with("_compressed")
+            {
+                *batches += node["Actual Rows"].as_f64().unwrap_or(0.0) * loops;
+            }
+            if node["Custom Plan Provider"].as_str() == Some("ColumnarScan") {
+                *rows += (node["Actual Rows"].as_f64().unwrap_or(0.0)
+                    + node["Rows Removed by Filter"].as_f64().unwrap_or(0.0))
+                    * loops;
+            }
+        }
+        if let Some(children) = node["Plans"].as_array() {
+            for child in children {
+                work(child, payload, batches, rows);
+            }
+        }
+    }
+    for plan in plans {
+        payload_lookup_is_bounded(&plan);
+        let (mut batches, mut rows) = (0.0, 0.0);
+        work(&plan[0]["Plan"], false, &mut batches, &mut rows);
+        assert!(
+            batches > 0.0 && batches <= 4.0,
+            "payload lookup must fetch selected row groups, not the chunk: {batches}, {plan}"
+        );
+        assert!(
+            rows <= 4000.0,
+            "payload lookup decompressed the chunk: {rows}, {plan}"
+        );
     }
 }
