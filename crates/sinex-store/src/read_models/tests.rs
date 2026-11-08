@@ -279,3 +279,88 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
         page.up_to.unwrap()
     );
 }
+
+/// A text whose full-text vector exceeds PostgreSQL's size limit is recorded
+/// as refused; the other events of the page are indexed and the position
+/// advances past it.
+#[devkit::test]
+async fn search_refused_text_passes(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let mut declaration = sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef {
+            name: "synthetic.search".into(),
+            version: 1,
+        },
+        "synthetic".into(),
+    );
+    declaration.search = sinex_model::kinds::Search::Words;
+    sinex_schema::kinds::register(&mut conn, "synthetic", std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
+    // About 40,000 distinct words: its full-text vector is over 1 MB.
+    let oversized: String = (0..40_000)
+        .map(|n| format!("w{n:05}x{}", uuid::Uuid::from_u128(n as u128).simple()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let events: Vec<sinex_model::Event> = [oversized, "after the large text".to_owned()]
+        .into_iter()
+        .enumerate()
+        .map(|(n, text)| {
+            sinex_model::Event::submitted(
+                declaration.kind.clone(),
+                serde_json::json!({"text": text}),
+                "synthetic".into(),
+                sinex_model::Origin::Record {
+                    location: sinex_model::RecordLocation {
+                        material: sinex_model::MaterialId::new(),
+                        anchor: n as u64,
+                    },
+                    output_index: 0,
+                },
+                sinex_model::ReadingOrder(1),
+                [n as u8 + 1; 32],
+                sinex_model::Class::Open,
+            )
+        })
+        .collect();
+    let (large, small) = (events[0].id, events[1].id);
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(
+        &sinex_model::Batch {
+            run: sinex_model::RunId::new(),
+            kind: sinex_model::BatchKind::Api {
+                actor: "synthetic".into(),
+            },
+            records: vec![sinex_model::RecordOutcome::Events {
+                location: None,
+                events,
+            }],
+            archive: vec![],
+        },
+        &crate::NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let up_to = crate::query::current_seq(&mut conn).await.unwrap();
+    assert_eq!(catch_up_search_text(&mut conn).await.unwrap(), up_to);
+    let indexed: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT event_id FROM core.search_text")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(indexed, vec![small.0]);
+    let refused: Vec<(uuid::Uuid, String)> =
+        sqlx::query_as("SELECT event_id, reason FROM core.search_refusals")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].0, large.0);
+    assert!(
+        refused[0].1.contains("too long for tsvector"),
+        "{}",
+        refused[0].1
+    );
+}

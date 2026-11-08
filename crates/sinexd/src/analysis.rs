@@ -13,8 +13,8 @@ pub(crate) mod recall;
 mod recipes;
 pub(crate) mod stored;
 
+pub(crate) use access::materialize;
 pub(crate) use access::question;
-pub(crate) use access::{load_pack, materialize};
 pub(crate) use brief::{render_pack, why_not};
 pub(crate) use panel::{gaps, panel, table};
 pub(crate) use recipes::{Recipe, run};
@@ -82,7 +82,6 @@ pub(crate) fn keyed_with(
 ) -> Vec<Box<dyn sinex_derivations::AnyKeyed>> {
     let mut all = sinex_derivations::keyed_with(configuration);
     all.push(Box::new(stored::StoredProducts));
-    all.push(Box::new(recall::RecallProducts));
     all
 }
 pub(crate) fn keyed() -> Vec<Box<dyn sinex_derivations::AnyKeyed>> {

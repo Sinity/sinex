@@ -1,3 +1,5 @@
+-- Undo the later search refusals table.
+DROP TABLE core.search_refusals;
 -- Undo later online backup custody before replaying the named forward chain.
 DROP FUNCTION core.backup_covers(text, bigint);
 DROP TABLE core.backup_segments, core.backup_holds;

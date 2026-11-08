@@ -1,3 +1,5 @@
+-- Undo the search refusals upgrade.
+DROP TABLE core.search_refusals;
 -- Undo the online backup upgrade before exercising its forward application.
 DROP FUNCTION core.backup_covers(text,bigint);
 DROP TABLE core.backup_segments, core.backup_holds;

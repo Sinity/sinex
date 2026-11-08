@@ -496,28 +496,14 @@ impl DerivationRunner {
         };
         let read = t.elapsed();
         let t = Instant::now();
-        let selected = selected::read(
-            &mut snapshot,
-            self.keyed[index].as_ref(),
-            key,
-            &inputs,
-            env,
-            true,
-        )
-        .await?;
-        let mut computed = match &selected {
-            Some(selected) => self.keyed[index].compute_selected(key, &inputs, selected, env),
-            None => self.keyed[index].compute(key, &inputs, env),
-        };
+        let mut computed = self.keyed[index].compute(key, &inputs, env);
         let position = derivations::head(&mut snapshot)
             .await
             .map_err(|error| error.to_string())?;
-        selected::stamp(
+        provenance::stamp(
             &mut snapshot,
             self.keyed[index].as_ref(),
             key,
-            &inputs,
-            selected.as_ref(),
             position,
             &mut computed,
         )
@@ -1166,7 +1152,7 @@ fn ranks(catalog: &[Derivation]) -> BTreeMap<String, u32> {
 mod comparison;
 mod counts;
 
-mod selected;
+mod provenance;
 pub(crate) use comparison::{Change, Comparison};
 pub(crate) use counts::Counts;
 
@@ -1293,22 +1279,15 @@ impl KeyComputation<'_> {
             for (i, input, queried) in std::mem::take(&mut ready) {
                 let (key, dirty_seq) = &work[i];
                 let t = Instant::now();
-                let selected =
-                    selected::read(&mut *self.read, self.derivation, key, &input, env, true)
-                        .await?;
-                let mut computed = match (&selected, queried) {
-                    (Some(selected), _) => {
-                        self.derivation.compute_selected(key, &input, selected, env)
-                    }
-                    (None, true) => self.derivation.compute(key, &input, env),
-                    (None, false) => sinex_derivations::Computed::default(),
+                let mut computed = if queried {
+                    self.derivation.compute(key, &input, env)
+                } else {
+                    sinex_derivations::Computed::default()
                 };
-                selected::stamp(
+                provenance::stamp(
                     &mut *self.read,
                     self.derivation,
                     key,
-                    &input,
-                    selected.as_ref(),
                     input_position,
                     &mut computed,
                 )

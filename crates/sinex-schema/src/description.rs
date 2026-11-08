@@ -51,8 +51,17 @@ impl Description {
         description
     }
 
-    pub(crate) fn before_online_backups() -> Self {
+    /// The description just before search refusals were recorded.
+    pub(crate) fn before_search_refusals() -> Self {
         let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| !statement.starts_with("CREATE TABLE core.search_refusals"));
+        description
+    }
+
+    pub(crate) fn before_online_backups() -> Self {
+        let mut description = Self::before_search_refusals();
         description
             .tables
             .retain(|statement| crate::backups::before(statement));

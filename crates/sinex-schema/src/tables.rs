@@ -543,6 +543,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
         "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed".into(),
+        SEARCH_REFUSALS.into(),
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.
@@ -656,6 +657,16 @@ fn kind_declarations() -> String {
         search = Search::check("search")
     )
 }
+
+/// Events whose text the search index refused (for example a full-text
+/// vector over PostgreSQL's size limit). The search reader records the event
+/// here and moves on, so one event never stops search, `follow` or the
+/// vector index; status counts these rows.
+pub(crate) const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
+  event_id uuid PRIMARY KEY,
+  reason text NOT NULL,
+  refused_at timestamptz NOT NULL DEFAULT now()
+)";
 
 pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
   operation_id uuid NOT NULL REFERENCES core.operations(id),

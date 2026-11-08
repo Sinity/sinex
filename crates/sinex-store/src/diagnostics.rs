@@ -101,6 +101,8 @@ pub struct Positions {
     pub schema_version: Option<i32>,
     pub search_position: Option<i64>,
     pub failures_24h: i64,
+    /// Events whose text the search index refused.
+    pub search_refusals: i64,
 }
 
 pub async fn positions(conn: &mut PgConnection) -> Result<Positions> {
@@ -110,7 +112,8 @@ pub async fn positions(conn: &mut PgConnection) -> Result<Positions> {
              (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
              (SELECT max(version) FROM sinex_schema.applied) AS schema_version,
              (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS search_position,
-             (SELECT count(*) FROM raw.failures WHERE failed_at > now() - interval '24 hours') AS "failures_24h!""#,
+             (SELECT count(*) FROM raw.failures WHERE failed_at > now() - interval '24 hours') AS "failures_24h!",
+             (SELECT count(*) FROM core.search_refusals) AS "search_refusals!""#,
         crate::read_models::SEARCH_TEXT
     )
     .fetch_one(&mut *conn)

@@ -93,6 +93,8 @@ impl Keyed for StoredProducts {
         // they describe. Their acquisition time cannot clip a record window.
         Some(InputQuery::all(kinds))
     }
+    /// A figure or coverage observation refreshes only the stored questions
+    /// whose panel period it falls in; questions about other days stay clean.
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
         let Some(start) = input.ts_orig else {
             return vec![];
@@ -111,14 +113,6 @@ impl Keyed for StoredProducts {
             start,
             end,
         }]
-    }
-    fn nearby_inputs(&self, input: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
-        if input.event_type == "analysis.request" {
-            return None;
-        }
-        // All stored questions are eligible for new acquisition evidence;
-        // compute selects exact periods and sources, without a history cap.
-        Some(InputQuery::all(vec![Kind::all("analysis.request")]))
     }
     fn refresh_at(&self, outputs: &[Event], env: &Env) -> Option<sinex_model::Timestamp> {
         outputs

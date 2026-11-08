@@ -361,13 +361,17 @@ async fn gaps_are_where_coverage_does_not_reach(db: devkit::pg::TestDatabase) {
 }
 
 fn observed(from: i64, to: i64) -> Event {
+    observed_by("test", from, to)
+}
+
+fn observed_by(binding: &str, from: i64, to: i64) -> Event {
     use sinex_model::event_types::coverage::*;
     Event::build(
         &SourceCoverage {
             observed_run: None,
             observed_class: None,
             observed_source: "code.git".into(),
-            binding: "test".into(),
+            binding: binding.into(),
             host: "test".into(),
             started_at: at(from),
             ended_at: Timestamp::from_unix_ns(at(to).unix_ns() + 1000).unwrap(),
@@ -387,7 +391,7 @@ fn observed(from: i64, to: i64) -> Event {
             output_index: 0,
         },
         ReadingOrder(0),
-        *blake3::hash(format!("{from}:{to}").as_bytes()).as_bytes(),
+        *blake3::hash(format!("{binding}:{from}:{to}").as_bytes()).as_bytes(),
         Class::Open,
     )
     .unwrap()
@@ -471,4 +475,36 @@ async fn stored_questions_rederive_after_late_inputs_and_reuse_their_request_mat
     assert!(revised["read_as"].as_i64().unwrap() > first["read_as"].as_i64().unwrap());
     let live: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e WHERE event_type='analysis.panel' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").fetch_one(&mut conn).await.unwrap();
     assert_eq!(live, 1);
+}
+
+#[devkit::test]
+async fn analysis_refresh_in_period(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
+    w.derive(vec![commit("first", 0), observed(0, 24)]).await;
+    let mut conn = w.conn().await;
+    let day = parse_day("2026-09-14").unwrap();
+    let metric = sinex_derivations::figures::metric("git.commits").unwrap();
+    w.prepare(&mut conn, "panel", None, &[metric], day, day)
+        .await;
+    // Questions dirtied by an admission after `seq`.
+    async fn dirtied_after(conn: &mut PgConnection, seq: i64) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM derivation.dirty
+             WHERE derivation = 'analysis.products' AND last_dirty_seq > $1",
+        )
+        .bind(seq)
+        .fetch_one(conn)
+        .await
+        .unwrap()
+    }
+    // Coverage from another binding, two days later, is outside the
+    // question's period. (A newer reading of the question's own binding
+    // replaces its input, which dirties it through the lifecycle instead.)
+    let before = sinex_store::query::current_seq(&mut conn).await.unwrap();
+    w.admit(vec![observed_by("later", 48, 72)]).await;
+    assert_eq!(dirtied_after(&mut conn, before).await, 0);
+    // Coverage ending inside the question's day makes it dirty.
+    let before = sinex_store::query::current_seq(&mut conn).await.unwrap();
+    w.admit(vec![observed_by("same-day", 2, 10)]).await;
+    assert_eq!(dirtied_after(&mut conn, before).await, 1);
 }

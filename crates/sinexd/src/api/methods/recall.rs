@@ -1,57 +1,39 @@
-//! The recall adapter stores one complete selected context before paging it.
+//! Recall reads its answer at one commit position and presents it from the
+//! rows of that read. An ordinary interactive recall stores nothing; its pages
+//! are the query cursor's pages at the same position.
 use super::*;
-use serde::{Deserialize, Serialize};
-use sinex_model::Timestamp;
-use sinex_model::event_types::analysis::AnalysisRequest;
-
-#[derive(Serialize, Deserialize)]
-struct PackSelection {
-    pack: String,
-}
 
 impl Api {
     pub(super) async fn recall(&self, caller: &Caller, text: &str, page: Page) -> Reply {
-        match self
-            .recall_answer(caller, text, page, None, self.context())
-            .await
-        {
-            Ok(answer) => data(answer),
-            Err(error) => refused(error),
-        }
+        self.recall_in(caller, text, page, self.context()).await
     }
 
-    pub(super) async fn recall_context(
+    /// Recall under a supplied clock, used when a surface's window is relative
+    /// to the time its first page was read.
+    pub(super) async fn recall_in(
         &self,
         caller: &Caller,
         text: &str,
         page: Page,
-        question: Value,
         ctx: Context,
     ) -> Reply {
-        match self
-            .recall_answer(caller, text, page, Some(question), ctx)
-            .await
-        {
+        match self.recall_answer(caller, text, page, ctx).await {
             Ok(answer) => data(answer),
             Err(error) => refused(error),
         }
     }
+
     async fn recall_answer(
         &self,
         caller: &Caller,
         text: &str,
         page: Page,
-        identity: Option<Value>,
         mut ctx: Context,
     ) -> Result<Value, String> {
         let mut conn = self
             .acquire(caller)
             .await
             .map_err(|error| error.to_string())?;
-        let size = page.size.unwrap_or(sinex_store::query::DEFAULT_PAGE).max(1);
-        if size > i64::MAX as u64 {
-            return Err("page size is out of range".into());
-        }
         let text = text.trim();
         ctx.catalog = Some(query::QueryCatalog::new(
             sinex_schema::kinds::all(&mut conn)
@@ -59,221 +41,46 @@ impl Api {
                 .map_err(|e| e.to_string())?
                 .into_values(),
         ));
-        let explicit_identity = identity.is_some();
-        let question = match identity {
-            Some(value) => Ok(value),
-            None => sinex_store::query::continuation::query_identity(text, &ctx)
-                .map_err(|e| e.to_string()),
-        };
-        let mut question_id = question
-            .as_ref()
-            .ok()
-            .map(|question| {
-                sinex_store::query::continuation::identity("recall", question, &caller.grants)
-                    .map_err(|error| error.to_string())
-            })
-            .transpose()?;
-        let seal = sinex_store::query::continuation::seal_key(&mut conn)
+        if reads_history(&mut conn, text, &ctx).await? {
+            return self
+                .recall_preview(&mut conn, caller, text, &ctx, &page)
+                .await;
+        }
+        let read = if query::saved::reference_name(text).is_some() {
+            sinex_store::query::run(&mut conn, text, None, &ctx, &page).await
+        } else {
+            let operation = query::native::parse(text, &ctx).map_err(|error| error.to_string())?;
+            sinex_store::query::run_operation(&mut conn, text, &operation, &ctx, &page).await
+        }
+        .map_err(|error| error.to_string())?;
+        let mut answer = serde_json::to_value(&read).map_err(|error| error.to_string())?;
+        let parents: Vec<sinex_model::EventId> = read
+            .rows
+            .iter()
+            .filter_map(|row| row["id"].as_str()?.parse::<uuid::Uuid>().ok())
+            .map(sinex_model::EventId)
+            .collect();
+        let versions = sinex_store::derivations::producer_versions(&mut conn, &parents)
             .await
-            .map_err(|e| e.to_string())?;
-        let mut captured_pack = None;
-        let prior =
-            if let Some(raw) = &page.cursor {
-                let authenticated = sinex_store::query::continuation::authenticate(&seal, raw)
-                    .map_err(|error| error.to_string())?;
-                if let Some(metadata) = authenticated.context().versions.get("sinex.recall") {
-                    let selected: PackSelection =
-                        serde_json::from_str(metadata).map_err(|error| error.to_string())?;
-                    let pack = crate::analysis::load_pack(&mut conn, &selected.pack)
-                        .await?
-                        .ok_or("recall cursor's stored context is unavailable")?;
-                    let selection: sinex_model::event_types::analysis::QuerySelection =
-                        serde_json::from_value(pack.payload["analysis"]["selected"].clone())
-                            .map_err(|error| error.to_string())?;
-                    sinex_store::query::check_selected_question(&mut conn, text, &selection)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    if !explicit_identity && let Some(original) = &selection.original_question {
-                        question_id = Some(
-                            sinex_store::query::continuation::identity(
-                                "recall",
-                                original,
-                                &caller.grants,
-                            )
-                            .map_err(|error| error.to_string())?,
-                        );
-                    }
-                    captured_pack = Some(pack);
-                    Some(
-                        sinex_store::query::continuation::bind_authenticated(
-                            authenticated,
-                            question_id.ok_or_else(|| {
-                                question.as_ref().err().cloned().unwrap_or_else(|| {
-                                    "recall question identity is unavailable".into()
-                                })
-                            })?,
-                            &ctx,
-                        )
-                        .map_err(|error| error.to_string())?,
-                    )
-                } else {
-                    let historical = if let Some(name) = query::saved::reference_name(text) {
-                        let definitions = queries::definitions(&mut conn, &name).await?;
-                        query::saved::bind_saved(text, &ctx, &definitions)
-                            .map_err(|error| error.to_string())?
-                    } else {
-                        query::native::parse(text, &ctx)
-                            .and_then(|operation| operation.bind(&ctx))
-                            .map_err(|error| error.to_string())?
-                    };
-                    if historical
-                        .stages
-                        .iter()
-                        .any(|stage| matches!(stage, query::Stage::AsOf(_)))
-                    {
-                        return self
-                            .recall_preview(&mut conn, caller, text, &ctx, &page, None)
-                            .await;
-                    }
-                    return Err("invalid recall cursor".into());
-                }
-            } else {
-                None
-            };
-        let question_id = question_id.ok_or_else(|| {
-            question
-                .as_ref()
-                .err()
-                .cloned()
-                .unwrap_or_else(|| "recall question identity is unavailable".into())
-        })?;
-        let pack = if let Some(cursor) = &prior {
-            ctx.now = cursor.context.clock.now;
-            captured_pack.expect("an authenticated recall cursor loaded its pack")
-        } else {
-            let selection = sinex_store::query::resolve_recall(&mut conn, text, &ctx)
-                .await
-                .map_err(|error| error.to_string())?;
-            if selection.read_as.is_some() {
-                return self
-                    .recall_preview(&mut conn, caller, text, &ctx, &page, Some(&selection))
-                    .await;
-            }
-            let selected = &selection.selected;
-            let at = Timestamp::from_unix_ns(ctx.now.as_nanosecond())
-                .map_err(|error| error.to_string())?;
-            let started_at =
-                serde_json::from_value::<Timestamp>(selected["from"].clone()).unwrap_or(at);
-            let ended_at =
-                serde_json::from_value::<Timestamp>(selected["to"].clone()).unwrap_or(at);
-            let mut request = AnalysisRequest {
-                request: String::new(),
-                operation: "recall".into(),
-                recipe: None,
-                from: ctx.logical_date(ctx.now).to_string(),
-                to: ctx.logical_date(ctx.now).to_string(),
-                metrics: vec![],
-                min_observed_fraction: None,
-                zone: selection.zone.clone(),
-                day_start: selection.day_start.clone(),
-                grants: selection.grants.clone(),
-                started_at,
-                ended_at,
-                by: caller.actor.into(),
-                requested_at: at,
-                selection: Some(selection),
-            };
-            request.request = crate::analysis::recall::request_identity(&request)?;
-            let writer = self
-                .writer
-                .as_ref()
-                .ok_or("recall materialization requires sinexd run")?;
-            let reference = crate::analysis::recall::materialize(
-                &mut conn,
-                writer,
-                &self.blobs,
-                request,
-                caller.actor,
-                &self.host,
-            )
-            .await?;
-            let pack = crate::analysis::load_pack(&mut conn, &reference)
-                .await?
-                .ok_or("the selected context pack is not materialized")?;
-            pack
-        };
-        let mut answer = pack.payload["analysis"]["answer"].clone();
-        if !answer.is_object() {
-            return Err("the stored context is not a recall answer".into());
-        }
-        let rows = answer["rows"]
-            .as_array()
-            .ok_or("the stored recall rows are unavailable")?;
-        // A stored row coordinate is immutable even when projection omits IDs.
-        // It identifies a row in this exact cited pack, never a moving offset.
-        let position = |index: usize| query::cursor::OrderPosition {
-            values: vec![],
-            row_identity: format!("{}/rows/{index:020}", pack.citation),
-        };
-        let mut chosen = Vec::new();
-        let mut last = None;
-        let mut more = false;
-        for (index, row) in rows.iter().enumerate() {
-            let here = position(index);
-            if let Some(prior) = &prior
-                && !query::cursor::compare_positions(&here, &prior.after, &[])
-                    .map_err(|e| e.to_string())?
-                    .is_gt()
-            {
-                continue;
-            }
-            if chosen.len() as u64 == size {
-                more = true;
-                break;
-            }
-            chosen.push(row.clone());
-            last = Some(here);
-        }
-        let next = if more {
-            let now = answer["resolved"]["now"]
-                .as_str()
-                .ok_or("stored recall clock is unavailable")?
-                .parse()
-                .map_err(|e: jiff::Error| e.to_string())?;
-            let mut clock = ctx.clone();
-            clock.now = now;
-            let metadata = serde_json::to_string(&PackSelection {
-                pack: pack.citation.clone(),
-            })
-            .map_err(|e| e.to_string())?;
-            Some(
-                sinex_store::query::continuation::encode(
-                    &seal,
-                    question_id,
-                    &clock,
-                    std::collections::BTreeMap::from([(
-                        "context.pack".into(),
-                        pack.citation.clone(),
-                    )]),
-                    std::collections::BTreeMap::from([("sinex.recall".into(), metadata)]),
-                    last.ok_or("recall page did not advance")?,
-                )
-                .map_err(|e| e.to_string())?,
-            )
-        } else {
-            None
-        };
-        answer["rows"] = json!(chosen);
-        answer["query"] = json!(text);
-        answer["page"] = json!({"size":size,"cursor":next});
-        let (presentation, _) =
-            crate::analysis::render_pack(&mut conn, &pack.citation, 4000).await?;
-        answer["machine"] = json!({"context_pack":pack.citation,"read_as":presentation.context.as_of,
+            .map_err(|error| error.to_string())?;
+        let presentation = sinex_analysis::presentation::compile(
+            sinex_analysis::presentation::Context {
+                citation: None,
+                producer_versions: Some(versions.clone()),
+                title: "Recorded context".into(),
+                evaluated_at: read.resolved.now.clone(),
+                as_of: read.resolved.commit_seq,
+                day_setting: format!("{} {}", read.resolved.day_start, read.resolved.zone),
+            },
+            crate::analysis::recall::sections(&answer, &parents),
+            4000,
+        );
+        answer["machine"] = json!({"context_pack":null,"read_as":presentation.context.as_of,
             "sections":presentation.sections.iter().filter(|section| section.title=="Machine").collect::<Vec<_>>()});
         answer["text"] = json!(presentation.markdown);
         answer["presentation"] = json!(presentation);
-        answer["context_pack"] = json!(pack.citation);
-        answer["producer_versions"] = pack.payload["producer_versions"].clone();
+        answer["context_pack"] = Value::Null;
+        answer["producer_versions"] = versions;
         Ok(answer)
     }
 
@@ -284,9 +91,8 @@ impl Api {
         text: &str,
         ctx: &Context,
         page: &Page,
-        selection: Option<&sinex_model::event_types::analysis::QuerySelection>,
     ) -> Result<Value, String> {
-        let selected = sinex_store::query::selected_page(conn, text, ctx, page, selection)
+        let selected = sinex_store::query::selected_page(conn, text, ctx, page)
             .await
             .map_err(|error| error.to_string())?;
         let versions = sinex_store::derivations::producer_versions(conn, &selected.parents)
@@ -294,7 +100,7 @@ impl Api {
             .map_err(|error| error.to_string())?;
         let mut answer =
             serde_json::to_value(&selected.answer).map_err(|error| error.to_string())?;
-        let sections = crate::analysis::recall::sections(&answer, &selected.parents, None);
+        let sections = crate::analysis::recall::sections(&answer, &selected.parents);
         let day_setting = format!(
             "{} {}",
             selected.answer.resolved.day_start, selected.answer.resolved.zone
@@ -337,12 +143,32 @@ impl Api {
     }
 }
 
+/// Whether the question names an earlier read position (`as of`), which is
+/// answered as a labelled historical preview.
+async fn reads_history(
+    conn: &mut sqlx::PgConnection,
+    text: &str,
+    ctx: &Context,
+) -> Result<bool, String> {
+    let bound = if let Some(name) = query::saved::reference_name(text) {
+        let definitions = queries::definitions(conn, &name).await?;
+        query::saved::bind_saved(text, ctx, &definitions).map_err(|error| error.to_string())?
+    } else {
+        query::native::parse(text, ctx)
+            .and_then(|operation| operation.bind(ctx))
+            .map_err(|error| error.to_string())?
+    };
+    Ok(bound
+        .stages
+        .iter()
+        .any(|stage| matches!(stage, query::Stage::AsOf(_))))
+}
+
+/// The clock a surface's first page was read at, carried by its cursor.
 pub(super) async fn context_for_page(
     conn: &mut sqlx::PgConnection,
     ctx: &Context,
     page: &Page,
-    question: &Value,
-    grants: &str,
 ) -> Result<Context, String> {
     let Some(raw) = &page.cursor else {
         return Ok(ctx.clone());
@@ -350,12 +176,10 @@ pub(super) async fn context_for_page(
     let seal = sinex_store::query::continuation::seal_key(conn)
         .await
         .map_err(|e| e.to_string())?;
-    let id = sinex_store::query::continuation::identity("recall", question, grants)
-        .map_err(|e| e.to_string())?;
-    let saved =
-        sinex_store::query::continuation::open(&seal, raw, id, ctx).map_err(|e| e.to_string())?;
+    let authenticated =
+        sinex_store::query::continuation::authenticate(&seal, raw).map_err(|e| e.to_string())?;
     Ok(Context::new(
-        saved.context.clock.now,
+        authenticated.context().clock.now,
         ctx.zone.clone(),
         ctx.day_start,
     ))

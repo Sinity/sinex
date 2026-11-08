@@ -3,7 +3,7 @@
 use crate::Result;
 use crate::commit_log::Committed;
 use sinex_model::query::text::payload_text;
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 
 /// The search read model's consumer name, and its position's key in
 /// `core.consumer_positions`.
@@ -38,6 +38,64 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
     sqlx::query!("LOCK TABLE core.search_text IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *conn)
         .await?;
+    let mut batch = conn.begin().await?;
+    match insert_search_rows(&mut batch, &ids, &texts, &trigram_indexed).await {
+        Ok(()) => batch.commit().await?,
+        Err(_) => {
+            batch.rollback().await?;
+            // One event's text can be refused (a full-text vector over the
+            // size limit). Index the others one by one and record each refusal,
+            // so the reader's position always advances.
+            for index in 0..ids.len() {
+                let mut one = conn.begin().await?;
+                let row = index..index + 1;
+                match insert_search_rows(
+                    &mut one,
+                    &ids[row.clone()],
+                    &texts[row.clone()],
+                    &trigram_indexed[row],
+                )
+                .await
+                {
+                    Ok(()) => one.commit().await?,
+                    Err(error) if refused_by_index(&error) => {
+                        one.rollback().await?;
+                        sqlx::query!(
+                            r#"INSERT INTO core.search_refusals (event_id, reason) VALUES ($1, $2)
+                               ON CONFLICT (event_id) DO UPDATE SET reason = EXCLUDED.reason, refused_at = now()"#,
+                            ids[index],
+                            error.to_string()
+                        )
+                        .execute(&mut *conn)
+                        .await?;
+                    }
+                    // A connection or server failure is not this row's fault:
+                    // the whole page is retried with nothing recorded.
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether PostgreSQL refused this row's text itself: a data exception
+/// (SQLSTATE class 22) or a program limit (class 54, which includes a
+/// full-text vector over its size limit).
+fn refused_by_index(error: &crate::Error) -> bool {
+    matches!(
+        error,
+        crate::Error::Database(sqlx::Error::Database(database))
+            if database.code().is_some_and(|code| code.starts_with("22") || code.starts_with("54"))
+    )
+}
+
+async fn insert_search_rows(
+    conn: &mut PgConnection,
+    ids: &[uuid::Uuid],
+    texts: &[String],
+    trigram_indexed: &[bool],
+) -> Result<()> {
     sqlx::query!(
         r#"INSERT INTO core.search_text AS stored (event_id, text, trigram_indexed)
            SELECT input.event_id, input.text, input.trigram_indexed
@@ -48,9 +106,9 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
              SET text = EXCLUDED.text, trigram_indexed = EXCLUDED.trigram_indexed
            WHERE (stored.text, stored.trigram_indexed)
              IS DISTINCT FROM (EXCLUDED.text, EXCLUDED.trigram_indexed)"#,
-        &ids,
-        &texts,
-        &trigram_indexed
+        ids,
+        texts,
+        trigram_indexed
     )
     .execute(&mut *conn)
     .await?;

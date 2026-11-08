@@ -28,7 +28,6 @@ pub mod library;
 pub mod observed;
 pub mod portfolio;
 pub mod presence;
-pub mod selected;
 pub mod session;
 pub mod state_interval;
 pub mod tags;
@@ -287,15 +286,6 @@ pub trait Keyed: Send + Sync {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
 
-    fn selected_query(
-        &self,
-        _: &Value,
-        _: &[Event],
-        _: Option<&sinex_model::event_types::analysis::AnalysisRequest>,
-        _: &Env,
-    ) -> Option<sinex_model::event_types::analysis::QuerySelection> {
-        None
-    }
     /// Exact live readings required by a receipt, including readings with unknown time.
     fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> {
         None
@@ -303,16 +293,6 @@ pub trait Keyed: Send + Sync {
     fn reads_type(&self, event_type: &str) -> bool {
         Self::INPUTS.contains(&event_type)
     }
-    fn compute_selected(
-        &self,
-        key: &Value,
-        inputs: &[Event],
-        _: &selected::SelectedInputs,
-        env: &Env,
-    ) -> Computed {
-        Keyed::compute(self, key, inputs, env)
-    }
-
     fn affected_ranges(&self, _: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
         Vec::new()
     }
@@ -389,31 +369,12 @@ pub trait AnyKeyed: Send + Sync {
     fn output_types(&self) -> &'static [&'static str];
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
-    fn selected_query(
-        &self,
-        _: &Value,
-        _: &[Event],
-        _: Option<&sinex_model::event_types::analysis::AnalysisRequest>,
-        _: &Env,
-    ) -> Option<sinex_model::event_types::analysis::QuerySelection> {
-        None
-    }
     fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> {
         None
     }
     fn reads_type(&self, event_type: &str) -> bool {
         self.inputs_types().contains(&event_type)
     }
-    fn compute_selected(
-        &self,
-        key: &Value,
-        inputs: &[Event],
-        _: &selected::SelectedInputs,
-        env: &Env,
-    ) -> Computed {
-        self.compute(key, inputs, env)
-    }
-
     fn affected_ranges(&self, _: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
         Vec::new()
     }
@@ -458,29 +419,11 @@ impl<K: Keyed> AnyKeyed for K {
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
         Keyed::inputs(self, key, env)
     }
-    fn selected_query(
-        &self,
-        key: &Value,
-        inputs: &[Event],
-        request: Option<&sinex_model::event_types::analysis::AnalysisRequest>,
-        env: &Env,
-    ) -> Option<sinex_model::event_types::analysis::QuerySelection> {
-        Keyed::selected_query(self, key, inputs, request, env)
-    }
     fn exact_inputs(&self, key: &Value, env: &Env) -> Option<Vec<EventId>> {
         Keyed::exact_inputs(self, key, env)
     }
     fn reads_type(&self, event_type: &str) -> bool {
         Keyed::reads_type(self, event_type)
-    }
-    fn compute_selected(
-        &self,
-        key: &Value,
-        inputs: &[Event],
-        selected: &selected::SelectedInputs,
-        env: &Env,
-    ) -> Computed {
-        Keyed::compute_selected(self, key, inputs, selected, env)
     }
     fn affected_ranges(&self, input: &KeyView<'_>, env: &Env) -> Vec<AffectedRange> {
         Keyed::affected_ranges(self, input, env)

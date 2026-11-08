@@ -661,18 +661,6 @@ impl Api {
             Err(e) => return refused(e.to_string()),
         };
         if let Some(name) = query::saved::reference_name(text) {
-            if let Some(raw) = page.cursor.as_deref() {
-                let seal = match sinex_store::query::continuation::seal_key(&mut conn).await {
-                    Ok(seal) => seal,
-                    Err(e) => return refused(e.to_string()),
-                };
-                if sinex_store::query::continuation::authenticate(&seal, raw)
-                    .is_ok_and(|cursor| cursor.context().versions.contains_key("sinex.recall"))
-                {
-                    drop(conn);
-                    return self.recall(caller, text, page).await;
-                }
-            }
             let definitions = match queries::definitions(&mut conn, &name).await {
                 Ok(d) => d,
                 Err(e) => return refused(e),
@@ -846,6 +834,7 @@ impl Api {
             "search_index": {
                 "position": row.search_position,
                 "behind": row.commit_seq - row.search_position.unwrap_or(0),
+                "refused": row.search_refusals,
             },
             "schema_version": row.schema_version,
             // Upgrade tasks the daemon still runs after start; empty when done.
