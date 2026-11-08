@@ -22,9 +22,7 @@ working rules that apply here.
   as built; when code and design differ, the design is the target and
   closing the difference is the work.
 - CLI help, MCP tool schemas, the generated catalog and each module's `//!`
-  documentation describe the current build. The
-  [reference index](docs/reference/README.md) separates current artifacts
-  from planned generated pages.
+  documentation describe the current build.
 - Plans, open questions, decisions and acceptance criteria live in Beads, the
   task tracker, outside this repository. A Bead points at the doc section it
   builds; docs never point at Beads.
@@ -129,8 +127,7 @@ flags bound compilation; nextest filters select execution within those
 targets. [Development](docs/development.md) describes focused selection.
 Every xtask run is recorded in devkit's history database.
 Fuzzing runs as tests: bounded corpus replay inside `test`, longer runs as a
-test profile over the same harness. The designed `cargo xtask docs` (renders
-[docs/reference/](docs/reference/README.md)) is not implemented yet. Development runs,
+test profile over the same harness. Development runs,
 coverage, VM scenarios and history comparisons are described in
 [testing.md](docs/testing.md#development-runs-and-reports).
 

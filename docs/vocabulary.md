@@ -2,8 +2,8 @@
 
 Each concept and its one name, with a one-line meaning. Code, SQL, wire keys,
 error text, comments and docs use these names. The values of closed sets
-(kinds, sources, tables, settings) are in the generated
-[reference](reference/README.md); the shared mechanics (blob, segment, extent,
+(kinds, sources, tables, settings) are in their declarations and the
+generated [catalog](../nix/catalog.json); the shared mechanics (blob, segment, extent,
 day setting, operation, failure kind, deadline class) are named in common's
 [vocabulary](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/vocabulary.md)
 (including reference, locator, selector, authored record, current, order key, answer,

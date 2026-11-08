@@ -1,6 +1,6 @@
 # Operations
 
-How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); every option, key and environment variable will be listed in [planned reference/settings.md](reference/README.md#planned-pages); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md).
+How Sinex is deployed, configured and backed up: the flake's NixOS and Home Manager modules, the deployment configuration (listen address, authentication, the logical-day setting), and backup and restore with the restore drill. How settings flow through the code is in [architecture.md](architecture.md#configuration-and-clocks); the meaning of the logical day is the `DaySetting` of [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md).
 
 ## Deployment
 
@@ -56,7 +56,7 @@ The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log
 
 ## Configuration
 
-Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Every key will be listed in [planned reference/settings.md](reference/README.md#planned-pages); current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
+Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
 
 The NixOS module writes daemon settings to `/etc/sinex/sources.json`, including `services.sinex.stagingRoots`, which limits agent staging. Session and capture-node producers receive `/etc/sinex/session-sources.json` and `/etc/sinex/capture-sources.json`: source settings, exclusions and discovery inputs, with their own spool and watch paths. Staging authority stays with the daemon.
 

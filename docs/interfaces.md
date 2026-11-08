@@ -45,7 +45,6 @@ function are common
 - **The write path.** Handlers hold only the read pool. Every write (stage, `record`,
   note, duplicate decision, curation, saved query, signal rule, archive request) goes to the one
   [admission function](admission.md) as a request material plus events.
-- The command list will be rendered into [planned reference/commands.md](reference/README.md#planned-pages).
 
 ## Transports
 

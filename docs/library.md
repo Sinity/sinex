@@ -424,7 +424,7 @@ Budgets (p95, warm, decided target): grid first page of 60 tiles over 1 M items 
 
 ## Records
 
-Kind fields will be listed in [the planned kinds reference](reference/README.md#planned-pages); until then this table is the record model.
+This table is the record model.
 
 | Record | Holds |
 |---|---|
