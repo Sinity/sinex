@@ -38,14 +38,36 @@ pub fn schema_hash(root: &Path) -> Result<String> {
     devkit::pg::schema_hash(&[], &[version.trim(), declarations.trim()])
 }
 
-/// Run the query-free schema tool from this checkout.
+/// Run the query-free schema tool from this checkout. It is built with the
+/// whole workspace's feature resolution, so its units (sinex-model and every
+/// dependency below it) are the ones the test build reuses; `cargo run -p`
+/// would resolve a second graph and compile them again.
 fn schema_tool(root: &Path, args: &[&str]) -> Result<std::process::Output> {
-    let output = devkit::cargo_command()
-        .args(["run", "--locked", "--quiet", "-p", "sinex-schema", "--"])
+    let build = devkit::cargo_command()
+        .args([
+            "build",
+            "--locked",
+            "--quiet",
+            "--workspace",
+            "--bin",
+            "sinex-schema",
+        ])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("sinex-schema build: {e}"))?;
+    if !build.status.success() {
+        return Err(format!(
+            "sinex-schema build failed: {}\n{}",
+            build.status,
+            String::from_utf8_lossy(&build.stderr)
+        ));
+    }
+    let binary = root.join(crate::target_dir()).join("debug/sinex-schema");
+    let output = Command::new(&binary)
         .args(args)
         .current_dir(root)
         .output()
-        .map_err(|e| format!("sinex-schema: {e}"))?;
+        .map_err(|e| format!("{}: {e}", binary.display()))?;
     if !output.status.success() {
         return Err(format!(
             "sinex-schema failed: {}\n{}",
