@@ -92,14 +92,18 @@ fn assert_selected_id_lookup(plan: &Value) {
     assert!(scans > 0, "the plan must fetch event identities: {plan}");
 }
 
-fn assert_compressed_work(plan: &Value) {
-    fn walk(node: &Value, batches: &mut f64, decompressed: &mut f64) {
+fn assert_compressed_work(plan: &Value, compressed: &[(String, String, String)]) {
+    fn walk(
+        node: &Value,
+        compressed: &[(String, String, String)],
+        batches: &mut f64,
+        decompressed: &mut f64,
+    ) {
         let loops = node["Actual Loops"].as_f64().unwrap_or(0.0);
-        if node["Relation Name"]
-            .as_str()
-            .unwrap_or("")
-            .ends_with("_compressed")
-        {
+        if compressed.iter().any(|(schema, table, _)| {
+            node["Schema"].as_str() == Some(schema.as_str())
+                && node["Relation Name"].as_str() == Some(table.as_str())
+        }) {
             *batches += node["Actual Rows"].as_f64().unwrap_or(0.0) * loops;
         }
         if node["Custom Plan Provider"].as_str() == Some("ColumnarScan") {
@@ -109,12 +113,17 @@ fn assert_compressed_work(plan: &Value) {
         }
         if let Some(children) = node["Plans"].as_array() {
             for child in children {
-                walk(child, batches, decompressed);
+                walk(child, compressed, batches, decompressed);
             }
         }
     }
     let (mut batches, mut decompressed) = (0.0, 0.0);
-    walk(&plan[0]["Plan"], &mut batches, &mut decompressed);
+    walk(
+        &plan[0]["Plan"],
+        compressed,
+        &mut batches,
+        &mut decompressed,
+    );
     eprintln!("compressed rewrite work: row_groups={batches}, decompressed_rows={decompressed}");
     assert!(
         batches > 0.0 && batches <= 4.0,
@@ -134,9 +143,14 @@ async fn search_rewrite_uses_bounded_event_lookups_in_custom_and_generic_plans(
     let expected = fixture(&mut conn, 8192).await;
     // Every chunk must contain many compressed row groups, so chunk exclusion
     // alone cannot satisfy the physical-work assertion.
-    let compressed: Vec<String> = sqlx::query_scalar(
-        "SELECT compress_relid::text FROM _timescaledb_catalog.compression_settings
-         WHERE relid IN (SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL",
+    // Compression relation names differ across template clones and fresh schemas.
+    // Match the catalog's physical relation identity to verbose EXPLAIN nodes.
+    let compressed: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT n.nspname::text, c.relname::text, format('%I.%I', n.nspname, c.relname)
+         FROM _timescaledb_catalog.compression_settings s
+         JOIN pg_class c ON c.oid=s.compress_relid
+         JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE s.relid IN (SELECT show_chunks('core.events'))",
     )
     .fetch_all(&mut conn)
     .await
@@ -146,7 +160,7 @@ async fn search_rewrite_uses_bounded_event_lookups_in_custom_and_generic_plans(
         6,
         "every fixture chunk must be compressed"
     );
-    for table in compressed {
+    for (_, _, table) in &compressed {
         let batches: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
             .fetch_one(&mut conn)
             .await
@@ -186,7 +200,7 @@ async fn search_rewrite_uses_bounded_event_lookups_in_custom_and_generic_plans(
             tx.rollback().await.unwrap();
             assert_selected_id_lookup(&plan);
             eprintln!("prepared rewrite plan: resumed={resumed}, mode={mode}");
-            assert_compressed_work(&plan);
+            assert_compressed_work(&plan, &compressed);
         }
         conn.execute("DEALLOCATE rewrite").await.unwrap();
     }
