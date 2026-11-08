@@ -27,6 +27,19 @@ inputs and expected outcomes checked against the format knowledge, never
 re-blessed from new output. A mock that asserts its own setup tests nothing;
 tests run against real PostgreSQL and NATS, which devkit makes cheap.
 
+A test checks behaviour a caller can observe, through an interface that stays
+stable while the implementation changes, against an expected result known
+independently of the code under test. Its assertions are exact: when an
+expectation changes, the doc page that changed it is cited in the commit, and
+a failing assertion is fixed in the code rather than loosened to pass.
+Removed code is gone because it was deleted, so nothing asserts that a name,
+variant, flag or format stays absent; what the system refuses or never
+exposes on purpose (a secret in an error, an operation outside a grant) is
+behaviour and is tested as such. Tests wait for readiness signals rather than
+for elapsed time. A time budget only detects a hang: keep it far from the
+behaviour under test (a fake child that must be stopped outlives the budget),
+and when a run is slow, find the slow step instead of widening the budget.
+
 ## The test database
 
 The store's SQL is checked at compile time against a live database built from

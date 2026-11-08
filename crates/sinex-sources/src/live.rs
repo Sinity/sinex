@@ -326,7 +326,7 @@ where
     let mut selected_at = Instant::now();
     let mut declaration = declaration(lives);
     let mut producer: Option<Producer> = None;
-    let mut participant = None;
+    let mut backup_responder = None;
     let backup_bindings = Arc::new(std::sync::Mutex::new(
         lives
             .iter()
@@ -346,7 +346,7 @@ where
                     if extend(lives, plan, positions, &failed) {
                         health_bindings.send_replace(monitored(lives));
                         declaration = self::declaration(lives);
-                        participant = None;
+                        backup_responder = None;
                         producer = None;
                         *backup_bindings.lock().unwrap() =
                             lives.iter().map(|live| live.binding.clone()).collect();
@@ -386,9 +386,9 @@ where
                     };
                     let state = positions.to_owned();
                     let bindings = backup_bindings.clone();
-                    participant = Some(
+                    backup_responder = Some(
                         connected
-                            .backup_participant(Arc::new(move |cancel| {
+                            .backup_responder(Arc::new(move |cancel| {
                                 backup::capture(Some(&state), &bindings.lock().unwrap(), &cancel)
                             }))
                             .await?,
@@ -410,7 +410,7 @@ where
                 }
             }
         }
-        let _participant = participant.as_ref();
+        let _backup_responder = backup_responder.as_ref();
         let connected = producer.as_mut().expect("connected above");
         for live in lives.iter() {
             connected.monitor(&live.binding.name, live.health.clone());
@@ -469,7 +469,7 @@ where
             }
         }
         if reconnect {
-            participant = None;
+            backup_responder = None;
             producer = None;
             continue;
         }
@@ -673,7 +673,7 @@ pub fn options(pairs: &[String]) -> Result<Value, String> {
 #[cfg(test)]
 mod tests;
 
-/// Acquire native retained source spools for the daemon's already frozen reader.
+/// Copy the retained source spools while the daemon's publication is paused.
 /// Its checkpoint belongs to the exported core snapshot, rather than a producer file.
 pub fn capture_backup(
     bindings: &[Binding],

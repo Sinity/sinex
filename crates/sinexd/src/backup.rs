@@ -219,7 +219,7 @@ fn segment_path(name: &str) -> Result<&Path, String> {
 pub(crate) async fn local_sources(
     bindings: Result<Vec<sinex_source_core::Binding>, String>,
     output: &Path,
-) -> sinex_model::backup::ProducerCut {
+) -> sinex_model::backup::ProducerSnapshot {
     let result = async {
         let bindings = bindings?;
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -248,15 +248,15 @@ pub(crate) async fn local_sources(
     }
     .await;
     match result {
-        Ok(files) => sinex_model::backup::ProducerCut {
+        Ok(files) => sinex_model::backup::ProducerSnapshot {
             producer: "@daemon".into(),
-            incarnation: None,
+            run_id: None,
             files,
             unavailable: None,
         },
-        Err(reason) => sinex_model::backup::ProducerCut {
+        Err(reason) => sinex_model::backup::ProducerSnapshot {
             producer: "@daemon".into(),
-            incarnation: None,
+            run_id: None,
             files: Vec::new(),
             unavailable: Some(reason),
         },
@@ -270,31 +270,29 @@ pub(crate) async fn prepare(
     output: &Path,
     stop: watch::Receiver<bool>,
     source_revision: String,
-    producer_cuts: Vec<sinex_model::backup::ProducerCut>,
+    producer_snapshots: Vec<sinex_model::backup::ProducerSnapshot>,
     required_producers: Option<Vec<String>>,
 ) -> Result<Manifest, String> {
-    let producer_custody = if required_producers.as_ref().is_some_and(|required| {
-        required.len() == producer_cuts.len()
+    let producers_complete = required_producers.as_ref().is_some_and(|required| {
+        required.len() == producer_snapshots.len()
             && required.iter().all(|producer| {
-                producer_cuts
+                producer_snapshots
                     .iter()
-                    .filter(|cut| &cut.producer == producer && cut.unavailable.is_none())
+                    .filter(|snapshot| {
+                        &snapshot.producer == producer && snapshot.unavailable.is_none()
+                    })
                     .count()
                     == 1
             })
-    }) {
-        sinex_model::backup::ProducerCustody::Complete
-    } else {
-        sinex_model::backup::ProducerCustody::Incomplete
-    };
+    });
     let mut manifest = Manifest {
         format: 1,
         boundary: snapshot.hold.clone(),
         database: snapshot.database.clone(),
         source_revision,
-        producer_cuts,
+        producer_snapshots,
         required_producers,
-        producer_custody,
+        producers_complete,
         files: Vec::new(),
     };
     // This record survives failures and identifies the hold without claiming a complete artifact.
@@ -367,8 +365,8 @@ pub(crate) async fn prepare(
     .await
     .map_err(|e| e.to_string())??;
     manifest.files.extend(dumps);
-    for cut in &manifest.producer_cuts {
-        manifest.files.extend(cut.files.iter().cloned());
+    for producer in &manifest.producer_snapshots {
+        manifest.files.extend(producer.files.iter().cloned());
     }
     stopped(&stop)?;
     // Both pg_dump calls imported the same still-live snapshot of this database.

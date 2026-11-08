@@ -64,7 +64,7 @@ async fn refused_from(db: devkit::pg::TestDatabase, previous_version: i32, messa
     )
     .unwrap();
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
-    // The fixture stands before library curation, later backup custody and
+    // The fixture predates library curation, the online backup tables and
     // search refusals.
     sqlx::raw_sql(
         "DROP TABLE core.search_refusals;

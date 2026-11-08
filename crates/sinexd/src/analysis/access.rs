@@ -162,27 +162,28 @@ pub(crate) async fn load_pack(
     conn: &mut PgConnection,
     reference: &str,
 ) -> Result<Option<StoredPack>, String> {
-    let event = if let Some(id) = reference.strip_prefix("sinex:ev/") {
+    if let Some(id) = reference.strip_prefix("sinex:ev/") {
         let id = uuid::Uuid::parse_str(id)
             .map_err(|error| format!("context pack reference: {error}"))?;
-        sinex_store::query::event_payload(conn, ContextPack::EVENT_TYPE, sinex_model::EventId(id))
-            .await
-            .map_err(|error| error.to_string())?
-            .map(|_| sinex_model::EventId(id))
-    } else {
+        return Ok(sinex_store::query::event_payload(
+            conn,
+            ContextPack::EVENT_TYPE,
+            sinex_model::EventId(id),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|payload| StoredPack {
+            citation: format!("sinex:ev/{id}"),
+            payload,
+        }));
+    }
+    Ok(
         sinex_store::query::live_payload(conn, ContextPack::EVENT_TYPE, "pack", reference)
             .await
             .map_err(|error| error.to_string())?
-            .map(|(event, _)| event)
-    };
-    let Some(event) = event else {
-        return Ok(None);
-    };
-    let payload = sinex_store::query::representation::context_pack(conn, event)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(Some(StoredPack {
-        citation: format!("sinex:ev/{event}"),
-        payload,
-    }))
+            .map(|(id, payload)| StoredPack {
+                citation: format!("sinex:ev/{id}"),
+                payload,
+            }),
+    )
 }

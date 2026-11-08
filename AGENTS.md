@@ -319,17 +319,13 @@ themselves straight-up bugs." (2026-09-27,
 `cc:62be45f2-6c40-49ce-a88e-bc566948628c:4cc20d7c-9e62-4b7a-9550-7dd97f9d48e9`).
 
 **Tests that are better than the predecessor's.** Every specified behaviour
-has a test that fails when the production path breaks. The
-valuable kinds: independent oracles (goldens written from format knowledge,
-GNU tar for PAX materials, PostgreSQL's own COPY reader), the lifecycle
-tests (whole-chain moves, restore refused on collision, replay undo,
-tombstoned events never become parents while replay and re-import create new
-readings, as-of reads), crash tests at real durability boundaries, and
-property tests at serialization boundaries. Tests run against real
-PostgreSQL and NATS, which devkit makes cheap; a mock that asserts its own
-setup tests nothing. A failing test points at a bug to fix, not a test to
-remove. "We don't want to have tests which are counterproductive or
-low-value just to have more tests." (2026-10-27,
+has a test that fails when the production path breaks, checked
+against an independently known result through a stable interface, against
+real PostgreSQL and NATS. [What a test is worth](docs/testing.md#what-a-test-is-worth)
+describes the valuable kinds and what a test does not assert. A failing test
+points at a bug to fix, not a test to remove or loosen. "We don't want to have
+tests which are counterproductive or low-value just to have more tests."
+(2026-10-27,
 `cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:bbb105d6-16f1-418e-b04a-0c5f105832df`).
 
 **A fast development loop.** Code quality comes first; within it, optimise

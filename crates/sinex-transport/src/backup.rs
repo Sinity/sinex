@@ -1,4 +1,4 @@
-//! A producer owns its frozen publication frontier and immutable captured bytes.
+//! A producer pauses publication for a backup and copies its own state files.
 use futures::StreamExt;
 use sinex_model::backup::{File, Hold};
 use sinex_protocol::{
@@ -24,7 +24,7 @@ impl Publication {
     pub async fn enter(&self) -> OwnedRwLockReadGuard<()> {
         self.0.clone().read_owned().await
     }
-    pub async fn freeze(&self) -> OwnedRwLockWriteGuard<()> {
+    pub async fn pause(&self) -> OwnedRwLockWriteGuard<()> {
         self.0.clone().write_owned().await
     }
 }
@@ -35,19 +35,21 @@ pub struct Captured {
     pub files: Vec<File>,
 }
 
-pub struct Participant(tokio::task::JoinHandle<()>);
-impl Drop for Participant {
+/// Answers the daemon's backup requests for one producer until dropped.
+pub struct BackupResponder(tokio::task::JoinHandle<()>);
+impl Drop for BackupResponder {
     fn drop(&mut self) {
         self.0.abort();
     }
 }
 
-struct Cut {
+/// A backup in progress: publication stays paused while this exists.
+struct PausedBackup {
     token: String,
     _guard: OwnedRwLockWriteGuard<()>,
     captured: Option<(Hold, Captured)>,
 }
-impl Participant {
+impl BackupResponder {
     pub async fn start(
         client: async_nats::Client,
         subjects: Subjects,
@@ -63,17 +65,17 @@ impl Participant {
             .await
             .map_err(|e| e.to_string())?;
         client.flush().await.map_err(|e| e.to_string())?;
-        let incarnation = uuid::Uuid::now_v7().to_string();
+        let run_id = uuid::Uuid::now_v7().to_string();
         Ok(Self(tokio::spawn(async move {
-            let mut cut: Option<Cut> = None;
+            let mut paused: Option<PausedBackup> = None;
             loop {
-                // Expiry invalidates the token before publication resumes. A delayed
-                // capture can never certify bytes from an expired frontier.
+                // An idle backup expires and publication resumes; its token stops
+                // working, so a late copy can never describe the resumed state.
                 let message = match tokio::time::timeout(IDLE, requests.next()).await {
                     Ok(Some(message)) => message,
                     Ok(None) => break,
                     Err(_) => {
-                        cut = None;
+                        paused = None;
                         continue;
                     }
                 };
@@ -88,63 +90,124 @@ impl Participant {
                 }
                 let build = async {
                     let result: Result<Reply, String> = async {
-                    let request: Request = serde_json::from_slice(&message.payload).map_err(|e|e.to_string())?;
-                    match request {
-                        Request::Freeze { token } => {
-                            if let Some(current) = &cut {
-                                if current.token != token { return Err("another backup cut is active".into()); }
-                            } else {
-                                let guard = publication.0.clone().write_owned().await;
-                                cut = Some(Cut { token: token.clone(), _guard: guard, captured: None });
+                        let request: Request =
+                            serde_json::from_slice(&message.payload).map_err(|e| e.to_string())?;
+                        match request {
+                            Request::Pause { token } => {
+                                if let Some(current) = &paused {
+                                    if current.token != token {
+                                        return Err("another backup is in progress".into());
+                                    }
+                                } else {
+                                    let guard = publication.0.clone().write_owned().await;
+                                    paused = Some(PausedBackup {
+                                        token: token.clone(),
+                                        _guard: guard,
+                                        captured: None,
+                                    });
+                                }
+                                Ok(Reply::Paused {
+                                    token,
+                                    run_id: run_id.clone(),
+                                })
                             }
-                            Ok(Reply::Frozen { token, incarnation: incarnation.clone() })
-                        }
-                        Request::Capture { token, boundary } => {
-                            let current = cut.as_mut().filter(|c|c.token==token).ok_or("backup cut expired or belongs to another incarnation")?;
-                            if let Some((previous, _)) = &current.captured {
-                                if previous != &boundary { return Err("backup cut already captured for a different core boundary".into()); }
-                            } else {
-                                let callback = capture.clone();
-                                let cancelled = Arc::new(AtomicBool::new(false));
-                                struct Cancel(Arc<AtomicBool>);
-                                impl Drop for Cancel {fn drop(&mut self){self.0.store(true,Ordering::Release);}}
-                                let _cancel = Cancel(cancelled.clone());
-                                let captured = tokio::task::spawn_blocking(move || {
-                                    let captured = callback(cancelled.clone())?;
-                                    validate(&captured,&cancelled)?;
-                                    Ok::<_,String>(captured)
-                                }).await.map_err(|e|e.to_string())??;
-                                current.captured = Some((boundary.clone(), captured));
+                            Request::Capture { token, boundary } => {
+                                let current = paused
+                                    .as_mut()
+                                    .filter(|c| c.token == token)
+                                    .ok_or("backup expired or the producer restarted")?;
+                                if let Some((previous, _)) = &current.captured {
+                                    if previous != &boundary {
+                                        return Err(
+                                            "backup already copied for a different hold".into()
+                                        );
+                                    }
+                                } else {
+                                    let callback = capture.clone();
+                                    let cancelled = Arc::new(AtomicBool::new(false));
+                                    struct Cancel(Arc<AtomicBool>);
+                                    impl Drop for Cancel {
+                                        fn drop(&mut self) {
+                                            self.0.store(true, Ordering::Release);
+                                        }
+                                    }
+                                    let _cancel = Cancel(cancelled.clone());
+                                    let captured = tokio::task::spawn_blocking(move || {
+                                        let captured = callback(cancelled.clone())?;
+                                        validate(&captured, &cancelled)?;
+                                        Ok::<_, String>(captured)
+                                    })
+                                    .await
+                                    .map_err(|e| e.to_string())??;
+                                    current.captured = Some((boundary.clone(), captured));
+                                }
+                                let files = current
+                                    .captured
+                                    .as_ref()
+                                    .expect("captured above")
+                                    .1
+                                    .files
+                                    .clone();
+                                Ok(Reply::Captured {
+                                    token,
+                                    run_id: run_id.clone(),
+                                    boundary,
+                                    files,
+                                })
                             }
-                            let files = current.captured.as_ref().expect("captured above").1.files.clone();
-                            Ok(Reply::Captured { token, incarnation: incarnation.clone(), boundary, files })
-                        }
-                        Request::Read { token, file, offset } => {
-                            let current = cut.as_ref().filter(|c|c.token==token).ok_or("backup cut expired")?;
-                            let captured = &current.captured.as_ref().ok_or("backup cut not captured")?.1;
-                            let descriptor = captured.files.get(file).ok_or("unknown captured file")?;
-                            if offset > descriptor.bytes { return Err("offset beyond captured prefix".into()); }
-                            let mut input = std::fs::File::open(captured.directory.path().join(&descriptor.path)).map_err(|e|e.to_string())?;
-                            input.seek(SeekFrom::Start(offset)).map_err(|e|e.to_string())?;
-                            let mut data = Vec::new();
-                            input.take(READ_BYTES.min(descriptor.bytes-offset)).read_to_end(&mut data).map_err(|e|e.to_string())?;
-                            if data.len() as u64 != READ_BYTES.min(descriptor.bytes-offset) { return Err("captured prefix shortened".into()); }
-                            Ok(Reply::Bytes { offset, data })
-                        }
-                        Request::Release { token } => {
-                            if cut.as_ref().is_some_and(|c|c.token!=token) { return Err("another backup cut is active".into()); }
-                            cut = None;
-                            Ok(Reply::Released)
+                            Request::Read {
+                                token,
+                                file,
+                                offset,
+                            } => {
+                                let current = paused
+                                    .as_ref()
+                                    .filter(|c| c.token == token)
+                                    .ok_or("backup expired")?;
+                                let captured = &current
+                                    .captured
+                                    .as_ref()
+                                    .ok_or("backup files are not copied yet")?
+                                    .1;
+                                let descriptor =
+                                    captured.files.get(file).ok_or("unknown captured file")?;
+                                if offset > descriptor.bytes {
+                                    return Err("offset beyond captured prefix".into());
+                                }
+                                let mut input = std::fs::File::open(
+                                    captured.directory.path().join(&descriptor.path),
+                                )
+                                .map_err(|e| e.to_string())?;
+                                input
+                                    .seek(SeekFrom::Start(offset))
+                                    .map_err(|e| e.to_string())?;
+                                let mut data = Vec::new();
+                                input
+                                    .take(READ_BYTES.min(descriptor.bytes - offset))
+                                    .read_to_end(&mut data)
+                                    .map_err(|e| e.to_string())?;
+                                if data.len() as u64 != READ_BYTES.min(descriptor.bytes - offset) {
+                                    return Err("captured prefix shortened".into());
+                                }
+                                Ok(Reply::Bytes { offset, data })
+                            }
+                            Request::Release { token } => {
+                                if paused.as_ref().is_some_and(|c| c.token != token) {
+                                    return Err("another backup is in progress".into());
+                                }
+                                paused = None;
+                                Ok(Reply::Released)
+                            }
                         }
                     }
-                }.await;
+                    .await;
                     Some(result.unwrap_or_else(|reason| Reply::Unavailable { reason }))
                 };
                 if crate::replies::respond_json_wait(&client, inbox.to_string(), build, IDLE)
                     .await
                     .is_err()
                 {
-                    cut = None;
+                    paused = None;
                 }
             }
         })))
@@ -272,7 +335,7 @@ pub fn capture_tree(
                     .strip_prefix(base)
                     .map_err(|e| e.to_string())?
                     .to_str()
-                    .ok_or("non UTF-8 custody path")?
+                    .ok_or("backup file path is not UTF-8")?
                     .to_owned();
                 files.push(File {
                     path,
@@ -280,7 +343,7 @@ pub fn capture_tree(
                     blake3: hash,
                 });
             } else {
-                return Err("producer custody contains a non-regular file".into());
+                return Err("producer state contains a non-regular file".into());
             }
         }
         cancelled(flag)?;
@@ -312,16 +375,16 @@ pub async fn request(
     .map_err(|e| e.to_string())
 }
 
-/// A frozen participant must be captured against the exact exported core cut.
-pub struct Frozen {
+/// A producer paused for one backup; its files are copied for that backup's hold.
+pub struct PausedProducer {
     client: async_nats::Client,
     subjects: Subjects,
     pub producer: String,
     token: String,
-    pub incarnation: String,
+    pub run_id: String,
 }
-impl Frozen {
-    pub async fn freeze(
+impl PausedProducer {
+    pub async fn pause(
         client: async_nats::Client,
         subjects: Subjects,
         producer: String,
@@ -331,23 +394,23 @@ impl Frozen {
             &client,
             &subjects,
             &producer,
-            &Request::Freeze {
+            &Request::Pause {
                 token: token.clone(),
             },
         )
         .await?
         {
-            Reply::Frozen {
+            Reply::Paused {
                 token: found,
-                incarnation,
+                run_id,
             } if found == token => Ok(Self {
                 client,
                 subjects,
                 producer,
                 token,
-                incarnation,
+                run_id,
             }),
-            other => Err(format!("producer did not freeze: {other:?}")),
+            other => Err(format!("producer did not pause: {other:?}")),
         }
     }
     pub async fn acquire(&self, boundary: &Hold, output: &Path) -> Result<Vec<File>, String> {
@@ -364,15 +427,13 @@ impl Frozen {
         {
             Reply::Captured {
                 token,
-                incarnation,
+                run_id,
                 boundary: found,
                 files,
-            } if token == self.token && incarnation == self.incarnation && &found == boundary => {
-                files
-            }
+            } if token == self.token && run_id == self.run_id && &found == boundary => files,
             other => {
                 return Err(format!(
-                    "producer did not capture frozen core cut: {other:?}"
+                    "producer did not copy its files for this hold: {other:?}"
                 ));
             }
         };

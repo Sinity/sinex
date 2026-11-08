@@ -289,7 +289,7 @@ impl Producer {
         self.publication.clone()
     }
 
-    pub async fn backup_participant(
+    pub async fn backup_responder(
         &self,
         capture: std::sync::Arc<
             dyn Fn(
@@ -298,8 +298,8 @@ impl Producer {
                 + Send
                 + Sync,
         >,
-    ) -> Result<sinex_transport::backup::Participant, String> {
-        sinex_transport::backup::Participant::start(
+    ) -> Result<sinex_transport::backup::BackupResponder, String> {
+        sinex_transport::backup::BackupResponder::start(
             self.client.clone(),
             self.subjects.clone(),
             self.name.clone(),

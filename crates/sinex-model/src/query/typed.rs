@@ -1192,7 +1192,7 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
                 if let Some(join) = value.exposed_order_mut() {
                     assign(join, &mut names, false);
                 }
-                // Conditions read the input witness, before this filter exposes
+                // Conditions read the input's matched row, before this filter exposes
                 // a replacement. Their requirements belong to earlier producers.
                 expression(value, &mut names);
             }

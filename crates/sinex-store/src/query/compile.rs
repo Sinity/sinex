@@ -200,11 +200,11 @@ fn operand_fields(o: &Operand, out: &mut Vec<FieldRef>) {
     }
 }
 
-fn has_order_witness(expression: &Expr) -> bool {
+fn exposes_matched_row(expression: &Expr) -> bool {
     match expression {
         Expr::Order(_) => true,
         Expr::And(left, right) | Expr::Or(left, right) => {
-            has_order_witness(left) || has_order_witness(right)
+            exposes_matched_row(left) || exposes_matched_row(right)
         }
         _ => false,
     }
@@ -518,9 +518,9 @@ impl<'c> Compiler<'c> {
                         ranked,
                         &group_order,
                     )?;
-                    let witnesses = self.order_witnesses(&cols, &e)?;
+                    let matched = self.matched_rows(&cols, &e)?;
                     let condition_cols = cols.clone();
-                    if !witnesses.is_empty() {
+                    if !matched.is_empty() {
                         let order =
                             self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
                         let next_ordinal = self.alias("o");
@@ -536,18 +536,13 @@ impl<'c> Compiler<'c> {
                         ordinal = Some(next_ordinal);
                         sort = None;
                     }
-                    for witness in witnesses {
+                    for row in matched {
                         let mut select = vec![SqlFragment::text(format!("{r}.*"))];
-                        for (visible, (name, value)) in witness
+                        for (visible, (name, value)) in row
                             .columns
                             .into_iter()
                             .map(|column| (true, column))
-                            .chain(
-                                witness
-                                    .hidden_columns
-                                    .into_iter()
-                                    .map(|column| (false, column)),
-                            )
+                            .chain(row.hidden_columns.into_iter().map(|column| (false, column)))
                         {
                             let physical = self.alias("c");
                             select.push(SqlFragment::text(format!(
@@ -559,17 +554,17 @@ impl<'c> Compiler<'c> {
                             }
                             renamed.insert(name, physical);
                         }
-                        let mut witnessed = SqlFragment::text("SELECT ");
-                        witnessed
+                        let mut with_matched = SqlFragment::text("SELECT ");
+                        with_matched
                             .append(SqlFragment::join(select, ", "))
                             .push(" FROM (")
                             .append(rel)
                             .push(format!(") {r} "))
-                            .append(witness.lateral);
-                        rel = witnessed;
+                            .append(row.lateral);
+                        rel = with_matched;
                     }
                     let cond = self.expr(&condition_cols, &e)?;
-                    let mut f = if has_order_witness(&e) {
+                    let mut f = if exposes_matched_row(&e) {
                         let proof = self.predicate_parents(&condition_cols, &e)?;
                         let mut retained: Vec<_> = renamed
                             .values()

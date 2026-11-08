@@ -166,7 +166,7 @@ async fn pair_relations_keep_all_matches_child_order_and_exact_event_contributor
 }
 
 #[devkit::test]
-async fn positive_order_predicates_keep_all_witnesses_and_skip_false_or_negated_branches(
+async fn positive_order_predicates_keep_all_matches_and_skip_false_or_negated_branches(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -343,7 +343,7 @@ async fn absolute_numeric_values_keep_unknown_rows_and_integer_magnitude(
 }
 
 #[devkit::test]
-async fn explicit_witness_order_preserves_outer_order_identity_and_near_ties(
+async fn explicit_match_order_preserves_outer_order_identity_and_near_ties(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;
@@ -402,7 +402,7 @@ async fn absolute_unknown_values_stay_unknown(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn filter_operands_read_the_input_witness_before_exposing_a_new_one(
+async fn filter_operands_read_the_input_match_before_exposing_a_new_one(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;

@@ -1,4 +1,4 @@
-//! Native custody while publication and spool retirement are frozen.
+//! Copy producer state while publication and spool retirement are paused.
 use super::*;
 use notify::{RecursiveMode, Watcher};
 use sinex_transport::backup::{Captured, capture_tree};
@@ -168,7 +168,7 @@ pub(super) fn capture(
         let pinned = tempfile::tempdir_in(&binding.input).map_err(|e| e.to_string())?;
         // The acquisition cursor precedes the append-only bytes it covers.
         // Pin it before enumerating segments, so concurrent rotation can only
-        // add a superset beyond this saved cursor. Publisher retirement is frozen.
+        // add a superset beyond this saved cursor. Publisher retirement is paused.
         let resume = binding.input.join("resume-cursor");
         match std::fs::hard_link(&resume, pinned.path().join("resume-cursor")) {
             Ok(()) => {}

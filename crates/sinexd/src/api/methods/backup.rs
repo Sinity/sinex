@@ -91,15 +91,15 @@ impl Api {
                     return refused(e);
                 }
                 let source_publication = writer.source_publication();
-                let local_guard = source_publication.freeze().await;
-                let mut frozen = Vec::new();
-                let mut producer_cuts = Vec::new();
+                let local_guard = source_publication.pause().await;
+                let mut paused = Vec::new();
+                let mut producer_snapshots = Vec::new();
                 if let Some((client, subjects, producers)) = &self.backup_producers {
                     let results =
                         futures::future::join_all(producers.iter().map(|producer| async move {
                             (
                                 producer,
-                                sinex_transport::backup::Frozen::freeze(
+                                sinex_transport::backup::PausedProducer::pause(
                                     client.clone(),
                                     subjects.clone(),
                                     producer.clone(),
@@ -110,29 +110,31 @@ impl Api {
                         .await;
                     for (producer, result) in results {
                         match result {
-                            Ok(cut) => frozen.push(cut),
-                            Err(reason) => producer_cuts.push(sinex_model::backup::ProducerCut {
-                                producer: producer.clone(),
-                                incarnation: None,
-                                files: Vec::new(),
-                                unavailable: Some(reason),
-                            }),
+                            Ok(paused_producer) => paused.push(paused_producer),
+                            Err(reason) => {
+                                producer_snapshots.push(sinex_model::backup::ProducerSnapshot {
+                                    producer: producer.clone(),
+                                    run_id: None,
+                                    files: Vec::new(),
+                                    unavailable: Some(reason),
+                                })
+                            }
                         }
                     }
                 }
                 let mut snapshot = match writer.backup_snapshot(caller.actor).await {
                     Ok(snapshot) => snapshot,
                     Err(e) => {
-                        for cut in &frozen {
-                            let _ = cut.release().await;
+                        for producer in &paused {
+                            let _ = producer.release().await;
                         }
                         return refused(e.to_string());
                     }
                 };
                 let hold = snapshot.hold.id;
                 if let Err(error) = crate::backup::record_boundary(&output, &snapshot.hold) {
-                    for cut in &frozen {
-                        let _ = cut.release().await;
+                    for producer in &paused {
+                        let _ = producer.release().await;
                     }
                     return refused(format!("{error}; backup hold {hold} remains open"));
                 }
@@ -145,25 +147,27 @@ impl Api {
                 let boundary = &snapshot.hold;
                 let output_root = &output;
                 let external =
-                    futures::future::join_all(frozen.into_iter().map(|cut| async move {
-                        let relative = format!("main/producers/{}", cut.producer);
-                        let result = cut.acquire(boundary, &output_root.join(&relative)).await;
-                        let _ = cut.release().await;
+                    futures::future::join_all(paused.into_iter().map(|producer| async move {
+                        let relative = format!("main/producers/{}", producer.producer);
+                        let result = producer
+                            .acquire(boundary, &output_root.join(&relative))
+                            .await;
+                        let _ = producer.release().await;
                         match result {
                             Ok(mut files) => {
                                 for file in &mut files {
                                     file.path = format!("{relative}/{}", file.path);
                                 }
-                                sinex_model::backup::ProducerCut {
-                                    producer: cut.producer,
-                                    incarnation: Some(cut.incarnation),
+                                sinex_model::backup::ProducerSnapshot {
+                                    producer: producer.producer,
+                                    run_id: Some(producer.run_id),
                                     files,
                                     unavailable: None,
                                 }
                             }
-                            Err(reason) => sinex_model::backup::ProducerCut {
-                                producer: cut.producer,
-                                incarnation: Some(cut.incarnation),
+                            Err(reason) => sinex_model::backup::ProducerSnapshot {
+                                producer: producer.producer,
+                                run_id: Some(producer.run_id),
                                 files: Vec::new(),
                                 unavailable: Some(reason),
                             },
@@ -172,15 +176,15 @@ impl Api {
                 let local = crate::backup::local_sources(local_bindings, output_root);
                 let (acquired, local) = futures::join!(external, local);
                 drop(local_guard);
-                producer_cuts.extend(acquired);
-                producer_cuts.push(local);
+                producer_snapshots.extend(acquired);
+                producer_snapshots.push(local);
                 match crate::backup::prepare(
                     snapshot,
                     self.blobs.root(),
                     &output,
                     self.stop.clone(),
                     revision.into(),
-                    producer_cuts,
+                    producer_snapshots,
                     self.backup_producers.as_ref().map(|(_, _, producers)| {
                         let mut required = producers.clone();
                         required.push("@daemon".into());

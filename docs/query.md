@@ -279,7 +279,7 @@ sinexctl 'queries'
   event type leaves the schema unknown at save time, so payload fields whose types differ
   across schemas need a fixed event-type selection.
 - Relative times resolve at invocation and stay fixed for the continuation.
-- Saved request material records its input format. Current requests carry a typed executable template. Reading immutable format 1 material uses its frozen decoder and retains the decoded definition with proof of its authored source. Invocation expands that historical definition's saved dependencies before converting it to a current executable template, so a named dependency continues to resolve dynamically. Stored selections retain their exact dependency snapshots and original question identity. The owning reader validates the captured source and kind declarations before projecting historical payloads into current executable definitions; captured events keep their original payload and kind version.
+- Saved request material carries the typed template beside the authored text. Stored selections keep the saved definitions they used, as they were when the question was asked.
 
 - Later stages operate on the saved question's result, including grouped rows. Nested
   references record composition edges, which take part in version checks and completion.
