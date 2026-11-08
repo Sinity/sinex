@@ -3,12 +3,11 @@
 These pages are the design of record: what Sinex does, its model and formats,
 and the reasons behind the choices. They describe
 Sinex as designed. CLI help, MCP tool schemas and module documentation
-describe the current build. The [reference index](reference/README.md)
-distinguishes current artifacts from planned generated pages; the work
-between design and code is tracked outside the repository. The current generated
-[source and derivation catalog](../nix/catalog.json) is also a module and
-discovery input; its generator and test are described in
-[the reference index](reference/README.md).
+describe the current build; the work between design and code is tracked
+outside the repository. The generated
+[source and derivation catalog](../nix/catalog.json) is a module and
+discovery input, produced by `sinexd admin catalog` and kept current by a
+test.
 
 ## Pages
 
@@ -36,7 +35,6 @@ discovery input; its generator and test are described in
 | [operations.md](operations.md) | deployment, the NixOS and Home Manager modules, configuration, backup and restore |
 | [testing.md](testing.md) | the test database, the synthetic world, the properties tested, crash, VM and fuzz tests, benchmarks |
 | [vocabulary.md](vocabulary.md) | each concept and its one name |
-| [reference/](reference/README.md) | current catalog and planned generated pages for commands, settings, kinds, sources, query tables and derivations |
 
 Shared mechanics (the segment container, the query grammar, references and
 locators, the operation and answer contract, authored-record rules, ranking,
@@ -62,7 +60,5 @@ How Polylogue uses Sinex is in Polylogue's
   (most from the 2026-11-01 feature designs) that the code does not implement yet. Its
   acceptance and the work is tracked outside the repository. Unmarked text
   is the design as the code is meant to hold it.
-- **Planned generated pages** under [reference/](reference/README.md#planned-pages)
-  will be rendered by `cargo xtask docs` from the code's declarations. The
-  generator is not implemented yet; existing generated artifacts are changed
-  through their declarations, not by hand.
+- **Generated artifacts** are changed through their declarations, not by
+  hand.

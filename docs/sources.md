@@ -39,7 +39,7 @@ Everything enters Sinex by being staged ([materials](materials.md#staging) defin
 
 ## One declaration per source
 
-Each source has one declaration in Rust, with its parser and event kinds beside it. The NixOS options (exclusions and real settings), session capture's stream list and tooling are generated from the declarations or checked against them at build time. The [planned source reference](reference/README.md#planned-pages) will be rendered from those same declarations. Registration rejects duplicate names and bindings with no implementation, so a build fails on either.
+Each source has one declaration in Rust, with its parser and event kinds beside it. The NixOS options (exclusions and real settings), session capture's stream list and tooling are generated from the declarations or checked against them at build time. Registration rejects duplicate names and bindings with no implementation, so a build fails on either.
 
 | Field | Meaning |
 |---|---|
