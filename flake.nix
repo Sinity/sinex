@@ -171,6 +171,9 @@
         ];
         # mold links the test binaries several times faster than the default
         # linker; linking was a third to a half of each test binary's build.
+        # A fixed build identity for development builds, so sinexd is not
+        # rebuilt on every edit or commit; packages carry the real revision.
+        SINEX_BUILD = "0000000000000000000000000000000000000000;dirty=true";
         RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
         LLVM_COV = "${llvmTools}/llvm-cov";
         LLVM_PROFDATA = "${llvmTools}/llvm-profdata";

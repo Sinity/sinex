@@ -112,5 +112,10 @@ opt-level = 3
 [profile.dev.package.md-5]
 opt-level = 3
 
+# Procedural macros and build scripts run optimised: sqlx's compile-time
+# checked queries, serde and schemars derives expand much faster this way.
+[profile.dev.build-override]
+opt-level = 3
+
 [profile.dev.package."*"]
 debug = false
