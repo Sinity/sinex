@@ -101,7 +101,9 @@ Enter the development shell with `nix develop`. It carries the Rust
 toolchain read from `rust-toolchain.toml`, nextest, PostgreSQL with
 TimescaleDB, `nats-server` and the mold linker. It installs the repository's
 hooks when no hooks path is set. [Development](docs/development.md) owns
-local overrides and plain commands.
+local overrides and plain commands. Pull requests and master run `cargo xtask
+check` and `cargo xtask test` on GitHub Actions in this shell; read the result
+with `gh pr checks`.
 
 | Command | Does |
 |---|---|
