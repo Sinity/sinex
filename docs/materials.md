@@ -6,9 +6,9 @@ Sinex keeps the exact bytes it captured as **materials** and reads events out of
 
 A material is stored, immutable, self-contained bytes. Every event read from a source can be re-derived from one of its materials, and replay reads the stored copy, never the original path.
 
-**A path is never a material.** A file referred to by path can change or disappear, and then nothing could be read again. Ruling, 2026-03-29: "yeah and what if it's gone? THis defeats the entire point of source materials in the first place!" (cc-queued:ea2bf14e-10bb-42e9-9ff5-616882baaf1c@2026-03-29T19:12Z).
+**A path is never a material.** A file referred to by path can change or disappear, and then nothing could be read again. (ruling 2026-03-29, cc-queued:ea2bf14e-10bb-42e9-9ff5-616882baaf1c@2026-03-29T19:12Z).
 
-**Materials are source-shaped.** A material is a unit the source itself has: a file revision, a part of a growing file, a capture segment, an export member, a set of database rows. Ruling, 2026-03-29: "source material should be, generally, source-shaped" (cc:ea2bf14e-10bb-42e9-9ff5-616882baaf1c:bbe835e2-4b30-498e-bc5b-d257f4d82323).
+**Materials are source-shaped.** A material is a unit the source itself has: a file revision, a part of a growing file, a capture segment, an export member, a set of database rows. (ruling 2026-03-29, cc:ea2bf14e-10bb-42e9-9ff5-616882baaf1c:bbe835e2-4b30-498e-bc5b-d257f4d82323).
 
 - **Database rows, never database images.** A SQLite source is captured as rows; Sinex stores neither a whole database image nor periodic snapshots of one.
 - **Materials are large.** A growing input rotates into closed parts at a size or time bound declared per binding (default 100 MiB or one hour). A poll never makes its own material: a SQLite poller appends its rows to the binding's open part. One material per event is a defect.
@@ -55,7 +55,7 @@ Each question has one owner, written once, in the transaction that learns it:
 
 ### Metadata
 
-An observation records every metadata item the acquisition can read, not a fixed whitelist: size; modification, change, access and birth times; inode, device, mode, owner, group, extended attributes and ACLs where the platform exposes them; host, mount and file system. An item that could not be read is recorded as unavailable with its reason, never as empty. Directory captures carry the same through PAX tar ([directory captures](sources.md#directory-captures)). Ruling, 2026-08-16: "it definitely should exhaustively preserve all available metadataof such source materials" (cc:ec60fadc-f448-407d-baab-ce3741265a67:f0605a92-4adf-42b8-be2e-6c021a74dd9a).
+An observation records every metadata item the acquisition can read, not a fixed whitelist: size; modification, change, access and birth times; inode, device, mode, owner, group, extended attributes and ACLs where the platform exposes them; host, mount and file system. An item that could not be read is recorded as unavailable with its reason, never as empty. Directory captures carry the same through PAX tar ([directory captures](sources.md#directory-captures)). (ruling 2026-08-16, cc:ec60fadc-f448-407d-baab-ce3741265a67:f0605a92-4adf-42b8-be2e-6c021a74dd9a).
 
 ## Bytes before rows
 
@@ -94,7 +94,7 @@ The step runs inside `sinexd admin upgrade` like any data step; a dry run of the
 
 ## Staging
 
-Everything enters Sinex by being **staged**: a generic element ingests it from a small configuration that names the parser, possibly autodetected. History and live input take the same path, and there is no second ingestion mechanism. Ruling, 2026-10-27: "this was not some kind of a niche feature -- this was entire basis of how sinex was architected!" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:4d35819f-890c-4d5a-85cf-cd8ab46d62d7).
+Everything enters Sinex by being **staged**: a generic element ingests it from a small configuration that names the parser, possibly autodetected. History and live input take the same path, and there is no second ingestion mechanism. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:4d35819f-890c-4d5a-85cf-cd8ab46d62d7).
 
 ```
 stage ──► acquire material ──► parse ──► admit
@@ -162,7 +162,7 @@ Live streams are always saved as material parts assembled as they arrive (the sp
 
 ### Re-staging identical content
 
-A re-stage of identical content is not imported twice, and it is still recorded. Byte-identical data staged again is a **new material**, not a replay; its records are suppressed against the live readings by their source record keys ([what admission does with a key](events.md#what-admission-does-with-a-key)). A one-shot file whose records have no identifying fields is keyed by its content digest and offset, so the re-stage is recognised whatever its path. Ruling, 2025-06-12: "no deduplication pls. just ensuring no double import … redundancy is fine" (cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae). Ruling, 2026-05-30: "it wil still be considered entirely new material -- this has nothign to do with replay" (cc:3c91049e-3702-4e99-be65-81620e1f7552:e73554d4-91ea-403d-ad9a-62f4d0bcf128).
+A re-stage of identical content is not imported twice, and it is still recorded. Byte-identical data staged again is a **new material**, not a replay; its records are suppressed against the live readings by their source record keys ([what admission does with a key](events.md#what-admission-does-with-a-key)). A one-shot file whose records have no identifying fields is keyed by its content digest and offset, so the re-stage is recognised whatever its path. (ruling 2025-06-12, cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae). (ruling 2026-05-30, cc:3c91049e-3702-4e99-be65-81620e1f7552:e73554d4-91ea-403d-ad9a-62f4d0bcf128).
 
 ### One-shot inputs finish
 

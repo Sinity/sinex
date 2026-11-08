@@ -87,10 +87,10 @@ Raw bytes are in the segment log of [hashed-blobs](https://github.com/Sinity/pol
 
 ## Schema evolution
 
-The schema is declared, never hand-altered. Ruling, 2026-03-15: "do not add alter table, wtf, stop ruining the codebase. the schema is supposed to be declarative." (cc:11ccf3c6-2de1-4195-b2c6-0f44d825e6b5:6b6da473-0f02-456b-ada0-36e9e7809dfe).
+The schema is declared, never hand-altered. (ruling 2026-03-15, cc:11ccf3c6-2de1-4195-b2c6-0f44d825e6b5:6b6da473-0f02-456b-ada0-36e9e7809dfe).
 
 - **One description in Rust** (`sinex-schema`) generates the fresh DDL and every structural upgrade; nothing structural is written by hand.
-- **Upgrades preserve data.** Sinex holds captured data that cannot be fetched again, so it keeps numbered, data-preserving upgrades rather than recreating the store. Ruling, 2026-03-08: "no data should be actually wiped out unrecoverably, ever!" (cc:3a32c9d8-4a89-4424-887c-7a3c63af5c4d:4ba7e862-da6f-4705-a291-e6700d4d3248).
+- **Upgrades preserve data.** Sinex holds captured data that cannot be fetched again, so it keeps numbered, data-preserving upgrades rather than recreating the store. (ruling 2026-03-08, cc:3a32c9d8-4a89-4424-887c-7a3c63af5c4d:4ba7e862-da6f-4705-a291-e6700d4d3248).
 - **Data transformations are named steps** inside an upgrade. Upgrades are numbered when they land, so concurrent work never races for a number.
 - **Explicit upgrade.** `sinexd admin upgrade` runs with the whole daemon stopped, in one transaction, and rolls back on failure; a writer holding the database refuses it. The NixOS module runs it as the `sinex-schema-upgrade` unit, which nothing starts on its own. A dry run reports what a step would change and writes nothing. `sinex-schema apply` is the same operation for development databases.
 - **Work after start.** An upgrade does only what new writes need. Filling new tables from rows stored before it and building indexes over them are left to the daemon, which runs them after start as an ordered list of tasks: the publication key, the feed index, the event edges, the search rewrite. Each task has a mark table in `sinex_schema` that the upgrade creates and the task's last transaction drops, so a finished store matches a fresh one; each step is bounded and resumes after a restart; an index build an interruption left invalid is dropped and built again, and work another session still runs is waited for. `sinexctl status` lists the tasks that remain (`upgrade_work_after_start`). Readers stay correct meanwhile:
@@ -103,7 +103,7 @@ The schema is declared, never hand-altered. Ruling, 2026-03-15: "do not add alte
 - **The transaction leaves event storage in place.** A widened event column is added beside the old one, whose declared default costs no write, and only rows holding another value are copied. Properties the declarations guarantee (the equivalence key encoding round-trips) are tests, not passes over stored rows, and the stored event types are read by index probes.
 
 - **The daemon refuses any schema version other than its own** and names the command to run. Startup's schema step (`sinexd admin schema`) creates the schema in an empty database and keeps declarations current at its own version; it never upgrades, resets or moves a store aside.
-- **Upgrades may pause capture.** Producers spool meanwhile; a deploy with zero lost capture time is not a requirement. Ruling, 2026-10-11: "sure it is desirable properlyt I guess, but it is not a requirement anymore" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:4e4fa8f3-a4b6-4258-8938-04c5b8513a40).
+- **Upgrades may pause capture.** Producers spool meanwhile; a deploy with zero lost capture time is not a requirement. (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:4e4fa8f3-a4b6-4258-8938-04c5b8513a40).
 - **Declarations are single.** Kinds, CHECK lists, streams, consumers, derivations and sources are each declared once in Rust and exported for the NixOS module ([operations.md](operations.md#deployment)).
 
 ## Performance

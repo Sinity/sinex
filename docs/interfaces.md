@@ -20,13 +20,9 @@ function are common
   reader. Page size, presentation budget and deadline never change what was selected.
 - **One entry point for questions.** The query is the entry point; a new capability
   arrives as a table, an alias, a stage or a verb on rows, never as a top-level
-  command that restates a query. Ruling, 2026-05-25: "seriously, randomly introduce
-  new top-level command for that?"
-  (cc-queued:c2404522-7bba-4de3-936d-e08deb14262c@2026-05-25T00:40Z).
+  command that restates a query. (ruling 2026-05-25, cc-queued:c2404522-7bba-4de3-936d-e08deb14262c@2026-05-25T00:40Z).
 - **Agents are primary users** and get no fewer powers than the operator; what
-  distinguishes the operator is authorship, which the daemon computes. Ruling,
-  2026-06-01: "design stuff in sinex with mind towards agents as primary usres … Critical,
-  then, to design the system to be fundamentall legible" (journal 2026-06-01 06:54).
+  distinguishes the operator is authorship, which the daemon computes. (ruling 2026-06-01, journal 2026-06-01 06:54).
 - **Legible and honest.** Every answer says what was observed, what was derived, what is
   unknown and what was left out of the display. A quiet source is not a failed one; a
   running process is not evidence of capture; a command with no recorded end is "end
@@ -45,9 +41,7 @@ function are common
   help, completion and the shipped agent skill are generated from it. A command missing
   from the table fails closed.
 - **Every feature reachable through MCP is in the CLI**, and the reverse, unless the
-  table records a reason. Ruling, 2026-07-29: "probably should be in CLI, unless clear
-  reason not to, but CLI itself is supposed to be disciplined"
-  (cc-queued:d6f4b0c3-840b-47b6-bd57-5f1bd6c9c7d4@2026-07-29T01:12Z).
+  table records a reason. (ruling 2026-07-29, cc-queued:d6f4b0c3-840b-47b6-bd57-5f1bd6c9c7d4@2026-07-29T01:12Z).
 - **The write path.** Handlers hold only the read pool. Every write (stage, `record`,
   note, duplicate decision, curation, saved query, signal rule, archive request) goes to the one
   [admission function](admission.md) as a request material plus events.
@@ -72,8 +66,7 @@ function are common
 - **The daemon is required.** Ordinary commands go through `sinexd`. Only the declared
   offline diagnostics (`verify`, `status --offline`, `store verify --offline`) read the
   database directly through the reader role, and completion works from the published
-  catalog file. Ruling, 2026-09-14: "Daemon is the standard, not some sort of optional
-  addon" (cc:652ae14f-a036-496b-abfa-42e7574c9ec9:b8a68d64-772f-4d8c-8e95-435ce601d245).
+  catalog file. (ruling 2026-09-14, cc:652ae14f-a036-496b-abfa-42e7574c9ec9:b8a68d64-772f-4d8c-8e95-435ce601d245).
 
 ## Failures
 
@@ -96,8 +89,7 @@ adds one:
 ### One command set
 
 The operator and agents hold the same command set; there are no ordered access tiers.
-Ruling, 2026-07-03: "I want agents to have more power / capabilites rather than less,
-more affordances" (cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:20Z).
+(ruling 2026-07-03, cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:20Z).
 
 - **Grants are per-credential configuration**, seeded with defaults by the NixOS
   module, never code constants. Which output a caller sees is decided by the output
@@ -157,9 +149,7 @@ act or by session undo. Programs that derive continuously use the ingress as
 - Sinex ships a skill text **generated from the operation table**: what Sinex holds, the
   core operations, example queries with their `read_as`, the data notice, and the rule
   "cite event IDs". Sinex's NixOS module installs it into each harness's skill
-  directory; `sinexctl skill print` prints it for any other installation. Ruling,
-  2026-10-18: "CLAUDE/AGENTS/skills -- yes"
-  (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:12f1a067-cc5b-41b7-9209-297099d6b0c1).
+  directory; `sinexctl skill print` prints it for any other installation. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:12f1a067-cc5b-41b7-9209-297099d6b0c1).
 - The MCP `instructions` field carries its summary; each tool description is short and
   says when to use the tool.
 - Context reaches agents without their asking, through Polylogue's session-start brief
@@ -167,9 +157,7 @@ act or by session undo. Programs that derive continuously use the ingress as
 
 ## CLI
 
-`sinexctl` is product UI, not developer tooling. Ruling, 2026-02-12: "sinexctl isn't DX
-tho...? I mean, it's part of the system, its UI"
-(claude.ai:7abe2ed3-2651-4e23-a23a-48a61c82bb85:019c5366-a07e-7623-9477-9d8a857b0aa3).
+`sinexctl` is product UI, not developer tooling. (ruling 2026-02-12, claude.ai:7abe2ed3-2651-4e23-a23a-48a61c82bb85:019c5366-a07e-7623-9477-9d8a857b0aa3).
 
 ### Grammar
 
@@ -285,9 +273,7 @@ one irreversible deletion; a refused material is read again by replay.
 
 ### Completion, picker and references
 
-Completion and fuzzy finding are part of the product. Ruling, 2026-10-27: "advacned
-autocomplete, fuzzyfingind where appropiate"
-(cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:dad489d4-a1b8-48bd-bbc0-26262f34b262).
+Completion and fuzzy finding are part of the product. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:dad489d4-a1b8-48bd-bbc0-26262f34b262).
 
 - **Completion runs in the CLI process from a catalog file `sinexd` publishes**: tables,
   aliases, fields per event type from the kind registry, sources, hosts, recent event

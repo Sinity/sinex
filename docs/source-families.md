@@ -35,7 +35,7 @@ Family F02: window managers, desktop activity trackers, clipboard and notificati
 
 **Window managers are ordinary sources** behind one interface, so adding another is a new reader, not a new design. Hyprland's socket2 events are stored whole, with `hyprctl -j` snapshots on connection and on relevant changes ([the Hyprland stream](streams.md)). A snapshot is present state, never a fabricated open or start. Every IPC event, unknown event text, window, workspace and output identity and all properties are kept. The compositor plugin's frame, layout and input-latency observations are one record per native report, with no aggregation at the source. Sway and i3, niri and river, KWin, GNOME and X11 have separate native readers that produce the same domain vocabulary where the semantics match. KWin and GNOME bus traffic comes from the bus stream; only provider instrumentation the bus lacks is a separate reader. An alternative compositor that is not running is marked inapplicable, not failed.
 
-**Activity trackers.** ActivityWatch is read from its native rows: every mutable row, bucket metadata and heartbeat revision; archive, API and native exports keep their source identity. It is a stopgap whose data is still captured whole. Ruling, 2026-03-17: "aw is used more like a stopgap … we will collect all hyprland stuff anyway" (cc:6c1674bb-e912-438c-9de4-62658fb48cf4:41d66e2e-0047-4e0f-b937-56044c511122). Archive databases are opened read-only and never written. ActivityWatch's duplicate-start defect is a reading defect the record itself shows how to correct, so the reader records the corrected interval beside the raw row and leaves the stored row as it is. Arbtt is read from its native binary log or the tool's lossless dump.
+**Activity trackers.** ActivityWatch is read from its native rows: every mutable row, bucket metadata and heartbeat revision; archive, API and native exports keep their source identity. It is a stopgap whose data is still captured whole. (ruling 2026-03-17, cc:6c1674bb-e912-438c-9de4-62658fb48cf4:41d66e2e-0047-4e0f-b937-56044c511122). Archive databases are opened read-only and never written. ActivityWatch's duplicate-start defect is a reading defect the record itself shows how to correct, so the reader records the corrected interval beside the raw row and leaves the stored row as it is. Arbtt is read from its native binary log or the tool's lossless dump.
 
 **Clipboard and notification archives** are application records independent of the live streams: Clipse and archive exports, Cliphist and CopyQ through their native store interfaces, and mako, swaync or dunst history. They keep MIME bytes, source IDs, actions and lifecycle fields. Repeated bytes stay distinct records.
 
@@ -172,7 +172,7 @@ Family F07.
 - The transport and decoder report which channels the actual hardware and firmware support; an absent channel is unavailable or unsupported, never a measured zero.
 - Capture never changes a device setting.
 
-**Wearable configuration** is set outside Sinex by the device deployment, whose target is every sensor at its maximum cadence (continuous heart rate, SpO2, stress, sleep, temperature where supported). The BLE source reads and reports each channel's configured and actual state, so a disabled or slowed channel shows in status as a configuration gap rather than as missing data. Ruling, 2026-08-14: "why not SpO2 for example? Also, do configure the band maximally, to rly capture everything" (cc:c7d56707-950b-4e3e-bd5c-b4c1822d5b5c:13add765-7bb0-41aa-9a84-8a27850068a3).
+**Wearable configuration** is set outside Sinex by the device deployment, whose target is every sensor at its maximum cadence (continuous heart rate, SpO2, stress, sleep, temperature where supported). The BLE source reads and reports each channel's configured and actual state, so a disabled or slowed channel shows in status as a configuration gap rather than as missing data. (ruling 2026-08-14, cc:c7d56707-950b-4e3e-bd5c-b4c1822d5b5c:13add765-7bb0-41aa-9a84-8a27850068a3).
 
 Health coverage counts unique provider IDs and raw points, and charts gaps by source and device.
 
@@ -209,7 +209,7 @@ Family F09.
 
 **Live acquisition** reads the operator's available feeds and the full accessible conversation and comment context, not just the operator's own messages. Provider pagination and sync tokens are used, and edit and delete facts are captured. A failed or partial fetch never removes history. Rate limits, backoff and access restrictions are visible. An export-only provider is still discovered from its native packages and reported as export-only.
 
-**Scope** is whole comment trees with metadata wherever the operator commented, plus linked content, self-posts and directly hosted media; dead links are recovered through the CDX reader ([browsers](#browsers-and-web-content)). Ruling, 2026-08-11: "the whole comment trees, incl metadata. for all places where I commented, at least. and secondarily, crawling certain users of interest" (cc:049c6f6c-9252-44c7-a0b2-3a585f63b686:c7769bf6-b74e-47ee-bdbf-659e784d6374). Only a new paid API or a credential not yet available needs the operator ([discovery and exclusions](sources.md)).
+**Scope** is whole comment trees with metadata wherever the operator commented, plus linked content, self-posts and directly hosted media; dead links are recovered through the CDX reader ([browsers](#browsers-and-web-content)). (ruling 2026-08-11, cc:049c6f6c-9252-44c7-a0b2-3a585f63b686:c7769bf6-b74e-47ee-bdbf-659e784d6374). Only a new paid API or a credential not yet available needs the operator ([discovery and exclusions](sources.md)).
 
 **Users of interest.** Per provider, the operator (or an agent on the operator's behalf) keeps a list of accounts of interest as authored records. Their posts and comment trees are acquired through the provider API or an available public dataset, under the same pagination, revision, deletion and rate-limit rules as the operator's own feeds. Each acquired record names its list entry and the dataset or API it came from; status shows per-account coverage and the dataset's own coverage limit.
 
@@ -314,7 +314,7 @@ Family F15.
 
 ### Continuous screen video
 
-Continuous screen video is designed but not captured, because its storage cost is not yet affordable; audio, being cheap, is captured whole. Ruling, 2026-10-28: "video, probalby we won't yet even capture it, not imminently" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
+Continuous screen video is designed but not captured, because its storage cost is not yet affordable; audio, being cheap, is captured whole. (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
 
 When enabled, it works as follows.
 - The capture is a compositor source: a Hyprland plugin captures inside the compositor, like any other [window-manager source](#desktop-state).
@@ -329,7 +329,7 @@ When enabled, it works as follows.
 
 Family F16.
 
-**All audio is captured, losslessly.** Ruling, 2026-10-28: "audio is comparatively extremely cheap, so obviously we would capture all of it losslessly" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
+**All audio is captured, losslessly.** (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
 - Every PipeWire capture source, sink monitor and application stream whose content reaches the user's audio graph is recorded; the graph itself is the [PipeWire stream](streams.md).
 - Topology, node and port identities, serials across restarts, formats, native sample rate, channels and channel map, timestamps and clock correction are kept.
 - Simultaneous input and output streams are recorded separately, including silence and overlapping signals. There is no voice-activity gating, microphone-only selection, 16 kHz downsampling or mono conversion.
@@ -368,7 +368,7 @@ No prompts are sent until the operator designs instruments for them; spontaneous
 
 ## Sources beyond the catalog
 
-Family F18. The catalog is a floor: it lists what is known to exist, and Sinex captures beyond it. Ruling, 2026-10-14: "stuff I didn't ever mention but is obviuosly in scope" (chatgpt:6ace15d4-c6d0-83ed-ac53-4a870df45514:2b47b1b6-ada1-44ab-a07d-f0080f34ae97). Applicable local records are discovered automatically; a new paid service, a new credential grant or a new kind of third-party observation needs the operator ([discovery and exclusions](sources.md)). Every added source inherits the rules in [sources](sources.md) and its family's requirements here. No source is left out for lacking an earlier reader. New event names are registered through the kind registry ([planned kinds reference](reference/README.md#planned-pages)).
+Family F18. The catalog is a floor: it lists what is known to exist, and Sinex captures beyond it. (ruling 2026-10-14, chatgpt:6ace15d4-c6d0-83ed-ac53-4a870df45514:2b47b1b6-ada1-44ab-a07d-f0080f34ae97). Applicable local records are discovered automatically; a new paid service, a new credential grant or a new kind of third-party observation needs the operator ([discovery and exclusions](sources.md)). Every added source inherits the rules in [sources](sources.md) and its family's requirements here. No source is left out for lacking an earlier reader. New event names are registered through the kind registry ([planned kinds reference](reference/README.md#planned-pages)).
 
 ## Catalog
 

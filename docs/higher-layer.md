@@ -4,9 +4,9 @@ The higher layer answers the question an operator or an agent has on returning t
 
 ## Purpose
 
-These products carry the purposes Lynchpin served as a stopgap, rebuilt on primary data. Ruling, 2026-08-16: "it is literally a stopgap for sinex, but … it is crystallized intelligence regarding how higher layers of sinex should funciton" (cc:ec60fadc-f448-407d-baab-ce3741265a67:3f5eec78-a742-429f-b9e8-6078dbb6b172).
+These products carry the purposes Lynchpin served as a stopgap, rebuilt on primary data. (ruling 2026-08-16, cc:ec60fadc-f448-407d-baab-ce3741265a67:3f5eec78-a742-429f-b9e8-6078dbb6b172).
 
-- **Purposes are ported; formats are not.** Lynchpin's NDJSON products, DuckDB snapshots, graph nodes and hard-coded scores are evidence of intent. Sinex never reads them as input and rebuilds each purpose on the original source data. Ruling, 2026-07-07: "Not copied 1-to-1 (since, agin, lynchpin was just a stopgap) - but sinex should >>= lynchpin in basically all kinds of ways" (cc:cce07895-09a1-4d90-9313-3017a899291d:2cd02fc1-4978-4b92-8707-3bae0794d7ad).
+- **Purposes are ported; formats are not.** Lynchpin's NDJSON products, DuckDB snapshots, graph nodes and hard-coded scores are evidence of intent. Sinex never reads them as input and rebuilds each purpose on the original source data. (ruling 2026-07-07, cc:cce07895-09a1-4d90-9313-3017a899291d:2cd02fc1-4978-4b92-8707-3bae0794d7ad).
 - **Results reach the operator in ordinary work**: agent session start, resumption, the day pack, Today and signals. A product that needs a new daily ritual to be useful does not count.
 - **No prescriptions.** No streaks, productivity scores, nudges, or actions taken on the operator's behalf from a narrative. The products describe; they do not grade.
 - **Operator time and agent time are separate measures** everywhere. Agent work runs beside operator work, not instead of it.
@@ -159,7 +159,7 @@ Resume packs are recomputed on suspension and on new evidence. The session-start
 ## Figures
 
 - `metric.figure` and `health.figure`: a metric declares its input kinds, its measure (event count, interval-union seconds, ratio, typed numeric or map sum), units, dimensions and observing sources.
-- Hourly figures hold period and day, metric and dimension identity, a nullable value, numerator and denominator, counted and supporting rows, and exact parents. **Daily figures read hourly figures only.** Ruling, 2026-10-11: "yes things are supposed to be hierharhical like that to scale sensibly" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
+- Hourly figures hold period and day, metric and dimension identity, a nullable value, numerator and denominator, counted and supporting rows, and exact parents. **Daily figures read hourly figures only.** (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
 - Counts are attributed once, at original starts; durations clip the interval union into every overlapping hour. Daily ratios sum numerators and denominators; averages derive from sums and known counts, never means of hourly means. Distinct sources per day come from dimension identities. Overlap reads include every interval that began before the period.
 - Every cell has a state and no default ([figure cells](evidence.md#figure-cells)). Sparse positive-event exports never turn silent days into observed zeros.
 - Each metric declares the construct it operationalizes, its role and validity ([the metric catalog](evidence.md#constructs-and-the-metric-catalog)).
@@ -198,7 +198,7 @@ The resume pack, the here pack (the machine section of an agent's brief), the da
 
 ### Narratives
 
-Narratives are a first-class product: rich prose over the operator's recent past, written by a model. Ruling, 2026-04-17: "need great prompt, for one thing, to actually induce creation of rich narratives, multifaceted, interesting, insightful, useful" (cc:5472844a-19e2-40fd-8536-c471e3f9f020:767e5798-c84d-4db8-813b-7353ad0b9600).
+Narratives are a first-class product: rich prose over the operator's recent past, written by a model. (ruling 2026-04-17, cc:5472844a-19e2-40fd-8536-c471e3f9f020:767e5798-c84d-4db8-813b-7353ad0b9600).
 
 - **`narrative.period`** (day, week, month, project, thread) is model-written prose over the stored pack and findings, with per-claim citations and slot-bound numbers: every number in the prose is bound to a slot in the pack, and every claim cites its evidence. A narrative with an unsupported number, a nonexistent citation or a lost material caveat is refused at admission.
 - The deterministic assembly supplies the evidence and the fallback: template prose from stored facts.

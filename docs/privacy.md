@@ -8,8 +8,8 @@ Privacy in Sinex is an optional output feature the operator configures: field hi
 - **With no operator configuration, every output is complete and unaltered for every caller.** No rule, class, detector or minimum is active by default, and no secret, credential, personal-data or content category is detected or hidden unless the operator configures it. There is no built-in censoring and no credential masking: a secret in history that matters is edited out of its source by the operator, or by an agent he asks, as an exceptional act rather than a system.
 - **Rules act at output, not at admission.** Stored payloads stay raw, so a rule change takes effect at the next read with nothing to reclassify, replay or rewrite. Sealing is the one action applied when a reading is stored ([sealing](#sealing)).
 - **Confidentiality comes from the deployment**: one machine, the service user, file permissions and authenticated services.
-- **Sending data to model providers or archive APIs is acceptable**; privacy is no reason to leave a feature unused. Ruling, 2026-08-12: "absurd rly. why woudl we build a feature to not use it?" (cc:049c6f6c-9252-44c7-a0b2-3a585f63b686:891f917e-080f-4506-835b-5f8eaa94e456).
-- **Privacy is low priority** next to capture, storage and performance. Ruling, 2026-06-15: "privacy setup is considered extra feature, not something so fundamental as you always make it to be" (cc:1cb95099-0044-4613-97e1-1bac25f8077a:6a77d81c-0e0f-47fa-9e60-715826cd3e6f).
+- **Sending data to model providers or archive APIs is acceptable**; privacy is no reason to leave a feature unused. (ruling 2026-08-12, cc:049c6f6c-9252-44c7-a0b2-3a585f63b686:891f917e-080f-4506-835b-5f8eaa94e456).
+- **Privacy is low priority** next to capture, storage and performance. (ruling 2026-06-15, cc:1cb95099-0044-4613-97e1-1bac25f8077a:6a77d81c-0e0f-47fa-9e60-715826cd3e6f).
 
 ## Field hints
 
@@ -37,7 +37,7 @@ Each kind declaration names, per payload field, zero or more hints from one voca
 
 Each detector has a version; an edit is a new version.
 
-**A catalog of importable datasets ships as data**, settable through the Nix module, with NSFW terms and NSFW domains as the first sets, because adult content is the category that matters most. There are no health, finance, gambling or drug categories. Ruling, 2026-08-10: "singling these out would be just weird. the actual most important category tho is NSFW adult stuff" (cc:b0efeea2-f2e8-411f-90a4-bc7b3f278aba:f5345171-40be-432f-89ca-53df1a8c1bd6).
+**A catalog of importable datasets ships as data**, settable through the Nix module, with NSFW terms and NSFW domains as the first sets. There are no health, finance, gambling or drug categories. (ruling 2026-08-10, cc:b0efeea2-f2e8-411f-90a4-bc7b3f278aba:f5345171-40be-432f-89ca-53df1a8c1bd6).
 
 **Nothing in the catalog is enabled.** A dataset becomes a detector only when the operator imports it, and a detector has effect only through a rule.
 
@@ -54,7 +54,7 @@ Each detector has a version; an edit is a new version.
 
 ## Rules, classes, grants and actions
 
-**Rules are database rows the operator (or anyone) writes, not code.** Ruling, 2026-06-01: "privacy rules are supposed to be database+user driven. not in imperative code like this" (codex:019e7fe3-c012-7a50-a128-cb9f3ba376d4@2026-06-01T02:23Z).
+**Rules are database rows the operator (or anyone) writes, not code.** (ruling 2026-06-01, codex:019e7fe3-c012-7a50-a128-cb9f3ba376d4@2026-06-01T02:23Z).
 
 ### Rules
 
@@ -114,7 +114,7 @@ The SQL reader role receives the public event views and explicit registry and co
 
 ## Sealing
 
-**Sealing is encryption of chosen values: a rule action on a field or a record.** Ruling, 2026-10-11: "how would privacy design work without encryption?" (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:a41a76a5-2c20-4c90-b04a-b36b86ff9f24).
+**Sealing is encryption of chosen values: a rule action on a field or a record.** (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:a41a76a5-2c20-4c90-b04a-b36b86ff9f24).
 
 ### Keys
 

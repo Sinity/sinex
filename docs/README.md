@@ -50,10 +50,11 @@ How Polylogue uses Sinex is in Polylogue's
 
 - **One fact, one page.** Each page states what it owns and links to the page
   that owns anything else.
-- **Rulings.** Only the operator's own words are labelled: a ruling is cited
-  at the rule it binds, with its date, a short verbatim quote where the quote
-  carries meaning, and a locator in the source where the words were written.
-  Everything unlabelled is the design. The locator schemes are defined in
+- **Rulings.** A ruling is cited at the rule it binds as `(ruling DATE,
+  LOCATOR)`: its date and a locator in the source where the words were
+  written. The page states the decided behaviour in its own words; the
+  operator's private sessions are never quoted, because these pages are
+  public. Everything unlabelled is the design. The locator schemes are defined in
   Polylogue's [documentation index](https://github.com/Sinity/polylogue/blob/master/docs/README.md),
   shared by both products. A default the operator may still change is marked
   "(default; open operator question)".

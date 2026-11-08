@@ -134,7 +134,7 @@ A **note** is an authored statement anchored in time or on events. It is the one
 
 ## Agent arrival
 
-Agents rarely ask for history, so context is delivered at session start rather than waiting to be requested. Ruling, 2026-10-11: "agents rarely look up histoyr but there's also plans ot have skills and / or AGENTS.md setup … but hooks also probably" (cc:56c7f026-fd50-4480-b484-72f1299a534c:848fbe0c-20ce-41a5-8475-48322d93a787).
+Agents rarely ask for history, so context is delivered at session start rather than waiting to be requested. (ruling 2026-10-11, cc:56c7f026-fd50-4480-b484-72f1299a534c:848fbe0c-20ce-41a5-8475-48322d93a787).
 
 ### One brief, composed by Polylogue
 

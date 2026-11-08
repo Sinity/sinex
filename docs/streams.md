@@ -4,7 +4,7 @@ The base-layer streams are Sinex's live captures of the desktop and the machine:
 
 ## One capture per base layer
 
-A stream is one producer-side capture of a base layer, stored raw in its own format. Each stream produces one compact generic event per natural record; typed events (a notification shown, a key pressed, a clipboard copy, screen text) are [derivations](derivations.md) over those generic events, never separate captures. Notifications, MPRIS players, power, network, Bluetooth, mounts, logind and systemd unit lifecycles are all derivations of the bus stream. Ruling, 2025-06-13: "do capture generic DbusSignal. Don't worry about redundancy for now" (cc:f0bb2bee-4ea1-416c-ac7f-f5d0cf9216c6:0640b66c-a353-4ac9-8883-dc141595187e).
+A stream is one producer-side capture of a base layer, stored raw in its own format. Each stream produces one compact generic event per natural record; typed events (a notification shown, a key pressed, a clipboard copy, screen text) are [derivations](derivations.md) over those generic events, never separate captures. Notifications, MPRIS players, power, network, Bluetooth, mounts, logind and systemd unit lifecycles are all derivations of the bus stream. (ruling 2025-06-13, cc:f0bb2bee-4ea1-416c-ac7f-f5d0cf9216c6:0640b66c-a353-4ac9-8883-dc141595187e).
 
 | Stream | Stored raw | Spool | Generic event |
 |---|---|---|---|
@@ -157,7 +157,7 @@ A bus material mixes notifications, player data and unrelated traffic. Tombstoni
 
 ### Capture
 
-Source `desktop.input`. Every `/dev/input/event*` node is captured, including virtual keyboards, mice, touch, tablets, controllers, switches and unknown devices; discovery decides what applies and an exclusion needs a recorded reason. Every native `input_event` the kernel returns is kept with its kernel timestamp, including synchronization and miscellaneous records, before debounce or remapping. Ruling, 2026-03-17: "certainly browser profile including its webhistory, and keylogger, mouse ofc as well" (cc:6c1674bb-e912-438c-9de4-62658fb48cf4:41d66e2e-0047-4e0f-b937-56044c511122).
+Source `desktop.input`. Every `/dev/input/event*` node is captured, including virtual keyboards, mice, touch, tablets, controllers, switches and unknown devices; discovery decides what applies and an exclusion needs a recorded reason. Every native `input_event` the kernel returns is kept with its kernel timestamp, including synchronization and miscellaneous records, before debounce or remapping. (ruling 2026-03-17, cc:6c1674bb-e912-438c-9de4-62658fb48cf4:41d66e2e-0047-4e0f-b937-56044c511122).
 
 - **Reading.** `read(2)` into reusable buffers with epoll gives the exact bytes. Device metadata and state queries use a separately opened read-only descriptor, because a state-query ioctl can flush queued events on the descriptor it is issued on. Capture opens read-only, nonblocking and close-on-exec, and never grabs, masks, debounces or reinjects. The default `CLOCK_REALTIME` is kept; `EVIOCSCLOCKID` is never called, since it can flush queued records. The synchronizing device iterator is not used, because it can substitute synthesized events.
 - **The scanner** runs as the Sinex account with supplementary group `input`, starts before any graphical session, database or NATS, and is the **one spool writer**: one binding, one part sequence, one cursor. Logind device handover cannot serve here, because it requires the session's exclusive controller and pauses inactive devices.

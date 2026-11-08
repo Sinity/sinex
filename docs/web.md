@@ -23,9 +23,7 @@ app reaches the desktop's notification and shortcut services while keeping URLs 
 citations and one shell shared with Polylogue; desktop integration goes through the
 desktop's own services. The reader uses the API only and holds no database of its own.
 
-The web interface is built as a designed product, not a placeholder. Ruling,
-2026-10-27: "wasn't it actually designed? what happened to that? why it's so basic?"
-(cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3c3dd59f-4560-4fee-95d4-5c43b6c94ca5).
+The web interface is built as a designed product, not a placeholder. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3c3dd59f-4560-4fee-95d4-5c43b6c94ca5).
 
 ## Access
 
@@ -37,8 +35,7 @@ from a phone or another device is that configuration, not a separate feature.
 ## Visual baselines
 
 Views are built as drawn in their designs, improved visually without inventing anything
-incongruent with Sinex. Ruling, 2026-05-04: "does it impeltn the claude design
-faithrfully?" (cc:9afa1f68-65b4-4edd-8276-36fb059dc130:2bbd67ef-65f3-4acf-bdf0-64d7d661c676).
+incongruent with Sinex. (ruling 2026-05-04, cc:9afa1f68-65b4-4edd-8276-36fb059dc130:2bbd67ef-65f3-4acf-bdf0-64d7d661c676).
 
 | Baseline | Binds | Where |
 |---|---|---|
@@ -141,9 +138,7 @@ Keys follow the shared table in `web-shell` (the same key means the same act in 
 
 **Desktop integration:** two deployment-bound hotkeys, note (a one-line prompt that writes a note with client context) and recall now (a notification showing the moment pack's first lines, with open and note actions), both through the desktop's own services.
 
-The firehose is a query into the event stream, which is why it lives in Sinex. Ruling,
-2026-07-30: "this is obviously actual good usecase of sinex to prioritize" (journal
-2026-07-30 23:51).
+The firehose is a query into the event stream, which is why it lives in Sinex. (ruling 2026-07-30, journal 2026-07-30 23:51).
 
 - The reader writes only what the CLI can write, through the same operations, with the
   same [computed author](interfaces.md#computed-authorship) (`via: web`).

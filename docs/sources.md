@@ -10,7 +10,7 @@ Scope is every input that is not an AI session: shell and terminal, desktop stat
 
 ## Capture by default
 
-`services.sinex.enable = true` captures every source whose canonical input exists on the host. There is no per-source enable option and no opt-in feature: a source that is built is on. Ruling, 2025-06-27: "I didn't have all these event sources, features written to then have them disabled. Defaults should be ~full-featured." (cc:57547e40-5ef5-4e62-b089-a09820967865:e0902901-9329-4f3f-a320-461eca10109c). Ruling, 2026-05-24: "should not have optins to be clear" (cc-queued:67eb2417-f1d1-4623-a652-ceb0e4c653e3@2026-05-24T10:09:42Z).
+`services.sinex.enable = true` captures every source whose canonical input exists on the host. There is no per-source enable option and no opt-in feature: a source that is built is on. (ruling 2025-06-27, cc:57547e40-5ef5-4e62-b089-a09820967865:e0902901-9329-4f3f-a320-461eca10109c). (ruling 2026-05-24, cc-queued:67eb2417-f1d1-4623-a652-ceb0e4c653e3@2026-05-24T10:09:42Z).
 
 **Discovery** finds applicable inputs at canonical locations: the host layout registry, XDG locations, each tool's own configuration and the configured accounts. A location names a root (home, XDG data or configuration, the runtime directory, an application's environment variable, a named root the host declares, the spool) and a path relative to it; where a source reads is never a per-source setting. It runs at start and during operation, so a new browser profile, mail folder, device, journal namespace or repository is captured when it appears, without a restart, and a passive notice names the new input. Existing roots expand by their provider's own rules (browser profiles, ledger includes, note attachments, archive members, git worktrees, device channels). There is no recursive search of the whole host; inputs are found where their programs put them.
 
@@ -22,7 +22,7 @@ Discovery gives every input one availability before any record is read: **captur
 
 **Unavailable is a state, never zero.** An unavailable credential, an unreadable path, a missing device or an inapplicable provider is shown as "awaiting credentials", "permission denied" (with the grant it needs), "not present" or "not applicable". None of these is out of scope, and none reads as an empty source.
 
-**What waits for the operator.** Only three things: a paid external API, a credential the host lacks, and capturing third parties in a way not done before. Until the operator answers, such a source spends nothing and shows "awaiting credentials" (default; open operator question). Capture breadth is otherwise never a question. Ruling, 2026-10-27: "d-bus -- why 'how much'? read about the whole point of what sinex is supposed to be." (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:f1f39c29-7c7d-42e0-99ec-0c7a1b10b751).
+**What waits for the operator.** Only three things: a paid external API, a credential the host lacks, and capturing third parties in a way not done before. Until the operator answers, such a source spends nothing and shows "awaiting credentials" (default; open operator question). Capture breadth is otherwise never a question. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:f1f39c29-7c7d-42e0-99ec-0c7a1b10b751).
 
 **Volume is performance work.** No source has a daily cap on records, bytes, file size, history age, fields, attachments or text length. A stream that a host truly cannot admit may declare deterministic sampling of events only, with its raw capture kept whole ([streams](streams.md#sampling)).
 
@@ -70,11 +70,11 @@ Decided target (2026-11-01): `expect` and `expires_after` replace the separate h
 
 ### External formats
 
-A source reads data as an external service or program produces it: the vendor's export, the program's database, the protocol's bytes. A format the operator once invented to hold data in the meantime is not a source format; exceptions exist but are the exception. Sinex therefore never ingests a stand-in tool's database, CSVs or merged products, temporary capture envelopes as a permanent format, merged sleep, hand-filtered piles, title classifications or merged web-history ledgers; their purposes are served by derivations over the primary inputs. Ruling, 2026-10-28: "the sources should be actual externally sourced stuff, in general. there might be possible exception to that, it's not really a hard rule" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284). Ruling, 2026-10-11: "what should be ported are the acutal data formats, not my custom made up thigns like that. primary data sources." (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
+A source reads data as an external service or program produces it: the vendor's export, the program's database, the protocol's bytes. A format the operator once invented to hold data in the meantime is not a source format; exceptions exist but are the exception. Sinex therefore never ingests a stand-in tool's database, CSVs or merged products, temporary capture envelopes as a permanent format, merged sleep, hand-filtered piles, title classifications or merged web-history ledgers; their purposes are served by derivations over the primary inputs. (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284). (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
 
 ### Window managers and terminals
 
-A window manager and a terminal are ordinary data sources, captured like any other (Hyprland and Kitty among them). Each sits behind an interface for its role, so the window, workspace and terminal-session kinds that derivations and views read do not depend on which program produced them, and adding another window manager or terminal is a new source behind the same interface. Ruling, 2026-10-28: "it is actual data source. eventually we would support other window managers and such … codebase neeeds to be architected so that such extending of the ssytem works out nicely" (cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
+A window manager and a terminal are ordinary data sources, captured like any other (Hyprland and Kitty among them). Each sits behind an interface for its role, so the window, workspace and terminal-session kinds that derivations and views read do not depend on which program produced them, and adding another window manager or terminal is a new source behind the same interface. (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
 
 ## Inputs and materials
 
@@ -100,7 +100,7 @@ One driver per shape, shared by every source of that shape:
 
 ### SQLite as rows
 
-A database Sinex polls is captured as rows read in one committed read transaction, never as a page, file or WAL image, and there is no snapshot stream beside the row stream. Ruling, 2026-10-24: "the outcome was that we *dont* need to store stuff like full databases. We reconceptualized what \"source material\" means." (chatgpt:6adb720d-d2fc-83e9-8eac-c9e1d7b39cbf:e9c41cc7-3782-4bb4-ba40-011b951b35f0).
+A database Sinex polls is captured as rows read in one committed read transaction, never as a page, file or WAL image, and there is no snapshot stream beside the row stream. (ruling 2026-10-24, chatgpt:6adb720d-d2fc-83e9-8eac-c9e1d7b39cbf:e9c41cc7-3782-4bb4-ba40-011b951b35f0).
 
 - The database is opened read-only, never with the create flag, never with `immutable=1`, and never by copying the main file, WAL or `-shm`. A locked database reports `busy` for that poll and is retried without advancing the cursor.
 - Row values keep SQLite's value types: BLOBs stay bytes, integers keep their precision, and null differs from a missing column. Unknown columns and new tables are captured.
@@ -109,7 +109,7 @@ A database Sinex polls is captured as rows read in one committed read transactio
 
 ### Imports kept as received
 
-A file, archive or package the operator hands to Sinex (`stage`, `import`, a file drop) is stored byte-for-byte as received. Ruling, 2026-10-24: "Obviously we do not remove original input, that would be extremely counterintuitive" (chatgpt:6adb720d-d2fc-83e9-8eac-c9e1d7b39cbf:e9c41cc7-3782-4bb4-ba40-011b951b35f0).
+A file, archive or package the operator hands to Sinex (`stage`, `import`, a file drop) is stored byte-for-byte as received. (ruling 2026-10-24, chatgpt:6adb720d-d2fc-83e9-8eac-c9e1d7b39cbf:e9c41cc7-3782-4bb4-ba40-011b951b35f0).
 
 - An account archive is stored as the archive, not as extracted files.
 - A SQLite file staged once (an export, a browser's history file) is stored as received, and its rows are also read in one read transaction into a rows part; events anchor in the rows part.
@@ -218,11 +218,11 @@ Decided target (2026-11-01). Three questions always have an exact answer: what d
 
 ## Retention and redundancy
 
-**Nothing is deleted by time.** Not materials, spools, self-observation, gaps or the confirmed stream. There is no garbage collection of source materials; only crash-left unreferenced files are removed. Removing data is the operator's act through the [lifecycle](lifecycle.md), and disk space is the operator's concern. Ruling, 2026-05-03: "source materials are nto somethig to GC!" (cc-queued:71f182b0-73fb-4faf-81e3-31d6b40d2bb2@2026-05-03T22:00:23Z). Ruling, 2026-09-02: "I told you multiple times I do not want retention anywhere." (cc-queued:0704fd51-a688-4dc7-8b55-8e389e0703c5@2026-09-02T18:55:04Z). Ruling, 2026-10-11: "disk space: I can remove stuff when I run out of space, do not worry about it." (cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
+**Nothing is deleted by time.** Not materials, spools, self-observation, gaps or the confirmed stream. There is no garbage collection of source materials; only crash-left unreferenced files are removed. Removing data is the operator's act through the [lifecycle](lifecycle.md), and disk space is the operator's concern. (ruling 2026-05-03, cc-queued:71f182b0-73fb-4faf-81e3-31d6b40d2bb2@2026-05-03T22:00:23Z). (ruling 2026-09-02, cc-queued:0704fd51-a688-4dc7-8b55-8e389e0703c5@2026-09-02T18:55:04Z). (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
 
 **Noise is fixed where it starts.** Log spam and self-capture loops are fixed at the noisy unit or the feedback path, never by retention caps or capture filters.
 
-**Redundancy is by design.** The same fact seen by several sources stays several records; [fusion](derivations.md#fusion) relates them where a family is defined. Only double import of the same content is prevented. Ruling, 2025-06-12: "no deduplication pls. just ensuring no double import … redundancy is fine." (cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae).
+**Redundancy is by design.** The same fact seen by several sources stays several records; [fusion](derivations.md#fusion) relates them where a family is defined. Only double import of the same content is prevented. (ruling 2025-06-12, cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae).
 
 **Sinex observes itself as a source.** Its own telemetry is captured as ordinary `sinex.telemetry` events backed by materials, through the same admission, commit log, visibility, replay and query path as every source ([storage](admission.md#storage-representation)). Activity derivations select their declared kinds and never treat these samples as operator activity. One snapshot of several gauges is one record. The write rate is bounded by declared sampling of current gauges, and nothing Sinex logs about its own capture is captured back into a loop.
 
