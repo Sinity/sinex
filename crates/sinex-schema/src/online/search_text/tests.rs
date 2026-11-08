@@ -115,6 +115,7 @@ fn assert_compressed_work(plan: &Value) {
     }
     let (mut batches, mut decompressed) = (0.0, 0.0);
     walk(&plan[0]["Plan"], &mut batches, &mut decompressed);
+    eprintln!("compressed rewrite work: row_groups={batches}, decompressed_rows={decompressed}");
     assert!(
         batches > 0.0 && batches <= 4.0,
         "a four-ID page must fetch only its compressed row groups: {batches}, {plan}"
@@ -182,6 +183,7 @@ async fn search_rewrite_uses_bounded_event_lookups_in_custom_and_generic_plans(
             .unwrap();
             tx.rollback().await.unwrap();
             assert_selected_id_lookup(&plan);
+            eprintln!("prepared rewrite plan: resumed={resumed}, mode={mode}");
             assert_compressed_work(&plan);
         }
         conn.execute("DEALLOCATE rewrite").await.unwrap();

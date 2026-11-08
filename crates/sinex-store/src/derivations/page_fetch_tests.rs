@@ -405,10 +405,16 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
             }
         }
     }
-    for plan in plans {
+    for (query, plan) in ["window", "value", "after_seq", "exact", "commit_log"]
+        .into_iter()
+        .zip(plans)
+    {
         payload_lookup_is_bounded(&plan);
         let (mut batches, mut rows) = (0.0, 0.0);
         work(&plan[0]["Plan"], false, &mut batches, &mut rows);
+        eprintln!(
+            "compressed {query} payload work: row_groups={batches}, decompressed_rows={rows}"
+        );
         assert!(
             batches > 0.0 && batches <= 4.0,
             "payload lookup must fetch selected row groups, not the chunk: {batches}, {plan}"
