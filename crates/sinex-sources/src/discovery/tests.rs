@@ -100,7 +100,6 @@ fn every_browser_profile_and_shared_source_format_is_discovered() {
     );
 }
 
-/// law: sx.cap.exclusion-reasoned
 #[devkit::test]
 fn exclusion_reasoned_and_for_a_known_source() {
     let mut context = DiscoveryContext::default();
@@ -503,7 +502,6 @@ fn synthetic_home(root: &Path) -> DiscoveryContext {
     context
 }
 
-/// law: sx.cap.default-total
 #[devkit::test]
 fn default_total_on_a_fixture_host() {
     let root = tempfile::tempdir().unwrap();
@@ -560,7 +558,6 @@ fn default_total_on_a_fixture_host() {
     );
 }
 
-/// law: sx.cap.no-host-coupling
 #[devkit::test]
 fn no_host_coupling_in_declared_locations() {
     const ROOTS: &[&str] = &[

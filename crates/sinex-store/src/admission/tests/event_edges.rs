@@ -1,7 +1,6 @@
 use super::*;
 use sinex_model::lifecycle::Act;
 
-/// law: walks-during-fill
 /// A reading stored before the upgrade and tombstoned before the fill reached
 /// it keeps its parent edges, as it would have on a filled store, and chain
 /// walks during the fill find it through its parents.

@@ -8,7 +8,6 @@ async fn staging_from(db: devkit::pg::TestDatabase, root: &std::path::Path) -> W
     world_with_config(db, config).await
 }
 
-/// law: sx.stage.inventory-total
 #[devkit::test]
 async fn stage_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
@@ -136,7 +135,6 @@ async fn a_stage_of_nothing_readable_is_refused(db: devkit::pg::TestDatabase) {
     assert_eq!(missing["outcome"], "refused");
 }
 
-/// law: sx.stage.agent-roots
 /// An agent stages only under the declared source locations and the
 /// operator's staging roots; the operator stages any path the daemon reads.
 #[devkit::test]

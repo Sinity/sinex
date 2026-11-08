@@ -118,28 +118,3 @@ The pipeline's throughput and live-latency targets are in [architecture.md](arch
 | day queries over three months on compressed chunks | latency of the day query, with archive, restore, replay and tombstone on the same chunks |
 
 Figures are reported with bytes/s, bytes kept per event (every table's heap, TOAST and indexes, by table), WAL per event, syncs per group and stage utilisation. No test asserts elapsed time; measurement is the bench of [testing.md](testing.md). Batch and turn sizes are targets, never input ceilings.
-
-## Laws
-
-- **one-transaction-or-nothing**: one transaction covers events, archive changes, dirty keys, record failures, cursors, acknowledgements and the operation row; a failure injected at any statement leaves none of them.
-- **success-only-after-commit**: no producer or caller is told an event is admitted before its transaction commits.
-- **single-writer**: a second writer blocks or is refused; under two concurrent admitting transactions no commit-order reader skips a position.
-- **positions-never-regress**: no commit position smaller than one already visible becomes visible.
-- **positions-commit-with-work**: every derivation, read-model, publisher and source position is in the transaction of the work it covers; a crash after the work and before the position is impossible.
-- **failure-tied-to-bytes**: an unreadable record becomes a record failure naming its material and anchor in the transaction that advances the cursor past it, and the rest of the material is admitted.
-- **cursor-never-past-unadmitted**: no cursor covers a record that was neither admitted nor recorded as failed.
-- **transport-failure-not-parse-failure**: a database or transport failure during admission leaves committed progress unchanged and is reported as retryable, never as a record failure or an empty success.
-- **empty-poll-saves-progress**: a poll whose records are all suppressed, or that finds none, still commits its cursor.
-- **commit-log-prune-below-readers**: pruning removes only commit-log rows below every commit-order reader's position, and as-of reads at every retained position are unchanged by it.
-- **search-follows-lifecycle**: after archive, restore, replay or tombstone, search returns exactly the live readings' text; no archived or withheld text is found.
-- **read-models-rebuild-equal**: a read model rebuilt from events equals the one maintained incrementally.
-- **reader-role-boundary**: the SQL reader role cannot read raw payloads, keys or hits.
-- **fresh-equals-upgraded**: fresh DDL from the description equals the schema reached by applying every upgrade to a populated store from each supported version, with unaffected values identical. Column positions are not part of the schema: a widened event column ends up last.
-- **upgrade-keeps-event-storage**: an upgrade's transaction rewrites no event chunk; of the event rows it writes only those whose output number is not 0 (on a compressed chunk, the batches holding them are decompressed).
-- **daemon-refuses-mismatched-schema**: the daemon refuses to start on a schema version other than its own and names the command.
-- **online-work-resumes**: every state an interruption of the work after start can leave (a batch committed, an invalid or a finished index build, a key built but not swapped) resumes to a store equal to a fresh one.
-- **walks-during-fill**: a walk over parent edges while the edges are filled returns exactly what it returns on a filled store; a tombstone during the fill keeps its event's edges.
-- **prepared-copy-mirrors**: while the prepared equivalence-key copy exists, every insert, update, delete and truncate of the table, including those racing a backfill batch, leaves the copy equal to the table encoded; the upgrade that swaps it in reaches the fresh schema with every row.
-- **upgrade-rolls-back-whole**: a failing upgrade step leaves the store exactly at its previous version.
-- **compressed-chunks-meet-targets**: day queries over three months and every lifecycle operation on compressed chunks meet the [performance](#performance) targets on real-shaped data.
-- **live-latency-under-bulk**: live p99 stays at most 1 s while a bulk replay runs (a bench figure, not a test assertion).

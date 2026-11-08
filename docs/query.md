@@ -4,7 +4,7 @@ Sinex's query catalog and what its compiler adds: tables and aliases, typed payl
 fields, clocks, the logical day as Sinex uses it, units and fill, joins, read context,
 paging and budgets, saved queries and kept results, citation forms, and `read`, `trace`
 and `related`. The grammar, spelling, AST semantics, three-valued logic, time
-expressions, sealed cursors and the shared query laws belong to the common
+expressions, sealed cursors and the shared query semantics belong to the common
 [`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md)
 crate; how the CLI, MCP and HTTP carry a query is in [interfaces](interfaces.md); what a
 record and a citation identify is in [events](events.md#identity).
@@ -201,7 +201,7 @@ sinexctl 'commands where when in last 7d | group by day(when), cwd | count | fil
 - Shared material and captured ancestors are found through provenance, never time
   proximity.
 - Sequences (`seq`), `exists` subqueries, attached child relations and `distinct` over
-  declared identity behave as the shared crate's laws state.
+  declared identity behave as the shared crate states.
 
 SQL date functions use intervals produced by the same shared `DaySetting` as
 recall and stored day products. The trusted compiler prepares calendar boundaries
@@ -354,42 +354,3 @@ parsed query with the `pl.` and `sx.` prefixes, the Sinex parts are compiled for
 by Sinex through its API, results join on references and time, and the answer reports
 the position it read in each product and its lag. Sinex callers reach AI text through
 that route ([cross-system queries](https://github.com/Sinity/polylogue/blob/master/docs/primary-mode.md#cross-system-queries)).
-
-## Laws
-
-- **paging**: page sizes 1 and 50 and `--jsonl` give the same ordered rows; inserts,
-  replays and archives between pages either keep the selected view or refuse
-  `stale_cursor`.
-- **presentation-budget**: a presentation budget counts the encoded destination
-  including metadata and citations; whole items are cut with an omission count; the
-  stored product is unchanged.
-- **budgets-stay-apart**: changing page size, presentation budget or deadline never
-  changes the selected rows or the total; only the semantic limit does.
-- **timeout-not-empty**: a query past its deadline ends `timeout` naming a narrower
-  query, never an empty or partial success.
-- **no-depth-caps**: traces deeper than 100 levels and graphs wider than a page are
-  complete through continuation.
-- **citations-across-replay**: `ev` preserves the cited reading across replay; `record`
-  and `key` follow; `at` over two spans is ambiguous; a window refuses mutation; a known
-  form that cannot resolve reports its state.
-- **saved-identity**: two definitions with equal canonical AST share one
-  `sinex:query/<hash>`; renaming keeps the identity; a kept result is queryable as
-  `result:<id>` and reproduces at its read context.
-- **parameters-are-values**: a parameter never binds a field, table or clause; missing,
-  duplicate, unused and wrong-type arguments and recursion are refused.
-- **logical-day-agrees**: across 23- and 25-hour days, a host zone different from the
-  configured one, and a changed boundary, every day-grain surface agrees; the zone never
-  falls back to UTC.
-- **unknown-is-not-zero**: a failed-read interval inside a live run, an unchanged poll
-  and a never-read binding give `missing`, `observed` and `unknown` respectively in fill,
-  status, recall and alerts.
-- **units-never-mix**: every numeric column states its unit, an expression combining
-  different units is refused, and an unknown exit code never enters a success
-  denominator.
-- **inner-context-honoured**: an inner relation with its own read-context stage runs at
-  that context or is refused; it is never silently run at the outer context.
-- **sql-under-output-rules**: `sql` returns the same rule effects as every other surface
-  and cannot read a withheld field or key.
-
-
-A scalar's quotes preserve its spelling, not a second comparison mode. Equality compares literal identifiers and payload values, including a literal `*`. Wildcard matching is explicit with `glob(value, pattern)`, whose only wildcard is `*`. Contains and prefix operators take literal text. Declared scalar types govern conversion. A schemaless JSON field instead uses the scalar type of each value: numeric rows compare numerically, strings preserve exact spelling such as `001`, and boolean equality uses canonical `true` or `false`. Missing, non-scalar or incompatible values produce unknown truth, including beneath `NOT`.

@@ -1,4 +1,4 @@
-//! The curation laws against a real database and the real writer: requests
+//! Curation against a real database and the real writer: requests
 //! are planned, stored as request material and admitted like every write.
 use super::super::tests::{World, world};
 use super::super::{Library, Stored};
@@ -59,7 +59,6 @@ async fn entries(w: &mut World, collection: &str) -> Vec<Value> {
         .clone()
 }
 
-/// law: lib.withdrawal-keeps-history
 #[devkit::test]
 async fn untag_uncollect_and_undo_keep_history_and_withdrawing_them_restores(
     db: devkit::pg::TestDatabase,
@@ -120,7 +119,6 @@ async fn untag_uncollect_and_undo_keep_history_and_withdrawing_them_restores(
     assert_eq!(view(&mut w, &a).await["notes"][0]["text"], "synthetic note");
 }
 
-/// law: lib.undo-refuses-dependents
 #[devkit::test]
 async fn undo_with_a_later_dependent_record_is_refused_and_changes_nothing(
     db: devkit::pg::TestDatabase,
@@ -154,7 +152,6 @@ async fn undo_with_a_later_dependent_record_is_refused_and_changes_nothing(
     );
 }
 
-/// law: lib.conflict-on-same-revision
 #[devkit::test]
 async fn two_replacements_from_one_revision_give_one_success_and_one_conflict(
     db: devkit::pg::TestDatabase,
@@ -186,7 +183,6 @@ async fn two_replacements_from_one_revision_give_one_success_and_one_conflict(
     );
 }
 
-/// law: lib.atomic-actions
 #[devkit::test]
 async fn a_failed_part_of_a_request_leaves_none_of_its_records(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
@@ -227,7 +223,6 @@ async fn count(w: &mut World) -> i64 {
         .unwrap()
 }
 
-/// law: lib.computed-authorship
 #[devkit::test]
 async fn authorship_comes_from_the_caller_and_decides_precedence(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
@@ -279,7 +274,6 @@ async fn authorship_comes_from_the_caller_and_decides_precedence(db: devkit::pg:
     );
 }
 
-/// law: lib.pinned-entries
 #[devkit::test]
 async fn entries_pin_their_revision_and_removal_addresses_one_entry(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
@@ -322,7 +316,6 @@ async fn entries_pin_their_revision_and_removal_addresses_one_entry(db: devkit::
     assert_eq!(order, [left[1]["entry"].clone(), left[0]["entry"].clone()]);
 }
 
-/// law: lib.tag.any-label
 #[devkit::test]
 async fn punctuation_labels_are_written_and_shown_as_ordinary_tags(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
@@ -511,7 +504,7 @@ async fn untagging_after_a_rejection_leaves_no_statement(db: devkit::pg::TestDat
 }
 
 /// Stored curation records written as they are, without planning, for
-/// laws about reading them back.
+/// rules about reading them back.
 async fn store_raw(w: &mut World, records: Vec<Curation>) {
     let library = Library {
         writer: &w.writer,
@@ -575,8 +568,6 @@ fn stored(header: &authored::Header, case: usize) -> Curation {
     }
 }
 
-/// law: lib.currency.shared
-/// law: authored.currency.middle-withdrawal
 #[devkit::test]
 async fn stored_currency_equals_the_shared_function_on_generated_histories(
     db: devkit::pg::TestDatabase,
@@ -711,7 +702,6 @@ async fn replay_curation(w: &mut World) {
     assert_eq!(report.failures, 0);
 }
 
-/// law: lib.projection.equals-function
 #[devkit::test]
 async fn the_projection_equals_the_function_after_generated_writes_withdrawals_archives_and_replays(
     db: devkit::pg::TestDatabase,

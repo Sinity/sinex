@@ -30,7 +30,6 @@ fn current(records: &[Duplicate]) -> Vec<String> {
         .collect()
 }
 
-/// law: authored.currency.middle-withdrawal
 #[devkit::test]
 fn a_revision_supersedes_and_a_withdrawal_takes_it_back_by_the_descendant_rule() {
     let first = decision("r1", "r1", "operator", Some(Decision::Same));

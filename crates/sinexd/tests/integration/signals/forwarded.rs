@@ -93,8 +93,6 @@ async fn decisions(conn: &mut PgConnection) -> Vec<Value> {
         .unwrap()
 }
 
-/// law: signal-forwarded-shares-host-budget
-/// law: signal-forwarded-current-waits-for-progress
 /// A forwarded agent firing is routed by this host's policy: it spends the
 /// host's one interrupt budget, so a second one in the hour is passive. A
 /// forwarded current-state firing waits until its producer reports being up

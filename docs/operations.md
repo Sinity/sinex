@@ -190,14 +190,3 @@ A missing extent, key or spool is a named failure, never an empty start.
 ### The restore drill
 
 A restore drill on real-shaped data runs before any operation that could lose data; there is no calendar of drills. The drill restores into a separate deployment and checks every property listed under [restore](#restore); how it runs as a test is in [testing.md](testing.md).
-
-## Laws
-
-- **one-day-setting**: every logical-day consumer (queries, derivations, analysis, recall, briefs, and Polylogue on Sinex) cuts days with the one configured setting; changing it changes every consumer's answer together.
-- **day-values-record-boundary**: every day- and hour-grain value records the boundary and zone it was cut with.
-- **invalid-zone-stops-daemon**: a zone that does not resolve to a named zone stops the daemon at start with an error naming the setting; nothing falls back to UTC.
-- **non-loopback-needs-token**: the daemon refuses to start on a non-loopback listen address without a token file; on loopback, a connection from another user is refused.
-- **restore-reproduces-boundary**: a restore drill reproduces event IDs, payloads, states, positions and bytes at the recorded boundary, replays without the original files, and producers resume without duplicates.
-- **restore-names-missing-parts**: a restore with a missing extent, key or spool fails naming what is missing and never starts empty.
-- **hold-protects-extents**: a punch never removes an extent an open backup hold covers, and is done at the writer's next group after the last covering hold is released.
-- **hold-visible-until-released**: an open hold appears in status with its age until it is released; no hold ends by itself.

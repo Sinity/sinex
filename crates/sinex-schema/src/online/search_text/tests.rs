@@ -206,7 +206,6 @@ async fn search_rewrite_uses_bounded_event_lookups_in_custom_and_generic_plans(
     }
 }
 
-/// law: online-work-resumes
 #[devkit::test]
 async fn search_rewrite_preserves_exact_ids_and_rolls_back_mark_with_flags(
     db: devkit::pg::TestDatabase,

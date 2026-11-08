@@ -32,8 +32,6 @@ async fn status_lists_exclusions_and_reasons_without_source_runs(db: devkit::pg:
     );
 }
 
-/// law: sx.cap.exclusion-reasoned
-/// law: sx.cap.unimplemented-census
 #[devkit::test]
 async fn sources_discover_dry_run_lists_states_reasons_and_the_census(
     db: devkit::pg::TestDatabase,

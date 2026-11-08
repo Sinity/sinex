@@ -17,7 +17,7 @@ working rules that apply here.
 ## The design of record
 
 - [`docs/`](docs/README.md) is the design of record: each area page owns its
-  behaviour, model, formats and laws, and [docs/architecture.md](docs/architecture.md)
+  behaviour, model and formats, and [docs/architecture.md](docs/architecture.md)
   is the orientation across them. The docs describe Sinex as designed, not
   as built; when code and design differ, the design is the target and
   closing the difference is the work.
@@ -130,8 +130,7 @@ targets. [Development](docs/development.md) describes focused selection.
 Every xtask run is recorded in devkit's history database.
 Fuzzing runs as tests: bounded corpus replay inside `test`, longer runs as a
 test profile over the same harness. The designed `cargo xtask docs` (renders
-[docs/reference/](docs/reference/README.md)) and `laws` (lists each law key
-and the tests named after it) are not implemented yet. Development runs,
+[docs/reference/](docs/reference/README.md)) is not implemented yet. Development runs,
 coverage, VM scenarios and history comparisons are described in
 [testing.md](docs/testing.md#development-runs-and-reports).
 
@@ -321,10 +320,10 @@ themselves straight-up bugs." (2026-09-27,
 `cc:62be45f2-6c40-49ce-a88e-bc566948628c:4cc20d7c-9e62-4b7a-9550-7dd97f9d48e9`).
 
 **Tests that are better than the predecessor's.** Every specified behaviour
-and every law has a test that fails when the production path breaks. The
+has a test that fails when the production path breaks. The
 valuable kinds: independent oracles (goldens written from format knowledge,
-GNU tar for PAX materials, PostgreSQL's own COPY reader), the lifecycle law
-suite (whole-chain moves, restore refused on collision, replay undo,
+GNU tar for PAX materials, PostgreSQL's own COPY reader), the lifecycle
+tests (whole-chain moves, restore refused on collision, replay undo,
 tombstoned events never become parents while replay and re-import create new
 readings, as-of reads), crash tests at real durability boundaries, and
 property tests at serialization boundaries. Tests run against real
@@ -344,8 +343,7 @@ and cleanup before raising timeouts or cutting coverage.
 - Rust, four-space indent, `rustfmt`.
 - Tests live in their own files: a module's unit tests in `<module>/tests.rs`
   declared with `#[cfg(test)] mod tests;`, integration tests under the
-  crate's `tests/`. A test that checks a law is named after the law's key
-  ([docs/testing.md](docs/testing.md#laws-and-their-tests)). A test that needs PostgreSQL calls
+  crate's `tests/`. A test that needs PostgreSQL calls
   `devkit::pg::test_database()` for its own copy of the schema template, so
   tests run in parallel. CLI and MCP behaviour is tested through the public
   commands, not by widening visibility.

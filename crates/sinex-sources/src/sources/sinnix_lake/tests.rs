@@ -257,7 +257,6 @@ fn day_files_skip_index_and_sidecars() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
-/// law: sx.cap.no-host-coupling
 #[devkit::test]
 fn no_host_coupling_in_lake_machine_lanes() {
     let root = tempfile::tempdir().unwrap();
@@ -344,7 +343,6 @@ fn a_missing_lake_root_is_not_an_empty_lake() {
     );
 }
 
-/// law: sx.cap.no-host-coupling
 #[devkit::test]
 fn no_host_coupling_in_any_lake_lane_directory() {
     for lake in LAKE_SOURCES {

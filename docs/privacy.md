@@ -134,18 +134,3 @@ The SQL reader role receives the public event views and explicit registry and co
 ### Tombstoning sealed data
 
 A tombstoned record loses its payload, ciphertext included ([tombstone](lifecycle.md)). A material's data key is destroyed when no live, archived or tombstone-skeleton record still needs it and the material's bytes are gone. Copies in backups are outside Sinex's reach, and the tombstone operation reports that.
-
-## Laws
-
-- **off-by-default**: with no rules written, every output for every token equals the stored payload, and no detector runs.
-- **nothing-rewritten**: no rule, detector or class changes a stored payload or material byte, and record hashes are equal before and after any rule change.
-- **rule-edit-immediate**: after adding, editing or ending a rule, the next read through every surface reflects it, with no replay, whoever wrote the rule.
-- **output-parity**: one configured rule gives the same result through CLI, JSON, MCP, HTTP, `follow`, the reader, exports, search snippets and counts, and SQL views, per token grant; the confirmed stream carries only references, and the fetch by event ID under the consumer's grants returns that same result.
-- **agent-equality**: two tokens with equal grants, one an agent's, receive identical output.
-- **any-author**: a rule written by an agent takes effect at the next read, like the operator's, and `status` lists it as a non-operator change.
-- **detection-pending**: a new detector's catch-up resumes from its position after a restart and is reported; fields it has not reached get the rule's action.
-- **inheritance**: a derived field and a carried-over field keep their parent's hits.
-- **reader-role-boundary**: the SQL reader role cannot read raw payloads, keys or hits.
-- **range-read-refused-by-rule**: a raw range containing a field a rule hides from the caller is refused, naming the rule.
-- **sealing-scope**: sealing one field leaves the material's other records readable without a key.
-- **locked-replay-deferred**: replay of sealed records while locked is deferred and listed.

@@ -342,37 +342,3 @@ Hyprland's socket2 is stored whole in its own line framing, with `hyprctl -j` sn
 ## browser
 
 The browser stream is the profile rows and files of every discovered profile, read as rows and files, plus the extension producer's observations of visits, navigation, tabs, frames, downloads and page content; their records are the profile row kinds. The full requirements are in [source families](source-families.md).
-
-## Laws
-
-- **dbus-packet-bytes-exact**: on a test broker with empty monitor rules, signals, calls, returns, errors and unicast under both bus settings (unknown interfaces, empty bodies, missing optional headers, both endians, maximum-width integers, NaN, nested values, duplicate dictionary keys, descriptor indexes, oversized packets) are spooled and read back byte-identical to what the broker delivered.
-- **dbus-monitor-privilege**: the system-bus monitor succeeds as root or the bus owner under the declared hardening, and a missing privilege appears as `permission denied`, never an empty stream.
-- **caused-traffic-no-generic-event**: bootstrap, subscription, registration and AT-SPI tree-read packets are present in the spool and produce no `bus.message`; each bootstrap read and each finished node produces exactly one result record citing its packet range.
-- **dbus-descriptors-released**: a pipe descriptor passed on a test broker reaches EOF on its other end before the writer is released, and a monitor without descriptor negotiation is shown to be disconnected by the broker.
-- **dbus-carry-deterministic**: with several names per owner, owner replacement, bootstrap races, serial reuse, no-reply calls, missing calls, broker errors, replies across midnight and across segments, several capture UUIDs, reversed admission and wall-clock reversal, replay reproduces every annotation and key.
-- **capture-uuid-per-connection**: every monitor conversion starts a new capture UUID whose first material has no previous part; replay of a late minute reads only its own capture UUID's parts.
-- **overflow-counted**: a full writer queue produces an `overflow` gap with the exact count and interval of omitted packets, and a broker disconnect a `disconnected` gap with an unknown count; the counts reconcile as spooled records equal admitted events plus sampled events plus failures and gaps.
-- **spool-sync-and-tail**: an idle spool still syncs every second; a truncated closed tail is a record failure with bytes kept and later segments are read; an active incomplete tail waits.
-- **generic-not-searched**: new and rebuilt read models hold zero search rows for `bus.message` and the `a11y.event` node records, while typed derived events are searchable under their classes.
-- **arguments-only-on-demand**: default `show` and query paths read no packet body; `show --arguments` decodes exact types and is refused before any read when the caller's grant does not cover the material's class.
-- **packet-range-reads**: bytes a derivation reads scale with the cited packet ranges, never with segment length times event count.
-- **session-kinds-guarded**: the declarations of `bus.message`, `desktop.input`, `desktop.selection` and `desktop.a11y` are `Guarded`, and derived events inherit it.
-- **evdev-pre-remap**: through a synthetic uinput pipeline, the forwarding helper's stdout is byte-identical to the device's output, and the spool holds the bytes before debounce and remapping.
-- **evdev-packet-per-syn-report**: every split of reads and blocks yields the same packets, one `input.event` per `SYN_REPORT`, with `SYN_MT_REPORT`, unknown codes and oversized packets kept whole and per-record time preserved.
-- **evdev-identical-packets-distinct**: two packets with equal bytes and timestamps, on interleaved opens, are two events.
-- **evdev-forwarding-survives-capture**: a scanner, socket or disk fault leaves forwarding running and records the lost capture range as a gap after recovery; terminating a helper releases its grab and the scanner takes over.
-- **evdev-state-query-keeps-queue**: state queries on the separate descriptor leave the capture descriptor's queued events intact.
-- **evdev-syn-dropped-honest**: after `SYN_DROPPED`, the intervening bytes are kept, transitions are marked unreliable until the next state query, and no edge or loss count is invented.
-- **evdev-spool-modes**: under a 0022 umask and the service accounts, spool directories are 2750 and files 0640, and a symlinked spool path is refused.
-- **evdev-hotplug**: enumeration races, missed udev events, reused event numbers and permission recovery all end with every present device captured under a new open UUID.
-- **selection-exact-bytes**: every advertised MIME type of every offer on every seat, including the password hint, custom types, NUL bytes and trailing newlines, is stored with its exact bytes and hash, and an invalid UTF-8 MIME name is sent back byte for byte (two names that collapse to the same lossy string stay distinct).
-- **selection-no-cutoff**: simultaneous large transfers, a slow owner and a nonterminating owner never block other MIME types, seats or selections, nothing is truncated, and capture memory tracks active buffers rather than payload size.
-- **selection-repeats-kept**: equal repeated offers, clears and initial state each produce their own `selection.offer`.
-- **selection-crash-recovery**: a crash at any step of a transfer (start record, byte rename, directory sync, terminal append, frame preparation, admission, cursor save, acknowledgment) ends with one terminal result per transfer, `interrupted` with its actual prefix where the terminal record was not synced, and replay from stored material and owned bytes after spool cleanup.
-- **selection-capture-before-ack**: with NATS down and saved unacknowledged frames, new offers are spooled before any acknowledgment arrives.
-- **atspi-one-read-per-pending-root**: many triggers before a read starts produce one traversal linked to every trigger; a trigger after the read starts produces another; different roots never merge.
-- **atspi-no-tree-ceiling**: trees deeper and larger than any fixed cap, text spanning several transfers, cycles and failed children yield complete or explicitly partial trees, never a truncated success.
-- **atspi-hung-app-isolated**: a hung application does not stop another application's reads or the monitor's capture, and its timed-out fields are retried.
-- **atspi-node-cites-replies**: every `NodeFinished` cites a packet interval whose replies, including late and missing ones, resolve to that node's context after rotation, replay, midnight and wall-clock changes.
-- **atspi-cleanup-pinned**: segments holding unfinished tree-read evidence survive an acknowledgment, and a missing work database blocks cleanup until rebuilt.
-- **atspi-no-empty-wildcard**: registration never sends an empty event class.

@@ -2,7 +2,7 @@
 
 What Sinex computes about a life beyond "what was happening": figures over rest, body, intake, mood, money, places and work, each declaring the construct it stands for; usual ranges computed only from the past; studies of whether two things go together; randomized self-experiments; forecasts with a visible track record; and the rule by which Lynchpin's purposes are switched off one by one. The derivation model these products follow is in [derivations](derivations.md); presence, agency, attribution, episodes and the other descriptive products are in [the higher layer](higher-layer.md); notes and instruments are in [recall](recall.md#notes); coverage is in [sources](sources.md#completeness).
 
-Decided target (2026-11-01). Sinex already has the method core (`sinex-analysis`: cell states, findings with typed caveats, correlation with effective sample size, change points, trend, robust baseline, false-discovery control, binary Brier scoring) and the forecast kinds; the construct catalog, studies, experiments, method forecasters, places, money and the retirement ledger below are decided and not built, and their laws are the acceptance. Personal evidence needs staged exports for its inputs ([staging](materials.md#staging)).
+Decided target (2026-11-01). Sinex already has the method core (`sinex-analysis`: cell states, findings with typed caveats, correlation with effective sample size, change points, trend, robust baseline, false-discovery control, binary Brier scoring) and the forecast kinds; the construct catalog, studies, experiments, method forecasters, places, money and the retirement ledger below are decided and not built. Personal evidence needs staged exports for its inputs ([staging](materials.md#staging)).
 
 ## Purpose
 
@@ -234,42 +234,3 @@ Budgets are p95, warm, at ten years of daily and two years of hourly data per me
 | track record, 10,000 resolved | ≤ 30 ms | a forecasts read model with score columns written at resolution |
 | backtest, daily forecaster over 2 years | ≤ 2 s | one sort-merge sweep over a figure-history index against the origins' positions |
 | `place.visit` over a day of 1 Hz location | ≤ 200 ms | one pass with a running centroid |
-
-## Laws
-
-Stored with the scope `sx.`; tested on the synthetic world extended with a month of rest, body, intake, mood, location and ledger data with a planted lagged effect of known size.
-
-- **ev.cell-state**: every figure cell has a state, and no conversion from a cell to a number skips it. *(compile-fail test and property)*
-- **ev.construct-declared**: registering a metric without construct, role, validity, opportunity and law is refused.
-- **ev.affirmed-zero**: a self-report metric is `observed(0)` only on units covered by an affirmation; without one it is `missing(unknown)`.
-- **ev.strata-apart**: values of different strata are never pooled without a declared calibration.
-- **ev.figure-cites**: every number in a CLI, MCP or web rendering is bound to a figure cell or a result slot whose citation resolves.
-- **ev.prior-only**: admitting data dated after day D changes neither D's usual range nor D's deviation.
-- **ev.baseline-min**: fewer observed prior units than the minimum gives `not_estimable`, never a zero deviation.
-- **ev.no-snap**: a change point is reported where it was detected; annotations never move it.
-- **ev.family-fixed**: q-values are computed over the whole declared family, cells that produced nothing included; adding a cell is a new revision.
-- **ev.confirmatory-by-order**: a study is confirmatory exactly when its revision's commit position and `at` precede its outcome period; no field sets it.
-- **ev.detectable-effect**: every association and contrast result carries its detectable effect, and a null result's rendering names it.
-- **ev.band**: a result over a parameterized metric or method carries an estimate for every declared alternate.
-- **ev.placebo**: every lagged association carries its reverse-lag estimate and trend check.
-- **ev.shared-sensor**: a cell whose exposure and outcome share a declared sensor carries the `shared_sensor` caveat.
-- **ev.ordinal**: a mean over an ordinal scale is refused unless requested, and then carries its caveat.
-- **ev.no-causal-language**: no finding outside an experiment uses the `effect` template.
-- **ev.method-reference**: each method matches an independent reference and detects a planted faulty implementation.
-- **ev.untimed-excluded**: intakes with unknown time are excluded from `exposure.level` and counted.
-- **ev.assignment-committed**: the schedule recomputed from the revealed seed equals the committed hash, and changing seed or schedule after start is refused.
-- **ev.effect-needs-assignment**: an `effect` finding counts only units whose assignment precedes their exposure evidence.
-- **ev.unblind-recorded**: reading a withheld condition before the planned end needs `experiment.unblinded`, and later units are flagged.
-- **ev.locked-interim**: an experiment's result is withheld before its end or interim unless an `experiment.peeked` act exists, which the result reports.
-- **ev.washout-excluded**: washout units are excluded from the primary estimand and counted.
-- **ev.randomization-valid**: under a null world, the randomization test's p-values are uniform across 10,000 simulated experiments of each assignment type.
-- **ev.forecast-before-outcome**: a forecast counts in a track record only if issued before its target period and before any resolving evidence was committed.
-- **ev.missing-resolves-unknown**: a forecast whose resolving coverage stays missing resolves `unknown`, never true, false or a value; scoring then leaves it out under common scoring's `unknown-not-scored`.
-- **ev.backtest-as-of**: a backtest origin at time t reads only readings live at the commit position Sinex had at t.
-- **ev.skill-shown**: every rendering of a track record includes skill against climatology and persistence on the same resolved set.
-- **ev.gap-not-stay**: a location gap longer than the dwell never extends a visit.
-- **ev.book-of-record**: a money metric never sums a ledger posting and a bank line of the same account and period.
-- **ev.last-use-unknown**: a recurring charge without a service rule reports last use `unknown`.
-- **ev.row-switch**: a Lynchpin purpose closes as verified only with its evidence attached, and its Lynchpin module is deleted in the change that records the switch.
-
-The higher layer's laws `conservation`, `unknown-is-not-zero` and `stored-hierarchy` and the derivation laws also apply.

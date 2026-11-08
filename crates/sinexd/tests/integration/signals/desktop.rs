@@ -80,7 +80,6 @@ fn desktop(root: &Path, bus: &Bus) {
     .unwrap();
 }
 
-/// law: signal-desktop-unknown-is-terminal
 /// A notification call that never answers leaves its attempt unknown;
 /// admission goes on while it waits.
 #[devkit::test]
@@ -209,7 +208,6 @@ impl ImmediateServer {
     fn close_notification(&self, _id: u32) {}
 }
 
-/// law: signal-desktop-retry-once-on-appearance
 /// With no notification server, an attempt is not sent; when a server
 /// appears it is retried once under its identity, and a restart sends it
 /// no further. A grouped rule's delivery cites the readings its group

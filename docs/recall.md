@@ -11,7 +11,7 @@ sinexctl recall last --cwd /src/tide # the latest shell session there
 sinexctl note "check bench disk" --when here
 ```
 
-Decided target (2026-11-01). The current build answers `recall` with a time-ordered list of every event in the window, and keeps `context`, `brief` and `mark` as separate verbs with their own MCP tools. The decided design below replaces them: one verb, strata instead of a row list, recipes compiled into stored packs, and one `note` kind. The laws at the end are its acceptance.
+Decided target (2026-11-01). The current build answers `recall` with a time-ordered list of every event in the window, and keeps `context`, `brief` and `mark` as separate verbs with their own MCP tools. The decided design below replaces them: one verb, strata instead of a row list, recipes compiled into stored packs, and one `note` kind.
 
 ## Purpose
 
@@ -129,7 +129,7 @@ A **note** is an authored statement anchored in time or on events. It is the one
 - `note ["TEXT"] [--at TIME] [--about REF…] [--value INSTRUMENT=V] [--when QUERY|here] [--revises NOTE]`. It commits in under 1 s, so it sits on a hotkey; a client may supply native command and focus record keys.
 - Links from an `at`-anchored note to what it was about arrive later as derived `reference.about` events, by source record keys and containing time.
 - `recall note N` orders notes by noted time, newest first, with the ID as a stable tie-break.
-- A note is withdrawn by a withdrawal record, as every authored record is. A tripwire fires once per period its trigger holds, under the signals evaluator's laws. Notes are records about the substrate, never a second model of it, and they obey the [authored-record rules](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md).
+- A note is withdrawn by a withdrawal record, as every authored record is. A tripwire fires once per period its trigger holds, under the signals evaluator's rules. Notes are records about the substrate, never a second model of it, and they obey the [authored-record rules](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md).
 - Instruments are declared data (`instruments [list | show NAME]`). Prompts for them are signal rules; none is sent until the operator decides which may be (default; open operator question). Personal evidence's instruments are in [personal evidence](evidence.md#self-reports-and-intake).
 
 ## Agent arrival
@@ -160,32 +160,3 @@ Pending before past, every line cited:
 ### Presence for agents
 
 `recall now` includes the operator's presence and agency now (present; absent since T with the evidence kind; unknown with the reason) and his current episode, so agents batch questions while he is away and do not interrupt work in another project. It is read-only: no rule may start or resume an agent from it.
-
-## Laws
-
-- **rec.strata**: recall over any span returns states, acts, incidents, ambient counts and linked presentations as separate strata; no stratum is one cross-source time-ordered list. *(query test)*
-- **rec.no-crowding**: adding 10⁶ ambient events to a span changes only the ambient counts; every act and state line is unchanged. *(property)*
-- **rec.no-bookkeeping-rows**: no `measure` or `presentation` event appears as an activity row, a source count or a parent of a recall pack. *(query test)*
-- **rec.stratum-declared**: registering a kind without a stratum is refused. *(schema test)*
-- **rec.complete-lanes**: every lane reports its complete count, and the rows a presentation omits are reachable through its expand handle at the same read context. *(property)*
-- **rec.subject-closed**: every subject form parses to one canonical selection, and equal selections share one `sinex:sel/<hash>`. *(parser property)*
-- **recall-last-honest**: with no matching timed shell session, `recall last` says so and never reports "no activity".
-- **one-assembly**: the day, moment, here and resume packs over one fixture and read context produce identical lines where their sections overlap, and every section of one pack reads the same read context.
-- **every-line-cited**: every line of every pack has a resolving citation and a stratum.
-- **card.section-status**: a section whose input sources were not observing has status `not_observed(sources)` or `partial`, never `empty` and never "nothing to report"; a not-estimable figure says why.
-- **card.unknown-not-zero**: a figure over a span with presence evidence never reports zero time at the machine; over a span without coverage it reports unknown.
-- **card.expected-coverage-only**: the coverage header lists only sources expected in the span plus export sources whose newest export ends before it; a never-staged export source does not appear per day.
-- **card.surfaces-agree**: for any source and day, recall's coverage, the day pack's data quality and the Sources grid report the same state.
-- **card.prepared-read**: a prepared pack is answered from storage within its budget; a missing or stale one returns its reference and age, never a synchronous compile on the hook path.
-- **machine-section-deadline**: the here pack answers within Polylogue's 100 ms deadline from the prepared product; a stale or unprepared directory returns its reason within the deadline; `/src/tide` never shows lines of `/src/tidepool`.
-- **card.no-invented-next**: the resume pack's Next section contains only recorded next steps; with none, it says unknown.
-- **budget-cuts-whole-lines**: a presentation budget cuts whole lines, reports the omission count, orders pending before past, and leaves the stored pack unchanged.
-- **card.known-then**: `--as-known-then` over a day reproduces the pack compiled at that day's end; a replay since then shows in the current rendering and in the difference note.
-- **note.client-context-only**: a note written at an instant stores only what the client read, never event references; `reference.about` links appear after the evidence is admitted and survive replay by key.
-- **note.backdate-kept**: `recall note N` orders by noted time with a stable tie-break, and a backdated note keeps its time.
-- **note-revision-keeps-text**: revising a note leaves the earlier note readable, and the revision names it.
-- **note.prompt-latency**: an answer to a prompt records its latency from the delivery. That an answer cites its prompt and that a missed prompt is never imputed are the shared laws `elicit.answer-cites-prompt` and `elicit.missed-is-recorded`.
-- **note.tripwire-once**: a tripwire note fires once per period its trigger holds, under the signals evaluator's laws.
-- **agent.handles-consistent**: expanding a handle returns rows at the original answer's read context, even after new admissions. *(MCP test)*
-
-Stored with the scope `sx.`. No rule or delivery starts or resumes an agent from presence or recall state: that is the shared signals law `trigger-never-starts-agent`.

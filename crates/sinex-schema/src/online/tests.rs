@@ -135,8 +135,6 @@ async fn catalog(conn: &mut PgConnection) -> Vec<String> {
     crate::tests::catalog(conn).await.unwrap()
 }
 
-/// law: online-work-resumes
-/// law: walks-during-fill
 #[devkit::test]
 async fn work_after_start_resumes_in_order_and_walks_answer_as_filled(
     db: devkit::pg::TestDatabase,
@@ -238,7 +236,6 @@ async fn invalidate(conn: &mut PgConnection, name: &str) {
         .unwrap();
 }
 
-/// law: online-work-resumes
 #[devkit::test]
 async fn interrupted_index_builds_are_rebuilt_and_finished_ones_kept(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();

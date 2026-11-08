@@ -1,4 +1,4 @@
-//! The lifecycle's laws against a real database: whole chains move, no
+//! The lifecycle against a real database: whole chains move, no
 //! event's state is earlier than its parents', restore refuses while another
 //! reading of the record is live and derives keyed aggregates again, refusal
 //! is per batch and resuming reaches the uninterrupted result, replay archives
@@ -205,7 +205,7 @@ async fn state(conn: &mut PgConnection, event: &Event) -> &'static str {
     }
 }
 
-/// The state order law, checked over the whole store: every event's state
+/// The state order, checked over the whole store: every event's state
 /// is at least each parent's (live < archived < tombstoned).
 async fn assert_state_order(conn: &mut PgConnection) {
     let violations: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx::query_as(

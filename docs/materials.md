@@ -199,21 +199,3 @@ Decided target (2026-11-01). Materials come first and parsers whenever, so an ag
 4. ship the parser. A passive notice says how many stored materials it can read ("parser google.travel 1 can read 6 stored materials (2 exports)"), and `replay "materials where parser is none and candidates contain P" --parser P` reads them.
 
 `parsers [--unread]` lists parsers, their versions and the stored-unparsed materials per candidate. `replay QUERY --compare` shows, per field, how many readings change, with a sample of before and after pairs, and writes nothing ([replay](lifecycle.md#replay)). Over MCP, `stage` and `replay` are rows of `sinex_act` (replay compares by default) and `parser try` is a row of `sinex_read`.
-
-## Laws
-
-- **bytes-read-back-equal**: a material's bytes read back equal the bytes acquired, for empty, small, multi-frame and larger-than-memory inputs; a range read decompresses only the frames it needs; a corrupted frame is an error naming the material.
-- **replay-reads-stored-copy**: replay after the original file is deleted reads the stored bytes and produces the same records.
-- **no-material-per-poll**: no poll makes its own material; a growing input's parts rotate only at their declared bounds.
-- **metadata-exhaustive**: an observation records every readable metadata item, and an unreadable one is recorded unavailable with a reason; GNU tar is the restore oracle for directory captures.
-- **stage.shapes**: `stage` of a file, a directory, a live SQLite database and a SQLite export each produce the material shape in [one-shot staging](#one-shot-staging), an operation row and a run.
-- **stage.strict-detection**: a file matching no declared structure is stored with no parser and no candidates; one matching two is stored with no parser and both listed; detection never assigns a parser of another origin; a member two sources would read is read by neither.
-- **stage.inventory-total**: for a staged export, every member appears in the inventory exactly once, as read, failed or stored and not interpreted.
-- **stage.agent-roots**: an agent staging a path outside the declared source locations and the operator's staging roots is refused with those roots; the operator stages it.
-- **stage.idempotent-progress**: killing a stage at any point and running it again reaches the same live readings and the same accounting.
-- **acct.identity**: for every product of a stage, records framed = read + headers + failures, and readings offered = new + same + revised + older + superseded.
-- **stage.without-parser**: staging with no matching parser stores the material byte for byte with no parser and the candidates; a later replay with `--parser` reads it.
-- **stage.restage-two-materials-one-live-reading**: staging byte-identical content twice from two paths yields two materials and one live reading per record; staging the same unchanged path again reads nothing new.
-- **streams-stored-before-commit**: a live stream's bytes are in material parts before their events commit.
-- **parser.arrival-reads-backlog**: after a parser for candidate materials ships, `replay … --parser` reads exactly the stored-unparsed materials it matches, and that parser's backlog count drops to zero. *(integration; decided target)*
-- **parser.try-admits-nothing**: `parser try` over any material leaves the commit position unchanged. *(integration; decided target)*

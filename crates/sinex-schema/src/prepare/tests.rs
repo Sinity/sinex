@@ -79,7 +79,6 @@ async fn key_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
     .unwrap()
 }
 
-/// law: prepared-copy-mirrors
 #[devkit::test]
 async fn prepared_copy_mirrors_every_change_and_is_swapped_in(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -147,7 +146,6 @@ async fn key_rows_from_text(conn: &mut PgConnection) -> Vec<serde_json::Value> {
     .unwrap()
 }
 
-/// law: prepared-copy-mirrors
 /// A batch waits for an update and a delete in flight, and copies what they
 /// left; their mirror already applied them.
 #[devkit::test]

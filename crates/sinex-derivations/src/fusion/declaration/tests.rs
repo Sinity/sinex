@@ -31,7 +31,6 @@ fn the_shipped_declaration_holds_the_defined_families() {
     }
 }
 
-/// law: fus.defined-only
 #[devkit::test]
 fn a_family_without_a_written_definition_refuses_to_start() {
     let mut text = shipped();

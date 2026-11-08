@@ -78,7 +78,6 @@ A parser fix re-reads old bytes into a new reading without making them a newer s
 
 How queries use these clocks is in [query](query.md); the clocks themselves and the logical day are in [architecture](architecture.md#configuration-and-clocks).
 
-
 Time from other hosts carries clock evidence (clock identity, measured offset and monotonic anchors), labelled and never rewritten ([time across hosts](hosts.md#time-across-hosts)).
 
 ## Identity
@@ -86,7 +85,6 @@ Time from other hosts carries clock evidence (clock identity, measured offset an
 A field key uses the fields the kind declares. The material and its input locate
 the bytes; their assigned IDs never salt that key. The same source record read
 from another export therefore compares with its existing live reading.
-
 
 ### Two identities and one key
 
@@ -178,17 +176,3 @@ A new derivation version is compared with the old one on real data before it swi
 - `keep_history`: the new version applies from the switch onward.
 
 Until a switch, the new version processes new inputs from its committed position. **Nothing recomputes history at daemon start.** Status lists derivations with mixed versions and pending switches. Execution and the switch itself are in [derivations](derivations.md#versions).
-
-## Laws
-
-- **one-origin**: every event has exactly one origin, enforced by the builder, the wire format, a CHECK and the parent-list type.
-- **events-immutable**: no UPDATE and no DELETE of an event row succeeds for any role, except the tombstone operation clearing an archived reading's payload.
-- **one-live-reading**: at most one live reading per record coordinates, kind and output index, and per keyed `(source, kind, key)`, after every commit, under concurrent batches.
-- **repeat-suppressed-advances-order**: a repeat with the same key and record hash is suppressed and advances the reading order; readings 10 (A), 30 (A), late 20 (B) leave A live.
-- **later-changed-reading-supersedes**: a later changed reading in one namespace supersedes the live one; an older one is suppressed; readings from two sources never meet under one key.
-- **removed-at-source-is-a-reading**: removed at source is a newer `removed` reading; an older export cannot revive the record; a reappearance is a newer `present` reading.
-- **keys-exclude-volatile-parts**: keys never contain content of a superseding kind, the material, the run or the producer version, checked per kind against real example inputs.
-- **alignment-keeps-keys**: alignment of a rewritten history keeps surviving lines' keys at any history length, and ambiguity creates records.
-- **record-hash-independent-of-privacy**: record hashes are equal before and after any privacy rule change.
-- **time-never-invented**: unknown time stays unknown; a suspect time is kept and labelled; a captured time beyond the skew is refused by the CHECK.
-- **producer-version-exact**: every event's producer version is exact, and a daemon start with a changed derivation version recomputes no history.

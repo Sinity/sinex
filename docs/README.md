@@ -1,7 +1,7 @@
 # Sinex documentation
 
 These pages are the design of record: what Sinex does, its model and formats,
-the laws its tests check, and the reasons behind the choices. They describe
+and the reasons behind the choices. They describe
 Sinex as designed. CLI help, MCP tool schemas and module documentation
 describe the current build. The [reference index](reference/README.md)
 distinguishes current artifacts from planned generated pages; the work
@@ -34,7 +34,7 @@ discovery input; its generator and test are described in
 | [web.md](web.md) | Today, the reader web, keys and counterparts |
 | [library.md](library.md) | the library: items with any locator, encounters, page captures, curation, rankings, the link to Polylogue |
 | [operations.md](operations.md) | deployment, the NixOS and Home Manager modules, configuration, backup and restore |
-| [testing.md](testing.md) | the test database, the synthetic world, laws and their tests, crash, VM and fuzz tests, benchmarks |
+| [testing.md](testing.md) | the test database, the synthetic world, the properties tested, crash, VM and fuzz tests, benchmarks |
 | [vocabulary.md](vocabulary.md) | each concept and its one name |
 | [reference/](reference/README.md) | current catalog and planned generated pages for commands, settings, kinds, sources, query tables and derivations |
 
@@ -58,14 +58,9 @@ How Polylogue uses Sinex is in Polylogue's
   Polylogue's [documentation index](https://github.com/Sinity/polylogue/blob/master/docs/README.md),
   shared by both products. A default the operator may still change is marked
   "(default; open operator question)".
-- **Laws.** Every area page ends with `## Laws`: properties with stable keys,
-  each checked by tests named after the key
-  ([testing.md](testing.md#laws-and-their-tests)). A law's stored key takes the scope
-  `sx.` (`sx.cov.no-false-empty`), which the pages omit; a law both products run lives
-  in its shared suite in common under that suite's scope.
-- **Decided targets.** A section or law marked *decided target* states a decision
+- **Decided targets.** A section marked *decided target* states a decision
   (most from the 2026-11-01 feature designs) that the code does not implement yet. Its
-  laws are its acceptance, and the work is tracked outside the repository. Unmarked text
+  acceptance and the work is tracked outside the repository. Unmarked text
   is the design as the code is meant to hold it.
 - **Planned generated pages** under [reference/](reference/README.md#planned-pages)
   will be rendered by `cargo xtask docs` from the code's declarations. The

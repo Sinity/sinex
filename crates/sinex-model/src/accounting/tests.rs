@@ -17,7 +17,6 @@ fn balanced() -> Accounting {
     }
 }
 
-/// law: sx.acct.identity
 #[devkit::test]
 fn acct_identity_holds_and_names_each_side_that_does_not() {
     assert_eq!(balanced().balanced(), Ok(()));

@@ -68,7 +68,6 @@ fn kitty_end(execution: &str, secs: i64) -> Event {
     .unwrap()
 }
 
-/// law: fus.token-exact
 #[devkit::test]
 async fn a_token_read_reaches_the_commands_end_and_stops_at_its_lifetime(
     db: devkit::pg::TestDatabase,

@@ -324,7 +324,6 @@ fn closest_pairs_win_and_extras_stay_alone() {
     assert_eq!(read.iter().filter(|f| f["members"].is_array()).count(), 1);
 }
 
-/// law: fusion-basis
 #[devkit::test]
 fn every_choice_among_candidates_records_ambiguity_and_duplicate_rows() {
     let inputs = [
@@ -481,7 +480,6 @@ fn result_does_not_depend_on_input_order() {
     );
 }
 
-/// law: stable-ties
 #[devkit::test]
 fn equal_times_group_alike_whatever_the_reading_ids_and_commit_order() {
     // Two equal candidates at the same distance: which one wins depends on
@@ -502,7 +500,6 @@ fn equal_times_group_alike_whatever_the_reading_ids_and_commit_order() {
     }
 }
 
-/// law: fus.no-singletons
 #[devkit::test]
 fn no_fused_record_has_fewer_than_two_members() {
     let commands = fuse_events(
@@ -662,7 +659,6 @@ fn token(secs: f64, n: u32) -> String {
     )
 }
 
-/// law: fus.token-exact
 #[devkit::test]
 fn readings_sharing_an_execution_token_associate_whatever_their_time_distance() {
     // The shell's report holds the token from the command's start; kitty's
@@ -687,7 +683,6 @@ fn readings_sharing_an_execution_token_associate_whatever_their_time_distance() 
     }
 }
 
-/// law: fus.token-exact
 #[devkit::test]
 fn a_token_read_stops_at_the_tokens_lifetime() {
     // The command ran 5 s. A record holding its token three days later is
@@ -756,7 +751,6 @@ fn a_command_end_never_counts_as_a_command_of_its_own() {
     assert_eq!(occurrences(commands(), &[row, end]).len(), 1);
 }
 
-/// law: fus.token-exact
 #[devkit::test]
 fn a_command_end_dirties_the_hour_its_command_started_in() {
     // Kitty's end arrives hours after the report; admitting it must
@@ -871,7 +865,6 @@ fn a_report_atuin_row_and_history_line_are_one_command() {
     assert_eq!(read.len(), 1);
 }
 
-/// law: fus.scope-partitions
 #[devkit::test]
 fn readings_from_different_hosts_or_accounts_never_associate() {
     // Same identifier, same command, same instant, different hosts.
@@ -893,7 +886,6 @@ fn readings_from_different_hosts_or_accounts_never_associate() {
     assert!(fuse(mail(), &[first, second]).is_empty());
 }
 
-/// law: fusion-scope
 #[devkit::test]
 fn one_fused_group_never_holds_two_observations_from_one_member() {
     // Two Atuin rows both named by reports; each report joins its own row.
@@ -1015,7 +1007,6 @@ fn agent_decisions_are_recorded_and_govern_only_where_the_family_admits_them() {
     assert_eq!(rows[0]["decided_by"], OPERATOR);
 }
 
-/// law: judgments-survive
 #[devkit::test]
 fn a_revision_supersedes_and_a_withdrawal_returns_the_pair_to_the_rules() {
     let a = atuin("deploy", H + 10.0, 0);
@@ -1081,7 +1072,6 @@ fn an_authors_conflicting_heads_are_no_decision() {
     assert_eq!(rows[0]["state"], "undecided");
 }
 
-/// law: judgments-survive
 #[devkit::test]
 fn a_decision_survives_replay_of_either_side() {
     // Decisions cite records, so a new reading of a side (new event ID, new
@@ -1173,7 +1163,6 @@ fn a_message_in_imap_and_an_mbox_is_one_message() {
     assert_eq!(joined["subject"], "about <1@x>");
 }
 
-/// law: fusion-basis
 #[devkit::test]
 fn mail_with_equal_message_id_in_one_account_fuses_without_date_agreement() {
     let inputs = [

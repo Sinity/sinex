@@ -75,7 +75,7 @@ Undo, archive, restore and replay are ordinary, everyday features; tombstoning i
 
 ## Whole chains move together
 
-**State order law.** With live < archived < tombstoned, every event's state is at least each of its parents' states. So a live event's parents are all live, and a tombstoned event's descendants are all tombstoned. An archived output of a still-live parent, as a derivation version change produces, is allowed. (ruling 2025-07, aistudio:Sinex core.events, audit.log refactoring:44).
+**State order.** With live < archived < tombstoned, every event's state is at least each of its parents' states. So a live event's parents are all live, and a tombstoned event's descendants are all tombstoned. An archived output of a still-live parent, as a derivation version change produces, is allowed. (ruling 2025-07, aistudio:Sinex core.events, audit.log refactoring:44).
 
 - **The cascade is mandatory, never a flag**, whatever the reason for archiving: an operator's or agent's archive, replay, a newer reading, a version change.
 - **Every transition walks the chain** from the root down through `parents`, and for keyed aggregates through their read ranges, to the last derived event. Each batch moves the complete chains it takes in one transaction.
@@ -166,25 +166,3 @@ Every user act that changes state is an **operation**: stage, archive, restore, 
 - **Operations have no workflow states**: no preview, approval, expiry or cancel lifecycle. A multi-batch operation's saved position is progress, not a state; it ends ok or `stopped_early`, and a stopped one resumes from its position. A `--compare` is a read and writes nothing.
 - **The actor is computed by the daemon** from the authenticated caller: the operator, an agent session with its harness and session ID, an outside producer's credential, or `sinexd` itself. No command supplies it. Writes through the API keep their actor. How callers are authenticated is in [callers](interfaces.md#callers).
 - **No act is refused because the caller is an agent.** Agents have the same lifecycle powers as the operator; what differs is the recorded actor.
-
-## Laws
-
-- **state-order**: every event's state is at least each parent's state, after every operation.
-- **archive-moves-whole-chains**: archive by reference, query, material and run moves whole chains; the answer's cascade equals `--compare`'s, and `--compare` writes nothing.
-- **refusal-per-batch**: an archive or restore with one unmovable member in its first batch changes nothing; with one in batch N > 1, batches 1..N−1 stay moved, the operation ends `stopped_early` naming what moved, and resuming it after the cause is cleared reaches the same final state as an uninterrupted run.
-- **restore-refused-while-other-reading-live**: restore is refused while a different reading of the record is live, and succeeds after that reading is archived.
-- **restore-rederives-aggregates**: restoring an input of a keyed aggregate produces a new aggregate reading while the old aggregate row stays archived; a restore of chains that left in one multi-batch operation brings back exactly that operation's chains.
-- **dirty-keys-wait-for-operation**: no keyed aggregate reading is admitted over keys an operation dirtied until its last batch (or `stopped_early` end); then each such key recomputes once.
-- **aggregate-children-per-range**: an aggregate over N inputs in R read ranges writes R `event_children` rows, and archiving any one input archives the aggregate.
-- **replay-archives-replaced-readings**: replay of a single event, a derived subtree, a material and a query result archives exactly the replaced readings and their chains and mints new IDs; replaying twice gives two archived readings and one live per record.
-- **replay-failure-keeps-old-reading**: a parse failure in replay leaves the old reading live, and an all-empty material replay leaves the old readings live.
-- **replay-resumes**: a replay killed between transactions resumes to the same final live content as an uninterrupted replay, with one live reading per record at every commit.
-- **undo-swaps-forever**: undo of a replay restores the previous readings, undo of the undo swaps back, and repeated N times the live set alternates while the archive holds every reading.
-- **archive-material-archives-readings**: archiving a material archives everything read from it, and a new stage of the same bytes is admitted live.
-- **tombstone-only-archived**: tombstone is refused for any live member; a tombstoned event keeps exactly the skeleton fields; nothing restores it.
-- **tombstone-allows-new-readings**: after tombstoning a record's readings, replay of its live material and a re-stage of identical bytes both admit new live readings.
-- **no-dead-parents**: no admitted event names a tombstoned parent, and an output whose parent was archived meanwhile is dropped as `superseded_input`.
-- **material-tombstone-spares-shared-bytes**: tombstoning a material removes its bytes only when no other material shares them; unrelated materials' bytes and offsets are identical before and after.
-- **tombstone-clears-copies**: tombstoning clears the readings' search entries, detector hits, annotations and confirmed-stream messages.
-- **as-of-reads-exact**: as-of reads at every commit position of a scripted history return the live set that held at that position.
-- **operations-recorded-with-actor**: every state-changing act writes an operation with the computed actor, and an API write keeps its actor.
