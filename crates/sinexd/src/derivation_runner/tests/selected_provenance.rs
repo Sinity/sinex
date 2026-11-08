@@ -15,12 +15,10 @@ async fn stored_product_versions_follow_exact_output_parents(db: devkit::pg::Tes
         ..Computed::default()
     };
     let mut conn = PgConnection::connect(&world.url).await.unwrap();
-    selected::stamp(
+    provenance::stamp(
         &mut conn,
         &crate::analysis::stored::StoredProducts,
         &json!({"request":"synthetic"}),
-        &[selected, unused],
-        None,
         7,
         &mut computed,
     )

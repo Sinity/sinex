@@ -569,7 +569,10 @@ decides which prompts may be sent (default; open operator question).
   commit cursor. A matching commit admitted after that notice is beyond the initial
   cursor floor and is delivered once.
 - Event follows wait for the search read model's durable position, including queries
-  without an explicit text predicate. Projection lag delays delivery. Read-model
+  without an explicit text predicate. Projection lag delays delivery. An event whose
+  text the search index refuses (a full-text vector over PostgreSQL's size limit) is
+  recorded in `core.search_refusals`, counted by `status` as `search_index.refused`,
+  and passed; it never holds the position. Read-model
   completion wakes subscriptions, and each captured batch stays within its lower
   exclusive and upper inclusive commit positions across every page.
 - Each message carries its commit or stream position as the SSE `id`. A reconnect with

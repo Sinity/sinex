@@ -16,10 +16,7 @@ mod selected;
 pub mod signals;
 pub use products::{current_grants, event_payload, key_dirty, live_payload};
 pub use saved::{saved_definitions, saved_records};
-pub use selected::{
-    SelectedAnswer, check_selected_question, resolve_recall, selected_page, selected_query,
-    selected_query_in_snapshot,
-};
+pub use selected::{SelectedAnswer, selected_page};
 mod source_views;
 pub(crate) mod sql;
 mod walk;
@@ -124,7 +121,7 @@ pub async fn run(
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
-    run_inner(conn, text, query, ctx, page, None, false, false, None)
+    run_inner(conn, text, query, ctx, page, false, false, None)
         .await
         .map(|selected| selected.answer)
 }
@@ -137,19 +134,9 @@ pub async fn run_operation(
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
-    run_inner(
-        conn,
-        text,
-        None,
-        ctx,
-        page,
-        None,
-        false,
-        false,
-        Some(operation),
-    )
-    .await
-    .map(|selected| selected.answer)
+    run_inner(conn, text, None, ctx, page, false, false, Some(operation))
+        .await
+        .map(|selected| selected.answer)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -159,7 +146,6 @@ async fn run_inner(
     query: Option<&Query>,
     ctx: &Context,
     page: &Page,
-    retained: Option<&sinex_model::event_types::analysis::QuerySelection>,
     capture_selection: bool,
     in_snapshot: bool,
     operation: Option<&sinex_model::query::native::Template>,
@@ -185,9 +171,7 @@ async fn run_inner(
         ));
     }
     let grants = current_grants(&mut tx).await?;
-    let mut question_form = retained
-        .and_then(|selection| selection.original_question.clone())
-        .map_or_else(|| continuation::query_identity(text, &ctx), Ok)?;
+    let mut question_form = continuation::query_identity(text, &ctx)?;
     let mut question_id = continuation::identity("query", &question_form, &grants)?;
     let seal = continuation::seal_key(&mut tx).await?;
     let pinned = if let Some(raw) = page.cursor.as_deref() {
@@ -224,26 +208,6 @@ async fn run_inner(
             }
             declarations
         }
-        None if retained.is_some() => {
-            let expected: Vec<(sinex_model::KindRef, String)> =
-                serde_json::from_value(retained.expect("retained context").declarations.clone())
-                    .map_err(|error| Error::Invalid(error.to_string()))?;
-            let refs: Vec<_> = expected
-                .iter()
-                .map(|(reference, _)| reference.clone())
-                .collect();
-            let declarations = sinex_schema::kinds::load(&mut tx, &refs).await?;
-            if expected.iter().any(|(reference, hash)| {
-                declarations
-                    .get(reference)
-                    .is_none_or(|declaration| declaration.definition_hash() != *hash)
-            }) {
-                return Err(Error::Invalid(
-                    "query declaration snapshot is unavailable".into(),
-                ));
-            }
-            declarations
-        }
         None => sinex_schema::kinds::all(&mut tx).await?,
     };
     ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
@@ -253,10 +217,8 @@ async fn run_inner(
         let parsed = sinex_model::query::bind(text, &ctx).ok();
         (parsed.as_ref() != Some(q)).then(|| format!("{q:?}"))
     });
-    let mut saved_context = retained.map(|selection| selection.definitions.clone());
-    let execution = if let Some(retained) = retained {
-        Some(retained.template.clone())
-    } else if let Some(operation) = operation {
+    let mut saved_context = None;
+    let execution = if let Some(operation) = operation {
         Some(operation.clone())
     } else if query.is_none() {
         if let Some(name) = sinex_model::query::saved::reference_name(text) {
@@ -301,15 +263,11 @@ async fn run_inner(
     .fetch_one(&mut *tx)
     .await?;
     let scope = (scope.user, scope.grants);
-    let definition_evidence = if let Some(retained) = retained {
-        retained.selected.get("_saved").cloned()
-    } else {
-        saved_context
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|error| Error::Invalid(error.to_string()))?
-    };
+    let definition_evidence = saved_context
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| Error::Invalid(error.to_string()))?;
     let question = cursor::question_from_evidence(
         question_form,
         programmatic,
@@ -339,11 +297,6 @@ async fn run_inner(
                 _ => {}
             }
         }
-    }
-    if page.cursor.is_none()
-        && let Some(position) = retained.and_then(|retained| retained.read_as)
-    {
-        seq = position;
     }
     if seq < 0 || seq > current {
         return Err(Error::Invalid(
@@ -458,10 +411,7 @@ async fn run_inner(
         }
         Source::Recall { .. } | Source::RecallLast { .. } | Source::RecallMark { .. } => {
             read.check_availability()?;
-            let selection = match retained {
-                Some(retained) => recall::retained(&mut tx, retained, &read.ctx, read.seq).await?,
-                None => recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?,
-            };
+            let selection = recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?;
             let as_events = Query {
                 source: Source::Table {
                     table: Table::Events,

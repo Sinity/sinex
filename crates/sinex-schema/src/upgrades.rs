@@ -80,6 +80,7 @@ pub(crate) const NAMED: &[&str] = &[
     "stage_without_parser",
     "library_curation",
     "online_backup_holds",
+    "search_refusals",
 ];
 
 #[cfg(test)]
@@ -161,6 +162,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(crate::stage_without_parser::statements());
     steps.push(crate::library_curation::statements());
     steps.push(crate::backups::statements());
+    steps.push(vec![crate::tables::SEARCH_REFUSALS.into()]);
     steps
 }
 

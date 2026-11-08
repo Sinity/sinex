@@ -1,4 +1,4 @@
-//! Complete query-backed derivation inputs through the ordinary query compiler.
+//! The rows and exact provenance of one recall page, for historical previews.
 use super::*;
 use serde_json::json;
 use sinex_model::event_types::analysis::QuerySelection;
@@ -17,132 +17,6 @@ pub struct SelectedAnswer {
     pub parents: Vec<EventId>,
     pub class: Class,
     pub signature: String,
-}
-
-/// Resolve a relative/session/mark selector once, before its request is admitted.
-pub async fn resolve_recall(
-    conn: &mut PgConnection,
-    text: &str,
-    ctx: &Context,
-) -> Result<QuerySelection> {
-    let template = if sinex_model::query::saved::reference_name(text).is_some() {
-        None
-    } else {
-        Some(sinex_model::query::native::parse(text, ctx)?)
-    };
-    run_inner(
-        conn,
-        text,
-        None,
-        ctx,
-        &Page {
-            size: Some(1),
-            cursor: None,
-        },
-        None,
-        true,
-        false,
-        template.as_ref(),
-    )
-    .await?
-    .selection
-    .ok_or_else(|| Error::Invalid("a selected context requires a recall question".into()))
-}
-
-/// Read all rows of a retained selector. Query paging bounds each database read;
-/// the complete stored product has no presentation limit.
-pub async fn selected_query(
-    conn: &mut PgConnection,
-    selection: &QuerySelection,
-) -> Result<SelectedAnswer> {
-    complete(conn, selection, false).await
-}
-
-pub async fn selected_query_in_snapshot(
-    conn: &mut PgConnection,
-    selection: &QuerySelection,
-) -> Result<SelectedAnswer> {
-    complete(conn, selection, true).await
-}
-
-async fn complete(
-    conn: &mut PgConnection,
-    selection: &QuerySelection,
-    in_snapshot: bool,
-) -> Result<SelectedAnswer> {
-    let previous: String =
-        sqlx::query_scalar("SELECT coalesce(current_setting('sinex.grants', true), '')")
-            .fetch_one(&mut *conn)
-            .await?;
-    set_grants(conn, &selection.grants.join(",")).await?;
-    let result = async {
-        let now = jiff::Timestamp::from_nanosecond(selection.now.unix_ns())
-            .map_err(|error| Error::Invalid(error.to_string()))?;
-        let zone = jiff::tz::TimeZone::get(&selection.zone)
-            .map_err(|error| Error::Invalid(error.to_string()))?;
-        let day_start = selection
-            .day_start
-            .parse()
-            .map_err(|error: jiff::Error| Error::Invalid(error.to_string()))?;
-        let ctx = Context::new(now, zone, day_start);
-        let mut page = Page {
-            size: Some(5_000),
-            cursor: None,
-        };
-        let mut first: Option<SelectedAnswer> = None;
-        loop {
-            let next = run_inner(
-                conn,
-                &selection.query,
-                None,
-                &ctx,
-                &page,
-                Some(selection),
-                first.is_none(),
-                in_snapshot,
-                None,
-            )
-            .await?;
-            let cursor = next.answer.page.cursor.clone();
-            if let Some(first) = &mut first {
-                if first.answer.resolved != next.answer.resolved
-                    || first.answer.recall != next.answer.recall
-                {
-                    return Err(Error::StaleCursor);
-                }
-                first.answer.rows.extend(next.answer.rows);
-            } else {
-                let signature = next
-                    .selection
-                    .as_ref()
-                    .and_then(|selection| selection.selected["_fingerprint"].as_str())
-                    .ok_or_else(|| {
-                        Error::Invalid("selected query fingerprint is unavailable".into())
-                    })?
-                    .to_owned();
-                first = Some(SelectedAnswer {
-                    answer: next.answer,
-                    parents: next.parents,
-                    class: next.class,
-                    signature,
-                });
-            }
-            match cursor {
-                Some(cursor) => page.cursor = Some(cursor),
-                None => break,
-            }
-        }
-        let mut selected = first.expect("a query returns its first page, including empty answers");
-        selected.answer.page.cursor = None;
-        selected.answer.page.size = u64::try_from(selected.answer.rows.len()).map_err(|_| {
-            Error::Invalid("selected answer row count is outside the archive range".into())
-        })?;
-        Ok(selected)
-    }
-    .await;
-    let restored = set_grants(conn, &previous).await;
-    restored?;
-    result
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -247,57 +121,6 @@ pub(super) async fn capture(
     Ok((selection, ids.into_iter().map(EventId).collect(), class))
 }
 
-/// A pack cursor cannot be used as a page of a different bound question.
-pub async fn check_selected_question(
-    conn: &mut PgConnection,
-    text: &str,
-    selection: &QuerySelection,
-) -> Result<()> {
-    let expected: Vec<(sinex_model::KindRef, String)> =
-        serde_json::from_value(selection.declarations.clone())
-            .map_err(|error| Error::Invalid(error.to_string()))?;
-    let references: Vec<_> = expected
-        .iter()
-        .map(|(reference, _)| reference.clone())
-        .collect();
-    let declarations = sinex_schema::kinds::load(conn, &references).await?;
-    if expected.iter().any(|(reference, hash)| {
-        declarations
-            .get(reference)
-            .is_none_or(|declaration| declaration.definition_hash() != *hash)
-    }) {
-        return Err(Error::Invalid(
-            "query declaration snapshot is unavailable".into(),
-        ));
-    }
-    let now = jiff::Timestamp::from_nanosecond(selection.now.unix_ns())
-        .map_err(|error| Error::Invalid(error.to_string()))?;
-    let zone = jiff::tz::TimeZone::get(&selection.zone)
-        .map_err(|error| Error::Invalid(error.to_string()))?;
-    let day_start = selection
-        .day_start
-        .parse()
-        .map_err(|error: jiff::Error| Error::Invalid(error.to_string()))?;
-    let mut ctx = Context::new(now, zone, day_start);
-    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
-        declarations.into_values(),
-    ));
-    if selection.original_question.is_some() && text.trim() == selection.query.trim() {
-        return Ok(());
-    }
-    let requested = if sinex_model::query::saved::reference_name(text).is_some() {
-        sinex_model::query::saved::template_saved(text, &ctx, &selection.definitions)?
-    } else {
-        sinex_model::query::native::parse(text, &ctx)?
-    };
-    if selection.template.identity()? != requested.identity()? {
-        return Err(Error::Invalid(
-            "recall cursor belongs to a different bound question".into(),
-        ));
-    }
-    Ok(())
-}
-
 /// Historical previews use the same selected rows and exact provenance without
 /// admitting a new live output over inputs that may already be archived.
 pub async fn selected_page(
@@ -305,27 +128,13 @@ pub async fn selected_page(
     text: &str,
     ctx: &Context,
     page: &Page,
-    selection: Option<&QuerySelection>,
 ) -> Result<SelectedAnswer> {
-    let template = if let Some(selection) = selection {
-        Some(selection.template.clone())
-    } else if sinex_model::query::saved::reference_name(text).is_some() {
+    let template = if sinex_model::query::saved::reference_name(text).is_some() {
         None
     } else {
         Some(sinex_model::query::native::parse(text, ctx)?)
     };
-    let selected = run_inner(
-        conn,
-        text,
-        None,
-        ctx,
-        page,
-        selection,
-        true,
-        false,
-        template.as_ref(),
-    )
-    .await?;
+    let selected = run_inner(conn, text, None, ctx, page, true, false, template.as_ref()).await?;
     let signature = selected
         .selection
         .as_ref()

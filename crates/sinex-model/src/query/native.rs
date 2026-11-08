@@ -196,7 +196,7 @@ fn scalar(value: &syntax::Value) -> Result<&str, QueryError> {
 }
 fn seconds(value: Option<&syntax::Value>) -> Result<f64, QueryError> {
     let Some(value) = value else {
-        return Ok(1800.0);
+        return Ok(900.0);
     };
     let duration = query_language::time::duration(scalar(value)?)
         .ok_or_else(|| QueryError::new("recall radius needs a positive duration"))?;

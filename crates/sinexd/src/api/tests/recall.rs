@@ -347,7 +347,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
 }
 
 #[devkit::test]
-async fn recall_brief_and_machine_render_one_stored_context_pack(db: devkit::pg::TestDatabase) {
+async fn recall_does_not_write(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit_events(
         &w,
@@ -358,66 +358,40 @@ async fn recall_brief_and_machine_render_one_stored_context_pack(db: devkit::pg:
         ),
     )
     .await;
-    let (_, recall) = call(
-        &w,
-        Some(READ),
-        json!({"method":"recall","around":"last","cwd":"/src/tide","page":1}),
-    )
-    .await;
-    assert_eq!(recall["outcome"], "ok", "{recall}");
-    let citation = recall["result"]["context_pack"].as_str().unwrap();
-    let (_, brief) = call(
-        &w,
-        Some(READ),
-        json!({"method":"brief","day":citation,"budget":4000}),
-    )
-    .await;
-    assert_eq!(brief["outcome"], "ok", "{brief}");
-    assert_eq!(
-        brief["result"]["context_pack"],
-        recall["result"]["context_pack"]
-    );
-    assert_eq!(
-        brief["result"]["presentation"],
-        recall["result"]["presentation"]
-    );
-    let (_, stored) = call(
-        &w,
-        Some(READ),
-        json!({"method":"show","reference":citation}),
-    )
-    .await;
-    assert_eq!(stored["outcome"], "ok", "{stored}");
-    assert!(
-        stored["result"]["event"]["payload"]["analysis"]["answer"]["rows"]
-            .as_array()
+    let count = |w: &World| {
+        let reads = w.reads.clone();
+        async move {
+            sqlx::query_as::<_, (i64, i64, i64)>(
+                "SELECT (SELECT count(*) FROM core.events),
+                        (SELECT count(*) FROM raw.materials),
+                        (SELECT value FROM core.counters WHERE name = 'commit_seq')",
+            )
+            .fetch_one(&reads)
+            .await
             .unwrap()
-            .len()
-            > 1
-    );
-    let old_cursor = recall["result"]["page"]["cursor"].as_str().unwrap();
-    admit_events(&w, facts("newer", &[(20, "/src/tide", None)], Class::Open)).await;
-    let (_, continued) = call(
-        &w,
-        Some(READ),
-        json!({"method":"recall","around":"last","cwd":"/src/tide","page":1,"cursor":old_cursor}),
-    )
-    .await;
-    assert_eq!(continued["outcome"], "ok", "{continued}");
+        }
+    };
+    let before = count(&w).await;
+    for request in [
+        json!({"method":"recall","around":"last","cwd":"/src/tide","page":1}),
+        json!({"method":"recall"}),
+        json!({"method":"query","query":"recall 2026-09-14T08:00:00Z"}),
+    ] {
+        let (_, recall) = call(&w, Some(READ), request).await;
+        assert_eq!(recall["outcome"], "ok", "{recall}");
+        assert!(recall["result"]["context_pack"].is_null(), "{recall}");
+        assert!(recall["result"]["text"].is_string(), "{recall}");
+        assert!(recall["result"]["presentation"]["sections"].is_array());
+    }
     assert_eq!(
-        continued["result"]["context_pack"],
-        recall["result"]["context_pack"]
-    );
-    assert_eq!(
-        continued["result"]["resolved"],
-        recall["result"]["resolved"]
+        count(&w).await,
+        before,
+        "a recall leaves the store unchanged"
     );
 }
 
 #[devkit::test]
-async fn saved_recall_and_context_continuations_keep_their_stored_selection(
-    db: devkit::pg::TestDatabase,
-) {
+async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     let activity = facts(
         "synthetic",
@@ -435,15 +409,8 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
     )
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
-    assert!(first["result"]["context_pack"].is_string());
+    assert!(first["result"]["text"].is_string(), "{first}");
     let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
-    let (_, changed) = call(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"query-save","name":"remember-tide","query":"events | fields id"}),
-    )
-    .await;
-    assert_eq!(changed["outcome"], "ok", "{changed}");
     let (_, next) = call(
         &w,
         Some(OPERATOR),
@@ -451,31 +418,30 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
     )
     .await;
     assert_eq!(next["outcome"], "ok", "{next}");
-    assert_eq!(
-        next["result"]["context_pack"],
-        first["result"]["context_pack"]
-    );
     assert_eq!(next["result"]["resolved"], first["result"]["resolved"]);
-    let (_, context) = call(
-        &w,
-        Some(READ),
-        json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1}),
-    )
-    .await;
-    assert_eq!(context["outcome"], "ok", "{context}");
-    assert_activity_context(&w, &context, &activity_ids).await;
+    let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1});
+    let context = assert_activity_context(&w, READ, &request, &activity_ids).await;
     assert_eq!(
         context["result"]["recall"]["to"], context["result"]["resolved"]["now"],
         "an open-ended window and its cursor share one evaluation clock"
     );
     let cursor = context["result"]["page"]["cursor"].as_str().unwrap();
-    for changed in [
+    // A different window is a different question; naming the cursor's own
+    // end explicitly is the same window and continues.
+    let (_, refused) = call(
+        &w,
+        Some(READ),
         json!({"method":"context","since":"2026-09-14T00:00:01Z","page":1,"cursor":cursor}),
+    )
+    .await;
+    assert_eq!(refused["outcome"], "refused", "{refused}");
+    let (_, same) = call(
+        &w,
+        Some(READ),
         json!({"method":"context","since":"2026-09-14T00:00:00Z","until":context["result"]["recall"]["to"],"page":1,"cursor":cursor}),
-    ] {
-        let (_, refused) = call(&w, Some(READ), changed).await;
-        assert_eq!(refused["outcome"], "refused", "{refused}");
-    }
+    )
+    .await;
+    assert_eq!(same["outcome"], "ok", "{same}");
     let (_, changed_grants) = call(
         &w,
         Some(OPERATOR),
@@ -483,35 +449,38 @@ async fn saved_recall_and_context_continuations_keep_their_stored_selection(
     )
     .await;
     assert_eq!(changed_grants["outcome"], "refused", "{changed_grants}");
-    let (_, next) = call(
-        &w,
-        Some(READ),
-        json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1,"cursor":cursor}),
-    )
-    .await;
-    assert_eq!(next["outcome"], "ok", "{next}");
-    assert_eq!(
-        next["result"]["context_pack"],
-        context["result"]["context_pack"]
-    );
-    assert_eq!(next["result"]["resolved"], context["result"]["resolved"]);
 }
 
-async fn assert_activity_context(w: &World, answer: &Value, expected: &[EventId]) {
-    let citation = answer["result"]["context_pack"].as_str().unwrap();
-    let id = uuid::Uuid::parse_str(citation.strip_prefix("sinex:ev/").unwrap()).unwrap();
-    let (class, parents, stored): (String, Vec<uuid::Uuid>, Value) =
-        sqlx::query_as("SELECT class,parents,payload FROM core.events WHERE id=$1")
-            .bind(id)
-            .fetch_one(&mut *w.reads.acquire().await.unwrap())
-            .await
-            .unwrap();
-    assert_eq!(class, "open");
-    let rows = stored["analysis"]["answer"]["rows"].as_array().unwrap();
-    let mut actual = rows
-        .iter()
-        .map(|row| EventId(uuid::Uuid::parse_str(row["id"].as_str().unwrap()).unwrap()))
-        .collect::<Vec<_>>();
+/// Read every page of a context request and check that its rows are exactly
+/// the expected activity: saved definitions and presentation bookkeeping are
+/// not activity. Returns the first page.
+async fn assert_activity_context(
+    w: &World,
+    caller: &str,
+    request: &Value,
+    expected: &[EventId],
+) -> Value {
+    let (_, first) = call(w, Some(caller), request.clone()).await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    let mut actual = Vec::new();
+    let mut page = first.clone();
+    loop {
+        assert_eq!(page["result"]["resolved"], first["result"]["resolved"]);
+        actual.extend(
+            page["result"]["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| EventId(uuid::Uuid::parse_str(row["id"].as_str().unwrap()).unwrap())),
+        );
+        let Some(cursor) = page["result"]["page"]["cursor"].as_str() else {
+            break;
+        };
+        let mut next = request.clone();
+        next["cursor"] = json!(cursor);
+        page = call(w, Some(caller), next).await.1;
+        assert_eq!(page["outcome"], "ok", "{page}");
+    }
     actual.sort_unstable();
     let mut expected = expected.to_vec();
     expected.sort_unstable();
@@ -519,25 +488,7 @@ async fn assert_activity_context(w: &World, answer: &Value, expected: &[EventId]
         actual, expected,
         "activity rows exclude definitions and presentation bookkeeping"
     );
-    let parent_kinds: Vec<(uuid::Uuid, String)> =
-        sqlx::query_as("SELECT id,event_type FROM core.events WHERE id=ANY($1)")
-            .bind(&parents)
-            .fetch_all(&mut *w.reads.acquire().await.unwrap())
-            .await
-            .unwrap();
-    let mut activity_parents = parent_kinds
-        .iter()
-        .filter(|(_, kind)| kind != "analysis.request")
-        .map(|(id, _)| EventId(*id))
-        .collect::<Vec<_>>();
-    activity_parents.sort_unstable();
-    assert_eq!(activity_parents, expected);
-    assert_eq!(
-        parent_kinds.len(),
-        expected.len() + 1,
-        "the pack also cites its own admitted question"
-    );
-    let digest = &stored["analysis"]["answer"]["recall"];
+    let digest = &first["result"]["recall"];
     assert!(
         digest["by_source"]
             .as_array()
@@ -553,6 +504,7 @@ async fn assert_activity_context(w: &World, answer: &Value, expected: &[EventId]
             .iter()
             .all(|row| row["event_type"] != "query.saved")
     );
+    first
 }
 
 #[devkit::test]
@@ -631,50 +583,22 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
             .any(|row| row["payload"]["query"] == "events | fields id")
     );
     let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","until":"2026-09-14T09:00:00Z","page":1});
-    let (_, public) = call(&w, Some(READ), request.clone()).await;
-    assert_eq!(public["outcome"], "ok", "{public}");
-    assert_activity_context(&w, &public, &activity_ids).await;
-    let cursor = public["result"]["page"]["cursor"].as_str().unwrap();
-    let mut continuation = request.clone();
-    continuation["cursor"] = json!(cursor);
-    let (_, next) = call(&w, Some(READ), continuation).await;
-    assert_eq!(next["outcome"], "ok", "{next}");
-    assert_eq!(
-        next["result"]["context_pack"],
-        public["result"]["context_pack"]
-    );
-    assert_eq!(next["result"]["resolved"], public["result"]["resolved"]);
-
+    assert_activity_context(&w, READ, &request, &activity_ids).await;
     let private = facts(
         "private",
         &[(2, "/src/private-activity", None)],
         Class::Guarded,
     );
-    let private_ids = private.iter().map(|event| event.id.0).collect::<Vec<_>>();
+    let private_ids = private.iter().map(|event| event.id).collect::<Vec<_>>();
     admit_events(&w, private).await;
+    // A reader sees that guarded activity exists without its content.
     let (_, hidden) = call(&w, Some(READ), request.clone()).await;
-    assert_eq!(hidden["outcome"], "refused", "{hidden}");
+    assert_eq!(hidden["outcome"], "ok", "{hidden}");
     assert!(!hidden.to_string().contains("/src/private-activity"));
-    let (_, permitted) = call(&w, Some(OPERATOR), request).await;
-    assert_eq!(permitted["outcome"], "ok", "{permitted}");
-    let citation = permitted["result"]["context_pack"].as_str().unwrap();
-    let id = uuid::Uuid::parse_str(citation.strip_prefix("sinex:ev/").unwrap()).unwrap();
-    let (class, parents): (String, Vec<uuid::Uuid>) =
-        sqlx::query_as("SELECT class,parents FROM core.events WHERE id=$1")
-            .bind(id)
-            .fetch_one(&mut *w.reads.acquire().await.unwrap())
-            .await
-            .unwrap();
-    assert_eq!(class, "guarded");
-    assert!(
-        private_ids.iter().all(|id| parents.contains(id)),
-        "selected Guarded activity remains exact parent evidence"
-    );
-    assert!(
-        definition_ids
-            .iter()
-            .all(|id| !parents.contains(&uuid::Uuid::parse_str(id).unwrap()))
-    );
+    let mut expected = activity_ids.clone();
+    expected.extend(private_ids);
+    let permitted = assert_activity_context(&w, OPERATOR, &request, &expected).await;
+    assert!(permitted.to_string().contains("private"));
 }
 
 #[devkit::test]
@@ -726,7 +650,7 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
         .unwrap();
     let (_, ordinary) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(ordinary["outcome"], "ok", "{ordinary}");
-    assert!(ordinary["result"]["context_pack"].is_string());
+    assert!(ordinary["result"]["historical_preview"].is_null());
     let (_, archived) = call(
         &w,
         Some(OPERATOR),
@@ -773,77 +697,7 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
     assert_eq!(next["result"]["resolved"], historical["result"]["resolved"]);
     let (_, current) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(current["outcome"], "ok", "{current}");
-    assert!(current["result"]["context_pack"].is_string());
     assert!(current["result"]["historical_preview"].is_null());
-}
-
-#[devkit::test]
-async fn unchanged_explicit_recall_recompute_reuses_its_read_context_and_reading(
-    db: devkit::pg::TestDatabase,
-) {
-    let w = world(db).await;
-    admit_events(
-        &w,
-        facts(
-            "synthetic",
-            &[(0, "/src/tide", None), (1, "/src/tide", None)],
-            Class::Open,
-        ),
-    )
-    .await;
-    let (_, before) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
-    assert_eq!(before["outcome"], "ok", "{before}");
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='context.pack'")
-            .fetch_one(&w.reads)
-            .await
-            .unwrap();
-    let connection = w.reads.acquire().await.unwrap().detach();
-    let mut runner = crate::derivation_runner::DerivationRunner::for_one(
-        connection,
-        w.writer.clone(),
-        "recall.products",
-        "h",
-        &Default::default(),
-        sinex_model::time_settings::TimeSettings::from_parts(
-            jiff::tz::TimeZone::get("UTC").unwrap(),
-            jiff::civil::Time::constant(4, 0, 0, 0),
-        ),
-    )
-    .await
-    .unwrap();
-    let comparison = runner.compare("recall.products", None, 5).await.unwrap();
-    assert_eq!(
-        (
-            comparison.same,
-            comparison.added,
-            comparison.changed,
-            comparison.removed
-        ),
-        (1, 0, 0, 0)
-    );
-    assert_eq!(
-        runner.recompute_all("recall.products", None).await.unwrap(),
-        1
-    );
-    runner.catch_up().await.unwrap();
-    runner.end_runs().await.unwrap();
-    let (_, after) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
-    assert_eq!(after["outcome"], "ok", "{after}");
-    assert_eq!(
-        after["result"]["context_pack"],
-        before["result"]["context_pack"]
-    );
-    assert_eq!(after["result"]["resolved"], before["result"]["resolved"]);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM core.events WHERE event_type='context.pack'"
-        )
-        .fetch_one(&w.reads)
-        .await
-        .unwrap(),
-        count
-    );
 }
 
 #[devkit::test]

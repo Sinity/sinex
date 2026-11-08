@@ -1,68 +1,14 @@
-//! The shared query compiler supplies query-backed keyed derivations.
+//! Producer versions and read positions stamped on analysis outputs.
 use super::*;
-use sinex_derivations::selected::SelectedInputs;
-
-pub(super) async fn read(
-    conn: &mut PgConnection,
-    derivation: &dyn AnyKeyed,
-    key: &Value,
-    inputs: &[Event],
-    env: &Env,
-    in_snapshot: bool,
-) -> Result<Option<SelectedInputs>, String> {
-    let request = if derivation.name() == "recall.products" {
-        let original = inputs.iter().find(|event| {
-            event.event_type == "analysis.request"
-                && event.payload.get("request") == key.get("request")
-        });
-        match original {
-            Some(original) => Some(
-                sinex_store::query::representation::analysis_request(conn, original.id)
-                    .await
-                    .map_err(|error| error.to_string())?,
-            ),
-            None => None,
-        }
-    } else {
-        None
-    };
-    let Some(selection) = derivation.selected_query(
-        key,
-        inputs,
-        request.as_ref().map(|checked| checked.request()),
-        env,
-    ) else {
-        return Ok(None);
-    };
-    let selected = if in_snapshot {
-        sinex_store::query::selected_query_in_snapshot(conn, &selection).await
-    } else {
-        sinex_store::query::selected_query(conn, &selection).await
-    }
-    .map_err(|error| error.to_string())?;
-    Ok(Some(SelectedInputs {
-        request: request.map(|checked| checked.into_request()),
-        read_as: selected.answer.resolved.commit_seq,
-        value: serde_json::to_value(selected.answer).map_err(|error| error.to_string())?,
-        parents: selected.parents,
-        class: selected.class,
-        signature: selected.signature,
-    }))
-}
 
 pub(super) async fn stamp(
     conn: &mut PgConnection,
     derivation: &dyn AnyKeyed,
     key: &Value,
-    _inputs: &[Event],
-    selected: Option<&SelectedInputs>,
     position: i64,
     computed: &mut sinex_derivations::Computed,
 ) -> Result<(), String> {
-    if !matches!(
-        derivation.name(),
-        "analysis.products" | "recall.products" | "context.packs"
-    ) {
+    if !matches!(derivation.name(), "analysis.products" | "context.packs") {
         return Ok(());
     }
     let mut versions_by_parents = BTreeMap::<Vec<sinex_model::EventId>, Value>::new();
@@ -73,7 +19,6 @@ pub(super) async fn stamp(
         .iter()
         .map(|event| (record_key(event), event))
         .collect();
-    let position = selected.map_or(position, |selected| selected.read_as);
     for output in &mut computed.outputs {
         let parents = parent_ids(output);
         let versions = if let Some(versions) = versions_by_parents.get(&parents) {
@@ -96,16 +41,6 @@ pub(super) async fn stamp(
             output.payload["read_as"] = position.into();
             if let Some(evaluated_at) = previous.payload.get("evaluated_at") {
                 output.payload["evaluated_at"] = evaluated_at.clone();
-            }
-            if let Some(previous) = previous
-                .payload
-                .pointer("/analysis/answer/resolved/commit_seq")
-                && let Some(resolved) = output
-                    .payload
-                    .pointer_mut("/analysis/answer/resolved")
-                    .and_then(Value::as_object_mut)
-            {
-                resolved.insert("commit_seq".into(), previous.clone());
             }
         }
         output.payload["producer_versions"] = versions;
@@ -142,12 +77,6 @@ fn semantic_payload(payload: &Value) -> Value {
         object.remove("read_as");
         object.remove("producer_versions");
         object.remove("evaluated_at");
-    }
-    if let Some(resolved) = payload
-        .pointer_mut("/analysis/answer/resolved")
-        .and_then(Value::as_object_mut)
-    {
-        resolved.remove("commit_seq");
     }
     payload
 }

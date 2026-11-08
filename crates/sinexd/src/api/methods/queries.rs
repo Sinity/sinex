@@ -137,20 +137,11 @@ impl Api {
         until: Option<String>,
         page: Page,
     ) -> Reply {
-        let question = json!({"surface":"context","since":since,"until":until});
         let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
-        let ctx = match super::recall::context_for_page(
-            &mut conn,
-            &self.context(),
-            &page,
-            &question,
-            &caller.grants,
-        )
-        .await
-        {
+        let ctx = match super::recall::context_for_page(&mut conn, &self.context(), &page).await {
             Ok(ctx) => ctx,
             Err(e) => return refused(e),
         };
@@ -177,12 +168,11 @@ impl Api {
         if start >= end {
             return refused("context end must follow its start");
         }
-        // The absolute window, stored pack and continuation share this clock.
-        self.recall_context(
+        // The absolute window and its continuation share this clock.
+        self.recall_in(
             caller,
             &format!("recall sinex:window/{start}/{end}"),
             page,
-            question,
             ctx,
         )
         .await
