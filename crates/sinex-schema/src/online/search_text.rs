@@ -7,6 +7,9 @@ use super::Task;
 use crate::Error;
 use sqlx::{Connection, PgConnection};
 
+#[cfg(test)]
+mod tests;
+
 /// The last search row the rewrite has handled, in `event_id` order.
 const MARK: &str = "CREATE TABLE sinex_schema.search_trigram_rewrite (
   id boolean PRIMARY KEY CHECK (id),
@@ -60,15 +63,7 @@ async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64
              ) batch ORDER BY event_id DESC LIMIT 1",
             after("event_id", resumed)
         ),
-        format!(
-            "WITH batch AS MATERIALIZED (
-               SELECT event_id FROM core.search_text
-               WHERE {} AND event_id <= $2::uuid)
-             UPDATE core.search_text s SET trigram_indexed = false
-             FROM batch b JOIN core.events e ON e.id = b.event_id
-             WHERE s.event_id = b.event_id AND s.trigram_indexed AND e.event_type = ANY($3)",
-            after("event_id", resumed)
-        ),
+        rewrite_statement(resumed),
     );
     let last: Option<String> = sqlx::query_scalar(next_batch.as_str())
         .bind(&mark)
@@ -92,6 +87,24 @@ async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64
         .await?;
     tx.commit().await?;
     Ok(Some(rewritten))
+}
+
+/// Fetch exact batch identities independently of the metadata join, so the
+/// hypertable retains selected-ID chunk exclusion under either join strategy.
+fn rewrite_statement(resumed: bool) -> String {
+    format!(
+        "WITH batch AS MATERIALIZED (
+           SELECT event_id FROM core.search_text
+           WHERE {} AND event_id <= $2::uuid),
+         selected_events AS MATERIALIZED (
+           SELECT rewrite_event.id, rewrite_event.event_type
+           FROM core.events rewrite_event
+           WHERE rewrite_event.id = ANY(ARRAY(SELECT event_id FROM batch)))
+         UPDATE core.search_text s SET trigram_indexed = false
+         FROM batch b JOIN selected_events e ON e.id = b.event_id
+         WHERE s.event_id = b.event_id AND s.trigram_indexed AND e.event_type = ANY($3)",
+        after("event_id", resumed)
+    )
 }
 
 /// The lower key bound after the mark, or none before the first batch.
