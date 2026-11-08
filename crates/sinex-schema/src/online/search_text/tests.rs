@@ -260,3 +260,55 @@ async fn search_rewrite_preserves_exact_ids_and_rolls_back_mark_with_flags(
     .unwrap();
     assert_eq!(actual, expected);
 }
+
+#[devkit::test]
+async fn search_rewrite_retirement_keeps_fresh_partial_index(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let before: i64 =
+        sqlx::query_scalar("SELECT 'core.search_text_trigram'::regclass::oid::bigint")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    // A finished rename followed by interruption before dropping the mark.
+    for statement in begin() {
+        conn.execute(statement.as_str()).await.unwrap();
+    }
+    assert_eq!(step(&mut conn, 7).await.unwrap(), None);
+    let after: i64 = sqlx::query_scalar("SELECT 'core.search_text_trigram'::regclass::oid::bigint")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(after, before);
+}
+
+#[devkit::test]
+async fn search_rewrite_retires_an_invalid_whole_index(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    fixture(&mut conn, 8).await;
+    conn.execute(
+        "DROP INDEX core.search_text_trigram; UPDATE core.search_text SET text='duplicate'",
+    )
+    .await
+    .unwrap();
+    assert!(
+        sqlx::raw_sql(
+            "CREATE UNIQUE INDEX CONCURRENTLY search_text_trigram ON core.search_text (text)"
+        )
+        .execute(&mut conn)
+        .await
+        .is_err()
+    );
+    let valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index WHERE indexrelid='core.search_text_trigram'::regclass",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert!(!valid);
+    assert_eq!(step(&mut conn, 3).await.unwrap(), Some(2));
+    let absent: bool = sqlx::query_scalar("SELECT to_regclass('core.search_text_trigram') IS NULL")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert!(absent);
+}

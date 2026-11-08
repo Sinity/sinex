@@ -68,7 +68,7 @@ ranking = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "
 signal-delivery = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 references = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
-devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", features = ["pg", "nats"] }
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", default-features = false, features = ["pg", "nats"] }
 async-nats = "0.47"
 # The NATS server checks passwords against bcrypt hashes in its config.
 bcrypt = "0.17"

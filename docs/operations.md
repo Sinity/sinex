@@ -48,7 +48,7 @@ Activating a new version does not change the schema. When a version brings a sch
 
 Before stopping the daemon, run `sinexd admin upgrade --prepare` from the new build as the Sinex user. It builds the work the upgrade can swap in while the old daemon serves, and returns when that work is complete; it is safe to run again after an interruption, and `sinexd admin upgrade --unprepare` removes it. Without it the upgrade still succeeds, but rewrites the equivalence keys while admission waits.
 
-After start, the daemon finishes the rest of the upgrade on its own ([admission.md](admission.md#schema-evolution)). `sinexctl status` lists what remains under `upgrade_work_after_start`; the list is empty when the store matches a fresh one. Meanwhile the publisher holds until the publication key exists, and the chunk being indexed waits for its index. While the search trigram index is rebuilt, search maintenance waits (the search position shows the delay) and a tombstone started then waits for the build.
+After start, the daemon finishes the rest of the upgrade on its own ([admission.md](admission.md#schema-evolution)). `sinexctl status` lists what remains under `upgrade_work_after_start`; the list is empty when the store matches a fresh one. Meanwhile the publisher holds until the publication key exists, and the chunk being indexed waits for its index. The search rewrite retires the obsolete whole-text trigram index before changing row flags; prefix searches can scan during this interval, while word searches retain their TSV index. Concurrent index retirement and the later partial-index build serialize with search maintenance (the search position shows the delay); a tombstone queued behind maintenance waits too.
 
 ### PostgreSQL tuning
 

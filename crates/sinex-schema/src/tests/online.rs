@@ -186,7 +186,18 @@ async fn online_index_rebuild_keeps_a_finished_build_and_completes_the_swap(
     conn.execute("CREATE INDEX search_text_trigram_partial ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed; DROP INDEX core.search_text_trigram")
         .await
         .unwrap();
+    let built: i64 =
+        sqlx::query_scalar("SELECT 'core.search_text_trigram_partial'::regclass::oid::bigint")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
     crate::online::finish(&mut conn).await.unwrap();
+    let renamed: i64 =
+        sqlx::query_scalar("SELECT 'core.search_text_trigram'::regclass::oid::bigint")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(renamed, built);
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     assert_eq!(
         flags(&mut conn).await.0,
@@ -196,4 +207,99 @@ async fn online_index_rebuild_keeps_a_finished_build_and_completes_the_swap(
             ("lake.observed".into(), false, 10),
         ]
     );
+}
+
+/// Retiring the obsolete index survives a failed batch; flags and the mark
+/// still roll back together, and readers remain correct while it is absent.
+#[devkit::test]
+async fn online_rewrite_retires_whole_gin_before_updates_and_resumes_after_failure(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let fresh = catalog(&mut conn).await.unwrap();
+    upgraded_with_search_rows(&mut conn).await;
+    conn.execute("UPDATE core.search_text SET text=repeat('cargo test ',1024)||text")
+        .await
+        .unwrap();
+    let indexes: (i64, i64) = sqlx::query_as(
+        "SELECT 'core.search_text_tsv'::regclass::oid::bigint,
+                'core.search_text_pkey'::regclass::oid::bigint",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let before = matches(&mut conn, "cargo").await;
+    let words: Vec<String> = sqlx::query_scalar(
+        "SELECT event_id::text FROM core.search_text WHERE tsv @@ to_tsquery('simple','cargo') ORDER BY 1",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    conn.execute(
+        "CREATE FUNCTION pg_temp.check_retired_gin() RETURNS trigger LANGUAGE plpgsql AS
+         $$ BEGIN
+           IF to_regclass('core.search_text_trigram') IS NOT NULL THEN
+             RAISE EXCEPTION 'obsolete trigram GIN still present during flag update';
+           END IF;
+           RETURN NEW;
+         END $$;
+         CREATE TRIGGER check_retired_gin BEFORE UPDATE OF trigram_indexed ON core.search_text
+           FOR EACH ROW EXECUTE FUNCTION pg_temp.check_retired_gin();
+         CREATE FUNCTION pg_temp.fail_mark() RETURNS trigger LANGUAGE plpgsql AS
+         $$ BEGIN RAISE EXCEPTION 'fixture mark failure'; END $$;
+         CREATE TRIGGER fail_mark BEFORE UPDATE ON sinex_schema.search_trigram_rewrite
+           FOR EACH ROW EXECUTE FUNCTION pg_temp.fail_mark()",
+    )
+    .await
+    .unwrap();
+    let error = step(&mut conn, 7).await.unwrap_err();
+    assert!(
+        error.to_string().contains("fixture mark failure"),
+        "{error}"
+    );
+    let state: (bool, Option<String>, i64) = sqlx::query_as(
+        "SELECT to_regclass('core.search_text_trigram') IS NULL, rewritten_through::text,
+                (SELECT count(*) FROM core.search_text WHERE NOT trigram_indexed)
+         FROM sinex_schema.search_trigram_rewrite",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(state, (true, None, 0));
+    assert_eq!(matches(&mut conn, "cargo").await, before);
+    let after_words: Vec<String> = sqlx::query_scalar(
+        "SELECT event_id::text FROM core.search_text WHERE tsv @@ to_tsquery('simple','cargo') ORDER BY 1",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(after_words, words);
+    conn.execute("DROP TRIGGER fail_mark ON sinex_schema.search_trigram_rewrite; DROP TRIGGER check_retired_gin ON core.search_text")
+        .await
+        .unwrap();
+    drop(conn);
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    // Ordinary open does not recreate the retired index.
+    apply(&mut conn).await.unwrap();
+    let absent: bool = sqlx::query_scalar("SELECT to_regclass('core.search_text_trigram') IS NULL")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert!(absent);
+    assert!(matches!(
+        step(&mut conn, 7).await.unwrap(),
+        Progress::Advanced { .. }
+    ));
+    assert_eq!(matches(&mut conn, "cargo").await, before);
+    crate::online::finish(&mut conn).await.unwrap();
+    assert_eq!(matches(&mut conn, "cargo").await, before);
+    let after_indexes: (i64, i64) = sqlx::query_as(
+        "SELECT 'core.search_text_tsv'::regclass::oid::bigint,
+                'core.search_text_pkey'::regclass::oid::bigint",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(after_indexes, indexes);
+    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
 }

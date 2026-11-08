@@ -1,8 +1,9 @@
 //! Search rows stored before kinds declared trigram participation keep
 //! `trigram_indexed = true` until rewritten. Search matches a row under either
 //! flag value (the flag only chooses between the trigram index and a scan), so
-//! answers are the same before, during and after the rewrite. When every row
-//! is rewritten, the trigram index is rebuilt over eligible rows only.
+//! answers are the same before, during and after the rewrite. The obsolete whole
+//! trigram index is retired before changing flags. When every row is rewritten,
+//! the trigram index is rebuilt over eligible rows only.
 use super::Task;
 use crate::Error;
 use sqlx::{Connection, PgConnection};
@@ -27,6 +28,7 @@ pub(super) fn begin() -> Vec<String> {
 /// remained. Once all are rewritten, rebuild the index and end the task:
 /// `None`.
 pub(super) async fn step(conn: &mut PgConnection, batch: i64) -> Result<Option<u64>, Error> {
+    retire_whole_trigram_index(conn).await?;
     if let Some(rewritten) = rewrite_batch(conn, batch).await? {
         return Ok(Some(rewritten));
     }
@@ -36,6 +38,27 @@ pub(super) async fn step(conn: &mut PgConnection, batch: i64) -> Result<Option<u
         .execute(&mut *conn)
         .await?;
     Ok(None)
+}
+
+/// Flag updates can be non-HOT and would maintain the obsolete GIN over all
+/// text. Retire it outside the batch transaction, before the first update.
+/// Readers can scan while it is absent; the TSV index and final partial index
+/// stay in place. A stopped drop is retried under the online work lock. The
+/// concurrent drop, like the build, serializes with search maintenance
+/// holding its explicit table lock.
+async fn retire_whole_trigram_index(conn: &mut PgConnection) -> Result<(), Error> {
+    let whole: Option<bool> = sqlx::query_scalar(
+        "SELECT indpred IS NULL FROM pg_index WHERE indexrelid = to_regclass('core.search_text_trigram')",
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if whole == Some(true) {
+        sqlx::query("DROP INDEX CONCURRENTLY core.search_text_trigram")
+            .persistent(false)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Rewrite the next rows after the mark and move the mark, in one
@@ -120,9 +143,9 @@ fn after(column: &str, resumed: bool) -> String {
     }
 }
 
-/// Replace the trigram index over every row with the declared one over
-/// eligible rows, without blocking reads or writes. Each state an
-/// interruption can leave is a starting point: an invalid partial build is
+/// Build the declared trigram index over eligible rows after retirement of
+/// the whole index. Each state an interruption can leave is a starting point:
+/// an invalid partial build is
 /// dropped and built again, a valid one is kept, and a finished drop only
 /// needs the rename. A build a stopped daemon's backend still runs holds the
 /// work lock, so it is waited for before this runs.
@@ -155,12 +178,6 @@ async fn rebuild_trigram_index(conn: &mut PgConnection) -> Result<(), Error> {
         .persistent(false)
         .execute(&mut *conn)
         .await?;
-    }
-    if whole == Some(true) {
-        sqlx::query("DROP INDEX CONCURRENTLY core.search_text_trigram")
-            .persistent(false)
-            .execute(&mut *conn)
-            .await?;
     }
     sqlx::query("ALTER INDEX core.search_text_trigram_partial RENAME TO search_text_trigram")
         .persistent(false)
