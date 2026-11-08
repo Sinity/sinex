@@ -312,6 +312,28 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
         .execute(&mut *conn)
         .await
         .unwrap();
+    let compressed: Vec<String> = sqlx::query_scalar(
+        "SELECT format('%I.%I', cc.schema_name, cc.table_name)
+         FROM _timescaledb_catalog.chunk c
+         JOIN _timescaledb_catalog.chunk cc ON cc.id=c.compressed_chunk_id
+         JOIN _timescaledb_catalog.hypertable h ON h.id=c.hypertable_id
+         WHERE h.schema_name='core' AND h.table_name='events'",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let mut largest = 0_i64;
+    for table in compressed {
+        let batches: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        largest = largest.max(batches);
+    }
+    assert!(
+        largest >= 10,
+        "fixture must span many compressed row groups"
+    );
     let mut tx = conn.begin().await.unwrap();
     macro_rules! explain {
         ($file:literal $(, $arg:expr)* $(,)?) => {{

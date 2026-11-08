@@ -91,6 +91,8 @@ async fn rewrite_batch(conn: &mut PgConnection, batch: i64) -> Result<Option<u64
 
 /// Fetch exact batch identities independently of the metadata join, so the
 /// hypertable retains selected-ID chunk exclusion under either join strategy.
+/// Runtime arrays alone do not push into compressed min/max metadata; inclusive
+/// UUID bounds prune row groups without losing distinct same-millisecond IDs.
 fn rewrite_statement(resumed: bool) -> String {
     format!(
         "WITH batch AS MATERIALIZED (
@@ -99,7 +101,9 @@ fn rewrite_statement(resumed: bool) -> String {
          selected_events AS MATERIALIZED (
            SELECT rewrite_event.id, rewrite_event.event_type
            FROM core.events rewrite_event
-           WHERE rewrite_event.id = ANY(ARRAY(SELECT event_id FROM batch)))
+           WHERE rewrite_event.id >= (SELECT event_id FROM batch ORDER BY event_id LIMIT 1)
+             AND rewrite_event.id <= (SELECT event_id FROM batch ORDER BY event_id DESC LIMIT 1)
+             AND rewrite_event.id = ANY(ARRAY(SELECT event_id FROM batch)))
          UPDATE core.search_text s SET trigram_indexed = false
          FROM batch b JOIN selected_events e ON e.id = b.event_id
          WHERE s.event_id = b.event_id AND s.trigram_indexed AND e.event_type = ANY($3)",
