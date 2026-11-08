@@ -1,3 +1,4 @@
+-- Inclusive UUID bounds prune compressed row groups; ANY keeps exact membership.
 -- Materialize payloads for the selected IDs once, before joining page metadata.
 WITH page AS MATERIALIZED (
 SELECT id FROM(SELECT id,commit_seq,sum(size) OVER(ORDER BY commit_seq,id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)-size AS before
@@ -6,7 +7,9 @@ SELECT id FROM(SELECT id,commit_seq,sum(size) OVER(ORDER BY commit_seq,id ROWS B
                 ORDER BY e.commit_seq,e.id LIMIT $3) selected) bounded WHERE before<$4::bigint
 ), payload AS MATERIALIZED (
   SELECT payload_event.* FROM core.events payload_event
-  WHERE payload_event.id = ANY(ARRAY(SELECT id FROM page))
+  WHERE payload_event.id >= (SELECT id FROM page ORDER BY id LIMIT 1)
+    AND payload_event.id <= (SELECT id FROM page ORDER BY id DESC LIMIT 1)
+    AND payload_event.id = ANY(ARRAY(SELECT id FROM page))
 )
 SELECT e.id AS "id!",e.event_type AS "event_type!",e.source AS "source!",e.material_id,e.anchor,e.output_index AS "output_index!",e.parents,
           e.ts_orig,e.ts_quality AS "ts_quality!",e.payload AS "payload!",e.equivalence_key,e.reading_order AS "reading_order!",e.record_hash AS "record_hash!",

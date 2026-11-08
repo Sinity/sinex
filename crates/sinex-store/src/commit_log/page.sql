@@ -1,3 +1,4 @@
+-- Inclusive UUID bounds prune compressed row groups; ANY keeps exact membership.
 -- Keep the empty-page head row and fetch every selected payload once.
 WITH page AS MATERIALIZED (
   SELECT head.value AS head, c.commit_seq, c.event_id
@@ -25,7 +26,9 @@ WITH page AS MATERIALIZED (
            WHERE head.name='commit_seq'
 ), payload AS MATERIALIZED (
   SELECT payload_event.* FROM core.events payload_event
-  WHERE payload_event.id = ANY(ARRAY(SELECT event_id FROM page))
+  WHERE payload_event.id >= (SELECT event_id FROM page WHERE event_id IS NOT NULL ORDER BY event_id LIMIT 1)
+    AND payload_event.id <= (SELECT event_id FROM page WHERE event_id IS NOT NULL ORDER BY event_id DESC LIMIT 1)
+    AND payload_event.id = ANY(ARRAY(SELECT event_id FROM page))
 )
 SELECT page.head AS "head!", page.commit_seq AS "commit_seq?", e.id AS "id?", e.event_type AS "event_type?",
              e.source AS "source?", e.run_id AS "run_id?", e.material_id, e.anchor,
