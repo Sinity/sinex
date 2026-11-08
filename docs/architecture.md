@@ -127,11 +127,3 @@ Write-path targets (lifecycle operations on compressed chunks, segment throughpu
 **Outputs record their settings.** Derived outputs and cursors record the settings they were made under, and a changed setting re-derives them through the ordinary version mechanism of [derivations.md](derivations.md).
 
 **One instant type, one clock, one error enum.** Sinex has one instant type, one `Clock` passed in (tests drive it), and one error enum whose kind names are stable on the wire; conversions happen only at the storage boundary.
-
-## Laws
-
-- **crash-leaves-no-row-citing-missing-bytes**: a crash at every point between append, sync, commit and truncate leaves no committed row citing missing bytes and no unrecorded bytes after the segment opens.
-- **crash-states-resume-by-ordinary-open**: after a crash at any point, the next start finds at most an uncommitted tail, an unpunched tombstoned extent, a derived store behind its position or a source behind its rows, and resumes each with no repair step; the final state equals an uninterrupted run's.
-- **setting-read-once**: every component given the same configuration uses the same values; no library reads the environment or the system zone (checked by running components with a configuration that differs from the host's).
-- **unknown-setting-refused**: writing an unknown key or an ill-typed value to the changeable catalog is refused and changes nothing.
-- **outputs-record-their-settings**: every derived output and cursor names the settings it was made under; changing a setting re-derives the affected outputs and no others.

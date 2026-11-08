@@ -32,7 +32,6 @@ async fn quiet_daemon(
 
 const WITHDRAWN: &str = "SELECT count(*) FROM core.events WHERE event_type='signal.outcome' AND payload->'outcome'->'result'->>'reason'='basis_changed'";
 
-/// law: signal-basis-changed-withdraws
 /// Replaying the mark a pending firing cites archives that reading and makes a
 /// new one of the same record. The firing is withdrawn rather than delivered
 /// citing the archived reading, and fires again citing the new one.

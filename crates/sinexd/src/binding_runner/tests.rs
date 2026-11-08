@@ -451,7 +451,6 @@ async fn admit(
     .unwrap()
 }
 
-/// law: waiting-input-is-not-missing
 #[devkit::test]
 async fn an_input_not_present_yet_is_not_missing_coverage(db: devkit::pg::TestDatabase) {
     let root = tempfile::tempdir().unwrap();

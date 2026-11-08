@@ -1,6 +1,6 @@
 //! Admission rules: one live reading per location and key; newer replaces, older
 //! suppresses; events and progress commit together. Run against a real
-//! database. The lifecycle's laws are in `crate::lifecycle`.
+//! database. The lifecycle tests are in `crate::lifecycle`.
 use super::*;
 use proptest::prelude::*;
 use serde_json::json;

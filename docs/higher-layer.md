@@ -259,18 +259,3 @@ Targets follow [the derivation performance rules](derivations.md#performance).
 |---|---|
 | Resume and recall | a prepared pack is read within the hook deadline ([agent arrival](recall.md#agent-arrival)); an on-demand pack is warm p95 < 2 s for a 30-day project; the first evidence page arrives in < 1 s |
 | Figures | daily figures read hourly figures, verified by rows read; 30-, 365- and 730-day histories measured with selection, computation, admission and rendering apart |
-
-## Laws
-
-- **conservation**: at every boundary, project shares plus unallocated equal one for every operator interval; hourly and daily figures sum to the same supported seconds; three observers of ten minutes are ten minutes.
-- **agency-from-evidence**: agent-generated focus, titles, commits and clipboard changes with no operator input yield `delegated` or `automated`, never `operator`, and activity sessions do not extend over them.
-- **unknown-is-not-zero**: outages and time before coverage are `unknown` or `missing` in presence, figures and packs, never zero.
-- **path-components**: `/work/app` never owns `/work/apple`, and a renamed root attributes history by its effective date.
-- **exact-over-inferred**: an inferred tier never displaces an exact owner, and conflicting exact owners stay unallocated.
-- **episodes-persist**: an episode resumed after five days is one episode; dormancy never closes it; two tasks in one repository are two episodes.
-- **stored-hierarchy**: every study result, finding, pack and narrative returned by any surface is a stored event whose citation resolves, and daily figures read only hourly figures.
-- **narrative-grounding**: a narrative with an unbound number, a nonexistent citation or a dropped caveat is refused.
-- **complete-products**: sessions beyond 10,000 windows, traces beyond 100 levels, and packs over all projects and days are complete.
-- **hl.no-insight-kind**: no registered kind carries an insight, priority, importance or score field, and every "Worth a look" line names the declared selection rule that chose it. *(schema lint and pack test; decided target)*
-- **hl.agent-time-apart**: operator time and agent time are never summed in any pack, lane or figure. *(property over all measure kinds; decided target)*
-- **hl.compare-denominators**: every compare row carries both sides' units, denominators and coverage, and a side with insufficient coverage is not estimable. *(query test; decided target)*

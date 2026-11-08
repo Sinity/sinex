@@ -477,7 +477,6 @@ async fn walks_follow_provenance(db: devkit::pg::TestDatabase) {
     assert_eq!(shown["event_type"], json!("command.fused"));
 }
 
-/// law: no-data-means-silent
 #[devkit::test]
 async fn recall_reports_every_source_and_says_no_data(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))

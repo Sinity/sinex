@@ -1,21 +1,21 @@
 # Testing
 
-How Sinex is tested: the test database, the synthetic world, the law suites
-and how laws map to tests, crash, VM and fuzz tests, and benchmarks. The
+How Sinex is tested: the test database, the synthetic world, the properties tested,
+crash, VM and fuzz tests, and benchmarks. The
 commands that run them are in [AGENTS.md](../AGENTS.md#building-testing-and-measuring);
 the shared test runner, history and database harness are common's
 [`devkit`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/devkit/README.md).
 
 ## What a test is worth
 
-Every specified behaviour and every law in these pages has a test that fails
+Every specified behaviour in these pages has a test that fails
 when the production path breaks. A behaviour without one is a gap, whichever
 codebase it came from. Tests are judged by what they can catch:
 
 - **Independent oracles.** Goldens written from knowledge of the source
   format, not from Sinex's own output; GNU tar reading a PAX material;
   PostgreSQL's own COPY reader decoding what the writer encoded.
-- **Law suites** over real PostgreSQL and NATS (below).
+- **Lifecycle and admission tests** over real PostgreSQL and NATS (below).
 - **Crash tests** at the real durability boundaries (below).
 - **Property tests** at serialization boundaries: COPY encoding, manifests,
   producer frames, the query parser.
@@ -61,7 +61,7 @@ Sources are explicit in a development run: `--sources FILE` selects daemon bindi
 
 Crash cases share a two-slot nextest group, which bounds how many whole backfills compete for the test PostgreSQL at once while the rest of the suite runs beside them. The group changes scheduling only; per-test deadlines stay fixed.
 
-The daemon shutdown law reads the supervisor's actual task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness retain their own bounded deadlines.
+The daemon shutdown test reads the supervisor's actual task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness retain their own bounded deadlines.
 
 `cargo xtask coverage --output DIR --format html -- -p CRATE` uses a separate instrumented build. Formats are `html`, `lcov` and `json`; `coverage.json` retains LLVM data and `summary.json` records arguments, line coverage and function regions. `--threshold PERCENT` is an optional caller-selected threshold. Output directories are new; failed children, empty selections and malformed or missing reports are errors. The shared runner mechanics belong to [devkit](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/devkit/README.md).
 
@@ -112,33 +112,31 @@ invented, and every claim and number resolves to its evidence. Evaluation
 results are stored as ordinary answer events, so they replay and compare
 across versions of the derivations.
 
-## Laws and their tests
+## Properties tested
 
-Every area page ends with `## Laws`. A law's full name is `<page>/<key>`
-(`lifecycle/restore-refused-while-other-reading-live`); keys are plain words
-and stay stable, so inserting a law renames nothing. The conventions for
-laws and citations are shared with Polylogue and described in its
-[docs index](https://github.com/Sinity/polylogue/blob/master/docs/README.md).
+Integration tests are one binary per crate (`crates/<crate>/tests/integration/`)
+with one module per area, so each crate links its test dependencies once. The
+query language's shared tests live in common's
+[`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md)
+and run against Sinex's catalog as well as Polylogue's.
 
-- **Tests carry the key in their name.** Integration tests are one binary per
-  crate (`crates/<crate>/tests/integration/`) with one module per area, so
-  each crate links its test dependencies once; the test that checks a law is named
-  from its key (`restore_refused_while_other_reading_live`), with a suffix
-  when several tests check one law. Finding a law's tests is a name search.
-- **Shared laws live with the shared code.** The query language's law suite
-  is in common's
-  [`query-language`](https://github.com/Sinity/polylogue-sinex-common/blob/master/docs/query-language.md)
-  and runs against Sinex's catalog as well as Polylogue's;
-  [query.md](query.md) lists only Sinex's own query laws.
-- **Coverage is a report.** `cargo xtask laws` lists each law key with the
-  tests whose names carry it, and the laws that have none. It fails nothing;
-  a law without a test is a gap for the area's owner.
+These properties hold for every input; the tests named are where to look when
+one changes:
+
+- An admission batch commits whole or not at all, and commit positions are dense, in batch order and never regress (`events_and_progress_commit_together`, `commit_seq_is_dense_and_in_batch_order`, `a_second_transaction_waits_for_the_first_to_commit`).
+- One writer: a second claim is refused (`only_one_connection_can_claim_the_writer`).
+- A crash at every point between segment append, sync, commit and truncate leaves no committed row citing missing bytes, and an ordinary restart reaches the uninterrupted run's state (`sinexd/tests/integration/crash.rs`: `synced_uncommitted_segment_tail_is_truncated_on_restart`, `partial_segment_append_recovers_without_advancing_its_cursor`, the `stage_killed_*`, `replay_killed_*` and `publisher_killed_*` cases).
+- A source cursor never passes an unadmitted record, and a refused record keeps its failure tied to its bytes (`source_content_refusals_keep_material_failures_and_advance_the_cursor`).
+- Read models rebuilt from events equal the ones maintained incrementally (`search_modes_apply_to_live_indexing_and_its_rebuild`).
+- Lifecycle state order holds after every operation: no live event has a non-live parent (`assert_state_order` in `sinex-store/src/lifecycle/tests.rs`).
+- Archive moves whole chains; restore is refused while another reading is live; replay archives the readings it replaces and a failed replay keeps the old one (`archive_moves_whole_chains`, `restore_refused_while_other_reading_live`, `replay_archives_replaced_readings_of_a_material`, `a_later_material_read_failure_rolls_back_the_entire_replay_sequence`).
+- Online schema work resumes in order after interruption, and a failing upgrade rolls back whole (`work_after_start_resumes_in_order_and_walks_answer_as_filled`, `whole_chain_rolls_back_when_its_last_upgrade_fails`).
 
 The lifecycle suite is the core one: whole chains move together, restore is
 refused on a collision, a replay is undone by archiving its chain and
 restoring the previous one, tombstoned events never become parents while
 replay and re-import create new readings normally, and as-of reads return
-what was live at that position ([lifecycle.md](lifecycle.md#laws)).
+what was live at that position ([lifecycle.md](lifecycle.md)).
 
 ## Crash tests
 
@@ -202,16 +200,3 @@ performance is measured, never asserted: no test checks elapsed time.
   compilation and test execution are timed separately, a run on a seeded
   build directory is compared only with another seeded run, and the first
   build after a dependency-profile change is reported apart from warm runs.
-
-## Laws
-
-- **schema-database-follows-ddl**: two schemas with identical generated DDL
-  and server version select the same test database; any DDL change selects a
-  different one.
-- **test-databases-isolated**: rows written by one test are never visible to
-  another test running in parallel.
-- **generated-reference-current**: rendering the declarations produces
-  exactly the committed pages under [reference/](reference/README.md); the
-  golden test fails when they differ.
-- **module-catalog-current**: `sinexd admin catalog` produces exactly the
-  committed `nix/catalog.json`.

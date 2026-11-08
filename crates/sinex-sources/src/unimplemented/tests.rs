@@ -1,6 +1,5 @@
 use super::*;
 
-/// law: sx.cap.unimplemented-census
 #[devkit::test]
 fn unimplemented_census_lists_unbuilt_sources_whose_data_the_host_has() {
     let root = tempfile::tempdir().unwrap();
@@ -33,7 +32,6 @@ fn unimplemented_census_lists_unbuilt_sources_whose_data_the_host_has() {
     );
 }
 
-/// law: sx.cap.unimplemented-census
 #[devkit::test]
 fn unimplemented_census_never_names_a_built_source() {
     for unbuilt in UNIMPLEMENTED {

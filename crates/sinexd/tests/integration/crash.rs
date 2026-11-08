@@ -572,7 +572,7 @@ fn lock(table: &str) -> String {
 /// run that was never interrupted.
 async fn verified_stage_state(target: &Target, inputs: &Inputs) -> State {
     // The generic extractor below is also used by unrelated clipboard and
-    // lifecycle laws. Its old normalized positions are replaced only AFTER
+    // lifecycle rules. Its old normalized positions are replaced only AFTER
     // both native cursor claims have passed the independent custody proof.
     let positions = progress::positions(target, inputs).await;
     let mut state = state(&mut target.connect().await).await;
@@ -735,7 +735,6 @@ async fn stage_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
 
 macro_rules! stage_steps {
     ($inputs:expr; $($name:ident: $ready:expr, $lock:expr;)*) => {$(
-        /// law: sx.stage.idempotent-progress
         #[devkit::test]
         async fn $name() {
             stage_survives($inputs, $ready, &$lock).await;

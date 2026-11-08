@@ -133,7 +133,6 @@ fn handoffs(deliveries: Vec<::signals::Delivery>) -> ::signals::Handoffs {
     }
 }
 
-/// law: signal-delivery-cites-rule-and-inputs
 /// A delivery is derived from the rule that fired and from every reading
 /// its matched row was computed from, including a group's selected readings.
 #[devkit::test]
@@ -192,7 +191,6 @@ fn a_delivery_cites_its_rule_and_the_readings_its_row_was_computed_from() {
     assert!(state.inputs.is_empty());
 }
 
-/// law: signal-forwarded-delivery-cites-report
 /// A forwarded firing is derived from the report reading that carried it;
 /// a delivery naming neither a rule here nor a forwarded report is refused.
 #[devkit::test]
@@ -240,7 +238,6 @@ fn a_forwarded_delivery_cites_its_report_and_an_unknown_one_is_refused() {
     assert!(state.forwarded.is_empty());
 }
 
-/// law: signal-outlet-per-decision
 /// An interrupting decision owes a desktop notice when notifications are
 /// configured; a run decision owes its rule's configured value or action; a
 /// forwarded run decision is recorded not sent, since its outlet belongs to
@@ -352,7 +349,6 @@ fn each_decision_owes_the_outlet_it_names() {
     assert!(quiet.outbox.is_empty());
 }
 
-/// law: signal-cleared-closes-or-never-shows
 /// A cleared current-state delivery that was shown is closed; one whose
 /// notice was not begun yet is never shown on its own: its owed notice is
 /// replaced by a clear.
@@ -417,7 +413,6 @@ fn a_cleared_delivery_is_closed_once_shown_and_never_shown_otherwise() {
     assert!(state.open.is_empty());
 }
 
-/// law: signal-basis-changed-withdraws
 /// A handoff whose cited readings no longer stand is withdrawn: no delivery
 /// event, no outlet work, one outcome saying its basis changed, and its rows'
 /// readings forgotten so the rules are read again. The others in the same step

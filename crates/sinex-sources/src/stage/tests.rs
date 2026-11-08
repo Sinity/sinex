@@ -86,7 +86,6 @@ fn multipart_takeout(dir: &Path) -> [PathBuf; 3] {
     parts
 }
 
-/// law: sx.stage.inventory-total
 #[devkit::test]
 fn stage_inventory_total() {
     let dir = tempfile::tempdir().unwrap();
@@ -161,7 +160,6 @@ fn stage_inventory_total() {
     );
 }
 
-/// law: sx.stage.inventory-total
 #[devkit::test]
 fn a_failed_binding_marks_exactly_its_members_failed() {
     let dir = tempfile::tempdir().unwrap();
@@ -213,7 +211,6 @@ fn any_member(_: &str) -> bool {
     true
 }
 
-/// law: sx.stage.strict-detection
 #[devkit::test]
 fn stage_strict_detection() {
     let dir = tempfile::tempdir().unwrap();
@@ -290,7 +287,6 @@ fn stage_strict_detection() {
     );
 }
 
-/// law: sx.stage.strict-detection
 #[devkit::test]
 fn a_member_two_sources_would_read_is_read_by_neither() {
     let dir = tempfile::tempdir().unwrap();
@@ -427,7 +423,6 @@ fn bytes_written() -> u64 {
 /// data: nothing is written while it is listed, even with a member far
 /// larger than the archive, and members after it are reached.
 ///
-/// law: sx.stage.inventory-total
 #[devkit::test]
 fn a_tgz_is_inventoried_without_writing_its_members_out() {
     let dir = tempfile::tempdir().unwrap();

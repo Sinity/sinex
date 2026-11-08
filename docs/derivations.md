@@ -74,7 +74,6 @@ grouped by source, run manifest and build, and material parser version. A shared
 daemon run does not replace a source parser's version. Missing historical run or
 manifest metadata remains an explicit null entry with its event count.
 
-
 ## Identity of derived records
 
 - A derived record's key is computed from its parents' keys or offsets plus its window or scope; never from the producer version, event IDs, commit order or text alone. Typed opaque fields are encoded as tuples, never joined by punctuation. (Record keys in general: [identity](events.md#identity).)
@@ -270,7 +269,6 @@ The `read.embeddings` consumer builds a pgvector projection and an HNSW index fo
 
 `similar:sinex:ev/<embedding-id>` reuses that exact supplied embedding under the reader's grants and read position. Similarity scores every filtered row, using the best compatible chunk where several are present. Rows without a compatible vector retain unknown rank. The approximate index supplies candidates for optimization, while query membership and exact fallback remain independent of its recall. Model-driven text-to-vector requests remain disabled.
 
-
 ## Performance
 
 Targets are stated as hardware-independent figures (rows read per key, invalidated keys per input, outputs and parents per input, WAL bytes per derived event, peak memory per key, lag per stage) plus absolute rates on the machine that runs them. They are measured as paired runs of the devkit bench ([benchmarks](testing.md#benchmarks)); no test asserts elapsed time.
@@ -282,32 +280,3 @@ Targets are stated as hardware-independent figures (rows read per key, invalidat
 | Documents | 4 MiB-plus and 100 MiB inputs are complete with range equality; extraction and chunking measured apart; a resource failure is explicit and retryable, never a successful prefix |
 | Long history | full, incremental, reversed and late worlds agree beyond 10,000 windows, 1,024 units, 64 refresh neighbours and a closer a month late; unrelated keys are not recomputed |
 | Disabled providers | zero provider setup, probes and calls on every path |
-
-## Laws
-
-- **order-independence**: the same world admitted all at once, incrementally, reversed and shuffled yields equal stable payloads, keys and support for every derivation (fresh reading IDs allowed).
-- **replay-equivalence**: replaying every material yields outputs equal to the originals by stable key and payload, and exact citations still resolve to the archived readings.
-- **whole-chains**: after any archive (replay, newer reading, version switch, operator archive) no live event cites an archived or tombstoned one, and a keyed aggregate over an archived input is re-derived from live inputs.
-- **no-orphans**: removing a rule, an input or all inputs of a key, or shrinking an output set, leaves no former output live.
-- **late-correctness**: a closer, bridge or split arriving after the polling horizon (a month late) changes every affected key.
-- **producer-versions**: every derived event carries its producer version; a new version recomputes no history until switched (only new and dirty keys, with the mix disclosed); `--compare` reports exactly what the switch then writes; `keep_history` keeps old outputs and `recompute` replaces them; daemon start never recomputes history.
-- **stable-ties**: equal-time inputs with permuted IDs and commit order give identical fusion groups, intervals, sessions and episodes.
-- **fusion-basis**: only defined families produce fused events and none has one member; every fused event has a basis; every choice among n > 1 candidates records `ambiguous: n` and produces a `duplicates` row; mail with equal Message-ID in one account fuses without Date agreement.
-- **judgments-survive**: a `same` or `distinct` duplicate decision still governs after both sides are replayed and the rule file changes; withdrawing it recomputes the pair.
-- **fusion-scope**: two hosts, two desktops, two browser profiles or two accounts never fuse through time alone, and one fused group never holds two observations from one source.
-- **fus.no-singletons**: no fused record has fewer than two members.
-- **fus.defined-only**: the declaration file holds only families with a written definition (`command`, `mail`); an undefined family refuses to start. *(start-up test)*
-- **fus.token-exact**: two command readings that share an execution token associate with basis `identifier`, whatever their time distance within the token's lifetime; a read for the token's partners stops at that lifetime. *(property)*
-- **fus.scope-partitions**: readings from different hosts or accounts never associate, by identifier, time or duplicate decision.
-- **materialize-at-admission**: an `at_admission` derivation's outputs are committed before any request asks for them, and an `on_request` derivation names its reason.
-- **day-settings**: changing the logical-day boundary is a version change that recomputes every day-grain product under one setting; each output records the boundary and zone it used; `day.wake` never changes `group by day`.
-- **range-citation**: a day figure over two million inputs cites its read ranges, writes one `event_children` row per range, resolves to exactly the live inputs at the cited position, and is archived when one of those inputs is archived.
-- **provisional-once**: a key dirtied by many inputs in one writer group recomputes once; an open window's value is one overwritten row per key and leaves no archived readings; closing the window admits one event.
-- **construct-declared**: every shipped label and detection has its declaration of measure, fields, denominator and agreement evidence, checked at registration.
-- **complete-outputs**: document outputs beyond 4 MiB are complete and range-exact, and no parent list is truncated.
-- **providers-off**: with providers disabled there is no provider construction, probe or call at start or on any CLI, MCP or HTTP path, and local OCR runs when its engine is installed.
-
-
-### Exact target inputs
-
-A keyed consumer can name exact event IDs instead of a time window, for example when a recorded model result cites a frame or audio segment. These inputs use the same stored events and input snapshot as temporal reads. They are transferred in commit order with count and byte page budgets, including unknown-time records. Missing or archived targets remain absent; the consumer compares the actual IDs and target content identities with its required evidence and reports unavailable or waiting. It never substitutes a nearby record.

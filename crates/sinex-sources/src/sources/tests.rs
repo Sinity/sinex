@@ -129,7 +129,6 @@ fn integrated_source_families_are_registered_with_discovery() {
     );
 }
 
-/// law: sx.decl.one-expectation
 #[devkit::test]
 fn one_expectation_per_source_name() {
     for spec in specs() {
@@ -146,7 +145,6 @@ fn one_expectation_per_source_name() {
     }
 }
 
-/// law: sx.decl.expectation-fits-origin
 #[devkit::test]
 fn expectation_fits_origin() {
     use sinex_source_core::{Expectation, Origin};
@@ -184,7 +182,6 @@ fn expectation_fits_origin() {
 /// The two silent stalls of 2026-10-27 and 2026-10-29 (Atuin history and the
 /// session producer's streams) are exactly the sources whose silence must
 /// become visible, so each declares a deadline.
-/// law: sx.decl.continuous-sources-declare-silence
 #[devkit::test]
 fn continuous_sources_declare_silence() {
     for name in [

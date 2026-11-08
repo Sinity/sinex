@@ -2,7 +2,7 @@
 
 Capture from every machine and device the operator uses into the one Sinex record: hosts and the producers that run on them, credentials, sending rules for devices that are often offline, accounts placed on one host, time across hosts, contact and held data, how late data flows through derivations and signals, and a phone as a producer. The producer wire contract is [producers](producers.md); sources and their declarations are [sources](sources.md); the coverage read model this page extends is in [sources](sources.md#completeness); deployment options are in [operations](operations.md#hosts-and-placement).
 
-Decided target (2026-11-01). The capture node (`sinex-capture` sending to the main host's ingress) exists and passed a two-machine spool and forward test; everything else on this page is decided and not built. Its laws are the acceptance.
+Decided target (2026-11-01). The capture node (`sinex-capture` sending to the main host's ingress) exists and passed a two-machine spool and forward test; everything else on this page is decided and not built.
 
 ## Purpose
 
@@ -159,26 +159,3 @@ phone    phone        app        2 h 14 m ago  1.3 GB · 9 in.   1.3 GB / 21 d  
 Placement and enrollment are configuration: the CLI shows them and never edits them. Over MCP, `sinex_status` gains a hosts section and `sinex_query` serves the `hosts` unit, the `host` field, `host:<name>` and `group by host`. The query language gains a `host` field on every event (derived events carry their scope's host or none) and uses aligned time automatically when a query spans hosts. References: `host:<name>` and `producer:<component>@<host>`.
 
 In the web, Sources groups rows by host with a header row for contact, held, runway and clock, and draws `held` hatched with its arrival estimate; `/hosts/<name>` shows a 30-day contact strip, the clock offset with its uncertainty band, spool size over time and inputs with their transfer classes; Day and Timeline get one lane per host plus the operator lane, with late spans marked.
-
-## Laws
-
-Stored with the scope `sx.`.
-
-- **mh.one-host-per-credential**: every frame's host is its credential's configured host; a host named in a payload is stored as a claim and never changes input identity. *(protocol test with a forged claim)*
-- **mh.no-shared-secret**: no host other than the Sinex host holds another producer's credential; configuration holds only public keys. *(Nix evaluation check)*
-- **mh.order-per-namespace**: reading order never compares readings from two producer namespaces; two hosts' readings of one natural key stay separate unless the key is host-free. *(property)*
-- **mh.ts-never-rewritten**: no offset estimate, anchor or replay changes a reading's stored `ts_orig` except by re-framing in a replay, which mints a new reading. *(property)*
-- **mh.reanchor**: a record framed during an implausible wall-clock interval with a monotonic anchor is `unknown` at first and, after replay with a later anchor on the same boot, `captured` with a monotonic clock and the re-anchored mark; without an anchor it stays `unknown`. *(replay test with an injected clock step)*
-- **mh.offset-labelled**: a reading from a host whose estimated offset exceeds the kind's precision carries the offset and its uncertainty in its time evidence. *(VM test with a skewed clock)*
-- **mh.held-not-gap**: intervals after a producer's last `captured_through` read `held` until reported, and become `gap` only from the producer's gap frames or reported stop states. *(integration)*
-- **mh.week-offline**: a capture node disconnected for seven simulated days, with a 3 s clock skew and one reboot, loses and duplicates nothing after reconnecting; coverage goes from held to complete with no gap. *(two-VM test)*
-- **mh.spool-full-gap**: with the spool's filesystem full, capture stops with a counted gap and no spooled record is removed before it is settled. *(VM test with a small filesystem)*
-- **mh.transfer-not-capture**: captured bytes and record counts are identical whatever the network or power state; only send time differs. *(property over a simulated network schedule)*
-- **mh.placement-exclusive**: a producer offering a host-free input not placed on its host is refused at `hello`; two hosts never poll one account at once. *(integration)*
-- **mh.placement-moves-cursor**: after a placement move, every provider record after the committed position is admitted exactly once. *(integration with a mock provider)*
-- **mh.late-recomputes**: admitting held records into closed day keys recomputes those keys once per writer group, and the day pack equals a run that had the data on time. *(derivation test)*
-- **mh.same-declaration-any-host**: a source declaration runs unchanged on any host; no host-specific source code exists for a format the desktop shares. *(registry lint)*
-- **mh.relay-stateless**: the phone relay keeps no bytes after it replies and replies success only after Sinex's material acknowledgement. *(relay test with Sinex stopped)*
-- **mh.root-visible**: every root source on a host without root shows `unavailable(permission_denied(root))`. *(instrumentation test)*
-
-Late facts are delivered passively by the common signals law `late-is-passive`. The fusion law `fusion-scope` ([derivations](derivations.md#laws)), the producer laws, `cov.no-false-empty` and `cap.no-host-coupling` ([sources](sources.md#laws)) also hold across hosts.

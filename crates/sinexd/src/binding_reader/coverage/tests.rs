@@ -92,7 +92,6 @@ const RUNS: &str =
     "SELECT count(*) FROM core.runs WHERE name IN ('terminal.zsh-history','source.observation')";
 const OPEN_RUNS: &str = "SELECT count(*) FROM core.runs WHERE name IN ('terminal.zsh-history','source.observation') AND ended_at IS NULL";
 
-/// law: coverage-on-change
 #[devkit::test]
 async fn coverage_on_change(db: devkit::pg::TestDatabase) {
     let root = tempfile::tempdir().unwrap();

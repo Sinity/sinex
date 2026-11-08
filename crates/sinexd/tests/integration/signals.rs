@@ -101,7 +101,6 @@ fn rule(name: &str, deliver: &str) -> Value {
     json!({"name":name,"query":"events where event_type = operator.mark","fires":"on_new","for":0,"min_change":1,"deliver":deliver,"target":if deliver=="value"{Some("recorded")}else{None},"command":if deliver=="action"{Some("controlled")}else{None},"interrupt":false,"quiet_hours":null,"rate_limit":null,"scope":null,"enabled":true})
 }
 
-/// law: signal-effect-unknown-before-it-runs
 /// An action is recorded unknown and committed before its command starts; an
 /// unknown attempt is never run again after a restart, and the writer is never
 /// held while a command runs.

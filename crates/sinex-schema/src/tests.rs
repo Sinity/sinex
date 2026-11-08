@@ -265,7 +265,7 @@ async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
     );
 }
 
-/// Law admission/upgrade-keeps-event-storage: the upgrade's transaction
+/// The upgrade's transaction
 /// rewrites no event chunk. It writes only the event rows whose output number
 /// is not the default.
 #[devkit::test]

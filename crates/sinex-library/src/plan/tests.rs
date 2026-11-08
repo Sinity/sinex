@@ -45,7 +45,6 @@ fn request_ids_cannot_collide_with_write_ids_or_revisions() {
     assert!(check_request(&new_request()).is_ok());
 }
 
-/// law: lib.order.dense
 #[devkit::test]
 fn ten_thousand_insertions_between_the_same_neighbours_stay_distinct_and_ordered() {
     let first = (OrderKey::parse("V").unwrap(), "first".to_owned());
@@ -94,7 +93,6 @@ fn a_moved_entry_is_placed_among_the_others_only() {
     assert!(Resolver::position_in(0, &entries, Some("a"), Some("b"), None).is_err());
 }
 
-/// law: lib.tag.any-label
 #[devkit::test]
 fn any_label_with_text_is_accepted() {
     for text in ["-", "!x", "-cat", "?", "a b"] {
@@ -104,7 +102,6 @@ fn any_label_with_text_is_accepted() {
     assert!(label(0, "   ").is_err());
 }
 
-/// law: lib.tag.implies-acyclic
 #[devkit::test]
 fn an_implication_that_closes_a_cycle_is_refused() {
     let edges = vec![

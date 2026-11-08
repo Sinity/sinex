@@ -113,7 +113,6 @@ fn answered(args: &[&str], result: Value) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// law: text-by-default
 #[devkit::test]
 fn rendered_answers_print_their_text_once_unless_json_is_asked() {
     let brief = json!({"text":"# Brief for 2026-09-14\n- synthetic finding\n","context_pack":"sinex:ev/synthetic","presentation":{

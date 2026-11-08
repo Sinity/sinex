@@ -146,7 +146,6 @@ fn a_tag_applies_while_its_deciding_level_applies_it() {
     assert_eq!(shown[0].state, TagState::Conflict);
 }
 
-/// law: lib.tag.any-label
 #[devkit::test]
 fn labels_of_punctuation_are_ordinary_tags() {
     for label in ["-", "!x", "-cat", "?"] {

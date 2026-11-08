@@ -424,7 +424,7 @@ never success ([Polylogue primary mode](https://github.com/Sinity/polylogue/blob
 ## Signals
 
 A **signal** is a standing query with a declared delivery rule. It is the only way Sinex
-surfaces anything unasked. The rule schema, the evaluator and its laws, the route
+surfaces anything unasked. The rule schema, the evaluator, the route
 function, the interrupt budget, inhibition, outcomes, `wait`, `backtest` and desktop
 notifications are common
 [signals](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md);
@@ -612,56 +612,3 @@ Journey budgets on top:
 A miss is recorded with its measurement, never met by relaxing the number. Measurement
 is paired benchmark runs with hardware-independent figures (rows scanned, bytes encoded,
 memory per page); no test asserts elapsed time ([benchmarks](testing.md#benchmarks)).
-
-## Laws
-
-- **surface-parity**: the same synthetic questions through the CLI, HTTP, MCP and the
-  reader give identical rows, totals, units, `read_as`, output-rule effects and failures.
-- **generated-table**: CLI help, the MCP tool list with `outputSchema`, and
-  `/v1/commands` equal what the operation table declares; a command missing from the
-  table fails closed.
-- **mcp-cli-reach**: every operation marked for MCP has a CLI form, and every CLI
-  operation without a recorded reason is marked for MCP.
-- **typed-failures**: each failure kind maps to its exit code and HTTP status; a
-  stopped-early archive, restore, replay, stage, recompute or tombstone exits 5; MCP
-  returns typed failures, never an empty success.
-- **state-change-needs-scope**: a state-changing request with no scope is refused, and an
-  unknown request field is refused.
-- **one-command-set**: an agent credential can call every command; a reserved act
-  refuses with its configured reason; no refusal depends on the credential kind except
-  through configured grants.
-- **computed-authorship**: no request field sets an author; harness variables and the
-  channel decide it; two agent sessions writing produce two authors.
-- **session-undo**: `undo --session S` archives every write of S, undoes its replays by
-  archive and restore, records each reversal, and a second undo restores them.
-- **no-subset-commands**: every operation-table row records what a query plus an
-  existing verb cannot express; a row that restates a query or does a subset of another
-  command fails the vocabulary check.
-- **signal-before-query**: an unsignalled first word refuses within the local budget
-  with the nearest command and the `find` form.
-- **shared-mechanics-names**: every mechanical act shared with Polylogue has the same
-  command word and global flag names in both products' tables; the vocabulary check
-  fails on a difference or on a word missing from the vocabulary.
-- **completion-offline**: completion answers from the catalog file with the daemon
-  stopped, within its budget, and never offers an unavailable operation.
-- **text-by-default**: an answer rendered as text prints that text once without
-  `--json`, and the whole answer document with `--json`.
-- **picker-off-terminal**: off a terminal or with a machine format, an ambiguous
-  reference exits 2 with its candidates and the exact non-interactive call.
-- **help-examples-run**: every help example runs on the synthetic world and matches its
-  golden.
-- **source-evidence-path**: a never-read binding is never healthy, an unchanged
-  successful poll is never a stall, and a failed read inside a live run is not covered;
-  status, fill, recall and alerts agree on each.
-- **signals-conformance**: the common signals conformance cases pass against Sinex's
-  catalog and occurrence keys; a threshold fires once per crossing; `for` expires
-  without new events; the shared agent interrupt budget demotes the fifth agent
-  interruption in an hour and never the operator's.
-- **replay-never-refires**: replaying or re-importing the material behind a delivered
-  occurrence produces no second delivery.
-- **stall-alerts**: a reader that fails while its process lives raises one interrupting
-  alert with evidence; recovery clears it; unchanged polls never alert; a restart does
-  not deliver it again.
-- **follow-resumes**: disconnect, admit, archive and restore rows, reconnect with
-  `Last-Event-ID`: delivery is complete and ordered, including lifecycle messages; an
-  unavailable position refuses with a named gap.

@@ -52,7 +52,6 @@ fn a_comparison_is_one_judgment_with_its_tie_groups() {
     );
 }
 
-/// law: lib.rank.judge-isolation
 #[devkit::test]
 fn the_default_judge_set_is_the_operator_and_agents_change_nothing_in_it() {
     let operator = comparison("c1", "operator", "liking", json!([[t("a")], [t("b")]]));

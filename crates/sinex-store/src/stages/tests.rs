@@ -107,7 +107,6 @@ async fn a_stage_is_logged_from_begin_to_end(db: devkit::pg::TestDatabase) {
     assert!(show(&mut conn, OperationId::new()).await.unwrap().is_none());
 }
 
-/// law: sx.stage.without-parser
 #[devkit::test]
 async fn an_unparsed_material_has_no_parser_and_keeps_its_candidates(db: devkit::pg::TestDatabase) {
     let mut conn = connect(&db).await;

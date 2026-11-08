@@ -450,7 +450,6 @@ fn walks_and_references() {
     assert!(parse_reference("sinex:at/2026-09-14/session").is_err());
 }
 
-/// law: citation-key-round-trip
 /// A source record key may hold any text, including the grammar's own `@`,
 /// `#` and `%`: printed through the shared grammar it parses back unchanged.
 #[devkit::test]

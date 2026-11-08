@@ -1,6 +1,6 @@
 # Media library
 
-The library is how the operator and agents keep, describe, organize, find, judge and use anything they have seen, saved or made, inside Sinex: files, web pages, documents, images, videos, books and tracks, and catalog objects such as a video or a paper. It covers items and their locators, encounters, copies, revisions and renditions, page captures, tags and properties, notes, collections, ratings, comparisons and rankings, the link to Polylogue's sessions, and exact opening. This page owns the library's model, its features and its laws. Neighbouring pages own the mechanisms it rests on: [materials](materials.md) and [admission](admission.md) store and admit every library input; [the lifecycle](lifecycle.md) archives and tombstones them; [sources](sources.md) owns acquisition (scans, imports, page capture); [derivations](derivations.md) owns the runner that computes items and shown values; [the query surface](query.md) and [interfaces](interfaces.md) own the query language, the operation table and the CLI and MCP spelling of the library operations.
+The library is how the operator and agents keep, describe, organize, find, judge and use anything they have seen, saved or made, inside Sinex: files, web pages, documents, images, videos, books and tracks, and catalog objects such as a video or a paper. It covers items and their locators, encounters, copies, revisions and renditions, page captures, tags and properties, notes, collections, ratings, comparisons and rankings, the link to Polylogue's sessions, and exact opening. This page owns the library's model, and its features. Neighbouring pages own the mechanisms it rests on: [materials](materials.md) and [admission](admission.md) store and admit every library input; [the lifecycle](lifecycle.md) archives and tombstones them; [sources](sources.md) owns acquisition (scans, imports, page capture); [derivations](derivations.md) owns the runner that computes items and shown values; [the query surface](query.md) and [interfaces](interfaces.md) own the query language, the operation table and the CLI and MCP spelling of the library operations.
 
 ## Purpose
 
@@ -16,7 +16,7 @@ The principles that shape every feature below:
 - **Missing content, uncertainty and conflicts are reported, never hidden.** A successful command or an imported catalog is not evidence of a useful library.
 - **Nothing expires.** There is no media tiering or retention: media is kept until the operator archives it.
 
-Decided target (2026-11-01). The current build is a file library whose curation records share their revision rules with Polylogue's assertions through common's `authored` crate, with computed authorship, order-key entry positions and Plackett–Luce rankings. The decided design keeps this page's behaviour and adds three things: an item is anything with a native locator; encounters link every event to the item it touched; and page capture and the Polylogue link are specified. Sections marked as decided target describe what is not built; their laws are the acceptance.
+Decided target (2026-11-01). The current build is a file library whose curation records share their revision rules with Polylogue's assertions through common's `authored` crate, with computed authorship, order-key entry positions and Plackett–Luce rankings. The decided design keeps this page's behaviour and adds three things: an item is anything with a native locator; encounters link every event to the item it touched; and page capture and the Polylogue link are specified. Sections marked as decided target describe what is not built.
 
 ## Curation as authored input
 
@@ -447,63 +447,3 @@ Kind fields will be listed in [the planned kinds reference](reference/README.md#
 | filename hint | copy path evidence, author, title, year, external ID |
 | page fetch | requested URL, final URL, redirect chain, response metadata, body, fetch time, completeness or error, members and assets |
 | view (`library.view`) | opened target, start, optional end, duration or count, author, player, origin of each fact |
-
-## Laws
-
-- **rebuildable**: replaying the scan, import and request materials of a mixed synthetic library into an empty database, with the input roots unavailable, yields the same item IDs, revisions, shown values, collection orders and rankings.
-- **one-path**: a configured source binding, a stage, an explicit add and a replay converge on the same library state.
-- **equal-bytes-stay-separate**: two files with equal bytes added as two items stay two items with distinct IDs, and no curation moves between them when a reference-only original is re-found by hash.
-- **revisions-keep-transitions**: A→B→A gives two byte revisions and three recorded transitions, in capture order.
-- **move-continues-item**: unchanged bytes moved within a root, with the old path gone in the same completed scan, continue the item; several equal-byte moves with no unique match are reported and leave curation unattached.
-- **unavailable-is-not-gone**: a disconnected root or an incomplete traversal never marks a copy deleted.
-- **intake-matches-bytes**: a file mutated during acquisition ends as a complete acquisition whose stored bytes match its digest, or as a visible retry or failure.
-- **withdrawal-keeps-history**: untag, uncollect and undo leave the withdrawn record live and inspectable, the view excludes it, and withdrawing the withdrawal restores it.
-- **currency.shared**: the library's current records equal the common `authored` currency function on generated histories, read back from storage one record at a time, including withdrawal of a middle revision (R1←R2←R3, withdraw R2 → R3 current).
-- **projection.equals-function**: the `library_shown` projection equals the precedence applied to every live curation record, after any generated sequence of writes, withdrawals, archives, restores and replays.
-- **order.dense**: 10,000 successive insertions between the same two neighbours yield distinct, ordered positions.
-- **tag.any-label**: any label with text, including one of punctuation (`-`, `!x`), is an ordinary tag.
-- **no-cross-material-replacement**: the library's views are the same whether or not a newer reading in another material would replace an older one, because no curation kind depends on it. Derived readings (`library.item`, `library.filename_hints`) are recomputed by their derivation, and the newer reading replaces the live one.
-- **conflict-on-same-revision**: two replacements from one revision, including empty and withdraw operations, give one success and one refusal naming the current revision; a plan admitted after another curation write committed under it is refused.
-- **atomic-actions**: a failed part of tag-plus-collect, or of any multi-record action, leaves none of its records.
-- **undo-refuses-dependents**: undo after a later dependent record reports a conflict and changes nothing.
-- **computed-authorship**: no request can set its author; by default an agent's value ranks below the operator's and above an import, two agents disagreeing is a conflict shown with both supporters, and reads list every supporter.
-- **operator-correction-survives**: a rescan, reimport or classifier rerun leaves an operator's authored value shown.
-- **pinned-entries**: in a collection A, B, A with the second A removed, the first A remains, and editing A does not change the rendition either entry opens.
-- **old-parts-stay-attached**: after an item's bytes change, an existing crop, region or time range still refers to the earlier revision.
-- **live-and-fixed-sets**: after an import changes a query's results, the live set changes, the fixed selection does not, collection order does not change until a suggestion is accepted, and a dismissal holds only under its recorded query revision.
-- **no-truncated-selection**: a bulk action over a selection larger than one page acts on every member and reports each failed member.
-- **lifecycle-support**: archiving a scan removes only its support, curation shows "target lacks live support", restoring brings support back, and tombstoning an original removes bytes only when no other material reads them.
-- **exact-use**: opening revision A, changing the item to B and exiting records a view of A, played from A's bytes.
-- **unknown-is-not-zero**: an unknown view duration, rating or dimension is never shown or summed as 0.
-- **rankings**: A > B > C, cycles, disconnected groups, unbeaten items, two uncompared items and zero comparisons each give a deterministic result with fit status and support; the judge set changes the result only through its comparisons, and rebuilding from the same comparisons gives the same ranking.
-- **rank.judge-isolation**: adding an agent's comparisons changes the operator's ranking not at all.
-- **derived-ratings-attributed**: a rating produced from a ranking is attributed to its method and version, never to the operator.
-- **import-preserves-unknown-fields**: fields an importer does not interpret survive in the stored sidecar bytes, and reimporting the same record changes nothing.
-- **privacy-parity**: with one rule configured, item reads, search, previews, thumbnails and handoffs apply it identically; with none, nothing is hidden.
-- **agent-parity**: every library operation is callable over MCP with an agent token, and returns the same values and errors as the CLI and web.
-
-Decided target (2026-11-01):
-
-- **lib.projection.equals-function**: the shown-value projection equals recomputation from all live records after any sequence of writes, withdrawals, archives and replays.
-- **lib.tag.implies-acyclic**: an `implies` write that would close a cycle is refused, and shown tags under implication equal the transitive closure at the implying level.
-- **lib.tag.any-label**: any non-empty label, including one that starts with or consists of punctuation, is an ordinary tag.
-- **lib.bulk.single-valued-needs-each**: a property set over a query of more than one row without `--each` is refused with the `--each` form.
-- **lib.order.dense**: 10,000 successive insertions between the same two neighbours give distinct, ordered positions.
-- **lib.locator.shared-module**: Sinex and Polylogue produce byte-identical canonical locators for a generated corpus of URLs, paths and catalog identifiers.
-- **lib.locator.catalog-folds**: every declared URL form of a catalog object, and its export record, yields one item.
-- **lib.locator.no-guess**: two URLs differing only in a parameter not on the declared tracking list are two items.
-- **lib.locator.version-replays**: changing a canonicalizer's version and replaying yields the new item set, and curation on items whose locator canonicalizes the same keeps its target.
-- **lib.encounter.from-rules-only**: every encounter cites one event and one declared rule version; deleting the rule and replaying removes exactly its encounters.
-- **lib.attention.unknown-not-zero**: an item with one measured and one unmeasured encounter shows the measured sum marked `lower bound`.
-- **lib.capture.later-is-not-during**: a crawler fetch after a visit never grades that visit `during`, even with an equal body, unless another visit's `during` capture has that body.
-- **lib.capture.dedup**: re-displaying an unchanged page stores no new body bytes, and an asset shared by 1,000 pages is stored once.
-- **lib.reader.inert**: the reader never executes captured script and makes no network request.
-- **lib.rank.pl-reduces-to-bt**: on pair-only comparisons the Plackett–Luce fit equals the Bradley–Terry fit within tolerance.
-- **lib.rank.k-not-expanded**: one 4-ordering and its six implied pairs submitted as pairs give different supports, and the answer reports the comparisons actually submitted.
-- **lib.rank.judge-isolation**: adding an agent's comparisons changes the operator's ranking not at all.
-- **lib.rank.deterministic**: the same comparisons in any arrival order give the same scores, intervals and order.
-- **lib.rank.next-includes-unseen**: over a set with uncompared items, `judge next` proposes one within the first ⌈n/k⌉ proposals under every rule.
-- **lib.pl.federated-only**: the library holds no copy of Polylogue rows; with Polylogue down, the *In AI sessions* panel shows unavailable with the reason and every other panel is unchanged.
-- **lib.pl.split-equals-oracle**: mixed library queries equal the federation oracle of the shared query suite.
-
-Stored with the scope `sx.`. The library also runs the shared law `authored.currency.middle-withdrawal` against its current-record view.

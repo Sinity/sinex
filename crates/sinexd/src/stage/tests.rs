@@ -117,8 +117,6 @@ fn accounting(file: &Value, source: &str) -> Accounting {
         .unwrap_or_else(|e| panic!("{source}: {e}: {file}"))
 }
 
-/// law: sx.stage.inventory-total
-/// law: sx.acct.identity
 #[devkit::test]
 async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
@@ -213,7 +211,6 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
     assert!(stored.end_seq >= stored.start_seq);
 }
 
-/// law: sx.stage.restage-two-materials-one-live-reading
 #[devkit::test]
 async fn identical_bytes_from_two_paths_are_two_materials_and_one_live_reading(
     db: devkit::pg::TestDatabase,
@@ -267,7 +264,6 @@ async fn identical_bytes_from_two_paths_are_two_materials_and_one_live_reading(
     assert_eq!(after, 2);
 }
 
-/// law: sx.stage.without-parser
 #[devkit::test]
 async fn a_file_no_parser_recognises_is_kept_byte_for_byte(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
@@ -312,7 +308,6 @@ async fn a_file_no_parser_recognises_is_kept_byte_for_byte(db: devkit::pg::TestD
     );
 }
 
-/// law: sx.stage.shapes
 #[devkit::test]
 async fn each_staged_shape_makes_its_material_an_operation_and_a_run(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
@@ -431,7 +426,6 @@ fn a_relative_path_is_refused() {
     assert!(error.contains("absolute"), "{error}");
 }
 
-/// law: sx.stage.idempotent-progress
 #[devkit::test]
 async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
     let dir = tempfile::tempdir().unwrap();
@@ -496,8 +490,6 @@ async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
     ctx.close().await.unwrap();
 }
 
-/// law: sx.stage.idempotent-progress
-/// law: sx.acct.identity
 #[devkit::test]
 async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
     db: devkit::pg::TestDatabase,
