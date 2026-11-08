@@ -313,11 +313,8 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
         .await
         .unwrap();
     let compressed: Vec<String> = sqlx::query_scalar(
-        "SELECT format('%I.%I', cc.schema_name, cc.table_name)
-         FROM _timescaledb_catalog.chunk c
-         JOIN _timescaledb_catalog.chunk cc ON cc.id=c.compressed_chunk_id
-         JOIN _timescaledb_catalog.hypertable h ON h.id=c.hypertable_id
-         WHERE h.schema_name='core' AND h.table_name='events'",
+        "SELECT compress_relid::text FROM _timescaledb_catalog.compression_settings
+         WHERE relid IN (SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL",
     )
     .fetch_all(&mut *conn)
     .await
