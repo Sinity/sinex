@@ -1135,12 +1135,17 @@ pub(super) fn time_fn_value(
     let bad = |what: &str| QueryError::at(at, format!("{}() takes {what}", func.name()));
     Ok(match func {
         TimeFn::Day => Value::Text(date_word(raw).ok_or_else(|| bad("a date"))?.to_string()),
+        // A week is written as its ISO label (2026-W37) or as any date in it;
+        // both compare against the shared bucket label.
         TimeFn::Week => {
-            let d = date_word(raw).ok_or_else(|| bad("a date"))?;
-            let monday = d
-                .checked_sub(jiff::Span::new().days(d.weekday().to_monday_zero_offset() as i64))
-                .map_err(|_| bad("a date in range"))?;
-            Value::Text(monday.to_string())
+            let d = match raw.parse::<jiff::civil::ISOWeekDate>() {
+                Ok(week) => week.date(),
+                Err(_) => match iso_week(raw) {
+                    Some(d) => d,
+                    None => date_word(raw).ok_or_else(|| bad("a date or an ISO week"))?,
+                },
+            };
+            Value::Text(query_language::time::label::week(d))
         }
         TimeFn::Hour | TimeFn::Year => {
             let h: i64 = raw.parse().map_err(|_| bad("an hour, 0 to 23"))?;
@@ -1180,4 +1185,16 @@ pub(super) fn time_fn_value(
             }
         }
     })
+}
+
+/// `2026-W37`: the Monday of that ISO week.
+fn iso_week(raw: &str) -> Option<jiff::civil::Date> {
+    let (year, week) = raw.split_once("-W")?;
+    let week = jiff::civil::ISOWeekDate::new(
+        year.parse().ok()?,
+        week.parse().ok()?,
+        jiff::civil::Weekday::Monday,
+    )
+    .ok()?;
+    Some(week.date())
 }

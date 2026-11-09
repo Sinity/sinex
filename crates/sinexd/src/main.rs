@@ -299,19 +299,22 @@ fn effective_time_settings(
     zone: Option<&str>,
     day_start: &str,
 ) -> Result<sinex_model::time_settings::TimeSettings, String> {
-    let zone = match zone {
-        Some(name) => {
-            jiff::tz::TimeZone::get(name).map_err(|error| format!("zone {name}: {error}"))?
-        }
-        None => jiff::tz::TimeZone::system(),
-    };
-    if zone.iana_name().is_none() {
-        return Err("system time zone has no IANA name; pass --zone".into());
-    }
     let start = sinex_model::query::time::clock(day_start)
         .ok_or_else(|| format!("day start `{day_start}` is not a clock time"))?;
+    let day = match zone {
+        Some(name) => {
+            let zone =
+                jiff::tz::TimeZone::get(name).map_err(|error| format!("zone {name}: {error}"))?;
+            query_language::time::DaySetting::new(zone, start).map_err(|error| error.to_string())?
+        }
+        // The host's named zone, the same default Polylogue uses, so both
+        // products on one host share one logical day.
+        None => query_language::time::DaySetting::system(start)
+            .map_err(|_| "system time zone has no IANA name; pass --zone".to_string())?,
+    };
     Ok(sinex_model::time_settings::TimeSettings::from_parts(
-        zone, start,
+        day.zone().clone(),
+        start,
     ))
 }
 
