@@ -282,17 +282,17 @@ impl Preparation<'_> {
         };
         let ordinal = query_language::time::days_between(jiff::civil::date(1970, 1, 1), date)
             .map_err(|e| invalid(e.to_string()))?;
-        const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+        use query_language::time::label;
         Ok(Boundary {
             ordinal,
-            day: date.to_string(),
-            week: monday.map(|d| d.to_string()),
-            weekday: DAYS[date.weekday().to_monday_zero_offset() as usize],
-            month: format!("{:04}-{:02}", date.year(), date.month()),
+            day: label::day(date),
+            week: monday.map(|_| label::week(date)),
+            weekday: label::weekday(date),
+            month: label::month(date),
             year: date.year(),
             week_from_ns: bucket_start(monday, func == TimeFn::Week)?,
             month_from_ns: bucket_start(Some(month), func == TimeFn::Month)?,
-            month_day: format!("{:02}-{:02}", date.month(), date.day()),
+            month_day: label::month_day(date),
             from_ns: bounds.start.as_nanosecond().to_string(),
             until_ns: bounds.end.as_nanosecond().to_string(),
         })
