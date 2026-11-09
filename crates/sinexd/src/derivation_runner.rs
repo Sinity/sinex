@@ -76,7 +76,20 @@ pub(crate) struct DerivationRunner {
     runs: BTreeMap<String, RunId>,
     /// Largest stored reading order when each per-event run began.
     previous_orders: BTreeMap<String, i64>,
+    /// Where each per-event derivation's last pass that found no input ended.
+    empty_passes: BTreeMap<String, EmptyPass>,
     pub counts: BTreeMap<String, Counts>,
+}
+
+/// A per-event pass that found no event of its kinds after `stored` up to the
+/// snapshot's `head`. The next pass reads from `head` while the stored
+/// position and the kinds are the ones it started from; a version switch that
+/// resets the position, or new kinds, make it start from the stored position
+/// again.
+struct EmptyPass {
+    kinds: Vec<String>,
+    stored: i64,
+    head: i64,
 }
 
 pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
@@ -221,6 +234,7 @@ impl DerivationRunner {
             writer,
             runs,
             previous_orders,
+            empty_passes: BTreeMap::new(),
             counts: BTreeMap::new(),
         };
         for d in &catalog {
@@ -399,6 +413,7 @@ impl DerivationRunner {
             writer,
             runs,
             previous_orders: BTreeMap::new(),
+            empty_passes: BTreeMap::new(),
             counts: BTreeMap::new(),
         })
     }
@@ -626,9 +641,13 @@ impl DerivationRunner {
         let name = d.name();
         let version = d.version();
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
-        let position = derivations::position(&mut self.read, name)
+        let stored = derivations::position(&mut self.read, name)
             .await
             .map_err(|e| e.to_string())?;
+        let position = match self.empty_passes.get(name) {
+            Some(empty) if empty.stored == stored && empty.kinds == types => empty.head,
+            _ => stored,
+        };
         sinex_store::query::initialize_calendar(&mut self.read)
             .await
             .map_err(|error| error.to_string())?;
@@ -653,7 +672,20 @@ impl DerivationRunner {
             .await
             .map_err(|e| e.to_string())?;
         snapshot.commit().await.map_err(|error| error.to_string())?;
-        let Some(last) = last else { return Ok(0) };
+        let Some(last) = last else {
+            // Nothing of these kinds up to the head this snapshot saw: without
+            // this, every pass would read the same history again.
+            self.empty_passes.insert(
+                name.to_owned(),
+                EmptyPass {
+                    kinds: types,
+                    stored,
+                    head: head.max(position),
+                },
+            );
+            return Ok(0);
+        };
+        self.empty_passes.remove(name);
         let reading_order = self
             .previous_orders
             .get(name)

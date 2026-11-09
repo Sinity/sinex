@@ -40,9 +40,12 @@ pub(crate) async fn observed(
     observation: &sinex_model::ObservationFacts,
     revision: RevisionChange,
 ) -> Result<(Uuid, Uuid)> {
-    let input_id = sqlx::query_scalar!(
+    // An input registered before keeps its row; it is rewritten only when its
+    // kind changed, so a registration writes no row version for a known input.
+    let changed = sqlx::query_scalar!(
         r#"INSERT INTO raw.inputs (id, binding, kind, locator, host) VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (binding, locator, host) DO UPDATE SET kind = EXCLUDED.kind
+             WHERE raw.inputs.kind IS DISTINCT FROM EXCLUDED.kind
            RETURNING id"#,
         InputId::new().0,
         binding,
@@ -50,8 +53,21 @@ pub(crate) async fn observed(
         input.locator,
         input.host,
     )
-    .fetch_one(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await?;
+    let input_id = match changed {
+        Some(id) => id,
+        None => {
+            sqlx::query_scalar!(
+                "SELECT id FROM raw.inputs WHERE binding = $1 AND locator = $2 AND host = $3",
+                binding,
+                input.locator,
+                input.host,
+            )
+            .fetch_one(&mut *conn)
+            .await?
+        }
+    };
 
     let at = observation.observed_at.unwrap_or_else(Timestamp::now).0;
     let o = observation;

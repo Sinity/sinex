@@ -353,6 +353,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   kind text NOT NULL CHECK (kind IN ('appended', 'rewritten', 'replaced', 'truncated', 'snapshot')),
   started_at timestamptz NOT NULL DEFAULT now()
 )".into(),
+        REVISIONS_BY_INPUT.into(),
         format!("CREATE TABLE raw.materials (
   id uuid PRIMARY KEY,
   input_id uuid REFERENCES raw.inputs(id),
@@ -599,6 +600,7 @@ pub(crate) fn after_tables() -> Vec<String> {
             "CREATE TRIGGER event_guard BEFORE UPDATE OR DELETE ON $T FOR EACH ROW EXECUTE FUNCTION core.event_guard()",
             "ALTER TABLE $T SET (timescaledb.compress, timescaledb.compress_segmentby = 'source, event_type', timescaledb.compress_orderby = 'ts_orig, id')",
             "SELECT enable_chunk_skipping('$T', 'ts_orig')",
+            EVENTS_COMMIT_SEQ_SKIPPING,
             "SELECT add_compression_policy('$T', INTERVAL '7 days')",
         ] {
             out.push(template.replace("$T", table));
@@ -662,6 +664,16 @@ fn kind_declarations() -> String {
 /// vector over PostgreSQL's size limit). The search reader records the event
 /// here and moves on, so one event never stops search, `follow` or the
 /// vector index; status counts these rows.
+/// Registration reads an input's current revision on every batch it
+/// registers.
+pub(crate) const REVISIONS_BY_INPUT: &str = "CREATE INDEX IF NOT EXISTS revisions_input_latest ON raw.revisions (input_id, started_at DESC, id DESC)";
+
+/// Per-event derivations read events after a commit position; compressed
+/// chunks keep no B-tree, so their commit-position ranges exclude the chunks
+/// wholly before it.
+pub(crate) const EVENTS_COMMIT_SEQ_SKIPPING: &str =
+    "SELECT enable_chunk_skipping('core.events', 'commit_seq')";
+
 pub(crate) const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
   event_id uuid PRIMARY KEY,
   reason text NOT NULL,
