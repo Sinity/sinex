@@ -1,6 +1,5 @@
 use super::*;
 use crate::query::sql::SqlFragment;
-use sea_query::Value as Parameter;
 
 /// Independent scaled f64 cosine oracle, including extreme finite magnitudes.
 /// Zero-direction vectors have unknown similarity.
@@ -48,9 +47,9 @@ pub(crate) fn rank_sql(target_id_sql: &str, reference: Uuid, position: i64) -> S
       FROM core.visible_embedding_vectors p
       JOIN core.visible_events e ON e.id=p.embedding_id
       JOIN core.visible_embedding_vectors qp ON qp.embedding_id="#);
-    sql.param(Parameter::Uuid(Some(reference))).push(" JOIN core.visible_events q ON q.id=qp.embedding_id WHERE p.target_id=").push(target_id_sql)
-        .push(" AND p.space=qp.space AND p.coverage IN ('indexed','exact','fallback') AND e.commit_seq<=").param(Parameter::BigInt(Some(position)))
-        .push(" AND NOT audit.is_archived_at(e.id,").param(Parameter::BigInt(Some(position))).push(") AND q.commit_seq<=").param(Parameter::BigInt(Some(position)))
-        .push(" AND NOT audit.is_archived_at(q.id,").param(Parameter::BigInt(Some(position))).push(") ORDER BY 1 DESC NULLS LAST,e.commit_seq DESC,e.id DESC LIMIT 1)");
+    sql.param(reference).push(" JOIN core.visible_events q ON q.id=qp.embedding_id WHERE p.target_id=").push(target_id_sql)
+        .push(" AND p.space=qp.space AND p.coverage IN ('indexed','exact','fallback') AND e.commit_seq<=").param(position)
+        .push(" AND NOT audit.is_archived_at(e.id,").param(position).push(") AND q.commit_seq<=").param(position)
+        .push(" AND NOT audit.is_archived_at(q.id,").param(position).push(") ORDER BY 1 DESC NULLS LAST,e.commit_seq DESC,e.id DESC LIMIT 1)");
     sql
 }

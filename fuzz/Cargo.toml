@@ -8,7 +8,10 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+# libFuzzer itself (a C++ build) is linked only when fuzzing:
+# `cargo fuzz run <target> --features libfuzzer`. Workspace checks compile
+# the harnesses without it.
+libfuzzer-sys = { version = "0.4", default-features = false }
 serde_json.workspace = true
 jiff.workspace = true
 sinex-store.workspace = true
@@ -16,6 +19,9 @@ sqlx.workspace = true
 tokio.workspace = true
 sinex-model.workspace = true
 sinex-protocol.workspace = true
+
+[features]
+libfuzzer = ["libfuzzer-sys/link_libfuzzer"]
 
 [[bin]]
 name = "manifest_roundtrip"

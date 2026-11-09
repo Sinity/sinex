@@ -21,7 +21,6 @@ clap = { workspace = true, optional = true }
 [dev-dependencies]
 blake3.workspace = true
 devkit.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

@@ -232,7 +232,7 @@ impl Compiler<'_> {
                 .push(" - ")
                 .append(outer_point)
                 .push("))) <= ")
-                .param(V::String(Some(seconds.into())))
+                .param(seconds)
                 .push("::numeric");
             conditions.push(window);
         }

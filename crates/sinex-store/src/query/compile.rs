@@ -4,9 +4,8 @@
 //! commit position, so the pages of one answer agree with each other and
 //! `as of` is the same rule at an earlier position.
 use super::fields;
-use super::sql::SqlFragment;
+use super::sql::{Param, SqlFragment};
 use crate::{Error, Result};
-use sea_query::Value as V;
 use sinex_model::query::text::{like_escape, regex_escape};
 use sinex_model::query::{
     AggFn, Alias, Context, Expr, FieldRef, FieldType, Join, JoinKind, JoinOn, NativeField, Op,
@@ -120,20 +119,20 @@ pub(crate) fn text_array(items: &[String]) -> String {
     format!("{{{}}}", quoted.join(","))
 }
 
-fn time_value(t: jiff::Timestamp) -> Result<V> {
+fn time_value(t: jiff::Timestamp) -> Result<Param> {
     let odt = time::OffsetDateTime::from_unix_timestamp_nanos(t.as_nanosecond())
         .map_err(|e| invalid(format!("time out of range: {e}")))?;
-    Ok(V::TimeDateTimeWithTimeZone(Some(odt)))
+    Ok(Param::from(odt))
 }
 
-fn value_param(v: &Value) -> Result<V> {
+fn value_param(v: &Value) -> Result<Param> {
     Ok(match v {
-        Value::Text(s) => V::String(Some(s.clone())),
-        Value::Integer(i) => V::BigInt(Some(*i)),
-        Value::Number(n) => V::Double(Some(*n)),
-        Value::Bool(b) => V::Bool(Some(*b)),
+        Value::Text(s) => Param::from(s.clone()),
+        Value::Integer(i) => Param::from(*i),
+        Value::Number(n) => Param::from(*n),
+        Value::Bool(b) => Param::from(*b),
         Value::Time(t) => time_value(*t)?,
-        Value::Id(u) => V::Uuid(Some(*u)),
+        Value::Id(u) => Param::from(*u),
         Value::List(_) | Value::Unknown | Value::Operand(_) => {
             return Err(invalid("non-scalar SQL parameter"));
         }
@@ -266,7 +265,7 @@ impl<'c> Compiler<'c> {
         let mut parts = sql.split("{seq}");
         let mut out = SqlFragment::text(parts.next().expect("one part"));
         for part in parts {
-            out.param(V::BigInt(Some(self.seq))).push(part);
+            out.param(self.seq).push(part);
         }
         out
     }
@@ -675,7 +674,7 @@ impl<'c> Compiler<'c> {
                             ") {selected} WHERE {selected}.{} <= ",
                             quote(&rank)
                         ))
-                        .param(V::BigInt(Some(i64::try_from(*count).unwrap_or(i64::MAX))));
+                        .param(i64::try_from(*count).unwrap_or(i64::MAX));
                     rel = survivors;
                     ordinal = Some(next_ordinal);
                     sort = None;
@@ -809,7 +808,7 @@ impl<'c> Compiler<'c> {
                             .push(" ORDER BY ")
                             .append(order)
                             .push(" LIMIT ")
-                            .param(V::BigInt(Some(n as i64)));
+                            .param(n as i64);
                     }
                     ordinal = Some(next_ordinal.clone());
                     sort = None;
@@ -901,7 +900,7 @@ impl<'c> Compiler<'c> {
                             .push(" ORDER BY ")
                             .append(order)
                             .push(" LIMIT ")
-                            .param(V::BigInt(Some(n as i64)));
+                            .param(n as i64);
                     }
                     rel = projected;
                     columns = operands.iter().map(Operand::column).collect();
@@ -943,7 +942,7 @@ impl<'c> Compiler<'c> {
                 .push(format!(") {r} ORDER BY "))
                 .append(order.clone())
                 .push(" LIMIT ")
-                .param(V::BigInt(Some(n as i64))),
+                .param(n as i64),
             None => count.append(rel.clone()),
         };
         count.push(") c");
@@ -979,7 +978,7 @@ impl<'c> Compiler<'c> {
             .push(format!(") {r} ORDER BY "))
             .append(order);
         if let Some(n) = limit {
-            answer.push(" LIMIT ").param(V::BigInt(Some(n as i64)));
+            answer.push(" LIMIT ").param(n as i64);
         }
         Ok(Compiled {
             answer,
@@ -1011,7 +1010,7 @@ impl<'c> Compiler<'c> {
             .push(format!(") {r} ORDER BY "))
             .append(order)
             .push(" LIMIT ")
-            .param(V::BigInt(Some(n as i64)));
+            .param(n as i64);
         Ok(f)
     }
 

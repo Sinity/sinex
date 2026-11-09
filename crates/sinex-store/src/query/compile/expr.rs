@@ -40,8 +40,7 @@ impl Compiler<'_> {
             }
             (Cols::Base { .. }, FieldRef::TypedPayload { path, ty }) => {
                 let mut raw = SqlFragment::text(Self::template(cols, "({t}.payload #> "));
-                raw.param(V::String(Some(text_array(path))))
-                    .push("::text[])");
+                raw.param(text_array(path)).push("::text[])");
                 Ok((Self::typed_json(raw, *ty), Kind::Typed(*ty)))
             }
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
@@ -116,7 +115,7 @@ impl Compiler<'_> {
             let mut out = SqlFragment::text("extract(hour from (");
             out.append(t)
                 .push(" AT TIME ZONE ")
-                .param(V::String(Some(self.ctx.zone_name())))
+                .param(self.ctx.zone_name())
                 .push("))::bigint");
             return Ok(out);
         }
@@ -138,7 +137,7 @@ impl Compiler<'_> {
         let mut out = SqlFragment::text(format!(
             "(SELECT d.{column} FROM pg_temp.sinex_query_days d WHERE d.setting="
         ));
-        out.param(V::String(Some(setting.clone())))
+        out.param(setting.clone())
             .push(" AND d.from_ns<=")
             .append(ns.clone())
             .push(" AND ")
@@ -191,14 +190,9 @@ impl Compiler<'_> {
                     if index > 0 {
                         out.push(", ");
                     }
-                    out.param(V::String(Some(from.into())))
-                        .push(", ")
-                        .param(V::String(Some(to.into())))
-                        .push(")");
+                    out.param(from).push(", ").param(to).push(")");
                 }
-                out.push(" ESCAPE ")
-                    .param(V::String(Some("\\".into())))
-                    .push(")");
+                out.push(" ESCAPE ").param("\\").push(")");
                 Ok((out, Kind::Typed(FieldType::Bool)))
             }
             Operand::Text(value) => {
@@ -468,10 +462,10 @@ impl Compiler<'_> {
         )?;
         let mut number = Self::typed_json(lhs.clone(), FieldType::Number);
         number.push(" ").push(op_sql(op)).push(" (CASE WHEN ")
-            .param(V::String(Some(raw.into())))
+            .param(raw)
             .push(" ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$' AND pg_input_is_valid(")
-            .param(V::String(Some(raw.into()))).push(", 'numeric') THEN ")
-            .param(V::String(Some(raw.into()))).push("::numeric END)");
+            .param(raw).push(", 'numeric') THEN ")
+            .param(raw).push("::numeric END)");
         let boolean = if matches!(op, Op::Eq | Op::Ne) {
             match raw {
                 "true" => self.compare(
@@ -568,7 +562,7 @@ impl Compiler<'_> {
                 .push(" ")
                 .push(op_sql(op))
                 .push(" ")
-                .param(V::String(Some(raw.clone())))
+                .param(raw.clone())
                 .push("::numeric)");
             return Ok(out);
         }
@@ -582,7 +576,7 @@ impl Compiler<'_> {
             (Op::Contains, Value::Text(s), _) => {
                 out.append(l)
                     .push(" ILIKE ")
-                    .param(V::String(Some(format!("%{}%", like_escape(s)))))
+                    .param(format!("%{}%", like_escape(s)))
                     .push(" ESCAPE '\\'");
             }
             (Op::Prefix, Value::Text(s), Kind::Typed(FieldType::Path)) => {
@@ -598,20 +592,20 @@ impl Compiler<'_> {
                     // `%` in a path are not wildcards.
                     out.append(l.clone())
                         .push(" = ")
-                        .param(V::String(Some(root.clone())))
+                        .param(root.clone())
                         .push(" OR left(")
                         .append(l)
                         .push(", ")
-                        .param(V::Int(Some(root.chars().count() as i32 + 1)))
+                        .param(root.chars().count() as i32 + 1)
                         .push(") = ")
-                        .param(V::String(Some(format!("{root}/"))));
+                        .param(format!("{root}/"));
                 }
             }
             (Op::Prefix, Value::Text(s), _) => {
                 out.push("lower(")
                     .append(l)
                     .push(") LIKE lower(")
-                    .param(V::String(Some(format!("{}%", like_escape(s)))))
+                    .param(format!("{}%", like_escape(s)))
                     .push(") ESCAPE '\\'");
             }
             (Op::Contains | Op::Prefix, _, _) => {
@@ -622,7 +616,7 @@ impl Compiler<'_> {
                     out.push("NOT ");
                 }
                 out.push("(")
-                    .param(V::Uuid(Some(*id)))
+                    .param(*id)
                     .push(" = ANY(")
                     .append(l)
                     .push("))");
@@ -668,9 +662,9 @@ impl Compiler<'_> {
             out.push("(")
                 .append(id)
                 .push(" IN (SELECT s.event_id FROM core.visible_search_text s WHERE s.trigram_indexed AND s.text ~ ")
-                .param(V::String(Some(pattern.clone())))
+                .param(pattern.clone())
                 .push(" UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT s.trigram_indexed AND s.text ~ ")
-                .param(V::String(Some(pattern)))
+                .param(pattern)
                 .push("))");
             return Ok(out);
         }
@@ -679,11 +673,11 @@ impl Compiler<'_> {
             .push(" AND ");
         if w.phrase {
             out.push("s.tsv @@ phraseto_tsquery('simple', ")
-                .param(V::String(Some(w.words.join(" "))))
+                .param(w.words.join(" "))
                 .push(")");
         } else {
             out.push("s.tsv @@ plainto_tsquery('simple', ")
-                .param(V::String(Some(w.words.join(" "))))
+                .param(w.words.join(" "))
                 .push(")");
         }
         out.push(")");
@@ -752,7 +746,7 @@ impl Compiler<'_> {
                 let mut out = SqlFragment::text("(CASE WHEN ");
                 out.append(value.clone()).push(" IS NULL THEN NULL ELSE EXISTS (SELECT 1 FROM regexp_split_to_table(lower(")
                     .append(value).push("), '[^[:alnum:]]+') AS matched_word(word) WHERE word = ")
-                    .param(V::String(Some(words.words.join(" ")))).push(") END)");
+                    .param(words.words.join(" ")).push(") END)");
                 out
             }
             Expr::Within { lhs, from, to } => {
@@ -819,9 +813,9 @@ impl Compiler<'_> {
             let start = Self::template(cols, &start);
             let end = Self::template(cols, &end);
             let mut f = SqlFragment::text(Self::template(cols, "({t}.event_type = ANY("));
-            f.param(V::String(Some(text_array(
+            f.param(text_array(
                 &a.kinds.iter().map(|s| (*s).into()).collect::<Vec<_>>(),
-            ))))
+            ))
             .push(format!(
                 "::text[]) AND {start} {} ",
                 if to.is_some() { "<" } else { "<=" }
@@ -852,20 +846,20 @@ impl Compiler<'_> {
         match table {
             Table::Events | Table::Drift => {
                 let mut f = SqlFragment::text(Self::template(cols, "{t}.commit_seq <= "));
-                f.param(V::BigInt(Some(self.seq))).push(Self::template(
+                f.param(self.seq).push(Self::template(
                     cols,
                     " AND NOT audit.is_archived_at({t}.id, ",
                 ));
-                f.param(V::BigInt(Some(self.seq))).push(")");
+                f.param(self.seq).push(")");
                 out.push(f);
             }
             Table::Archive => {
                 let mut f = SqlFragment::text(Self::template(cols, "{t}.commit_seq <= "));
-                f.param(V::BigInt(Some(self.seq)))
+                f.param(self.seq)
                     .push(Self::template(cols, " AND {a}.archived AND {a}.commit_seq <= "))
-                    .param(V::BigInt(Some(self.seq)))
+                    .param(self.seq)
                     .push(Self::template(cols, " AND NOT EXISTS (SELECT 1 FROM audit.archive_changes later WHERE later.event_id={t}.id AND later.commit_seq>{a}.commit_seq AND later.commit_seq <= "))
-                    .param(V::BigInt(Some(self.seq))).push(")");
+                    .param(self.seq).push(")");
                 out.push(f);
             }
             _ => {}
@@ -876,38 +870,36 @@ impl Compiler<'_> {
         if let Some(a) = alias {
             let mut f = SqlFragment::text(Self::template(cols, "{t}.event_type = ANY("));
             let kinds: Vec<String> = a.kinds.iter().map(|k| k.to_string()).collect();
-            f.param(V::String(Some(text_array(&kinds))))
-                .push("::text[])");
+            f.param(text_array(&kinds)).push("::text[])");
             out.push(f);
             if let Some((field, value)) = a.only
                 && let Some(sql) = fields::alias_field(a.name, field)
             {
                 let mut f =
                     SqlFragment::text(format!("(({})::text = ", Self::template(cols, &sql)));
-                f.param(V::String(Some(value.to_owned()))).push(")");
+                f.param(value.to_owned()).push(")");
                 out.push(f);
             }
             for rows in a.kind_rows {
                 let mut f = SqlFragment::text(Self::template(cols, "({t}.event_type <> "));
-                f.param(V::String(Some(rows.kind.to_owned())))
-                    .push(" OR (true");
+                f.param(rows.kind.to_owned()).push(" OR (true");
                 for (field, value) in rows.equal {
                     f.push(Self::template(cols, " AND {t}.payload ->> "))
-                        .param(V::String(Some((*field).to_owned())))
+                        .param((*field).to_owned())
                         .push(" = ")
-                        .param(V::String(Some((*value).to_owned())));
+                        .param((*value).to_owned());
                 }
                 for field in rows.present {
                     f.push(Self::template(cols, " AND {t}.payload ->> "))
-                        .param(V::String(Some((*field).to_owned())))
+                        .param((*field).to_owned())
                         .push(" IS NOT NULL");
                 }
                 for (field, values) in rows.not_in {
                     let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
                     f.push(Self::template(cols, " AND coalesce({t}.payload ->> "))
-                        .param(V::String(Some((*field).to_owned())))
+                        .param((*field).to_owned())
                         .push(", '') <> ALL(")
-                        .param(V::String(Some(text_array(&values))))
+                        .param(text_array(&values))
                         .push("::text[])");
                 }
                 f.push("))");
@@ -918,14 +910,14 @@ impl Compiler<'_> {
                 let mut f = SqlFragment::text(
                     "NOT EXISTS (SELECT 1 FROM core.visible_events fused WHERE fused.event_type = ",
                 );
-                f.param(V::String(Some(fused.to_owned())))
+                f.param(fused.to_owned())
                     .push(Self::template(
                         cols,
                         " AND fused.parents @> ARRAY[{t}.id] AND fused.commit_seq <= ",
                     ))
-                    .param(V::BigInt(Some(self.seq)))
+                    .param(self.seq)
                     .push(" AND NOT audit.is_archived_at(fused.id, ")
-                    .param(V::BigInt(Some(self.seq)))
+                    .param(self.seq)
                     .push("))");
                 out.push(f);
             }
@@ -988,13 +980,13 @@ impl Compiler<'_> {
             };
             let mut selected = SqlFragment::text(Self::template(cols, "{t}.event_type = ANY("));
             selected
-                .param(V::String(Some(text_array(
+                .param(text_array(
                     &alias
                         .kinds
                         .iter()
                         .map(|s| (*s).to_owned())
                         .collect::<Vec<_>>(),
-                ))))
+                ))
                 .push("::text[])");
             start
                 .push("WHEN ")
@@ -1059,18 +1051,17 @@ impl Compiler<'_> {
             cols,
             "(SELECT ts_rank(s.tsv, plainto_tsquery('simple', ",
         ));
-        f.param(V::String(Some(words.join(" "))))
-            .push(Self::template(
-                cols,
-                ")) FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
-            ));
+        f.param(words.join(" ")).push(Self::template(
+            cols,
+            ")) FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
+        ));
         f
     }
 
     pub(super) fn snippet(&self, cols: &Cols, words: &[String]) -> SqlFragment {
         let mut f =
             SqlFragment::text("(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ");
-        f.param(V::String(Some(words.join(" ")))).push(Self::template(
+        f.param(words.join(" ")).push(Self::template(
             cols,
             "), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
         ));

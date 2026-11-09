@@ -38,9 +38,12 @@ regex = "1"
 getrandom = "0.3"
 age = { version = "0.11", default-features = false }
 chacha20poly1305 = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 thiserror = "2"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json", "macros", "time"] }
+# Held at 0.32: sqlx 0.8 (and 0.9) declare `libsqlite3-sys` below 0.38 for
+# their optional SQLite back end, and Cargo refuses two packages linking
+# `sqlite3` even when that back end is off. rusqlite 0.40 needs 0.38.
 rusqlite = { version = "0.32", features = ["bundled"] }
 gix = { version = "0.89", default-features = false, features = ["sha1"] }
 notify = { version = "8", default-features = false }
@@ -52,10 +55,8 @@ jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 caseless = "0.2"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
-sea-query = { version = "1", default-features = false, features = ["backend-postgres", "with-json", "with-uuid", "with-time"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
@@ -69,7 +70,10 @@ signal-delivery = { git = "https://github.com/Sinity/polylogue-sinex-common", br
 references = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", features = ["pg", "nats"] }
-async-nats = "0.47"
+# Every connection is user and password over plain NATS (or TLS, which the
+# `ring` provider covers); NKeys, WebSockets, key-value, object store and the
+# service API are not used.
+async-nats = { version = "0.47", default-features = false, features = ["jetstream", "ring", "nuid", "server_2_10", "server_2_11", "server_2_12"] }
 # The NATS server checks passwords against bcrypt hashes in its config.
 bcrypt = "0.17"
 jsonschema = { version = "0.42", default-features = false }

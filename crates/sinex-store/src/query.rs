@@ -563,7 +563,7 @@ fn typed_boundary(value: &Json, ty: &str) -> Result<SqlFragment> {
         }
     };
     let mut f = SqlFragment::text("(");
-    f.param(sea_query::Value::String(Some(value.to_string())))
+    f.param(value.to_string())
         .push("::jsonb #>> '{}')::")
         .push(cast);
     Ok(f)
@@ -626,15 +626,14 @@ fn render_page(compiled: Compiled, read: &ReadPage) -> Result<Rendered> {
             })
             .push(")");
     }
-    rows.push(format!(" ORDER BY {order} LIMIT "))
-        .param(sea_query::Value::BigInt(Some(
-            i64::try_from(
-                read.size
-                    .checked_add(1)
-                    .ok_or_else(|| Error::Invalid("page size overflow".into()))?,
-            )
-            .map_err(|_| Error::Invalid("page size overflow".into()))?,
-        )));
+    rows.push(format!(" ORDER BY {order} LIMIT ")).param(
+        i64::try_from(
+            read.size
+                .checked_add(1)
+                .ok_or_else(|| Error::Invalid("page size overflow".into()))?,
+        )
+        .map_err(|_| Error::Invalid("page size overflow".into()))?,
+    );
     Ok(Rendered {
         total,
         rows: rows.render(),
