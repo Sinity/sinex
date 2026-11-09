@@ -211,18 +211,3 @@ fn an_unsaved_mark_and_a_reopened_window_are_changes() {
         ]
     );
 }
-
-#[devkit::test]
-fn progress_glyphs_and_their_spaces_leave_the_text() {
-    for (title, text) in [
-        ("⣾ build", "build"),
-        ("✳✶ two glyphs", "two glyphs"),
-        ("◴ quarter", "quarter"),
-        ("* asterisk alone", "asterisk alone"),
-        ("*draft", "*draft"),
-        ("plain", "plain"),
-        ("⠋", ""),
-    ] {
-        assert_eq!(without_progress(title), text, "{title}");
-    }
-}

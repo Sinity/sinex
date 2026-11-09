@@ -13,6 +13,7 @@
 //! A terminal running a busy program animates a spinner at the start of its
 //! title, many times a second. A title change that only alters such a leading
 //! progress glyph is read with no event; the stored line keeps every frame.
+use super::titles::without_progress;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::desktop::{
@@ -124,36 +125,6 @@ impl Carry {
             _ => true,
         });
         (out, Carry { pending, titles })
-    }
-}
-
-/// A title without its leading progress glyphs and the spaces after them.
-/// Terminal programs draw spinners from Unicode Braille patterns, the dingbat
-/// stars and asterisks, circles with a half or quarter marked, the middle dot,
-/// and an asterisk standing alone before a space (an asterisk touching the
-/// text, as in `*draft`, is an editor's unsaved mark and stays).
-fn without_progress(title: &str) -> &str {
-    let glyph = |c: char| {
-        matches!(c,
-            '\u{2800}'..='\u{28FF}'   // Braille patterns: ⠋ ⠙ ⠹ ⣾ …
-            | '\u{2722}'..='\u{273D}' // dingbat stars and asterisks: ✢ ✳ ✶ ✻ ✽ …
-            | '\u{25D0}'..='\u{25D3}' // circles with a half filled: ◐ ◓ ◑ ◒
-            | '\u{25F4}'..='\u{25F7}' // circles with a quarter marked: ◴ ◵ ◶ ◷
-            | '\u{00B7}') // middle dot
-    };
-    let mut rest = title;
-    loop {
-        let mut chars = rest.chars();
-        match (chars.next(), chars.next()) {
-            (Some(c), _) if glyph(c) => rest = &rest[c.len_utf8()..],
-            (Some('*'), Some(next)) if next.is_whitespace() => rest = &rest[1..],
-            _ => break,
-        }
-    }
-    if rest.len() == title.len() {
-        title
-    } else {
-        rest.trim_start()
     }
 }
 

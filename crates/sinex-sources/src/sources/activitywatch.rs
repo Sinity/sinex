@@ -38,7 +38,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "attention, presence and recall",
     class: Class::Guarded,
     parser: "activitywatch-events",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &[
         "window.span",
         "presence.span",
@@ -50,10 +50,8 @@ pub const SPEC: SourceSpec = SourceSpec {
 
 /// The corrections applied while reading.
 pub struct Corrections {
-    /// Leading glyphs that are a spinner frame, not part of the title
-    /// (corpus-verified class, measured 2026-08-09..23).
-    pub spinner_glyphs: &'static [char],
-    /// Applications whose titles carry the spinner.
+    /// Applications whose titles carry a spinner
+    /// ([`without_progress`](super::titles::without_progress)).
     pub spinner_apps: &'static [&'static str],
     /// Adjacent identical window events whose gap is at most this many
     /// nanoseconds join one span (the watcher polls every 2-3 s).
@@ -61,9 +59,6 @@ pub struct Corrections {
 }
 
 pub const CORRECTIONS: Corrections = Corrections {
-    spinner_glyphs: &[
-        '◐', '◑', '⠂', '⠐', '⠏', '⠸', '⠦', '⠴', '⠇', '⠧', '⠋', '⠼', '⠹', '⠙', '✳',
-    ],
     spinner_apps: &["kitty"],
     merge_gap_ns: 3_000_000_000,
 };
@@ -77,11 +72,7 @@ fn corrected_title<'a>(app: &str, title: &'a str) -> &'a str {
     {
         return title;
     }
-    let mut chars = title.chars();
-    match (chars.next(), chars.next()) {
-        (Some(glyph), Some(' ')) if CORRECTIONS.spinner_glyphs.contains(&glyph) => chars.as_str(),
-        _ => title,
-    }
+    super::titles::without_progress(title)
 }
 
 sinex_model::payload_enum! {

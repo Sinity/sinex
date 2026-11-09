@@ -107,6 +107,7 @@ pub mod takeout_chrome;
 pub mod telemetry;
 pub(crate) mod terminal_text;
 pub mod text_history;
+pub(crate) mod titles;
 #[cfg(feature = "full")]
 pub mod transcript;
 #[cfg(feature = "full")]
