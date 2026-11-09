@@ -5,9 +5,12 @@ on:
   push:
     branches: [master]
 
+# A new push to a pull request replaces its running check. Every master
+# commit keeps its own run: its result is master's record and its target
+# directory is the cache pull requests start from.
 concurrency:
-  group: check-${{ github.ref }}
-  cancel-in-progress: true
+  group: check-${{ github.ref }}-${{ github.ref == 'refs/heads/master' && github.sha || 'latest' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 # Master builds from scratch and saves its whole target directory, the exact
 # build of that commit; a pull request starts from it. Cargo decides freshness
