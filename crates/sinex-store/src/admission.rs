@@ -110,6 +110,51 @@ pub struct Outcome {
     pub timings: std::collections::BTreeMap<&'static str, std::time::Duration>,
 }
 
+impl Outcome {
+    pub fn counts(&self) -> sinex_model::AdmissionCounts {
+        sinex_model::AdmissionCounts {
+            admitted: self.admitted,
+            repeats: self.repeats,
+            replaced: self.replaced,
+            older: self.older,
+            superseded: self.superseded,
+            superseded_input: self.superseded_input,
+            failures: self.failures,
+            dirty_keys: self.dirty_keys,
+            replay_archived: self.replay_archived,
+            removed_at_source: self.removed_at_source,
+        }
+    }
+
+    pub fn from_counts(counts: sinex_model::AdmissionCounts) -> Self {
+        let sinex_model::AdmissionCounts {
+            admitted,
+            repeats,
+            replaced,
+            older,
+            superseded,
+            superseded_input,
+            failures,
+            dirty_keys,
+            replay_archived,
+            removed_at_source,
+        } = counts;
+        Self {
+            admitted,
+            repeats,
+            replaced,
+            older,
+            superseded,
+            superseded_input,
+            failures,
+            dirty_keys,
+            replay_archived,
+            removed_at_source,
+            ..Self::default()
+        }
+    }
+}
+
 // Borrowed outcomes add counts and positions; callers take request IDs separately.
 impl std::ops::AddAssign<&Outcome> for Outcome {
     fn add_assign(&mut self, other: &Self) {

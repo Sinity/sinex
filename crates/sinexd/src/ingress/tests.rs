@@ -77,6 +77,40 @@ fn test_write(
     }
 }
 
+/// What admission counted for an admitted frame.
+fn counts(ack: &Acknowledgment) -> sinex_model::AdmissionCounts {
+    match &ack.result {
+        sinex_protocol::FrameResult::Admitted { counts, .. } => *counts,
+        other => panic!("not an admitted frame: {other:?}"),
+    }
+}
+
+/// The material an admitted material frame registered.
+fn material(ack: &Acknowledgment) -> Option<sinex_model::MaterialId> {
+    match &ack.result {
+        sinex_protocol::FrameResult::Admitted { material, .. } => *material,
+        other => panic!("not an admitted frame: {other:?}"),
+    }
+}
+
+/// The committed extents of an admitted material frame.
+fn extents(ack: &Acknowledgment) -> &[Vec<u8>] {
+    match &ack.result {
+        sinex_protocol::FrameResult::Admitted {
+            material_extents, ..
+        } => material_extents,
+        other => panic!("not an admitted frame: {other:?}"),
+    }
+}
+
+/// The kinds a kind registration frame registered.
+fn kinds(ack: &Acknowledgment) -> serde_json::Value {
+    match &ack.result {
+        sinex_protocol::FrameResult::KindsRegistered { kinds } => serde_json::json!(kinds),
+        other => panic!("not a kind registration: {other:?}"),
+    }
+}
+
 struct Harness {
     requests: Requests,
     writer: WriterHandle,
@@ -292,9 +326,13 @@ impl Harness {
                 bytes.as_slice(),
             ) {
                 return Acknowledgment {
+                    number: 0,
                     frame: frame.frame().into(),
-                    refusal: Some(reason.to_string()),
-                    ..refused_unrecorded("")
+                    content_hash: None,
+                    result: sinex_protocol::FrameResult::Refused {
+                        kind: FrameRefusal::Bytes,
+                        reason: reason.to_string(),
+                    },
                 };
             }
         }
@@ -359,7 +397,7 @@ impl Harness {
         .unwrap();
         page.acknowledgments
             .into_iter()
-            .find(|ack| ack.number == Some(hint.number))
+            .find(|ack| ack.number == hint.number)
             .expect("complete owned receipt")
     }
 
@@ -431,6 +469,14 @@ impl Harness {
         )
     }
 
+    /// The record failures a refused frame's row records.
+    async fn recorded_failures(&self, frame: &str) -> i64 {
+        self.count(&format!(
+            "SELECT (outcome->>'failures')::bigint FROM core.ingress_frames WHERE frame = '{frame}'"
+        ))
+        .await
+    }
+
     async fn count(&self, sql: &str) -> i64 {
         let mut conn = PgConnection::connect(&self.url).await.unwrap();
         sqlx::query_scalar(sql).fetch_one(&mut conn).await.unwrap()
@@ -472,8 +518,8 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
     let bytes = b": 1760788800:0;ls\n: 1760788801:0;pwd\n";
     let (material, frame) = h.material_frame("m1", bytes);
     let ack = h.send("kitty", &frame).await;
-    assert_eq!(ack.refusal, None);
-    assert_eq!(ack.material, Some(material));
+    assert_eq!(ack.refusal(), None);
+    assert_eq!(self::material(&ack), Some(material));
 
     let events = Ingress::Events {
         source: Some(test_source("kitty")),
@@ -483,10 +529,10 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
         failures: vec![],
     };
     let ack = h.send("kitty", &events).await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
-    assert_eq!(ack.admitted.len(), 2);
-    assert_eq!(ack.outcome["admitted"], 2);
-    assert!(ack.commit_seq.is_some());
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(ack.admitted().len(), 2);
+    assert_eq!(counts(&ack).admitted, 2);
+    assert!(ack.commit_seq().is_some());
 
     // The same frame again: the recorded acknowledgment, nothing admitted twice.
     let again = h.send("kitty", &events).await;
@@ -505,8 +551,8 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
         failures: vec![],
     };
     let ack2 = h.send("kitty", &resent).await;
-    assert_eq!(ack2.admitted, vec![]);
-    assert_eq!(ack2.outcome["repeats"], 1);
+    assert_eq!(ack2.admitted(), vec![]);
+    assert_eq!(counts(&ack2).repeats, 1);
 
     let have = h.recorded("kitty", &["m1", "e1", "never-sent"]).await;
     let names: Vec<&str> = have.iter().map(|a| a.frame.as_str()).collect();
@@ -575,7 +621,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let file = concat!(
@@ -605,7 +651,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             manifest: sinex_model::Manifest::from_json(json!({"media_type": "application/jsonl"})),
         }),
     };
-    assert_eq!(h.send("polylogue", &frame).await.refusal, None);
+    assert_eq!(h.send("polylogue", &frame).await.refusal(), None);
     let second = file.find('\n').unwrap() as u64 + 1;
     let at = |anchor: u64| Some(RecordLocation { material, anchor });
     let event =
@@ -663,20 +709,20 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     let ack = h
         .send("polylogue", &events("run the tests", 1, "events:1"))
         .await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
-    assert_eq!(ack.outcome["admitted"], 4);
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(counts(&ack).admitted, 4);
     // The same reading again, under a new frame: repeats.
     let again = h
         .send("polylogue", &events("run the tests", 1, "events:2"))
         .await;
-    assert_eq!(again.outcome["repeats"], 4, "{again:?}");
+    assert_eq!(counts(&again).repeats, 4, "{again:?}");
     // A newer parser reads the prompt differently: only the message changes,
     // and it replaces the live reading.
     let newer = h
         .send("polylogue", &events("run the tests, please", 2, "events:3"))
         .await;
-    assert_eq!(newer.outcome["admitted"], 1, "{newer:?}");
-    assert_eq!(newer.outcome["repeats"], 3, "{newer:?}");
+    assert_eq!(counts(&newer).admitted, 1, "{newer:?}");
+    assert_eq!(counts(&newer).repeats, 3, "{newer:?}");
     assert_eq!(
         h.count(
             "SELECT count(*) FROM core.events e WHERE e.event_type = 'polylogue.message' \
@@ -761,14 +807,17 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
                 },
             )
             .await;
-        let reason = ack.refusal.unwrap_or_default();
+        let reason = ack
+            .refusal()
+            .map(|(_, reason)| reason.to_owned())
+            .unwrap_or_default();
         assert!(reason.contains(expected), "{name}: {reason}");
-        assert!(ack.admitted.is_empty());
+        assert!(ack.admitted().is_empty());
     }
     // Refusals are recorded: asking again gets the same answer.
     let have = h.recorded("kitty", &["f-type"]).await;
     assert_eq!(have.len(), 1);
-    assert!(have.iter().all(|a| a.refusal.is_some()));
+    assert!(have.iter().all(|a| a.refusal().is_some()));
     assert_eq!(
         h.count("SELECT count(*) FROM core.events").await,
         0,
@@ -776,8 +825,11 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
     );
 
     let garbage = h.send_raw("kitty", b"{not json".to_vec()).await;
-    assert_eq!(garbage.refusal_kind(), Some(FrameRefusal::Malformed));
-    let reason = garbage.refusal.unwrap();
+    assert_eq!(
+        garbage.refusal().map(|(kind, _)| kind),
+        Some(FrameRefusal::Malformed)
+    );
+    let reason = garbage.refusal().unwrap().1;
     assert!(
         reason.starts_with("not a frame:") && reason.contains("at line"),
         "{reason}"
@@ -1014,8 +1066,8 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
     assert_eq!(
         confirmed,
         Confirmed::EventReference {
-            commit_seq: receipt.commit_seq.unwrap(),
-            event: receipt.admitted[0]
+            commit_seq: receipt.commit_seq().unwrap(),
+            event: receipt.admitted()[0]
         }
     );
     let wire: Value = serde_json::from_slice(&message.payload).unwrap();
@@ -1054,10 +1106,10 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
     };
     // Out of order is refused and recorded; in order is accepted.
     let ack = h.send("node", &chunk("a", middle, encoded.len())).await;
-    assert!(ack.refusal.unwrap().contains("ordered prefix"));
+    assert!(ack.refusal().unwrap().1.contains("ordered prefix"));
     for (offset, end) in [(0, middle), (middle, encoded.len())] {
         let ack = h.send("node", &chunk("b", offset, end)).await;
-        assert_eq!(ack.refusal, None, "{ack:?}");
+        assert_eq!(ack.refusal(), None, "{ack:?}");
     }
     assert!(
         !h.blobs.contains(&blob).unwrap(),
@@ -1065,7 +1117,7 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
     );
 
     let ack = h.send("node", &frame).await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
+    assert_eq!(ack.refusal(), None, "{ack:?}");
     assert!(h.blobs.contains(&blob).unwrap());
     assert!(
         !frame_bytes::directory(&h.store_dir, "node", "m-up").exists(),
@@ -1090,8 +1142,8 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
             },
         )
         .await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
-    assert_eq!(ack.admitted.len(), 1);
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(ack.admitted().len(), 1);
     assert_eq!(
         h.count("SELECT count(*) FROM raw.failures WHERE reason = 'unreadable'")
             .await,
@@ -1119,9 +1171,9 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
         length: body.len() as u64,
     };
     let ack = h.send("kitty", &outer).await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
+    assert_eq!(ack.refusal(), None, "{ack:?}");
     assert_eq!(ack.frame, "e-big");
-    assert_eq!(ack.admitted.len(), 1);
+    assert_eq!(ack.admitted().len(), 1);
     // A large frame cannot stand for another large frame.
     let nested_body = serde_json::to_vec(&outer).unwrap();
     let nested = h.fixture_blob(&nested_body);
@@ -1135,7 +1187,12 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
             },
         )
         .await;
-    assert!(ack.refusal.unwrap().contains("material or events frame"));
+    assert!(
+        ack.refusal()
+            .unwrap()
+            .1
+            .contains("material or events frame")
+    );
 }
 
 impl Harness {
@@ -1191,9 +1248,9 @@ async fn a_producer_archives_through_a_lifecycle_request(db: devkit::pg::TestDat
     use sinex_protocol::Reply;
     let h = Harness::start(db).await;
     let (mine, mine_frame) = h.material_frame("m1", b": 1760788800:0;ls\n");
-    assert_eq!(h.send("kitty", &mine_frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &mine_frame).await.refusal(), None);
     let (other, frame) = h.material_for("phone", "m2", b": 1760788801:0;pwd\n");
-    assert_eq!(h.send("phone", &frame).await.refusal, None);
+    assert_eq!(h.send("phone", &frame).await.refusal(), None);
     for (producer, material) in [("kitty", mine), ("phone", other)] {
         let events = Ingress::Events {
             source: Some(test_source(producer)),
@@ -1202,7 +1259,7 @@ async fn a_producer_archives_through_a_lifecycle_request(db: devkit::pg::TestDat
             events: vec![imported(material, 0, "ls")],
             failures: vec![],
         };
-        assert_eq!(h.send(producer, &events).await.refusal, None);
+        assert_eq!(h.send(producer, &events).await.refusal(), None);
     }
     let live = |source: &str| {
         format!(
@@ -1305,7 +1362,7 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     assert!(!request.is_finished());
 
     drop(read_permit);
-    assert_eq!(sending.await.refusal, None);
+    assert_eq!(sending.await.refusal(), None);
     let reply = tokio::time::timeout(Duration::from_secs(10), request)
         .await
         .unwrap()
@@ -1442,7 +1499,7 @@ async fn a_recorded_refusal_keeps_the_frame_bytes_on_redelivery(db: devkit::pg::
         let ack = h
             .send_raw("node", serde_json::to_vec(&frame).unwrap())
             .await;
-        assert!(ack.refusal.is_some());
+        assert!(ack.refusal().is_some());
         assert!(
             frame_bytes::reader(&h.store_dir, "node", "invalid", &blob, bytes.len() as u64).is_ok()
         );
@@ -1462,7 +1519,7 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
     ];
     let bytes = lines.concat();
     let (material, frame) = h.material_for("session", "material", bytes.as_bytes());
-    assert!(h.send("session", &frame).await.refusal.is_none());
+    assert!(h.send("session", &frame).await.refusal().is_none());
     let mut offset = 0;
     for (index, command) in ["first", "second", "third"].iter().enumerate() {
         let mut event = imported(material, offset, command);
@@ -1478,11 +1535,14 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
         };
         let ack = h.send("session", &frame).await;
         if index == 1 {
-            assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Content));
-            assert_eq!(ack.outcome["failures"], 1);
+            assert_eq!(
+                ack.refusal().map(|(kind, _)| kind),
+                Some(FrameRefusal::Content)
+            );
+            assert_eq!(h.recorded_failures(&ack.frame).await, 1);
             assert_eq!(h.send("session", &frame).await, ack);
         } else {
-            assert_eq!(ack.admitted.len(), 1);
+            assert_eq!(ack.admitted().len(), 1);
         }
         offset += lines[index].len() as u64;
     }
@@ -1573,10 +1633,10 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
 ) {
     let h = Harness::start(db).await;
     let (first, frame) = h.material_for("session", "a/material/first", b": 1760788800:0;first\n");
-    assert!(h.send("session", &frame).await.refusal.is_none());
+    assert!(h.send("session", &frame).await.refusal().is_none());
     let (second, frame) =
         h.material_for("session", "b/material/second", b": 1760788801:0;second\n");
-    assert!(h.send("session", &frame).await.refusal.is_none());
+    assert!(h.send("session", &frame).await.refusal().is_none());
     let mut nul_type = imported(first, 0, "synthetic");
     nul_type.kind.name = "not.\0declared".into();
     let mut no_location = imported(first, 0, "synthetic");
@@ -1606,9 +1666,20 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
                 },
             )
             .await;
-        assert_eq!(ack.refusal_kind(), Some(expected), "{ack:?}");
+        assert_eq!(
+            ack.refusal().map(|(kind, _)| kind),
+            Some(expected),
+            "{ack:?}"
+        );
         if name == "nul-type" {
-            assert_eq!(ack.outcome["event_types"], json!(["not.\\0declared"]));
+            assert_eq!(
+                h.count(&format!(
+                    r#"SELECT count(*) FROM core.ingress_frames WHERE frame = '{}' AND outcome->'event_types' = '["not.\\0declared"]'::jsonb"#,
+                    ack.frame
+                ))
+                .await,
+                1
+            );
             let mut repeated = imported(first, 0, "synthetic");
             repeated.kind.name = "not.\0declared".into();
             let retry = Ingress::Events {
@@ -1625,7 +1696,7 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             );
         }
         assert_eq!(
-            ack.outcome["failures"],
+            h.recorded_failures(&ack.frame).await,
             if expected == FrameRefusal::Content {
                 1
             } else {
@@ -1662,8 +1733,8 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             },
         )
         .await;
-    assert_eq!(accepted.refusal, None, "{accepted:?}");
-    assert_eq!(accepted.admitted.len(), 1);
+    assert_eq!(accepted.refusal(), None, "{accepted:?}");
+    assert_eq!(accepted.admitted().len(), 1);
     assert_eq!(h.count("SELECT count(*) FROM raw.failures").await, 4);
 }
 
@@ -1683,7 +1754,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     .await
     .unwrap();
     let (_, frame) = h.material_for("session", "first", b"first\n");
-    assert!(h.send("session", &frame).await.refusal.is_none());
+    assert!(h.send("session", &frame).await.refusal().is_none());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     sinex_store::privacy::set_source_class(
         &mut conn,
@@ -1695,7 +1766,10 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     .unwrap();
     let (_, frame) = h.material_for("session", "changed", b"changed\n");
     let ack = h.send("session", &frame).await;
-    assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
+    assert_eq!(
+        ack.refusal().map(|(kind, _)| kind),
+        Some(FrameRefusal::Configuration)
+    );
     let Ingress::Material { material, .. } = &frame else {
         panic!("material")
     };
@@ -1711,7 +1785,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     .await
     .unwrap();
     let (_, frame) = h.material_for("session", "checked", b"checked\n");
-    assert!(h.send("session", &frame).await.refusal.is_none());
+    assert!(h.send("session", &frame).await.refusal().is_none());
     sinex_store::privacy::set_source_class(
         &mut conn,
         "session",
@@ -1722,7 +1796,10 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     .unwrap();
     let (_, frame) = h.material_for("session", "sealed", b"sealed\n");
     let ack = h.send("session", &frame).await;
-    assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
+    assert_eq!(
+        ack.refusal().map(|(kind, _)| kind),
+        Some(FrameRefusal::Configuration)
+    );
     let Ingress::Material { material, .. } = &frame else {
         panic!("material")
     };
@@ -1786,7 +1863,10 @@ async fn malformed_frames_with_invalid_names_are_recorded_once(db: devkit::pg::T
         br#"{"kind":"events","frame":"nul\u0000name","events":[]}"#.as_slice(),
     ] {
         let ack = h.send_raw("session", bytes.to_vec()).await;
-        assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Malformed));
+        assert_eq!(
+            ack.refusal().map(|(kind, _)| kind),
+            Some(FrameRefusal::Malformed)
+        );
         assert_eq!(h.send_raw("session", bytes.to_vec()).await, ack);
         assert_eq!(h.recorded("session", &[&ack.frame]).await, vec![ack]);
     }
@@ -1824,7 +1904,10 @@ async fn malformed_large_frames_are_errors_and_byte_refusals_remove_transfer_byt
                 },
             )
             .await;
-        assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Malformed));
+        assert_eq!(
+            ack.refusal().map(|(kind, _)| kind),
+            Some(FrameRefusal::Malformed)
+        );
     }
     let (_, material) = h.material_for("session", "damaged", b"synthetic");
     let Ingress::Material { material: m, .. } = &material else {
@@ -1844,7 +1927,10 @@ async fn malformed_large_frames_are_errors_and_byte_refusals_remove_transfer_byt
     let ack = h
         .send_raw("session", serde_json::to_vec(&material).unwrap())
         .await;
-    assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Bytes));
+    assert_eq!(
+        ack.refusal().map(|(kind, _)| kind),
+        Some(FrameRefusal::Bytes)
+    );
     assert!(!dir.exists());
     assert_eq!(h.recorded("session", &["damaged"]).await, vec![ack]);
 }
@@ -1871,7 +1957,10 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     };
     for _ in 0..2 {
         assert_eq!(
-            h.send("node", &content).await.refusal_kind(),
+            h.send("node", &content)
+                .await
+                .refusal()
+                .map(|(kind, _)| kind),
             Some(FrameRefusal::Content)
         );
     }
@@ -1885,7 +1974,10 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         data: "!".into(),
     };
     assert_eq!(
-        h.send("node", &bad_bytes).await.refusal_kind(),
+        h.send("node", &bad_bytes)
+            .await
+            .refusal()
+            .map(|(kind, _)| kind),
         Some(FrameRefusal::Bytes)
     );
     let malformed = Ingress::Events {
@@ -1899,7 +1991,10 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         failures: vec![],
     };
     assert_eq!(
-        h.send("other-node", &malformed).await.refusal_kind(),
+        h.send("other-node", &malformed)
+            .await
+            .refusal()
+            .map(|(kind, _)| kind),
         Some(FrameRefusal::Malformed)
     );
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
@@ -1908,13 +2003,14 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         .unwrap();
     let (_, frame) = h.material_for("node", "d/material/sealed", b"unregistered\n");
     assert_eq!(
-        h.send("node", &frame).await.refusal_kind(),
+        h.send("node", &frame).await.refusal().map(|(kind, _)| kind),
         Some(FrameRefusal::Configuration)
     );
     assert_eq!(
         h.send_raw("unknown-node", b"not a frame".to_vec())
             .await
-            .refusal_kind(),
+            .refusal()
+            .map(|(kind, _)| kind),
         Some(FrameRefusal::Malformed)
     );
     let (_running, stop) = tokio::sync::watch::channel(false);
@@ -1996,7 +2092,7 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
     assert!(
         h.send("node", &chunk("prefix", 0, &encoded[..3]))
             .await
-            .refusal
+            .refusal()
             .is_none()
     );
     let directory = frame_bytes::directory(&h.store_dir, "node", "pending-material");
@@ -2006,7 +2102,10 @@ async fn a_configuration_refusal_removes_the_partial_chunk_transfer(db: devkit::
         .await
         .unwrap();
     let ack = h.send("node", &chunk("remaining", 3, &encoded[3..])).await;
-    assert_eq!(ack.refusal_kind(), Some(FrameRefusal::Configuration));
+    assert_eq!(
+        ack.refusal().map(|(kind, _)| kind),
+        Some(FrameRefusal::Configuration)
+    );
     assert!(!directory.exists());
     assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 0);
 }

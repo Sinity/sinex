@@ -77,7 +77,7 @@ async fn frames_sent_while_the_writer_stalls_are_admitted_once(db: devkit::pg::T
         .flat_map(|i| format!(": {}:0;cmd {i}\n", 1_760_788_800 + i).into_bytes())
         .collect();
     let (material, frame) = h.material_frame("m1", &bytes);
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let before = h.count("SELECT count(*) FROM core.events").await;
 
     let mut blocker = PgConnection::connect(&h.url).await.unwrap();

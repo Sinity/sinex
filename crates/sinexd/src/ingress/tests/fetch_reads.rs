@@ -1,7 +1,43 @@
 use super::*;
 use sinex_protocol::{
-    FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply, FetchRefusalKind,
+    ConfirmedEvent, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
+    FetchRefusal, FetchRefusalKind, MaterialFrame,
 };
+
+fn fetched_event(reply: FetchEventReply) -> ConfirmedEvent {
+    match reply {
+        FetchEventReply::Event(event) => *event,
+        other => panic!("not an event: {other:?}"),
+    }
+}
+
+fn fetched_erasure(reply: FetchEventReply) -> ErasedEvent {
+    match reply {
+        FetchEventReply::Erased(erased) => erased,
+        other => panic!("not an erasure: {other:?}"),
+    }
+}
+
+fn event_refusal(reply: FetchEventReply) -> FetchRefusal {
+    match reply {
+        FetchEventReply::Refused(refusal) => refusal,
+        other => panic!("not a refusal: {other:?}"),
+    }
+}
+
+fn fetched_material(reply: FetchMaterialReply) -> (MaterialFrame, Vec<Vec<u8>>) {
+    match reply {
+        FetchMaterialReply::Material { material, extents } => (*material, extents),
+        other => panic!("not a material: {other:?}"),
+    }
+}
+
+fn material_refusal(reply: FetchMaterialReply) -> FetchRefusal {
+    match reply {
+        FetchMaterialReply::Refused(refusal) => refusal,
+        other => panic!("not a refusal: {other:?}"),
+    }
+}
 
 #[devkit::test]
 async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_grants(
@@ -52,7 +88,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     let h = Harness::start_with_grants(db, grants).await;
     let command = format!("--secret=synthetic-value ghp_{}", "q".repeat(36));
     let (material, frame) = h.material_frame("fetch-material", format!("{command}\n").as_bytes());
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let mut event = imported(material, 0, &command);
     event.payload["paths"] = json!(["--secret=synthetic-path", "--token=synthetic-value"]);
     let expected = event.payload.clone();
@@ -69,8 +105,8 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
             },
         )
         .await;
-    assert_eq!(ack.refusal, None);
-    let id = ack.admitted[0];
+    assert_eq!(ack.refusal(), None);
+    let id = ack.admitted()[0];
     for producer in ["replica", "near-prefix", "open-only", "unconfigured"] {
         let bytes = serde_json::to_vec(&FetchEvent { event: id }).unwrap();
         let message = rpc(&h.client, h.subjects.fetch_event(producer), bytes)
@@ -78,8 +114,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
             .unwrap();
         let reply: FetchEventReply = serde_json::from_slice(&message.payload).unwrap();
         if producer == "replica" {
-            assert_eq!(reply.refusal, None);
-            let event = reply.event.unwrap();
+            let event = fetched_event(reply);
             assert_eq!(event.payload, expected);
             assert!(event.projection.verifies(&event.payload));
             let mut conn = PgConnection::connect(&h.url).await.unwrap();
@@ -94,10 +129,9 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
                 event.kind_definition_hash,
                 registered[&reference].definition_hash()
             );
-            assert_eq!(Some(event.commit_seq), ack.commit_seq);
+            assert_eq!(Some(event.commit_seq), ack.commit_seq());
         } else {
-            assert_eq!(reply.refusal_kind, Some(FetchRefusalKind::Denied));
-            assert!(reply.event.is_none());
+            assert_eq!(event_refusal(reply).kind, FetchRefusalKind::Denied);
         }
     }
     let forged = rpc(
@@ -108,8 +142,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     .await
     .unwrap();
     let forged: FetchEventReply = serde_json::from_slice(&forged.payload).unwrap();
-    assert_eq!(forged.refusal_kind, Some(FetchRefusalKind::Invalid));
-    assert!(forged.event.is_none());
+    assert_eq!(event_refusal(forged).kind, FetchRefusalKind::Invalid);
     let message = rpc(
         &h.client,
         h.subjects.fetch_material("replica"),
@@ -118,9 +151,9 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     .await
     .unwrap();
     let reply: FetchMaterialReply = serde_json::from_slice(&message.payload).unwrap();
-    assert_eq!(reply.refusal, None);
-    assert_eq!(reply.material.unwrap().id, material);
-    assert!(!reply.extents.is_empty());
+    let (fetched, extents) = fetched_material(reply);
+    assert_eq!(fetched.id, material);
+    assert!(!extents.is_empty());
 }
 
 #[devkit::test]
@@ -156,7 +189,7 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let command = "y ".repeat(h.client.server_info().max_payload);
@@ -179,20 +212,19 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
             },
         )
         .await;
-    assert_eq!(ack.refusal, None);
+    assert_eq!(ack.refusal(), None);
     let event: FetchEventReply = sinex_transport::replies::request_json(
         &h.client,
         h.subjects.fetch_event("replica"),
         "replica",
         &FetchEvent {
-            event: ack.admitted[0],
+            event: ack.admitted()[0],
         },
         Duration::from_secs(20),
     )
     .await
     .unwrap();
-    assert_eq!(event.refusal, None);
-    assert_eq!(event.event.unwrap().payload["command"], command);
+    assert_eq!(fetched_event(event).payload["command"], command);
     let result: FetchMaterialReply = sinex_transport::replies::request_json(
         &h.client,
         h.subjects.fetch_material("replica"),
@@ -202,21 +234,18 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     )
     .await
     .unwrap();
-    assert_eq!(result.refusal, None);
-    assert_eq!(
-        result.material.unwrap().manifest.detail("description"),
-        &json!(description)
-    );
-    assert!(!result.extents.is_empty());
+    let (fetched, extents) = fetched_material(result);
+    assert_eq!(fetched.manifest.detail("description"), &json!(description));
+    assert!(!extents.is_empty());
 }
 #[devkit::test]
 async fn accessible_empty_material_acknowledges_a_real_extent(db: devkit::pg::TestDatabase) {
     let h = Harness::start(db).await;
     let (_material, frame) = h.material_frame("empty-material", b"");
     let ack = h.send("kitty", &frame).await;
-    assert_eq!(ack.refusal, None);
-    assert_eq!(ack.material_extents.len(), 1);
-    let extent = hashed_blobs::Extent::decode(&ack.material_extents[0]).unwrap();
+    assert_eq!(ack.refusal(), None);
+    assert_eq!(extents(&ack).len(), 1);
+    let extent = hashed_blobs::Extent::decode(&extents(&ack)[0]).unwrap();
     assert_eq!(extent.decoded_len, 0);
     assert!(extent.len > 0);
 }
@@ -242,7 +271,7 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     .await;
     let command = "retained command";
     let (material, frame) = h.material_frame("erasure-race", b"retained command\n");
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let mut event = imported(material, 0, command);
     event.payload["paths"] = json!(["--secret=synthetic-path", "--token=synthetic-value"]);
     let expected = event.payload.clone();
@@ -259,9 +288,9 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
             },
         )
         .await;
-    assert_eq!(receipt.refusal, None);
+    assert_eq!(receipt.refusal(), None);
     let request = FetchEvent {
-        event: receipt.admitted[0],
+        event: receipt.admitted()[0],
     };
     let before: FetchEventReply = sinex_transport::replies::request_json(
         &h.client,
@@ -272,11 +301,10 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     )
     .await
     .unwrap();
-    let received = before.event.expect("event received before erasure");
+    let received = fetched_event(before);
     assert_eq!(received.payload, expected);
     assert!(received.projection.verifies(&received.payload));
-    assert!(before.erased.is_none());
-    assert_eq!(Some(received.commit_seq), receipt.commit_seq);
+    assert_eq!(Some(received.commit_seq), receipt.commit_seq());
     h.tombstone_materials(&[material]).await;
     let after: FetchEventReply = sinex_transport::replies::request_json(
         &h.client,
@@ -287,9 +315,7 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     )
     .await
     .unwrap();
-    assert!(after.event.is_none());
-    assert_eq!(after.refusal, None);
-    let erased = after.erased.expect("authoritative erasure evidence");
+    let erased = fetched_erasure(after);
     assert_eq!(erased.event, received.id);
     assert_eq!(erased.original_commit_seq, received.commit_seq);
     assert!(erased.commit_seq > erased.original_commit_seq);
@@ -302,9 +328,7 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     )
     .await
     .unwrap();
-    assert_eq!(denied.refusal_kind, Some(FetchRefusalKind::Denied));
-    assert!(denied.erased.is_none());
-    assert!(denied.event.is_none());
+    assert_eq!(event_refusal(denied).kind, FetchRefusalKind::Denied);
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     sqlx::query!(
         "UPDATE core.event_tombstones SET original_commit_seq=NULL WHERE event_id=$1",
@@ -322,14 +346,9 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     )
     .await
     .unwrap();
-    assert_eq!(unknown.refusal_kind, Some(FetchRefusalKind::Unavailable));
-    assert!(unknown.erased.is_none());
-    assert!(
-        unknown
-            .refusal
-            .unwrap()
-            .contains("unknown historical positions")
-    );
+    let unknown = event_refusal(unknown);
+    assert_eq!(unknown.kind, FetchRefusalKind::Unavailable);
+    assert!(unknown.reason.contains("unknown historical positions"));
     sqlx::query!(
         "UPDATE core.event_tombstones SET original_commit_seq=$2,class=NULL WHERE event_id=$1",
         request.event.0,
@@ -347,14 +366,9 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     )
     .await
     .unwrap();
-    assert_eq!(unknown.refusal_kind, Some(FetchRefusalKind::Unavailable));
-    assert!(unknown.erased.is_none());
-    assert!(
-        unknown
-            .refusal
-            .unwrap()
-            .contains("unknown historical class")
-    );
+    let unknown = event_refusal(unknown);
+    assert_eq!(unknown.kind, FetchRefusalKind::Unavailable);
+    assert!(unknown.reason.contains("unknown historical class"));
 }
 
 #[devkit::test]
@@ -374,7 +388,7 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     )
     .await;
     let (material, frame) = h.material_frame("policy-material", b"synthetic exact raw bytes\n");
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let receipt = h
         .send(
             "kitty",
@@ -387,8 +401,8 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             },
         )
         .await;
-    assert_eq!(receipt.refusal, None);
-    let event = receipt.admitted[0];
+    assert_eq!(receipt.refusal(), None);
+    let event = receipt.admitted()[0];
     let fetch = |material| {
         let h = &h;
         async move {
@@ -402,10 +416,8 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             .await
         }
     };
-    let original = fetch(material).await.unwrap();
-    assert!(original.material.is_some());
+    let (_, original) = fetched_material(fetch(material).await.unwrap());
     let extents = original
-        .extents
         .iter()
         .map(|bytes| hashed_blobs::Extent::decode(bytes).unwrap())
         .collect::<Vec<_>>();
@@ -438,11 +450,9 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     .unwrap();
     // A raw range is refused while a rule in force transforms a record of
     // its source (docs/privacy.md, range-read-refused-by-rule).
-    let refused = fetch(material).await.unwrap();
-    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Denied));
-    assert!(refused.material.is_none());
-    assert!(refused.extents.is_empty());
-    assert!(refused.refusal.unwrap().contains("privacy rules"));
+    let refused = material_refusal(fetch(material).await.unwrap());
+    assert_eq!(refused.kind, FetchRefusalKind::Denied);
+    assert!(refused.reason.contains("privacy rules"));
     // The rule applies once, to a reading admitted while it is in force.
     // The producer's first frame after a rule change is refused so it
     // reconnects and checks its configuration; the next one is admitted.
@@ -450,13 +460,14 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     assert!(
         h.send("kitty", &frame)
             .await
-            .refusal
+            .refusal()
             .unwrap()
+            .1
             .contains("privacy configuration changed")
     );
     let (hidden, frame) =
         h.material_frame("hidden-material-again", b"synthetic hidden raw bytes\n");
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let receipt = h
         .send(
             "kitty",
@@ -469,8 +480,8 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             },
         )
         .await;
-    assert_eq!(receipt.refusal, None);
-    let hidden_event = receipt.admitted[0];
+    assert_eq!(receipt.refusal(), None);
+    let hidden_event = receipt.admitted()[0];
     let (class, payload): (String, serde_json::Value) =
         sqlx::query_as("SELECT class,payload FROM core.events WHERE id=$1")
             .bind(hidden_event.0)
@@ -490,13 +501,13 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     )
     .await
     .unwrap();
-    let fetched = fetched.event.unwrap();
+    let fetched = fetched_event(fetched);
     assert!(fetched.payload.get("command").is_none());
     assert!(fetched.projection.verifies(&fetched.payload));
     sinex_store::privacy::end_rule(&mut conn, "synthetic-hidden-command", "synthetic-test")
         .await
         .unwrap();
-    assert!(fetch(material).await.unwrap().material.is_some());
+    fetched_material(fetch(material).await.unwrap());
     // A material holding a reading stored sealed is locked whatever the
     // caller's class grants. Stored rows are immutable, so the sealed reading
     // is a second synthetic output of the same record.
@@ -519,8 +530,6 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     .execute(&mut conn)
     .await
     .unwrap();
-    let refused = fetch(material).await.unwrap();
-    assert_eq!(refused.refusal_kind, Some(FetchRefusalKind::Locked));
-    assert!(refused.material.is_none());
-    assert!(refused.extents.is_empty());
+    let refused = material_refusal(fetch(material).await.unwrap());
+    assert_eq!(refused.kind, FetchRefusalKind::Locked);
 }

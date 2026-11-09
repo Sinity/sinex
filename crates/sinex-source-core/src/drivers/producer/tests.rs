@@ -876,7 +876,7 @@ async fn a_stale_malformed_acknowledgment_does_not_refuse_another_frame() {
         .await
         .unwrap();
     assert_eq!(ack.frame, "valid");
-    assert_eq!(ack.admitted.len(), 1);
+    assert_eq!(ack.admitted().len(), 1);
     assert_eq!(received.lock().unwrap().len(), 1);
 }
 

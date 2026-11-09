@@ -2,14 +2,23 @@ use super::*;
 
 fn receipt(frame: &Ingress) -> Acknowledgment {
     Acknowledgment {
-        number: Some(1),
+        number: 1,
         frame: frame.frame().into(),
-        material: None,
-        material_extents: vec![],
-        admitted: vec![],
-        outcome: serde_json::json!({"frame_content_hash":content_hash(frame).unwrap()}),
-        refusal: None,
-        commit_seq: Some(1),
+        content_hash: Some(content_hash(frame).unwrap()),
+        result: sinex_protocol::FrameResult::Admitted {
+            material: None,
+            material_extents: vec![],
+            admitted: vec![],
+            counts: Default::default(),
+            commit_seq: Some(1),
+        },
+    }
+}
+
+fn refused(kind: sinex_model::FrameRefusal, reason: &str) -> sinex_protocol::FrameResult {
+    sinex_protocol::FrameResult::Refused {
+        kind,
+        reason: reason.into(),
     }
 }
 
@@ -39,7 +48,7 @@ fn conflict_keeps_the_prior_owned_receipt_distinct_from_the_offered_body() {
     assert_eq!(frame, offered.frame());
     assert_eq!(offered_hash, content_hash(&offered).unwrap());
     assert_eq!(*actual, saved);
-    assert_ne!(actual.content_hash(), Some(offered_hash.as_str()));
+    assert_ne!(actual.content_hash, Some(offered_hash));
 }
 
 #[devkit::test]
@@ -60,8 +69,8 @@ fn foreign_frame_or_missing_durable_identity_never_exposes_a_prior_receipt_as_co
     ));
     assert!(!error.to_string().contains("foreign-frame"));
     let mut unknown = receipt(&offered);
-    unknown.number = None;
-    unknown.outcome = serde_json::json!({});
+    unknown.number = 0;
+    unknown.content_hash = None;
     assert!(matches!(
         check_receipt(&offered, unknown),
         Err(SubmitError::NoReceipt(_))
@@ -85,8 +94,7 @@ fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
         let malformed = format!("malformed/{}", blake3::hash(&bytes).to_hex());
         let mut saved = receipt(&frame);
         saved.frame = malformed.clone();
-        saved.refusal = Some("invalid frame name".into());
-        saved.outcome["refusal_kind"] = serde_json::json!("malformed");
+        saved.result = refused(sinex_model::FrameRefusal::Malformed, "invalid frame name");
         let check = |receipt| {
             check_receipt_for(
                 &frame,
@@ -115,13 +123,13 @@ fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
         foreign.frame.push('x');
         assert!(check(foreign).is_err());
         let mut wrong_body = saved.clone();
-        wrong_body.outcome["frame_content_hash"] = serde_json::json!("blake3:different");
+        wrong_body.content_hash = Some("blake3:different".into());
         assert!(check(wrong_body).is_err());
         let mut not_refused = saved.clone();
-        not_refused.refusal = None;
+        not_refused.result = receipt(&frame).result;
         assert!(check(not_refused).is_err());
         let mut undurable = saved;
-        undurable.number = None;
+        undurable.number = 0;
         assert!(check(undurable).is_err());
     }
     let valid = Ingress::RegisterKinds {
@@ -134,8 +142,7 @@ fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
     );
     let mut saved = receipt(&valid);
     saved.frame = malformed.clone();
-    saved.refusal = Some("invalid content".into());
-    saved.outcome["refusal_kind"] = serde_json::json!("malformed");
+    saved.result = refused(sinex_model::FrameRefusal::Malformed, "invalid content");
     assert!(
         check_receipt_for(
             &valid,
@@ -438,8 +445,7 @@ async fn duplicate_refusal_preserves_the_owned_terminal_disposition() {
     ] {
         let mut fixture = Duplicate::new(true).await;
         let mut saved = receipt(&fixture.frame);
-        saved.refusal = Some("synthetic owner refusal".into());
-        saved.outcome["refusal_kind"] = serde_json::to_value(kind).unwrap();
+        saved.result = refused(kind, "synthetic owner refusal");
         let expected = saved.clone();
         let mut requests = fixture
             .owner

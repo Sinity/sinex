@@ -37,6 +37,8 @@ Producer positions and unacknowledged journals use the same encoding and one syn
 
 **Event outcomes** are the admission function's: admitted, repeated, superseded, older, removed, failed, superseded-in-batch, and dropped as `superseded_input`, with the committed position and the event IDs Sinex minted. A producer is told success only after commit.
 
+**Acknowledgments are typed** (producer protocol version 3). Each names the frame, the order Sinex recorded it in and the hash of the frame body recorded under that name, and carries exactly one result: `admitted` (the registered material and its extents, the admitted event IDs, the counts above and the last commit position), `kinds_registered` (each declaration with its definition hash), `replayed` (the replay's operation, its admitted event IDs and last position) or `refused` (the refusal kind and reason). A conflict refusal carries the hash of the body already recorded, never the offered one. `core.ingress_frames.outcome` stores the same result, tagged by `result`, beside the frame's columns. The connect reply (`welcome` or `refused`), the consumer reply (`provisioned`, `gap` or `refused`) and the fetch replies (`event`, `erased` or `refused`; `material` or `refused`) are typed the same way, so a reply that is two things at once cannot be written or read.
+
 ### Write identity
 
 - **Each frame has a durable identity and immutable contents.** A producer prepares a write, saves it, and only then sends it. A retry reuses the identity and the contents; a later write gets a new identity even when its contents are equal.

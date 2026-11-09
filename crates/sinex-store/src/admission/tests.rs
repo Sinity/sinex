@@ -820,7 +820,6 @@ async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
             material: None,
             refusal: None,
             declarations: vec![],
-            refusal_kind: None,
             source: None,
             event_types: vec![],
         }));
@@ -853,6 +852,104 @@ async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
             .await
             .unwrap();
     assert_eq!(frames, Some(0));
+}
+
+/// Admitted and refused frames are recorded as typed outcomes that decode
+/// from their real rows, and an exact retry answers from the stored counts.
+#[devkit::test]
+async fn stored_frame_outcome_decodes(db: devkit::pg::TestDatabase) {
+    use crate::commit_log::{FrameOutcome, FrameResult};
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let frame = |name: &str, refusal: Option<(sinex_model::FrameRefusal, String)>| {
+        let event = keyed("atuin", 1, 1, 0);
+        let mut batch = batch(if refusal.is_some() {
+            vec![]
+        } else {
+            vec![event.clone()]
+        });
+        batch.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            content_hash: Some(format!("blake3:{name}")),
+            receipt_number: None,
+            coverage: None,
+            native_source: None,
+            source_fingerprint: None,
+            host: None,
+            family: None,
+            write_kind_prefixes: vec![],
+            assign_orders: vec![event.id],
+            producer: "atuin".into(),
+            frame: name.into(),
+            material: None,
+            refusal,
+            declarations: vec![],
+            source: Some("atuin".into()),
+            event_types: vec!["shell.command".into()],
+        }));
+        batch
+    };
+    let admitted = frame("admitted", None);
+    let first = admit_one(&mut conn, &admitted).await;
+    let refused = frame(
+        "refused",
+        Some((sinex_model::FrameRefusal::Content, "bad reading".into())),
+    );
+    admit_one(&mut conn, &refused).await;
+    let mut tx = conn.begin().await.unwrap();
+    let retried = tx.admit(&admitted, &NoDerivations).await.unwrap();
+    drop(tx);
+    assert_eq!(retried.counts(), first.counts());
+    assert_eq!(retried.commit_seq, first.commit_seq);
+    assert_eq!(retried.admitted_ids, first.admitted_ids);
+    let mut read = PgConnection::connect(&db.url(None)).await.unwrap();
+    let stored = crate::commit_log::frames(
+        &mut read,
+        "atuin",
+        &["admitted".to_owned(), "refused".to_owned()],
+    )
+    .await
+    .unwrap();
+    let outcomes: Vec<_> = stored
+        .iter()
+        .map(|row| {
+            (
+                row.frame.as_str(),
+                row.outcome.0.clone(),
+                row.refusal.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        vec![
+            (
+                "admitted",
+                FrameOutcome {
+                    content_hash: Some("blake3:admitted".into()),
+                    result: FrameResult::Admitted {
+                        counts: first.counts(),
+                        commit_range: first.commit_seq,
+                    },
+                },
+                None,
+            ),
+            (
+                "refused",
+                FrameOutcome {
+                    content_hash: Some("blake3:refused".into()),
+                    result: FrameResult::Refused {
+                        kind: sinex_model::FrameRefusal::Content,
+                        failures: 0,
+                        source: Some("atuin".into()),
+                        event_types: vec!["shell.command".into()],
+                    },
+                },
+                Some("bad reading"),
+            ),
+        ]
+    );
+    assert_eq!(first.counts().admitted, 1);
 }
 
 mod output_ordinals;
@@ -943,7 +1040,6 @@ async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_in
             }),
             refusal: None,
             declarations: vec![],
-            refusal_kind: None,
             source: Some(declaration.source.name.clone()),
             event_types: vec!["command.executed".into()],
         }));
@@ -1026,7 +1122,6 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
             material: None,
             refusal: None,
             declarations: vec![],
-            refusal_kind: None,
             source: None,
             event_types: vec![],
         }));

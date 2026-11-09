@@ -18,8 +18,8 @@ impl Requests {
             let head=sinex_store::query::current_seq(&mut conn).await.map_err(|error|error.to_string())?;
             drop(conn);
             let stream_name=self.subjects.confirmed_stream();let name=self.subjects.consumer_name(&scope);
-            if request.status_only {return Ok(ConfirmedConsumerReply{position:Some(head),stream:stream_name,consumer:name,scope,..Default::default()});}
-            if request.after>head {return Ok(ConfirmedConsumerReply{position:Some(head),scope,gap:Some("requested position exceeds durable commit history".into()),..Default::default()});}
+            if request.status_only {return Ok(ConfirmedConsumerReply::Provisioned{position:head,stream:stream_name,stream_instance:None,consumer:name,scope});}
+            if request.after>head {return Ok(ConfirmedConsumerReply::Gap{position:head,scope,reason:"requested position exceeds durable commit history".into()});}
             let _guard=self.consumer_admin.lock().await;
             let js=jetstream::new(self.client.clone());crate::publisher::ensure_stream(&js,&self.subjects).await?;
             let stream=js.get_stream(&stream_name).await.map_err(|error|error.to_string())?;
@@ -41,11 +41,8 @@ impl Requests {
                 stream.delete_consumer(&name).await.map_err(|error|error.to_string())?;
                 stream.create_consumer(config).await.map_err(|error|error.to_string())?;
             }
-            Ok(ConfirmedConsumerReply{position:Some(head),stream_instance:Some(crate::publisher::stream_instance(&stream)),stream:stream_name,consumer:name,scope,refusal:None,gap:None})
+            Ok(ConfirmedConsumerReply::Provisioned{position:head,stream_instance:Some(crate::publisher::stream_instance(&stream)),stream:stream_name,consumer:name,scope})
         }.await;
-        result.unwrap_or_else(|error| ConfirmedConsumerReply {
-            refusal: Some(error),
-            ..Default::default()
-        })
+        result.unwrap_or_else(|reason| ConfirmedConsumerReply::Refused { reason })
     }
 }

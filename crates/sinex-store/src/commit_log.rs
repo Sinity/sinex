@@ -5,12 +5,14 @@
 //! A tombstone retains positions and payload-free lifecycle history; exact
 //! stream placements are tracked per native stream incarnation for erasure.
 use crate::{Error, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::{
-    Class, DbCheck, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation, RecordState,
-    TimeQuality, Timestamp, TsOrig,
+    AdmissionCounts, Class, DbCheck, Event, EventId, FrameRefusal, KindRef, MaterialId,
+    OperationId, Origin, ReadingOrder, RecordLocation, RecordState, TimeQuality, Timestamp, TsOrig,
 };
 use sqlx::PgConnection;
+use sqlx::types::Json;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -341,9 +343,61 @@ pub struct StoredFrame {
     pub frame: String,
     pub material_id: Option<Uuid>,
     pub admitted: Vec<Uuid>,
-    pub outcome: Value,
+    pub outcome: Json<FrameOutcome>,
     pub refusal: Option<String>,
     pub commit_seq: Option<i64>,
+}
+
+/// The `outcome` column of `core.ingress_frames`. The frame's material, its
+/// admitted events, its last commit position and a refusal's reason are
+/// columns beside it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameOutcome {
+    /// `blake3:<hex>` of the logical frame body recorded under this name;
+    /// unknown for frames recorded before Sinex kept it.
+    pub content_hash: Option<String>,
+    #[serde(flatten)]
+    pub result: FrameResult,
+}
+
+/// What admission did with one frame.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum FrameResult {
+    /// Events, material, signal and chunk frames.
+    Admitted {
+        counts: AdmissionCounts,
+        commit_range: Option<(i64, i64)>,
+    },
+    KindsRegistered {
+        kinds: Vec<(KindRef, String)>,
+    },
+    /// A producer replay's replacement, admitted in its own transactions.
+    Replayed {
+        operation: OperationId,
+    },
+    /// Refused as a whole: no events, the reason in the `refusal` column.
+    Refused {
+        kind: FrameRefusal,
+        /// Record failures the refusal left on the cited materials.
+        failures: usize,
+        /// The source named at the start of a capture binding.
+        source: Option<String>,
+        event_types: Vec<String>,
+    },
+}
+
+impl StoredFrame {
+    pub fn content_hash(&self) -> Option<&str> {
+        self.outcome.content_hash.as_deref()
+    }
+
+    pub fn refusal_kind(&self) -> Option<FrameRefusal> {
+        match self.outcome.result {
+            FrameResult::Refused { kind, .. } => Some(kind),
+            _ => None,
+        }
+    }
 }
 
 /// The recorded frames among `frames` from `producer`.
@@ -354,7 +408,7 @@ pub async fn frames(
 ) -> Result<Vec<StoredFrame>> {
     Ok(sqlx::query_as!(
         StoredFrame,
-        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome, f.refusal, f.commit_seq, x.descriptor AS "material_extent?"
+        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome AS "outcome: Json<FrameOutcome>", f.refusal, f.commit_seq, x.descriptor AS "material_extent?"
            FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
            LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
            WHERE f.producer = $1 AND f.frame = ANY($2)
@@ -375,7 +429,7 @@ pub async fn frames_page(
     after: i64,
 ) -> Result<(Vec<StoredFrame>, Option<i64>)> {
     const PAGE: i64 = 64;
-    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,x.descriptor AS "material_extent?"
+    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome AS "outcome: Json<FrameOutcome>",f.refusal,f.commit_seq,x.descriptor AS "material_extent?"
       FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
       LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
       WHERE f.producer=$1 AND (f.frame=ANY($2) OR f.number=ANY($3)) AND f.number>$4 ORDER BY f.number LIMIT $5"#,producer,frames,numbers,after,PAGE).fetch_all(conn).await?;
@@ -580,7 +634,10 @@ pub async fn record_replay_frame(
     fingerprint: &str,
     host: Option<&str>,
 ) -> Result<()> {
-    let outcome = serde_json::json!({"admitted":ids.len(),"replay":operation,"frame_content_hash":content_hash});
+    let outcome = Json(FrameOutcome {
+        content_hash: Some(content_hash.to_owned()),
+        result: FrameResult::Replayed { operation },
+    });
     sqlx::query("INSERT INTO core.ingress_frames (producer,frame,admitted,outcome,commit_seq,family,write_kind_prefixes,number,source_name,source_version,source_fingerprint,producer_host) OVERRIDING SYSTEM VALUE VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
         .bind(producer).bind(frame).bind(ids).bind(outcome).bind(last).bind(family).bind(write_kind_prefixes).bind(number).bind(&source.name).bind(i64::from(source.version)).bind(fingerprint).bind(host).execute(conn).await?;
     Ok(())
@@ -620,7 +677,7 @@ pub async fn recorded_material(
     producer: &str,
     frame: &str,
 ) -> Result<Option<RecordedMaterial>> {
-    let row = sqlx::query!(r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome,f.refusal,f.commit_seq,
+    let row = sqlx::query!(r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome AS "outcome: Json<FrameOutcome>",f.refusal,f.commit_seq,
         x.descriptor AS "material_extent?",m.blob AS "blob?",m.length AS "length?",
         f.source_name,f.source_version,f.source_fingerprint,f.family,f.write_kind_prefixes,f.producer_host,
         (m.id IS NOT NULL AND x.descriptor IS NOT NULL AND m.status <> 'tombstoned') AS "available!"

@@ -34,7 +34,6 @@ fn live_bindings_come_from_the_kinds_that_capture() {
 }
 
 use futures::StreamExt;
-use serde_json::json;
 use sinex_protocol::{Acknowledgment, Ingress, Subjects};
 use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
 use std::collections::HashMap;
@@ -251,7 +250,10 @@ async fn fake_ingress_controlled(
                     if let Some(count) = &connections {
                         count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     }
-                    queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Welcome(sinex_protocol::ProducerWelcome { refusal: None, ..Default::default() }) });
+                    queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Welcome(sinex_protocol::ProducerWelcome::Welcome {
+                    family: None,
+                    canonical_publisher: false,
+                }) });
                 }
                 Some(message) = incoming.next() => {
                     if let Ok(message) = message {
@@ -261,7 +263,7 @@ async fn fake_ingress_controlled(
                 }
                 Some(message) = queries.next() => {
                     let query: sinex_protocol::RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
-                    let acknowledgments=recorded.values().filter(|receipt|(query.frames.contains(&receipt.frame)||receipt.number.is_some_and(|number|query.numbers.contains(&number)))&&receipt.number.is_some_and(|number|number>query.after)).cloned().collect();
+                    let acknowledgments=recorded.values().filter(|receipt|(query.frames.contains(&receipt.frame)||query.numbers.contains(&receipt.number))&&receipt.number>query.after).cloned().collect();
                     queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Recorded(sinex_protocol::RecordedPage { acknowledgments, next: None, ..Default::default() }) });
                 }
                 command = async { controls.as_mut().expect("enabled control branch").recv().await }, if controls.is_some() => {
@@ -320,30 +322,39 @@ async fn fake_ingress_controlled(
                                 _ => (None, vec![]),
                             };
                             let commit_seq = if admitted.is_empty() { None } else { Some(1) };
-                            if connections.is_some() && !configuration_refused && !matches!(frame, Ingress::Chunk { .. }) {
+                            if connections.is_some()
+                                && !configuration_refused
+                                && !matches!(frame, Ingress::Chunk { .. })
+                            {
                                 configuration_refused = true;
                                 return Acknowledgment {
-                                    number: Some(next_number),
-                                    material_extents: vec![],
+                                    number: next_number,
                                     frame: id.clone(),
-                                    material: None,
-                                    admitted: vec![],
-                                    outcome: json!({"refusal_kind":"configuration", "frame_content_hash":sinex_transport::producer::content_hash(&frame).unwrap()}),
-                                    refusal: Some(
-                                        "privacy configuration changed; reconnect".into(),
+                                    content_hash: Some(
+                                        sinex_transport::producer::content_hash(&frame).unwrap(),
                                     ),
-                                    commit_seq: None,
+                                    result: sinex_protocol::FrameResult::Refused {
+                                        kind: sinex_model::FrameRefusal::Configuration,
+                                        reason: "privacy configuration changed; reconnect".into(),
+                                    },
                                 };
                             }
                             Acknowledgment {
-                                number: Some(next_number),
-                                material_extents: vec![],
+                                number: next_number,
                                 frame: id.clone(),
-                                material,
-                                admitted,
-                                outcome: json!({"frame_content_hash":sinex_transport::producer::content_hash(&frame).unwrap()}),
-                                refusal: None,
-                                commit_seq,
+                                content_hash: Some(
+                                    sinex_transport::producer::content_hash(&frame).unwrap(),
+                                ),
+                                result: sinex_protocol::FrameResult::Admitted {
+                                    material,
+                                    material_extents: vec![],
+                                    counts: sinex_model::AdmissionCounts {
+                                        admitted: admitted.len(),
+                                        ..Default::default()
+                                    },
+                                    admitted,
+                                    commit_seq,
+                                },
                             }
                         })
                         .clone();
@@ -358,7 +369,7 @@ async fn fake_ingress_controlled(
                         .publish(
                             ack_subject.clone(),
                             serde_json::to_vec(&sinex_protocol::ReceiptHint {
-                                number: ack.number.unwrap(),
+                                number: ack.number,
                                 frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
                             })
                             .unwrap()
@@ -1144,9 +1155,8 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
             sinex_transport::replies::publish_json(
                 &client,
                 message.reply.unwrap().to_string(),
-                sinex_protocol::ProducerWelcome {
-                    refusal: Some("producer bytes cannot be stored sealed".into()),
-                    ..Default::default()
+                sinex_protocol::ProducerWelcome::Refused {
+                    reason: "producer bytes cannot be stored sealed".into(),
                 },
                 Duration::from_secs(10),
             )

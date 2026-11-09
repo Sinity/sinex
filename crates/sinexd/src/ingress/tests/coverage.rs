@@ -148,7 +148,7 @@ async fn setup_indexed_inputs(
             }
         )
         .await
-        .refusal
+        .refusal()
         .is_none()
     );
     let (material, frame) = h.material_for(
@@ -156,7 +156,7 @@ async fn setup_indexed_inputs(
         "coverage-material",
         b"synthetic provider array\n",
     );
-    assert!(h.send("polylogue", &frame).await.refusal.is_none());
+    assert!(h.send("polylogue", &frame).await.refusal().is_none());
     let message = raw
         .iter()
         .find(|kind| kind.kind.name == "polylogue.message")
@@ -187,8 +187,8 @@ async fn setup_indexed_inputs(
             },
         )
         .await;
-    assert_eq!(receipt.refusal, None);
-    (h, material, receipt.admitted, snapshot)
+    assert_eq!(receipt.refusal(), None);
+    (h, material, receipt.admitted().to_vec(), snapshot)
 }
 async fn page(
     h: &Harness,
@@ -292,7 +292,7 @@ async fn raw_coverage_checks_the_outer_proof_and_reports_same_scope_invalidation
         }],
         failures: vec![],
     };
-    assert!(h.send("polylogue", &frame).await.refusal.is_some());
+    assert!(h.send("polylogue", &frame).await.refusal().is_some());
     if let Ingress::Events {
         frame, coverage, ..
     } = &mut frame
@@ -301,7 +301,7 @@ async fn raw_coverage_checks_the_outer_proof_and_reports_same_scope_invalidation
         *coverage = Some(write);
     }
     assert!(
-        h.send("polylogue", &frame).await.refusal.is_none(),
+        h.send("polylogue", &frame).await.refusal().is_none(),
         "the same canonical output with the actual signed proof remains admissible"
     );
 }
@@ -456,7 +456,15 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
     )
     .await
     .unwrap();
-    assert_eq!(welcome.refusal, None);
+    let sinex_protocol::ConfirmedConsumerReply::Provisioned {
+        stream: welcome_stream,
+        stream_instance: welcome_instance,
+        consumer: welcome_consumer,
+        ..
+    } = welcome
+    else {
+        panic!("consumer is provisioned: {welcome:?}")
+    };
     let event = ProducerEvent {
         kind: declaration("message").kind,
         payload: json!({"id":"later","text":"new input"}),
@@ -481,7 +489,7 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
             }
         )
         .await
-        .refusal
+        .refusal()
         .is_none()
     );
     let js = jetstream::new(h.client.clone());
@@ -495,9 +503,9 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
         proof(&h, basis.clone(), q).await,
         CoverageStatus::Incomplete { .. }
     ));
-    let stream = js.get_stream(welcome.stream).await.unwrap();
+    let stream = js.get_stream(welcome_stream).await.unwrap();
     let mut consumer: jetstream::consumer::PullConsumer =
-        stream.get_consumer(&welcome.consumer).await.unwrap();
+        stream.get_consumer(&welcome_consumer).await.unwrap();
     let mut messages = consumer
         .fetch()
         .max_messages(100)
@@ -524,7 +532,7 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
     }
     assert_eq!(consumer.info().await.unwrap().ack_floor.stream_sequence, 0);
     let completion = sinex_protocol::DeliveredCompletion {
-        stream_instance: welcome.stream_instance.unwrap(),
+        stream_instance: welcome_instance.unwrap(),
         stream_sequence: barrier.expect("delivered completion"),
     };
     let mut invalid = completion.clone();
@@ -599,7 +607,7 @@ async fn paged_owner_replay_survives_later_admission_and_lifecycle(db: devkit::p
             }
         )
         .await
-        .refusal
+        .refusal()
         .is_none()
     );
     let last = page(&h, "polylogue", "cache", Some(cursor)).await;
@@ -637,7 +645,7 @@ async fn paged_owner_replay_survives_later_admission_and_lifecycle(db: devkit::p
         failures: vec![],
     };
     let receipt = h.send("polylogue", &frozen).await;
-    assert_eq!(receipt.refusal, None);
+    assert_eq!(receipt.refusal(), None);
     assert_eq!(
         h.send("polylogue", &frozen).await,
         receipt,
@@ -755,9 +763,9 @@ async fn full_projection_replays_canonical_and_foreign_records_separately_from_r
             },
         )
         .await;
-    assert_eq!(canonical.refusal, None);
+    assert_eq!(canonical.refusal(), None);
     let (material, frame) = h.material_frame("foreign-readable", b"foreign native source\n");
-    assert!(h.send("kitty", &frame).await.refusal.is_none());
+    assert!(h.send("kitty", &frame).await.refusal().is_none());
     let foreign = h
         .send(
             "kitty",
@@ -770,7 +778,7 @@ async fn full_projection_replays_canonical_and_foreign_records_separately_from_r
             },
         )
         .await;
-    assert_eq!(foreign.refusal, None);
+    assert_eq!(foreign.refusal(), None);
     let InputReplayReply::Page {
         inputs,
         continuation:
@@ -787,14 +795,14 @@ async fn full_projection_replays_canonical_and_foreign_records_separately_from_r
     assert_eq!(projection.position, raw.position);
     let canonical_ref = inputs
         .iter()
-        .find(|input| input.event == canonical.admitted[0])
+        .find(|input| input.event == canonical.admitted()[0])
         .unwrap();
     assert_eq!(canonical_ref.kind, snapshot.kind);
     assert_eq!(canonical_ref.source, None);
     assert_eq!(canonical_ref.source_fingerprint, None);
     let foreign_ref = inputs
         .iter()
-        .find(|input| input.event == foreign.admitted[0])
+        .find(|input| input.event == foreign.admitted()[0])
         .unwrap();
     assert_eq!(foreign_ref.kind, command.kind);
     assert_eq!(foreign_ref.kind_definition_hash, command.definition_hash());
@@ -820,7 +828,10 @@ async fn full_projection_replays_canonical_and_foreign_records_separately_from_r
     .await
     .unwrap();
     assert!(
-        refused.refusal.is_some(),
+        matches!(
+            refused,
+            sinex_protocol::ConfirmedConsumerReply::Refused { .. }
+        ),
         "a raw certificate cannot be promoted into full-prefix authority"
     );
 }
@@ -831,7 +842,7 @@ async fn canonical_read_stamp_cannot_certify_an_out_of_scope_cited_parent(
 ) {
     let (h, _, _, snapshot) = setup_inputs(db, 1, "raw input", sinex_model::Class::Open).await;
     let (material, frame) = h.material_frame("outside-projection", b"outside native source\n");
-    assert!(h.send("kitty", &frame).await.refusal.is_none());
+    assert!(h.send("kitty", &frame).await.refusal().is_none());
     let outside = h
         .send(
             "kitty",
@@ -844,7 +855,7 @@ async fn canonical_read_stamp_cannot_certify_an_out_of_scope_cited_parent(
             },
         )
         .await;
-    assert_eq!(outside.refusal, None);
+    assert_eq!(outside.refusal(), None);
     let InputReplayReply::Page {
         position,
         continuation:
@@ -872,7 +883,7 @@ async fn canonical_read_stamp_cannot_certify_an_out_of_scope_cited_parent(
                     payload: json!({"id":"session","text":"copied out of scope"}),
                     location: None,
                     output_index: 0,
-                    parents: outside.admitted,
+                    parents: outside.admitted().to_vec(),
                     reading_order: Some(position),
                     class: sinex_model::Class::Open,
                 }],
@@ -880,7 +891,7 @@ async fn canonical_read_stamp_cannot_certify_an_out_of_scope_cited_parent(
             },
         )
         .await;
-    assert!(refused.refusal.is_some());
+    assert!(refused.refusal().is_some());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM core.events WHERE event_type='polylogue.work_snapshot'",

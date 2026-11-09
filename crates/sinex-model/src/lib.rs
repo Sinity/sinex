@@ -25,9 +25,10 @@ pub mod time_settings;
 
 pub use accounting::Accounting;
 pub use batch::{
-    ArchiveReason, ArchiveRequest, Batch, BatchKind, DerivationHistory, FrameRefusal, IngressFrame,
-    InputRef, MaterialRef, ObservationFacts, OwnerCoverage, ReaderMemory, RecordOutcome,
-    ReplayScope, RevisionChange, SourceProgress, SourceRef, WrappedDataKey,
+    AdmissionCounts, ArchiveReason, ArchiveRequest, Batch, BatchKind, DerivationHistory,
+    FrameRefusal, IngressFrame, InputRef, MaterialRef, ObservationFacts, OwnerCoverage,
+    ReaderMemory, RecordOutcome, ReplayScope, RevisionChange, SourceProgress, SourceRef,
+    WrappedDataKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};

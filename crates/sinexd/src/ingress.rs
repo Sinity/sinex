@@ -42,10 +42,10 @@ use sinex_model::{
     ReadingOrder, RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp,
 };
 use sinex_protocol::{
-    Acknowledgment, Ingress, Lifecycle, MaterialFrame, Materials, ProducerEvent, ProducerFailure,
-    ProducerHello, ProducerMaterial, ProducerWelcome, RecordedQuery, Subjects,
+    Acknowledgment, FrameResult, Ingress, Lifecycle, MaterialFrame, Materials, ProducerEvent,
+    ProducerFailure, ProducerHello, ProducerMaterial, ProducerWelcome, RecordedQuery, Subjects,
 };
-use sinex_store::commit_log::{self, StoredFrame};
+use sinex_store::commit_log::{self, FrameResult as StoredResult, StoredFrame};
 use sinex_store::{Blobs, runs};
 use sqlx::PgConnection;
 use std::collections::HashMap;
@@ -155,24 +155,21 @@ impl Ingest {
         };
         if let Some(stored) = self.stored(producer, &name).await? {
             if stored
-                .outcome
-                .get("frame_content_hash")
-                .and_then(Value::as_str)
+                .content_hash()
                 .is_some_and(|saved| saved != content_hash)
             {
                 return Ok(Acknowledgment {
-                    number: Some(stored.number),
+                    number: stored.number,
                     frame: name.clone(),
-                    material: None,
-                    material_extents: vec![],
-                    admitted: vec![],
-                    outcome: serde_json::json!({"refusal_kind":FrameRefusal::Conflict}),
-                    refusal: Some("frame_body_conflict".into()),
-                    commit_seq: None,
+                    content_hash: stored.outcome.0.content_hash,
+                    result: FrameResult::Refused {
+                        kind: FrameRefusal::Conflict,
+                        reason: "frame_body_conflict".into(),
+                    },
                 });
             }
             self.discard_recorded(producer, &stored, decoded.as_ref().ok());
-            return Ok(acknowledgment(stored));
+            return acknowledgment(stored);
         }
         let mut declarations = Vec::new();
         let configuration = self.configuration(producer).await?;
@@ -301,7 +298,6 @@ impl Ingest {
                     material: progress,
                     refusal: None,
                     declarations,
-                    refusal_kind: None,
                     source: frame_source(details),
                     event_types: frame_event_types(details),
                 })),
@@ -324,7 +320,7 @@ impl Ingest {
                 // Handled meanwhile by a redelivery: answer from the record.
                 if let Some(stored) = self.stored(producer, &name).await? {
                     self.discard_recorded(producer, &stored, decoded.as_ref().ok());
-                    return Ok(acknowledgment(stored));
+                    return acknowledgment(stored);
                 }
                 let mut refused = self
                     .refusal(
@@ -349,13 +345,12 @@ impl Ingest {
             .await?
             .ok_or_else(|| format!("frame {name} from {producer} was not recorded"))?;
         self.discard_recorded(producer, &stored, decoded.as_ref().ok());
-        Ok(acknowledgment(stored))
+        acknowledgment(stored)
     }
 
     fn discard_recorded(&self, producer: &str, stored: &StoredFrame, frame: Option<&Ingress>) {
-        let kind =
-            serde_json::from_value::<FrameRefusal>(stored.outcome["refusal_kind"].clone()).ok();
-        if stored.refusal.is_none()
+        let kind = stored.refusal_kind();
+        if kind.is_none()
             || matches!(
                 kind,
                 Some(
@@ -441,8 +436,9 @@ impl Ingest {
                 .collect();
             if batch.records.is_empty()
                 && let BatchKind::Ingress(frame) = &mut batch.kind
+                && let Some((kind, _)) = &mut frame.refusal
             {
-                frame.refusal_kind = Some(FrameRefusal::Malformed);
+                *kind = FrameRefusal::Malformed;
             }
         }
         Ok(batch)
@@ -952,8 +948,7 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
             producer: producer.to_owned(),
             frame: frame.to_owned(),
             material: None,
-            refusal: Some(reason.replace('\0', "\\0")),
-            refusal_kind: Some(kind),
+            refusal: Some((kind, reason.replace('\0', "\\0"))),
             source: None,
             event_types: vec![],
             declarations: vec![],
@@ -963,31 +958,40 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
     }
 }
 
-#[cfg(test)]
-fn refused_unrecorded(reason: &str) -> Acknowledgment {
-    Acknowledgment {
-        number: None,
-        frame: String::new(),
-        material: None,
-        material_extents: vec![],
-        admitted: vec![],
-        outcome: Value::Null,
-        refusal: Some(reason.to_owned()),
-        commit_seq: None,
-    }
-}
-
-fn acknowledgment(s: StoredFrame) -> Acknowledgment {
-    Acknowledgment {
-        number: Some(s.number),
+/// The acknowledgment a recorded frame's row answers with.
+fn acknowledgment(s: StoredFrame) -> Result<Acknowledgment, String> {
+    let admitted = s.admitted.into_iter().map(EventId).collect();
+    let sqlx::types::Json(outcome) = s.outcome;
+    let result = match outcome.result {
+        StoredResult::Admitted { counts, .. } => FrameResult::Admitted {
+            material: s.material_id.map(sinex_model::MaterialId),
+            material_extents: s.material_extent.into_iter().collect(),
+            admitted,
+            counts,
+            commit_seq: s.commit_seq,
+        },
+        StoredResult::KindsRegistered { kinds } => FrameResult::KindsRegistered { kinds },
+        StoredResult::Replayed { operation } => FrameResult::Replayed {
+            operation,
+            admitted,
+            commit_seq: s.commit_seq,
+        },
+        StoredResult::Refused { kind, .. } => FrameResult::Refused {
+            kind,
+            reason: s.refusal.ok_or_else(|| {
+                format!(
+                    "frame {} from {} records a refusal without its reason",
+                    s.frame, s.producer
+                )
+            })?,
+        },
+    };
+    Ok(Acknowledgment {
+        number: s.number,
         frame: s.frame,
-        material: s.material_id.map(sinex_model::MaterialId),
-        material_extents: s.material_extent.into_iter().collect(),
-        admitted: s.admitted.into_iter().map(EventId).collect(),
-        outcome: s.outcome,
-        refusal: s.refusal,
-        commit_seq: s.commit_seq,
-    }
+        content_hash: outcome.content_hash,
+        result,
+    })
 }
 
 /// Producer requests answered at once, each in its own task.
@@ -1081,14 +1085,13 @@ impl Requests {
                 })
                 .map(|name| format!("producer event type {name} is not registered for {producer}"))
         };
-        let authorized = refusal.is_none();
-        Ok(ProducerWelcome {
-            family: authorized
-                .then(|| write.map(|write| write.family.clone()))
-                .flatten(),
-            canonical_publisher: authorized
-                && write.is_some_and(|write| !write.canonical_prefixes.is_empty()),
-            refusal,
+        Ok(match refusal {
+            Some(reason) => ProducerWelcome::Refused { reason },
+            None => ProducerWelcome::Welcome {
+                family: write.map(|write| write.family.clone()),
+                canonical_publisher: write
+                    .is_some_and(|write| !write.canonical_prefixes.is_empty()),
+            },
         })
     }
 
@@ -1129,7 +1132,10 @@ impl Requests {
         }
         conn.commit().await.map_err(|error| error.to_string())?;
         Ok(sinex_protocol::RecordedPage {
-            acknowledgments: rows.into_iter().map(acknowledgment).collect(),
+            acknowledgments: rows
+                .into_iter()
+                .map(acknowledgment)
+                .collect::<Result<_, _>>()?,
             next,
             continuations,
         })
@@ -1261,17 +1267,13 @@ impl Requests {
             ResponseBody::Context(response)
         } else if subject == self.subjects.connect(&producer) {
             match serde_json::from_slice::<ProducerHello>(payload) {
-                Ok(hello) => {
-                    ResponseBody::Welcome(self.connect(&producer, &hello).await.unwrap_or_else(
-                        |error| ProducerWelcome {
-                            refusal: Some(error),
-                            ..Default::default()
-                        },
-                    ))
-                }
-                Err(error) => ResponseBody::Welcome(ProducerWelcome {
-                    refusal: Some(error.to_string()),
-                    ..Default::default()
+                Ok(hello) => ResponseBody::Welcome(
+                    self.connect(&producer, &hello)
+                        .await
+                        .unwrap_or_else(|reason| ProducerWelcome::Refused { reason }),
+                ),
+                Err(error) => ResponseBody::Welcome(ProducerWelcome::Refused {
+                    reason: error.to_string(),
                 }),
             }
         } else if subject == self.subjects.confirmed_consumer(&producer) {
@@ -1279,30 +1281,33 @@ impl Requests {
                 Ok(request) => {
                     ResponseBody::Consumer(self.confirmed_consumer(&producer, &request).await)
                 }
-                Err(error) => ResponseBody::Consumer(sinex_protocol::ConfirmedConsumerReply {
-                    refusal: Some(error.to_string()),
-                    ..Default::default()
-                }),
+                Err(error) => {
+                    ResponseBody::Consumer(sinex_protocol::ConfirmedConsumerReply::Refused {
+                        reason: error.to_string(),
+                    })
+                }
             }
         } else if subject == self.subjects.fetch_event(&producer) {
             match serde_json::from_slice::<sinex_protocol::FetchEvent>(payload) {
                 Ok(request) => ResponseBody::Event(self.fetch_event(&producer, &request).await),
-                Err(error) => ResponseBody::Event(sinex_protocol::FetchEventReply {
-                    refusal: Some(error.to_string()),
-                    refusal_kind: Some(sinex_protocol::FetchRefusalKind::Invalid),
-                    ..Default::default()
-                }),
+                Err(error) => ResponseBody::Event(sinex_protocol::FetchEventReply::Refused(
+                    sinex_protocol::FetchRefusal {
+                        kind: sinex_protocol::FetchRefusalKind::Invalid,
+                        reason: error.to_string(),
+                    },
+                )),
             }
         } else if subject == self.subjects.fetch_material(&producer) {
             match serde_json::from_slice::<sinex_protocol::FetchMaterial>(payload) {
                 Ok(request) => {
                     ResponseBody::Material(self.fetch_material(&producer, &request).await)
                 }
-                Err(error) => ResponseBody::Material(sinex_protocol::FetchMaterialReply {
-                    refusal: Some(error.to_string()),
-                    refusal_kind: Some(sinex_protocol::FetchRefusalKind::Invalid),
-                    ..Default::default()
-                }),
+                Err(error) => ResponseBody::Material(sinex_protocol::FetchMaterialReply::Refused(
+                    sinex_protocol::FetchRefusal {
+                        kind: sinex_protocol::FetchRefusalKind::Invalid,
+                        reason: error.to_string(),
+                    },
+                )),
             }
         } else if subject == self.subjects.recorded(&producer) {
             match serde_json::from_slice::<RecordedQuery>(payload) {
@@ -1436,20 +1441,18 @@ async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<(), S
         };
         match ingest.handle(&producer, &message.payload).await {
             Ok(ack) => {
-                if let Some(number) = ack.number {
-                    let hint = sinex_protocol::ReceiptHint {
-                        number,
-                        frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
-                    };
-                    let _ = client
-                        .publish(
-                            ingest.subjects.ack(&producer),
-                            serde_json::to_vec(&hint)
-                                .expect("receipt hint serializes")
-                                .into(),
-                        )
-                        .await;
-                }
+                let hint = sinex_protocol::ReceiptHint {
+                    number: ack.number,
+                    frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
+                };
+                let _ = client
+                    .publish(
+                        ingest.subjects.ack(&producer),
+                        serde_json::to_vec(&hint)
+                            .expect("receipt hint serializes")
+                            .into(),
+                    )
+                    .await;
                 message.ack().await.map_err(|e| format!("ack: {e}"))?;
             }
             Err(error) => {

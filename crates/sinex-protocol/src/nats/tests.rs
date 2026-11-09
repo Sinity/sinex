@@ -258,3 +258,95 @@ fn backup_reply_authority_does_not_alias_any_ordinary_producer_inbox() {
     assert_eq!(subjects.backup_inbox("phone"), "_SINEX_BACKUP.phone");
     assert!(subscribe.contains(&"sinex.backup.backup".into()));
 }
+
+/// Every acknowledgment result serializes flat beside the frame's identity
+/// and decodes to itself. A reply without a result, a result without its
+/// own fields, or an acknowledgment without its number does not decode.
+#[devkit::test]
+fn ack_shapes_round_trip() {
+    let counts = sinex_model::AdmissionCounts {
+        admitted: 1,
+        repeats: 2,
+        ..Default::default()
+    };
+    let results = [
+        FrameResult::Admitted {
+            material: Some(MaterialId::new()),
+            material_extents: vec![vec![1, 2]],
+            admitted: vec![EventId::new()],
+            counts,
+            commit_seq: Some(9),
+        },
+        FrameResult::KindsRegistered {
+            kinds: vec![(
+                sinex_model::KindRef {
+                    name: "example.kind".into(),
+                    version: 1,
+                },
+                "hash".into(),
+            )],
+        },
+        FrameResult::Replayed {
+            operation: sinex_model::OperationId::new(),
+            admitted: vec![EventId::new()],
+            commit_seq: None,
+        },
+        FrameResult::Refused {
+            kind: sinex_model::FrameRefusal::Content,
+            reason: "bad reading".into(),
+        },
+    ];
+    for result in results {
+        let ack = Acknowledgment {
+            number: 3,
+            frame: "frame".into(),
+            content_hash: Some("blake3:aa".into()),
+            result,
+        };
+        let json = serde_json::to_value(&ack).unwrap();
+        assert_eq!(json["number"], 3);
+        assert!(json["result"].is_string(), "{json}");
+        assert_eq!(serde_json::from_value::<Acknowledgment>(json).unwrap(), ack);
+    }
+    for body in [
+        serde_json::json!({"number":3,"frame":"f","content_hash":null}),
+        serde_json::json!({"number":3,"frame":"f","content_hash":null,"result":"refused","admitted":[]}),
+        serde_json::json!({"frame":"f","content_hash":null,"result":"kinds_registered","kinds":[]}),
+    ] {
+        assert!(
+            serde_json::from_value::<Acknowledgment>(body.clone()).is_err(),
+            "{body}"
+        );
+    }
+}
+
+/// A fetch reply is one of an event, an erasure or a refusal.
+#[devkit::test]
+fn fetch_reply_is_one_of_three() {
+    let erased = FetchEventReply::Erased(ErasedEvent {
+        event: EventId::new(),
+        commit_seq: 5,
+        original_commit_seq: 2,
+    });
+    let refused = FetchEventReply::Refused(FetchRefusal {
+        kind: FetchRefusalKind::Missing,
+        reason: "gone".into(),
+    });
+    for reply in [erased, refused] {
+        let json = serde_json::to_value(&reply).unwrap();
+        assert_eq!(
+            serde_json::from_value::<FetchEventReply>(json).unwrap(),
+            reply
+        );
+    }
+    assert!(
+        serde_json::from_value::<FetchEventReply>(serde_json::json!({"erased":null,"event":null}))
+            .is_err()
+    );
+    assert!(
+        serde_json::from_value::<FetchMaterialReply>(
+            serde_json::json!({"reply":"material","extents":[]})
+        )
+        .is_err()
+    );
+}

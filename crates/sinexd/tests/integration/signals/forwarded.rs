@@ -200,7 +200,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         vec![progress(at)],
     )
     .await;
-    assert!(refused.refusal.is_some(), "{refused:?}");
+    assert!(refused.refusal().is_some(), "{refused:?}");
     let foreign = submit(
         &polylogue,
         &subjects,
@@ -213,7 +213,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         }],
     )
     .await;
-    assert!(foreign.refusal.is_some(), "{foreign:?}");
+    assert!(foreign.refusal().is_some(), "{foreign:?}");
 
     let first = submit(
         &polylogue,
@@ -230,7 +230,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         ],
     )
     .await;
-    assert!(first.refusal.is_none(), "{first:?}");
+    assert!(first.refusal().is_none(), "{first:?}");
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.events WHERE event_type='signal.delivery'",
@@ -255,7 +255,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         vec![fired("session-b", at, false)],
     )
     .await;
-    assert!(second.refusal.is_none(), "{second:?}");
+    assert!(second.refusal().is_none(), "{second:?}");
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.events WHERE event_type='signal.delivery'",
@@ -278,7 +278,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         vec![fired("session-c", now, true)],
     )
     .await;
-    assert!(current.refusal.is_none(), "{current:?}");
+    assert!(current.refusal().is_none(), "{current:?}");
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.signal_checkpoints WHERE state->'forwarded' <> '{}'::jsonb",
@@ -299,7 +299,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         vec![progress(millis())],
     )
     .await;
-    assert!(caught_up.refusal.is_none(), "{caught_up:?}");
+    assert!(caught_up.refusal().is_none(), "{caught_up:?}");
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.events WHERE event_type='signal.delivery'",

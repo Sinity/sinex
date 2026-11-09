@@ -16,6 +16,7 @@ use sqlx::{Connection, Executor, PgConnection};
 
 mod backups;
 mod event_indexes;
+mod frame_outcomes;
 mod library_curation;
 mod lifecycle;
 pub mod online;
@@ -146,11 +147,14 @@ pub fn declarations() -> Vec<String> {
     statements
 }
 
-/// BLAKE3 over the declarations: the name development tooling gives the
-/// database it provisions, so a schema change selects a new database and
+/// BLAKE3 over the schema version and the declarations: the name development
+/// tooling gives the database it provisions, so a schema change selects a new database and
 /// recompiles exactly the crates whose queries read it.
 pub fn declaration_hash() -> String {
     let mut hasher = blake3::Hasher::new();
+    // A database records the version it was built at, and an upgrade that
+    // only transforms rows leaves the declarations unchanged.
+    hasher.update(&VERSION.to_le_bytes());
     for statement in declarations() {
         hasher.update(statement.as_bytes());
         hasher.update(&[0]);

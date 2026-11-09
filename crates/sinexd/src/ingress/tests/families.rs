@@ -75,7 +75,7 @@ async fn material(h: &Harness, producer: &str) -> MaterialId {
     if let Ingress::Material { material, .. } = &mut frame {
         material.input.host = producer.into();
     }
-    assert_eq!(h.send(producer, &frame).await.refusal, None);
+    assert_eq!(h.send(producer, &frame).await.refusal(), None);
     id
 }
 #[devkit::test]
@@ -108,13 +108,10 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         declarations: vec![raw.clone(), summary.clone()],
     };
     let first = h.send("host-a", &definitions).await;
-    assert_eq!(first.refusal, None);
+    assert_eq!(first.refusal(), None);
     let second = h.send("host-b", &definitions).await;
-    assert_eq!(second.refusal, None);
-    assert_eq!(
-        first.outcome["registered_kinds"],
-        second.outcome["registered_kinds"]
-    );
+    assert_eq!(second.refusal(), None);
+    assert_eq!(kinds(&first), kinds(&second));
     for (producer, canonical_publisher) in [("host-a", true), ("host-b", false)] {
         let reply = rpc(
             &h.client,
@@ -130,9 +127,13 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         .unwrap();
         let welcome: sinex_protocol::ProducerWelcome =
             serde_json::from_slice(&reply.payload).unwrap();
-        assert_eq!(welcome.refusal, None);
-        assert_eq!(welcome.family.as_deref(), Some("example"));
-        assert_eq!(welcome.canonical_publisher, canonical_publisher);
+        assert_eq!(
+            welcome,
+            sinex_protocol::ProducerWelcome::Welcome {
+                family: Some("example".into()),
+                canonical_publisher,
+            }
+        );
     }
     let a = material(&h, "host-a").await;
     let b = material(&h, "host-b").await;
@@ -149,7 +150,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
                 }
             )
             .await
-            .refusal,
+            .refusal(),
             None
         );
     }
@@ -168,7 +169,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
             }
         )
         .await
-        .refusal
+        .refusal()
         .is_some()
     );
     assert_eq!(
@@ -183,15 +184,16 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
-    assert!(h.send("foreign", &definitions).await.refusal.is_some());
+    assert!(h.send("foreign", &definitions).await.refusal().is_some());
     assert!(
         h.send("reader", &definitions)
             .await
-            .refusal
+            .refusal()
             .unwrap()
+            .1
             .contains("no configured write family"),
         "read rights grant no registration authority"
     );
@@ -206,7 +208,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
             }
         )
         .await
-        .refusal
+        .refusal()
         .is_some()
     );
     let request = FetchMaterial { material: a };
@@ -218,8 +220,8 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
     .await
     .unwrap();
     let reply: FetchMaterialReply = serde_json::from_slice(&reply.payload).unwrap();
-    assert_eq!(
-        reply.refusal, None,
+    assert!(
+        matches!(reply, FetchMaterialReply::Material { .. }),
         "family ownership comes from stored write provenance, not writer read grants"
     );
 }
@@ -242,7 +244,7 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let id = material(&h, "host-a").await;
@@ -264,8 +266,10 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
     .await
     .unwrap();
     let reply: FetchMaterialReply = serde_json::from_slice(&reply.payload).unwrap();
-    assert_eq!(reply.refusal_kind, Some(FetchRefusalKind::Unavailable));
-    assert!(reply.material.is_none());
+    assert!(
+        matches!(&reply, FetchMaterialReply::Refused(refusal) if refusal.kind == FetchRefusalKind::Unavailable),
+        "{reply:?}"
+    );
     assert!(
         h.send(
             "host-a",
@@ -286,8 +290,9 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
             }
         )
         .await
-        .refusal
+        .refusal()
         .unwrap()
+        .1
         .contains("material family ownership")
     );
 }

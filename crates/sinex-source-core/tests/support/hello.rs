@@ -17,9 +17,9 @@ pub(crate) async fn hello(
             sinex_transport::replies::publish_json(
                 &client,
                 message.reply.unwrap().to_string(),
-                ProducerWelcome {
-                    refusal: None,
-                    ..Default::default()
+                ProducerWelcome::Welcome {
+                    family: None,
+                    canonical_publisher: false,
                 },
                 std::time::Duration::from_secs(10),
             )
