@@ -171,6 +171,8 @@ pub enum Request {
         compare: Option<bool>,
         #[serde(default)]
         all: Option<bool>,
+        #[serde(default, rename = "batch-events")]
+        batch_events: Option<u64>,
     },
     Recompute {
         derivation: String,

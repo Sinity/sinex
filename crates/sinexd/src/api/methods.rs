@@ -449,8 +449,12 @@ impl Api {
                 until,
                 compare,
                 all,
+                batch_events,
             } => {
                 let scope = (|| -> Result<crate::replay::Scope, String> {
+                    if batch_events == Some(0) {
+                        return Err("--batch-events needs at least one reading per batch".into());
+                    }
                     Ok(crate::replay::Scope {
                         materials: material
                             .iter()
@@ -462,6 +466,7 @@ impl Api {
                         event_types: (!event_type.is_empty()).then_some(event_type),
                         from: from.as_deref().map(timestamp).transpose()?,
                         until: until.as_deref().map(timestamp).transpose()?,
+                        batch_events,
                     })
                 })();
                 match scope {
