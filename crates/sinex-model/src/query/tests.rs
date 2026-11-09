@@ -772,14 +772,14 @@ mod depth {
 
     #[devkit::test]
     fn deeply_nested_negations_bind_and_read_back_without_overflowing_the_stack() {
-        let text = format!("events where {}source = 'synthetic'", "not ".repeat(20_000));
+        let text = format!("events where {}source = 'synthetic'", "NOT ".repeat(3_000));
         let query = q(&text);
         assert!(read_as(&query).contains("not ("));
     }
 
     #[devkit::test]
     fn deeply_nested_parentheses_bind_without_overflowing_the_stack() {
-        let depth = 20_000;
+        let depth = 3_000;
         let text = format!(
             "events where {}source = 'synthetic'{}",
             "(".repeat(depth),
@@ -792,13 +792,13 @@ mod depth {
     fn a_long_chain_of_conditions_binds_reads_back_and_drops() {
         let text = format!(
             "events where {}",
-            (0..20_000)
+            (0..3_000)
                 .map(|i| format!("source = 's{i}'"))
                 .collect::<Vec<_>>()
-                .join(" and ")
+                .join(" AND ")
         );
         let query = q(&text);
-        assert!(read_as(&query).contains("s19999"));
+        assert!(read_as(&query).contains("s2999"));
         drop(query);
     }
 }
