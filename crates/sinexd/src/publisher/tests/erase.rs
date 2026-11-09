@@ -1,29 +1,27 @@
 use super::*;
 
-fn jetstream_error(code: u64, description: &str) -> stream::DeleteMessageError {
-    let error: jetstream::Error = serde_json::from_value(serde_json::json!({
-        "code": 404,
-        "err_code": code,
-        "description": description,
+#[test]
+fn a_message_the_stream_does_not_hold_is_gone() {
+    assert!(missing(&stream::RawMessageError::new(
+        stream::RawMessageErrorKind::NoMessageFound
+    )));
+}
+
+#[test]
+fn other_lookup_failures_are_failures() {
+    // A server error that merely says "no message found" in its text is not
+    // taken as absence: only the typed kind is.
+    let worded: jetstream::Error = serde_json::from_value(serde_json::json!({
+        "code": 500,
+        "err_code": 10057,
+        "description": "no message found",
     }))
     .unwrap();
-    stream::DeleteMessageError::new(stream::DeleteMessageErrorKind::JetStream(error))
-}
-
-#[test]
-fn erasing_a_message_the_stream_no_longer_holds_is_done() {
-    assert!(already_erased(&jetstream_error(10037, "no message found")));
-    // The decision follows the server's error code, not its wording.
-    assert!(already_erased(&jetstream_error(10037, "message is gone")));
-}
-
-#[test]
-fn other_delete_failures_are_failures() {
-    assert!(!already_erased(&jetstream_error(10059, "no message found")));
-    assert!(!already_erased(&stream::DeleteMessageError::new(
-        stream::DeleteMessageErrorKind::TimedOut
-    )));
-    assert!(!already_erased(&stream::DeleteMessageError::new(
-        stream::DeleteMessageErrorKind::Request
-    )));
+    for kind in [
+        stream::RawMessageErrorKind::JetStream(worded),
+        stream::RawMessageErrorKind::Other,
+        stream::RawMessageErrorKind::InvalidSubject,
+    ] {
+        assert!(!missing(&stream::RawMessageError::new(kind)));
+    }
 }
