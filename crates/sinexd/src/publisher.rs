@@ -3,7 +3,9 @@
 //! transfer pages may divide a position without advancing it. Shared stream
 //! messages carry references, with payload access decided by authorized fetch.
 //! Publisher checkpoints and exact erasure mappings belong to a native stream
-//! incarnation, so a lost broker store replays from PostgreSQL.
+//! incarnation, so a lost broker store replays from PostgreSQL. A store that
+//! lost only its newest messages keeps its incarnation; each pass first moves
+//! the saved position back to what the stream still holds (`align_with_stream`).
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{EventId, OperationId};
@@ -195,9 +197,10 @@ pub(crate) async fn publish_pending_measured(
     let stream = confirmed_stream(js, subjects).await?;
     let instance = stream_instance(&stream);
     let consumer = consumer_for(&instance);
-    let (position, _) = commit_log::consumer_position(conn, &consumer)
+    let (saved, _) = commit_log::consumer_position(conn, &consumer)
         .await
         .map_err(|error| error.to_string())?;
+    let position = align_with_stream(conn, &stream, &instance, &consumer, saved).await?;
     let mut cursor = commit_log::ChangeCursor::after(position);
     let mut settled = position;
     let mut total = Published::default();
@@ -319,6 +322,75 @@ pub(crate) async fn publish_pending_measured(
             .next
             .expect("a nonempty page has a private continuation");
     }
+}
+
+/// Keep the saved position at or behind what the stream holds, and return it.
+///
+/// JetStream acknowledges a publish before it syncs its store (every 120 s by
+/// default), so a host crash can drop the stream's newest messages while
+/// PostgreSQL keeps the position and published records for them. The stream
+/// keeps its name and creation time, and its next messages reuse the lost
+/// sequence numbers. Reading back from the stream's newest message to the
+/// completion marker at or below the saved position settles both crash cases:
+/// - Event references met on the way are recorded. A crash between JetStream's
+///   acknowledgment and the commit leaves them unlisted, and an unlisted copy
+///   would escape erasure.
+/// - If that marker is older than the saved position, the stream lost a
+///   suffix. Records above the stream's last sequence are forgotten, so erasure
+///   never deletes a reused number, and the position moves back to the marker,
+///   so the lost positions are published again. Consumers skip positions they
+///   already applied.
+///
+/// Normally the newest message is the marker itself; the walk covers at most
+/// the messages of the one page published after it.
+async fn align_with_stream(
+    conn: &mut PgConnection,
+    stream: &stream::Stream,
+    instance: &str,
+    consumer: &str,
+    saved: i64,
+) -> Result<i64, String> {
+    let last = stream.cached_info().state.last_sequence;
+    let mut unlisted = Vec::new();
+    let mut marker = None;
+    let mut seq = last;
+    while seq > 0 {
+        match stream.get_raw_message(seq).await {
+            Ok(message) => match serde_json::from_slice::<Confirmed>(&message.payload) {
+                Ok(Confirmed::PositionComplete { commit_seq }) if commit_seq <= saved => {
+                    marker = Some(commit_seq);
+                    break;
+                }
+                Ok(Confirmed::EventReference { event, .. }) => {
+                    unlisted.push((event.0, i64::try_from(seq).map_err(|e| e.to_string())?));
+                }
+                _ => {}
+            },
+            // Erased messages leave holes.
+            Err(error) if error.kind() == stream::RawMessageErrorKind::NoMessageFound => {}
+            Err(error) => return Err(format!("read confirmed stream message {seq}: {error}")),
+        }
+        seq -= 1;
+    }
+    let held = marker.unwrap_or(0);
+    let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
+    commit_log::record_published_in(&mut tx, instance, &unlisted)
+        .await
+        .map_err(|error| error.to_string())?;
+    if held < saved {
+        let last = i64::try_from(last).map_err(|error| error.to_string())?;
+        let forgotten = commit_log::forget_published_above(&mut tx, instance, last)
+            .await
+            .map_err(|error| error.to_string())?;
+        commit_log::rewind_consumer_position(&mut tx, consumer, held)
+            .await
+            .map_err(|error| error.to_string())?;
+        eprintln!(
+            "sinexd: publisher: the confirmed stream holds positions only up to {held} (saved {saved}, last stream sequence {last}); forgot {forgotten} published records above it and publishing again from there"
+        );
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(held.min(saved))
 }
 
 /// Data acknowledgments and exact erasures precede a cumulative completion

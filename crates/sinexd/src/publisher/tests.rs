@@ -569,6 +569,69 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
     assert_eq!(pairs, [(id.0, ack.sequence as i64)]);
 }
 
+/// A crash between JetStream's acknowledgment and the commit, found after the
+/// duplicate window: the stream holds a reference the database does not list.
+/// The next pass records it, so erasure removes that copy too.
+#[devkit::test]
+async fn unrecorded_published_references_are_recorded_at_start(db: devkit::pg::TestDatabase) {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(&js, &subjects).await.unwrap();
+    let url = db.url(None);
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
+    let event = executed("1", "pwd", 1, Class::Open);
+    let id = event.id;
+    admit(&mut conn, batch(vec![event])).await;
+    let mut publisher_conn = PgConnection::connect(&url).await.unwrap();
+    publish_pending(&mut publisher_conn, &js, &subjects)
+        .await
+        .unwrap();
+    let committed = &commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
+        .await
+        .unwrap()
+        .events[0];
+    let stray = publish(
+        &js,
+        subjects.confirmed_event(&committed.class, &committed.event_type),
+        "copy-after-the-duplicate-window".into(),
+        &Confirmed::EventReference {
+            commit_seq: committed.commit_seq,
+            event: EventId(committed.id),
+        },
+    )
+    .await
+    .unwrap()
+    .await
+    .unwrap()
+    .sequence;
+
+    publish_pending(&mut publisher_conn, &js, &subjects)
+        .await
+        .unwrap();
+    let recorded: Vec<i64> = sqlx::query_scalar(
+        "SELECT stream_seq FROM core.published WHERE event_id = $1 ORDER BY stream_seq",
+    )
+    .bind(id.0)
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(recorded, [1, stray as i64], "both copies are recorded");
+
+    lifecycle(&mut conn, Act::Archive, vec![id]).await;
+    lifecycle(&mut conn, Act::Tombstone, vec![id]).await;
+    publish_pending(&mut publisher_conn, &js, &subjects)
+        .await
+        .unwrap();
+    assert!(
+        !read_all(&js, &subjects)
+            .await
+            .iter()
+            .any(|m| matches!(m, Confirmed::EventReference { event, .. } if *event == id)),
+        "no copy of the tombstoned event stays on the stream"
+    );
+}
+
 #[devkit::test]
 async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
     db: devkit::pg::TestDatabase,

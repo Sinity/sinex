@@ -351,7 +351,7 @@ fn resume_cursor(spool: &Path) -> std::io::Result<Option<String>> {
 fn save_resume_cursor(spool: &Path, cursor: &str) -> std::io::Result<()> {
     let temporary = spool.join(format!("{RESUME_FILE}.tmp"));
     std::fs::write(&temporary, cursor.as_bytes())?;
-    std::fs::rename(temporary, spool.join(RESUME_FILE))
+    sinex_source_core::drivers::media::place(spool, &temporary, &spool.join(RESUME_FILE))
 }
 
 /// The cursor of the last complete entry in the spool's segments.

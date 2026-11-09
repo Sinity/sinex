@@ -85,6 +85,12 @@ Every write follows one order, so a crash at any point leaves a state the ordina
 | an unpunched tombstoned extent | the punch when the segment opens, or at the writer's next group |
 | a derived store behind its saved position | the consumer reading on from its position |
 | a source position behind its committed rows | re-reading from the committed cursor; admission suppresses the repeats |
+| a confirmed stream missing its newest messages while PostgreSQL records them as published | the publisher's check before each pass |
+| messages on the confirmed stream that PostgreSQL does not list as published | the same check, which records them |
+
+**The confirmed stream is a store with its own sync.** JetStream acknowledges a publish before it syncs its files (every 120 s by default), so after a host crash the stream can lack its newest messages while PostgreSQL keeps the publisher's position and the stream numbers of the events it published. The stream keeps its name and creation time, and its next messages reuse the lost numbers. Before each pass the publisher reads back from the stream's newest message to the completion marker at or below its saved position. Event references it passes are recorded as published, so erasure reaches every copy. If the marker is older than the saved position, records above the stream's last number are forgotten and the position moves back to the marker, so the lost positions go out again; consumers skip positions they already applied. Syncing every message instead would stall the stream whenever the disk is busy.
+
+**Files appear whole.** A capture file that another step reads by its name (a media segment and its sidecar, a resume cursor) is synced before it is renamed to that name, and its directory is synced after.
 
 How the positions themselves are stored is in [admission.md](admission.md#commit-log-and-positions); backups record the same boundary ([operations.md](operations.md#backup-and-restore)).
 

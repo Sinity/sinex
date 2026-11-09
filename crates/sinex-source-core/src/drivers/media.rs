@@ -175,6 +175,8 @@ impl Reader for Media {
 
 /// Write a finished segment: the sidecar first, the data renamed into place
 /// last. `data` is a file capture already wrote in `dir` (with `.partial`).
+/// Each file is synced before it gets its final name, so after a host crash a
+/// published name never holds short data.
 pub fn publish_segment(
     dir: &Path,
     partial: &Path,
@@ -185,16 +187,24 @@ pub fn publish_segment(
     let side = dir.join(format!("{stem}.json"));
     let tmp = dir.join(format!(".{stem}.json.tmp"));
     std::fs::write(&tmp, serde_json::to_vec(sidecar).expect("JSON serializes"))?;
-    std::fs::rename(&tmp, &side)?;
+    place(dir, &tmp, &side)?;
     let data = dir.join(format!("{stem}.{ext}"));
     let counter = super::spool_health::counter(dir);
     let mut health = counter.as_ref().map(|counter| counter.lock().unwrap());
     let length = std::fs::metadata(partial)?.len() + std::fs::metadata(&side)?.len();
-    std::fs::rename(partial, &data)?;
+    place(dir, partial, &data)?;
     if let Some(health) = &mut health {
         health.captured_media(stem.to_owned(), length);
     }
     Ok(data)
+}
+
+/// Give the complete file `from` its final name `to` in `dir`: sync its bytes,
+/// rename, then sync the directory so the new name survives a host crash.
+pub fn place(dir: &Path, from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::File::open(from)?.sync_all()?;
+    std::fs::rename(from, to)?;
+    std::fs::File::open(dir)?.sync_all()
 }
 
 #[cfg(test)]
