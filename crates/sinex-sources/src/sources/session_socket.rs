@@ -18,7 +18,7 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "session.integrations",
@@ -86,6 +86,11 @@ fn capture_until(
 
 const ACCEPT_BATCH: usize = 32;
 
+/// How long a received line may sit in the spool before it is synced: lines
+/// are synced in groups, like every other live stream, so a burst of reports
+/// does not cost one sync each. A host crash can lose at most this window.
+const SYNC_EVERY: Duration = Duration::from_secs(1);
+
 fn capture_connections(
     listener: UnixListener,
     writer: Arc<Mutex<SpoolWriter>>,
@@ -95,6 +100,7 @@ fn capture_connections(
     let mut handlers = Vec::new();
     let mut count = 0;
     let mut failure = None;
+    let mut last_sync = Instant::now();
     loop {
         // Check stop between bounded batches even when new clients keep
         // the accept queue populated. Only accepted readers are drained.
@@ -140,6 +146,16 @@ fn capture_connections(
             } else {
                 i += 1;
             }
+        }
+        if last_sync.elapsed() >= SYNC_EVERY {
+            if let Err(error) = writer
+                .lock()
+                .map_err(|_| std::io::Error::other("spool lock poisoned"))
+                .and_then(|mut writer| writer.sync())
+            {
+                failure.get_or_insert(error);
+            }
+            last_sync = Instant::now();
         }
         if failure.is_some() || stop() {
             break;
@@ -199,7 +215,6 @@ fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::i
                 .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
             let dropped = writer.dropped;
             writer.append(Timestamp::now(), body)?;
-            writer.sync()?;
             count += u64::from(writer.dropped == dropped);
         }
         line.clear();

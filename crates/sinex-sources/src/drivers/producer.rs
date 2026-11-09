@@ -457,6 +457,10 @@ impl Producer {
         }
         let snapshots = Snapshots::new()?;
         let position = Position::load(state, binding)?;
+        // The cursor and carry last written for this binding. A poll that
+        // read nothing new leaves them unchanged, and rewriting the file then
+        // would cost a sync and a rename every poll for nothing.
+        let mut saved = (position.cursor.clone(), position.carry.clone());
         let batches = drivers::batches(
             source,
             binding,
@@ -550,7 +554,10 @@ impl Producer {
                 carry: progress.carry.clone(),
             };
             if frames.is_empty() {
-                after.save(state, binding)?;
+                if (&after.cursor, &after.carry) != (&saved.0, &saved.1) {
+                    after.save(state, binding)?;
+                    saved = (after.cursor.clone(), after.carry.clone());
+                }
                 continue;
             }
             let class = batch
@@ -580,6 +587,7 @@ impl Producer {
                 }
             }
             after.save(state, binding)?;
+            saved = (after.cursor.clone(), after.carry.clone());
             self.clear_frame_directories(&frames, sink)?;
             UnacknowledgedFrames::clear(state, binding)?;
         }
