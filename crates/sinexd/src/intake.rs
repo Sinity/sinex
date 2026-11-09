@@ -1,6 +1,6 @@
 //! One path from an acquisition to the writer, for bindings and API requests.
 use crate::stage::Totals;
-use crate::writer::{AdmissionCheck, Priority, StageCheckpoint, WriterHandle};
+use crate::writer::{AdmissionCheck, Priority, StageCheckpoint, WriteError, WriterHandle};
 use serde_json::Value;
 use sinex_model::{Class, MaterialId, RecordOutcome, RunId};
 use sinex_source_core::{Limits, Source, drivers};
@@ -8,6 +8,38 @@ use sinex_store::{Blobs, Outcome, bindings};
 use sqlx::PgConnection;
 use std::sync::Arc;
 use std::time::Instant;
+
+/// Why a submission did not commit. `Stale` keeps the writer's typed answer
+/// that the inputs moved, so a caller can compute again; every other failure
+/// is reported as text.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SubmitError {
+    #[error("{0}; evaluate again")]
+    Stale(&'static str),
+    #[error("{0}")]
+    Failed(String),
+}
+
+impl From<WriteError> for SubmitError {
+    fn from(error: WriteError) -> Self {
+        match error {
+            WriteError::Stale(what) => Self::Stale(what),
+            other => Self::Failed(other.to_string()),
+        }
+    }
+}
+
+impl From<String> for SubmitError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<&str> for SubmitError {
+    fn from(error: &str) -> Self {
+        Self::Failed(error.to_owned())
+    }
+}
 
 pub(crate) struct Submission {
     pub outcome: Outcome,
@@ -46,16 +78,17 @@ impl Intake<'_> {
                     .submit_source(self.priority, batch, check, stage)
                     .await
             };
-            result.map_err(|e| e.to_string())
+            result.map_err(SubmitError::from)
         })
         .await
+        .map_err(|error| error.to_string())
     }
 
     pub(crate) async fn submit_checkpoint(
         &self,
         acquired: drivers::Acquired,
         checkpoint: sinex_store::signals::Commit,
-    ) -> Result<Submission, String> {
+    ) -> Result<Submission, SubmitError> {
         let mut checkpoint = Some(checkpoint);
         self.submit_using(
             acquired,
@@ -67,10 +100,7 @@ impl Intake<'_> {
                     check()?;
                     let checkpoint =
                         checkpoint.ok_or("signal transition spans multiple admission batches")?;
-                    self.writer
-                        .submit_signals(Some(batch), checkpoint)
-                        .await
-                        .map_err(|error| error.to_string())
+                    Ok(self.writer.submit_signals(Some(batch), checkpoint).await?)
                 }
             },
         )
@@ -90,10 +120,11 @@ impl Intake<'_> {
                 self.writer
                     .submit_curation(self.priority, batch, check)
                     .await
-                    .map_err(|error| error.to_string())
+                    .map_err(SubmitError::from)
             },
         )
         .await
+        .map_err(|error| error.to_string())
     }
 
     async fn submit_using<F, A>(
@@ -102,10 +133,10 @@ impl Intake<'_> {
         carry: Value,
         totals: &mut Totals,
         mut admit: F,
-    ) -> Result<Submission, String>
+    ) -> Result<Submission, SubmitError>
     where
         F: FnMut(sinex_model::Batch, AdmissionCheck, Option<StageCheckpoint>) -> A,
-        A: std::future::Future<Output = Result<Outcome, String>>,
+        A: std::future::Future<Output = Result<Outcome, SubmitError>>,
     {
         let check = self.material.admission_check(self.check.clone());
         check()?;
@@ -205,7 +236,7 @@ impl Intake<'_> {
                 committed.accounting.framed =
                     committed.accounting.framed - committed_records + framed;
             }
-            Ok(Submission { outcome, material })
+            Ok::<_, SubmitError>(Submission { outcome, material })
         }
         .await;
         batches.finish().await?;
@@ -234,6 +265,7 @@ pub(crate) async fn request(
         Admission::Plain,
     )
     .await
+    .map_err(|error| error.to_string())
 }
 
 /// [`request`] for planned library curation records: admitted only if they
@@ -258,6 +290,7 @@ pub(crate) async fn request_curation(
         Admission::Curation,
     )
     .await
+    .map_err(|error| error.to_string())
 }
 
 /// What a request's admission must also hold.
@@ -276,7 +309,7 @@ pub(crate) async fn request_checkpoint(
     host: &str,
     acquired: drivers::Acquired,
     checkpoint: sinex_store::signals::Commit,
-) -> Result<Submission, String> {
+) -> Result<Submission, SubmitError> {
     request_inner(
         conn,
         writer,
@@ -299,7 +332,7 @@ async fn request_inner(
     host: &str,
     acquired: drivers::Acquired,
     admission: Admission,
-) -> Result<Submission, String> {
+) -> Result<Submission, SubmitError> {
     let spec = source.spec();
     let version = spec.parser_version.to_string();
     let run = sinex_store::runs::start(
@@ -317,7 +350,7 @@ async fn request_inner(
     .map_err(|error| format!("starting request run: {error}"))?;
     let result = async {
         if let Some(reason) = &acquired.observation.unavailable {
-            return Err(format!("request records are unavailable: {reason}"));
+            return Err(format!("request records are unavailable: {reason}").into());
         }
         bindings::save(
             conn,
@@ -355,12 +388,10 @@ async fn request_inner(
         };
         match admission {
             Admission::Signals(checkpoint) => intake.submit_checkpoint(acquired, checkpoint).await,
-            Admission::Curation => intake.submit_curation(acquired).await,
-            Admission::Plain => {
-                intake
-                    .submit(acquired, Value::Null, &mut Totals::default())
-                    .await
-            }
+            Admission::Curation => Ok(intake.submit_curation(acquired).await?),
+            Admission::Plain => Ok(intake
+                .submit(acquired, Value::Null, &mut Totals::default())
+                .await?),
         }
     }
     .await;
@@ -371,8 +402,9 @@ async fn request_inner(
         (result, Ok(())) => result,
         (Ok(_), Err(error)) => Err(format!(
             "request records committed for run {run}, but finalization failed: {error}"
-        )),
-        (Err(error), Err(ending)) => Err(format!("{error}; {ending}")),
+        )
+        .into()),
+        (Err(error), Err(ending)) => Err(format!("{error}; {ending}").into()),
     }
 }
 

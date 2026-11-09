@@ -524,7 +524,7 @@ async fn erase_tombstoned_in(
         for item in &pending {
             let seq = u64::try_from(item.stream_seq).map_err(|error| error.to_string())?;
             if let Err(error) = stream.delete_message(seq).await
-                && !error.to_string().contains("no message found")
+                && !already_erased(&error)
             {
                 return Err(format!("erase stream message {seq}: {error}"));
             }
@@ -600,6 +600,16 @@ pub(crate) async fn publish_all(
         done.tombstoned,
         wall.as_secs_f64()
     ))
+}
+
+/// Whether deleting a stream message failed only because the stream no
+/// longer holds it, which leaves the wanted state in place.
+fn already_erased(error: &stream::DeleteMessageError) -> bool {
+    matches!(
+        error.kind(),
+        stream::DeleteMessageErrorKind::JetStream(error)
+            if error.error_code() == jetstream::ErrorCode::NO_MESSAGE_FOUND
+    )
 }
 
 #[cfg(test)]

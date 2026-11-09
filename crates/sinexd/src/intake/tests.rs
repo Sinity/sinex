@@ -182,12 +182,18 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
                 writer
                     .submit_checked(Priority::Bulk, batch, check)
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(SubmitError::from)
             }
         },
     )
     .await;
-    assert!(result.err().unwrap().contains("capture stopped"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("capture stopped")
+    );
     assert!(
         sinex_store::positions::load(&mut ctx.read_conn, "synthetic-check")
             .await
@@ -347,7 +353,7 @@ async fn overlap(fail_first: bool) {
         "the parser must be joined before returning"
     );
     if fail_first {
-        assert_eq!(result.err().unwrap(), "first commit failed");
+        assert_eq!(result.err().unwrap().to_string(), "first commit failed");
         assert_eq!(submitted, 1);
         assert_eq!(parsed.load(Ordering::SeqCst), 2);
     } else {
@@ -514,7 +520,7 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
                             ));
                             queued.notify_one();
                         }
-                        answer.await.map_err(|e| e.to_string())
+                        answer.await.map_err(SubmitError::from)
                     }
                 },
             )
@@ -603,4 +609,30 @@ async fn an_unavailable_request_finalizes_its_observed_source_run(db: devkit::pg
     assert!(error.contains("synthetic unavailable bytes"), "{error}");
     request_run(&mut ctx.read_conn, 0).await;
     ctx.close().await.unwrap();
+}
+
+#[test]
+fn a_stale_write_stays_stale_through_submission() {
+    // Whatever the words, the variant decides.
+    for what in ["signal checkpoint changed", "inputs moved", ""] {
+        assert!(matches!(
+            SubmitError::from(WriteError::Stale(what)),
+            SubmitError::Stale(_)
+        ));
+    }
+}
+
+#[test]
+fn other_write_failures_are_failed_submissions() {
+    for error in [
+        WriteError::Refused("signal checkpoint changed; evaluate again".into()),
+        WriteError::Unavailable("database unavailable".into()),
+        WriteError::Stopped,
+    ] {
+        assert!(matches!(SubmitError::from(error), SubmitError::Failed(_)));
+    }
+    assert!(matches!(
+        SubmitError::from("signal checkpoint changed".to_owned()),
+        SubmitError::Failed(_)
+    ));
 }

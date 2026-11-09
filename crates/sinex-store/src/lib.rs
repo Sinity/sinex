@@ -69,6 +69,9 @@ pub enum Error {
     Invalid(String),
     #[error("query result changed; start the query again")]
     StaleCursor,
+    /// The signal checkpoint moved since it was read.
+    #[error("signal checkpoint changed; evaluate the committed state again")]
+    StaleCheckpoint,
     #[error(
         "{0}: its class is sealed, so it must be sealed where its material is stored; it arrived unsealed"
     )]
