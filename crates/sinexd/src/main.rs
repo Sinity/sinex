@@ -301,9 +301,8 @@ fn effective_time_settings(
         }
         // The host's named zone, the same default Polylogue uses, so both
         // products on one host share one logical day.
-        None => query_language::time::DaySetting::system(start).map_err(|_| {
-            Error::not_configured("system time zone has no IANA name; pass --zone")
-        })?,
+        None => query_language::time::DaySetting::system(start)
+            .map_err(|_| Error::not_configured("system time zone has no IANA name; pass --zone"))?,
     };
     Ok(sinex_model::time_settings::TimeSettings::from_parts(
         day.zone().clone(),
