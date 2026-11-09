@@ -263,7 +263,7 @@ impl Compiler<'_> {
     /// Event contributors of successful positive order predicates. Ordinary
     /// predicates add none; negation never invents a positive match.
     pub(super) fn predicate_parents(&self, outer: &Cols, expression: &Expr) -> Result<SqlFragment> {
-        sinex_model::query::ensure_stack(|| {
+        query_language::depth::deeper(|| {
             match expression {
                 Expr::Order(join) => {
                     let (inner, _display) = self.compile_inner(join)?;

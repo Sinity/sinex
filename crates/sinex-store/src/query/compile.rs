@@ -154,7 +154,7 @@ fn op_sql(op: Op) -> &'static str {
 
 /// Every row field an expression names (not inside joins).
 fn expr_fields(e: &Expr, out: &mut Vec<FieldRef>) {
-    sinex_model::query::ensure_stack(|| match e {
+    query_language::depth::deeper(|| match e {
         Expr::Truth { operand, .. } | Expr::FieldWords { operand, .. } => {
             operand_fields(operand, out)
         }
@@ -176,7 +176,7 @@ fn expr_fields(e: &Expr, out: &mut Vec<FieldRef>) {
 }
 
 fn operand_fields(o: &Operand, out: &mut Vec<FieldRef>) {
-    match o {
+    query_language::depth::deeper(|| match o {
         Operand::Field(f) | Operand::TimeFn(_, f) => out.push(f.clone()),
         Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
             operand_fields(left, out);
@@ -196,11 +196,11 @@ fn operand_fields(o: &Operand, out: &mut Vec<FieldRef>) {
             ..
         } => operand_fields(value, out),
         Operand::Literal { .. } => {}
-    }
+    })
 }
 
 fn exposes_matched_row(expression: &Expr) -> bool {
-    sinex_model::query::ensure_stack(|| match expression {
+    query_language::depth::deeper(|| match expression {
         Expr::Order(_) => true,
         Expr::And(left, right) | Expr::Or(left, right) => {
             exposes_matched_row(left) || exposes_matched_row(right)

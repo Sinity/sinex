@@ -7,7 +7,7 @@ fn bounds(
     from: &mut Option<jiff::Timestamp>,
     to: &mut Option<jiff::Timestamp>,
 ) {
-    super::ensure_stack(|| {
+    query_language::depth::deeper(|| {
         let mut lower = |t| *from = Some(from.map_or(t, |old| old.max(t)));
         let mut upper = |t| *to = Some(to.map_or(t, |old| old.min(t)));
         match e {

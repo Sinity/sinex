@@ -193,125 +193,130 @@ impl Binder<'_> {
         at: usize,
         path: Option<&NodePath>,
     ) -> Result<Operand, QueryError> {
-        use query_language::catalog::FieldKind as K;
-        Ok(match value {
-            syntax::Expression::Field { name } => {
-                Operand::Field(match path.and_then(|path| self.typing.operand(path)) {
-                    Some(info) => self.resolve_info(&info.result, at)?,
-                    None => self.resolve(name, scope, at)?,
-                })
-            }
-            syntax::Expression::Value { value } => {
-                let (value, kind) = match value {
-                    syntax::Value::Unknown => (Value::Unknown, K::Json),
-                    syntax::Value::Scalar {
-                        text,
-                        quoted: false,
-                    } if query_language::number::is_decimal(text) => {
-                        (Value::Text(text.clone()), K::Number)
-                    }
-                    syntax::Value::Scalar {
-                        text,
-                        quoted: false,
-                    } if matches!(text.as_str(), "true" | "false") => {
-                        (Value::Bool(text == "true"), K::Bool)
-                    }
-                    syntax::Value::Scalar {
-                        text,
-                        quoted: false,
-                    } if time::duration_decimal(text).is_some() => (
-                        Value::Text(time::duration_decimal(text).unwrap()),
-                        K::Duration,
-                    ),
-                    syntax::Value::Scalar { text, .. } => (Value::Text(text.clone()), K::Text),
-                    syntax::Value::Parameter { name } if self.validating => {
-                        (Value::PlaceholderText(name.clone()), K::Text)
-                    }
-                    _ => return Err(QueryError::at(at, "an expression needs one scalar value")),
-                };
-                Operand::Literal { value, kind }
-            }
-            syntax::Expression::Arithmetic {
-                operator,
-                left,
-                right,
-            } => {
-                let left_path = path.map(|path| path.field("left"));
-                let right_path = path.map(|path| path.field("right"));
-                let left = self.operand_at(left, scope, at, left_path.as_ref())?;
-                let right = self.operand_at(right, scope, at, right_path.as_ref())?;
-                let kind = path
-                    .and_then(|path| self.typing.operand(path))
-                    .map(|info| info.result.field.kind.clone())
-                    .or_else(|| {
-                        query_language::scope::arithmetic_kind(
-                            *operator,
-                            &left.kind(),
-                            &right.kind(),
-                        )
+        query_language::depth::deeper(|| {
+            use query_language::catalog::FieldKind as K;
+            Ok(match value {
+                syntax::Expression::Field { name } => {
+                    Operand::Field(match path.and_then(|path| self.typing.operand(path)) {
+                        Some(info) => self.resolve_info(&info.result, at)?,
+                        None => self.resolve(name, scope, at)?,
                     })
-                    .ok_or_else(|| {
-                        QueryError::at(at, "arithmetic operands have incompatible dimensions")
-                    })?;
-                Operand::Arithmetic {
-                    operator: *operator,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                    kind,
                 }
-            }
-            syntax::Expression::Function { name, arguments } => {
-                let arguments = arguments
-                    .iter()
-                    .enumerate()
-                    .map(|(index, argument)| {
-                        let argument_path = path.map(|path| path.field("arguments").index(index));
-                        self.operand_at(argument, scope, at, argument_path.as_ref())
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                if name == "text" {
-                    let [argument] = arguments.as_slice() else {
-                        return Err(QueryError::at(at, "text takes one value"));
+                syntax::Expression::Value { value } => {
+                    let (value, kind) = match value {
+                        syntax::Value::Unknown => (Value::Unknown, K::Json),
+                        syntax::Value::Scalar {
+                            text,
+                            quoted: false,
+                        } if query_language::number::is_decimal(text) => {
+                            (Value::Text(text.clone()), K::Number)
+                        }
+                        syntax::Value::Scalar {
+                            text,
+                            quoted: false,
+                        } if matches!(text.as_str(), "true" | "false") => {
+                            (Value::Bool(text == "true"), K::Bool)
+                        }
+                        syntax::Value::Scalar {
+                            text,
+                            quoted: false,
+                        } if time::duration_decimal(text).is_some() => (
+                            Value::Text(time::duration_decimal(text).unwrap()),
+                            K::Duration,
+                        ),
+                        syntax::Value::Scalar { text, .. } => (Value::Text(text.clone()), K::Text),
+                        syntax::Value::Parameter { name } if self.validating => {
+                            (Value::PlaceholderText(name.clone()), K::Text)
+                        }
+                        _ => {
+                            return Err(QueryError::at(at, "an expression needs one scalar value"));
+                        }
                     };
-                    Operand::Text(Box::new(argument.clone()))
-                } else if name == "abs" {
-                    let [argument] = arguments.as_slice() else {
-                        return Err(QueryError::at(at, "abs takes one numeric value"));
-                    };
-                    Operand::Absolute(Box::new(argument.clone()))
-                } else if name == "len" {
-                    let [argument] = arguments.as_slice() else {
-                        return Err(QueryError::at(at, "len takes one value"));
-                    };
-                    Operand::Length(Box::new(argument.clone()))
-                } else if name == "glob" {
-                    let [left, right] = arguments.as_slice() else {
-                        return Err(QueryError::at(at, "glob takes two text values"));
-                    };
-                    Operand::Glob {
-                        left: Box::new(left.clone()),
-                        right: Box::new(right.clone()),
-                    }
-                } else if name == "case_eq" {
-                    let [left, right, value] = arguments.as_slice() else {
-                        return Err(QueryError::at(at, "case_eq takes three values"));
-                    };
-                    Operand::CaseEqual {
-                        left: Box::new(left.clone()),
-                        right: Box::new(right.clone()),
-                        value: Box::new(value.clone()),
-                    }
-                } else {
-                    let func = TimeFn::from_name(name).ok_or_else(|| {
-                        QueryError::not_built(at, format!("{name}() is not built"))
-                    })?;
-                    let [Operand::Field(field)] = arguments.as_slice() else {
-                        return Err(QueryError::at(at, "time functions take one time field"));
-                    };
-                    self.time_field(field, scope, at)?;
-                    Operand::TimeFn(func, field.clone())
+                    Operand::Literal { value, kind }
                 }
-            }
+                syntax::Expression::Arithmetic {
+                    operator,
+                    left,
+                    right,
+                } => {
+                    let left_path = path.map(|path| path.field("left"));
+                    let right_path = path.map(|path| path.field("right"));
+                    let left = self.operand_at(left, scope, at, left_path.as_ref())?;
+                    let right = self.operand_at(right, scope, at, right_path.as_ref())?;
+                    let kind = path
+                        .and_then(|path| self.typing.operand(path))
+                        .map(|info| info.result.field.kind.clone())
+                        .or_else(|| {
+                            query_language::scope::arithmetic_kind(
+                                *operator,
+                                &left.kind(),
+                                &right.kind(),
+                            )
+                        })
+                        .ok_or_else(|| {
+                            QueryError::at(at, "arithmetic operands have incompatible dimensions")
+                        })?;
+                    Operand::Arithmetic {
+                        operator: *operator,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        kind,
+                    }
+                }
+                syntax::Expression::Function { name, arguments } => {
+                    let arguments = arguments
+                        .iter()
+                        .enumerate()
+                        .map(|(index, argument)| {
+                            let argument_path =
+                                path.map(|path| path.field("arguments").index(index));
+                            self.operand_at(argument, scope, at, argument_path.as_ref())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if name == "text" {
+                        let [argument] = arguments.as_slice() else {
+                            return Err(QueryError::at(at, "text takes one value"));
+                        };
+                        Operand::Text(Box::new(argument.clone()))
+                    } else if name == "abs" {
+                        let [argument] = arguments.as_slice() else {
+                            return Err(QueryError::at(at, "abs takes one numeric value"));
+                        };
+                        Operand::Absolute(Box::new(argument.clone()))
+                    } else if name == "len" {
+                        let [argument] = arguments.as_slice() else {
+                            return Err(QueryError::at(at, "len takes one value"));
+                        };
+                        Operand::Length(Box::new(argument.clone()))
+                    } else if name == "glob" {
+                        let [left, right] = arguments.as_slice() else {
+                            return Err(QueryError::at(at, "glob takes two text values"));
+                        };
+                        Operand::Glob {
+                            left: Box::new(left.clone()),
+                            right: Box::new(right.clone()),
+                        }
+                    } else if name == "case_eq" {
+                        let [left, right, value] = arguments.as_slice() else {
+                            return Err(QueryError::at(at, "case_eq takes three values"));
+                        };
+                        Operand::CaseEqual {
+                            left: Box::new(left.clone()),
+                            right: Box::new(right.clone()),
+                            value: Box::new(value.clone()),
+                        }
+                    } else {
+                        let func = TimeFn::from_name(name).ok_or_else(|| {
+                            QueryError::not_built(at, format!("{name}() is not built"))
+                        })?;
+                        let [Operand::Field(field)] = arguments.as_slice() else {
+                            return Err(QueryError::at(at, "time functions take one time field"));
+                        };
+                        self.time_field(field, scope, at)?;
+                        Operand::TimeFn(func, field.clone())
+                    }
+                }
+            })
         })
     }
     fn column(
@@ -578,7 +583,7 @@ impl Binder<'_> {
         scope: &Scope,
         path: &NodePath,
     ) -> Result<Expr, QueryError> {
-        super::ensure_stack(|| {
+        query_language::depth::deeper(|| {
             use syntax::ConditionKind as C;
             let at = c.span.start;
             Ok(match &c.kind {
@@ -918,20 +923,20 @@ impl Binder<'_> {
                 .ok_or_else(|| QueryError::new("bound stage scope is missing"))?;
             use syntax::TransformKind as S;
             let at = stage.span.start;
-            match stage.kind {
+            match &stage.kind {
                 S::Where { condition } => stages.push(Stage::Where(self.condition(
-                    &condition,
+                    condition,
                     scope,
                     &stage_path.field("condition"),
                 )?)),
-                S::AsOf { value, sequence } => stages.push(Stage::AsOf(if sequence {
+                S::AsOf { value, sequence } => stages.push(Stage::AsOf(if *sequence {
                     AsOf::Seq(
-                        self.scalar(&value, at)?
+                        self.scalar(value, at)?
                             .parse()
                             .map_err(|_| QueryError::at(at, "invalid commit position"))?,
                     )
                 } else {
-                    AsOf::Time(self.instant(&value, at)?)
+                    AsOf::Time(self.instant(value, at)?)
                 })),
                 S::Group { keys } => {
                     let keys = keys
@@ -948,7 +953,7 @@ impl Binder<'_> {
                 S::Aggregate { aggregates } => {
                     // Aggregate fields refer to the relation entering a group.
                     let aggregates = aggregates
-                        .into_iter()
+                        .iter()
                         .enumerate()
                         .map(|(aggregate_index, a)| {
                             let function = match &a.function {
@@ -1016,17 +1021,17 @@ impl Binder<'_> {
                     });
                 }
                 S::Sort { keys } => {
-                    let keys=keys.into_iter().map(|k| {
+                    let keys=keys.iter().map(|k| {
                     let key=if matches!(&k.expression,syntax::Expression::Field{name} if name=="rank") {SortBy::Rank} else {SortBy::Operand(self.operand(&k.expression,scope,at)?)};
                     Ok(SortKey{key,descending:k.descending})
                 }).collect::<Result<Vec<_>,QueryError>>()?;
                     stages.push(Stage::Sort(keys));
                 }
                 S::Limit { count } => {
-                    if count == 0 {
+                    if *count == 0 {
                         return Err(QueryError::at(at, "limit takes a positive integer"));
                     }
-                    stages.push(Stage::Limit(count));
+                    stages.push(Stage::Limit(*count));
                 }
                 S::First { count } => {
                     if matches!(stages.last(), Some(Stage::Group(group)) if group.aggregates.is_empty() && group.fill.is_none())
@@ -1036,10 +1041,10 @@ impl Binder<'_> {
                         };
                         stages.push(Stage::GroupFirst {
                             keys: group.keys,
-                            count,
+                            count: *count,
                         });
                     } else {
-                        stages.push(Stage::Limit(count));
+                        stages.push(Stage::Limit(*count));
                     }
                 }
                 S::Fields { columns } => stages.push(Stage::Fields(
@@ -1058,15 +1063,15 @@ impl Binder<'_> {
                             at: point,
                             scope: order_scope,
                         } => self.order_on(
-                            relation,
+                            relation.clone(),
                             within.as_ref(),
-                            point,
+                            point.clone(),
                             order_scope.as_deref(),
                             at,
                         )?,
                         syntax::JoinOn::Key { left, right } => JoinOn::Key {
-                            left: self.resolve(&left, scope, at)?,
-                            right: self.resolve(&right, &inner_scope, at)?,
+                            left: self.resolve(left, scope, at)?,
+                            right: self.resolve(right, &inner_scope, at)?,
                         },
                     };
                     stages.push(Stage::Join(Join {
@@ -1074,7 +1079,7 @@ impl Binder<'_> {
                         pick: vec![],
                         columns: self.inner_columns(&inner_scope, at)?,
                         required: vec![],
-                        inner: Box::new(self.query(*query, &inner_path)?),
+                        inner: Box::new(self.query((**query).clone(), &inner_path)?),
                     }));
                 }
 

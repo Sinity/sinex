@@ -26,14 +26,6 @@ pub use tables::{ALIASES, Alias, Field, FieldType, Table};
 pub use time::Context;
 pub use typed::{Completion, complete};
 
-/// Runs `f` on a newly allocated stack segment when little of the current
-/// stack is left. Every function that recurses over a query's conditions
-/// calls it, so a long chain of conditions or deeply nested negations never
-/// overflows the stack: the stack grows with the query instead.
-pub fn ensure_stack<R>(f: impl FnOnce() -> R) -> R {
-    stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, f)
-}
-
 /// Why a query was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]

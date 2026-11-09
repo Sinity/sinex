@@ -147,7 +147,7 @@ impl Compiler<'_> {
     }
 
     pub(super) fn operand(&self, cols: &Cols, o: &Operand) -> Result<(SqlFragment, Kind)> {
-        match o {
+        query_language::depth::deeper(|| match o {
             Operand::Field(f) => self.field(cols, f),
             Operand::Named { operand, .. } => self.operand(cols, operand),
             Operand::Literal { value, kind } => {
@@ -334,7 +334,7 @@ impl Compiler<'_> {
                     },
                 ))
             }
-        }
+        })
     }
 
     fn semantic_operand(&self, cols: &Cols, operand: &Operand) -> Result<(SqlFragment, Kind)> {
@@ -685,7 +685,7 @@ impl Compiler<'_> {
     }
 
     pub(super) fn expr(&self, cols: &Cols, e: &Expr) -> Result<SqlFragment> {
-        sinex_model::query::ensure_stack(|| {
+        query_language::depth::deeper(|| {
             Ok(match e {
                 Expr::Order(join) => self.order_predicate(cols, join)?,
                 Expr::And(a, b) => {

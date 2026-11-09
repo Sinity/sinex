@@ -789,6 +789,20 @@ mod depth {
     }
 
     #[devkit::test]
+    fn deeply_nested_arithmetic_binds_copies_and_reads_back() {
+        let text = format!(
+            "commands | fields {}exit_code as total",
+            // Binding arithmetic slows with depth faster than linearly
+            // (polylogue-sinex-common plnext-z6gq), so this depth keeps the
+            // test to seconds; the stack is what it checks.
+            "exit_code + ".repeat(300)
+        );
+        let query = q(&text);
+        assert_eq!(query.clone(), query);
+        assert!(!read_as(&query).is_empty());
+    }
+
+    #[devkit::test]
     fn a_long_chain_of_conditions_binds_reads_back_and_drops() {
         let text = format!(
             "events where {}",
@@ -798,6 +812,8 @@ mod depth {
                 .join(" AND ")
         );
         let query = q(&text);
+        assert_eq!(query.clone(), query);
+        assert!(format!("{query:?}").contains("s2999"));
         assert!(read_as(&query).contains("s2999"));
         drop(query);
     }

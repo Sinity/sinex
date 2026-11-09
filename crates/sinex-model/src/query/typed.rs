@@ -245,7 +245,7 @@ fn selected_value(value: &Value) -> Option<BTreeSet<String>> {
 }
 
 fn selected(e: &Expr, ctx: &Context) -> Option<BTreeSet<String>> {
-    super::ensure_stack(|| match e {
+    query_language::depth::deeper(|| match e {
         Expr::Compare {
             lhs: Operand::Glob { left, right },
             op: Op::Eq,
@@ -525,7 +525,7 @@ fn operand(
     kinds: &Option<BTreeSet<String>>,
     ctx: &Context,
 ) -> Result<(), QueryError> {
-    match o {
+    query_language::depth::deeper(|| match o {
         Operand::Field(f) => field(f, kinds, ctx),
         Operand::TimeFn(_, f) => {
             field(f, kinds, ctx)?;
@@ -629,7 +629,7 @@ fn operand(
             }
             Ok(())
         }
-    }
+    })
 }
 fn validate_value(v: &mut Value, ty: FieldType, ctx: &Context) -> Result<(), QueryError> {
     if let Value::Operand(value) = v {
@@ -800,7 +800,7 @@ fn check_join(
         .pop()
         .expect("the source has a kind scope");
     fn candidate_fields(value: &Operand, out: &mut BTreeSet<String>) {
-        match value {
+        query_language::depth::deeper(|| match value {
             Operand::Field(field) | Operand::TimeFn(_, field) => {
                 let name = field.name();
                 if !matches!(
@@ -828,7 +828,7 @@ fn check_join(
                 ..
             } => candidate_fields(value, out),
             _ => {}
-        }
+        })
     }
     let mut pick_fields = BTreeSet::new();
     for key in &join.pick {
@@ -933,7 +933,7 @@ fn check_join(
 }
 
 fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result<(), QueryError> {
-    super::ensure_stack(|| {
+    query_language::depth::deeper(|| {
         let narrowed = selected(e, ctx).map(|selected| {
             kinds.as_ref().map_or(selected.clone(), |ks| {
                 ks.intersection(&selected).cloned().collect()
@@ -1047,7 +1047,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
 }
 
 fn select_parameter(expression: &mut Expr, name: &str) -> bool {
-    super::ensure_stack(|| {
+    query_language::depth::deeper(|| {
         fn select_value(input: &mut Value, name: &str) -> bool {
             match input {
                 Value::PlaceholderText(_) => {
@@ -1100,7 +1100,7 @@ fn select_query_parameter(query: &mut Query, name: &str) -> bool {
 
 fn mark_join_requirements(query: &mut Query, extra: &[String]) {
     fn operand(value: &Operand, out: &mut BTreeSet<String>) {
-        match value {
+        query_language::depth::deeper(|| match value {
             Operand::Field(field) | Operand::TimeFn(_, field) => {
                 if let Some(name) = field.name().strip_prefix("match.") {
                     out.insert(name.to_owned());
@@ -1124,10 +1124,10 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
                 ..
             } => operand(value, out),
             _ => {}
-        }
+        })
     }
     fn expression(value: &Expr, out: &mut BTreeSet<String>) {
-        super::ensure_stack(|| match value {
+        query_language::depth::deeper(|| match value {
             Expr::And(left, right) | Expr::Or(left, right) => {
                 expression(left, out);
                 expression(right, out);
@@ -1147,7 +1147,7 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
         })
     }
     fn clear_orders(value: &mut Expr) {
-        super::ensure_stack(|| match value {
+        query_language::depth::deeper(|| match value {
             Expr::Order(join) => join.required.clear(),
             Expr::And(left, right) | Expr::Or(left, right) => {
                 clear_orders(left);
@@ -1246,7 +1246,7 @@ fn mark_join_requirements(query: &mut Query, extra: &[String]) {
 type PhysicalSchema = BTreeMap<String, FieldType>;
 
 fn seed_operand(value: &mut Operand, schema: &PhysicalSchema) {
-    match value {
+    query_language::depth::deeper(|| match value {
         Operand::Field(FieldRef::TypedGroup(column)) => {
             if let Some(ty) = schema.get(column.name()) {
                 column.bind(*ty);
@@ -1275,10 +1275,10 @@ fn seed_operand(value: &mut Operand, schema: &PhysicalSchema) {
             ..
         } => seed_operand(value, schema),
         _ => {}
-    }
+    })
 }
 fn seed_expr(value: &mut Expr, schema: &PhysicalSchema) {
-    super::ensure_stack(|| match value {
+    query_language::depth::deeper(|| match value {
         Expr::And(left, right) | Expr::Or(left, right) => {
             seed_expr(left, schema);
             seed_expr(right, schema);
@@ -1339,7 +1339,7 @@ fn clear_query_bindings(query: &mut Query) {
         }
     }
     fn operand(value: &mut Operand) {
-        match value {
+        query_language::depth::deeper(|| match value {
             Operand::Field(value) | Operand::TimeFn(_, value) => field(value),
             Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
                 operand(left);
@@ -1359,7 +1359,7 @@ fn clear_query_bindings(query: &mut Query) {
                 ..
             } => operand(value),
             _ => {}
-        }
+        })
     }
     fn join(value: &mut Join) {
         clear_query_bindings(&mut value.inner);
@@ -1377,7 +1377,7 @@ fn clear_query_bindings(query: &mut Query) {
         }
     }
     fn expression(value: &mut Expr) {
-        super::ensure_stack(|| match value {
+        query_language::depth::deeper(|| match value {
             Expr::And(left, right) | Expr::Or(left, right) => {
                 expression(left);
                 expression(right);

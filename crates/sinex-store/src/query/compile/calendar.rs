@@ -35,7 +35,7 @@ pub(crate) fn setting(ctx: &Context) -> String {
 }
 
 fn calendar_operands(operand: &Operand, out: &mut Vec<(TimeFn, FieldRef)>) {
-    match operand {
+    query_language::depth::deeper(|| match operand {
         Operand::TimeFn(func, field) if *func != TimeFn::Hour => out.push((*func, field.clone())),
         Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
             calendar_operands(left, out);
@@ -55,10 +55,10 @@ fn calendar_operands(operand: &Operand, out: &mut Vec<(TimeFn, FieldRef)>) {
             ..
         } => calendar_operands(value, out),
         _ => {}
-    }
+    })
 }
 fn expression_operands(e: &Expr, out: &mut Vec<(TimeFn, FieldRef)>) {
-    sinex_model::query::ensure_stack(|| match e {
+    query_language::depth::deeper(|| match e {
         Expr::And(a, b) | Expr::Or(a, b) => {
             expression_operands(a, out);
             expression_operands(b, out);
@@ -76,7 +76,7 @@ fn expression_operands(e: &Expr, out: &mut Vec<(TimeFn, FieldRef)>) {
     })
 }
 fn ordinary(e: &Expr) -> Option<Expr> {
-    sinex_model::query::ensure_stack(|| {
+    query_language::depth::deeper(|| {
         let mut needs = Vec::new();
         expression_operands(e, &mut needs);
         if needs.is_empty() {

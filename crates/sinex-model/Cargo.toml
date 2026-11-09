@@ -7,7 +7,6 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-stacker.workspace = true
 signals.workspace = true
 query-language.workspace = true
 references.workspace = true
