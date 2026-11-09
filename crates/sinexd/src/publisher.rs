@@ -390,7 +390,7 @@ async fn align_with_stream(
         );
     }
     tx.commit().await.map_err(|error| error.to_string())?;
-    Ok(held.min(saved))
+    Ok(held)
 }
 
 /// Data acknowledgments and exact erasures precede a cumulative completion
