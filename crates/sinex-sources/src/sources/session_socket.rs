@@ -417,47 +417,18 @@ pub fn shell_line(report: &ShellReport) -> Value {
     Value::Object(line)
 }
 
-/// Repository facts beside `cwd`, observed now: none when it is not in a
-/// repository or a probe fails or takes longer than `timeout`.
+/// Repository facts beside `cwd`, observed now through common's
+/// `git-identity`, the rule Polylogue's repository lookup and session hook
+/// use: root commits are every root reachable from `HEAD`, sorted,
+/// shallow-clone boundaries left out. None when `cwd` is not in a repository
+/// with a commit, or Git takes longer than `timeout`.
 pub fn git_identity(cwd: &Path, timeout: Duration) -> Option<GitIdentity> {
-    let git = |args: &[&str]| -> Option<String> {
-        let mut child = std::process::Command::new("git")
-            .arg("--no-optional-locks")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()?;
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            match child.try_wait().ok()? {
-                Some(status) if status.success() => break,
-                Some(_) => return None,
-                None if std::time::Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                None => std::thread::sleep(Duration::from_millis(5)),
-            }
-        }
-        let mut out = String::new();
-        std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
-        Some(out.trim().to_owned())
-    };
-    let common_dir = git(&["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
-    let mut root_commits: Vec<String> = git(&["rev-list", "--max-parents=0", "HEAD"])?
-        .lines()
-        .map(str::to_owned)
-        .collect();
-    root_commits.sort();
+    let identity = ::git_identity::observe_within(cwd, timeout).ok()?;
     Some(GitIdentity {
-        common_dir,
-        root_commits,
-        head: git(&["rev-parse", "HEAD"]),
-        branch: git(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
+        common_dir: identity.common_dir,
+        root_commits: identity.root_commits,
+        head: Some(identity.head),
+        branch: identity.branch,
     })
 }
 

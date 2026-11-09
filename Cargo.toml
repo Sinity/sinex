@@ -67,6 +67,7 @@ rmcp = { version = "3", features = ["server", "transport-io"] }
 schemars = { version = "1", features = ["uuid1"] }
 authored = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 query-language = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
+git-identity = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 signals = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 ranking = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 signal-delivery = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
