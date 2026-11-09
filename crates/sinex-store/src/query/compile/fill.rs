@@ -40,7 +40,7 @@ impl Compiler<'_> {
                 let mut out = SqlFragment::text("(");
                 out.param(time_value(at)?)
                     .push(" AT TIME ZONE ")
-                    .param(V::String(Some(self.ctx.zone_name())))
+                    .param(self.ctx.zone_name())
                     .push(")");
                 Ok(out)
             };
@@ -94,11 +94,11 @@ impl Compiler<'_> {
                 "SELECT {column} AS bucket FROM pg_temp.sinex_query_days WHERE setting="
             ));
             ticks
-                .param(V::String(Some(setting.clone())))
+                .param(setting.clone())
                 .push(" AND ordinal>=")
-                .param(V::BigInt(Some(first)))
+                .param(first)
                 .push(" AND ordinal<=")
-                .param(V::BigInt(Some(last)));
+                .param(last);
             (ticks, SqlFragment::text("bucket"))
         };
         let mut out = SqlFragment::text(

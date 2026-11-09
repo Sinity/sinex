@@ -1,8 +1,8 @@
 //! SQL fragments with their parameters. A fragment is text and values in
-//! order; rendering numbers the placeholders with sea-query's raw SQL builder,
-//! so a fragment can be built before the text around it and nested anywhere.
-use sea_query::raw_sql::RawSqlQueryBuilder;
-use sea_query::{PostgresQueryBuilder, Value};
+//! order; rendering numbers the placeholders `$1, $2, …` in text order, so a
+//! fragment can be built before the text around it and nested anywhere.
+use std::fmt::Write as _;
+
 use sqlx::Postgres;
 use sqlx::postgres::PgArguments;
 use sqlx::query::QueryScalar;
@@ -15,7 +15,7 @@ pub(crate) struct SqlFragment {
 #[derive(Clone, Debug)]
 enum FragmentPart {
     Text(String),
-    Param(Value),
+    Param(Param),
 }
 
 impl SqlFragment {
@@ -34,7 +34,7 @@ impl SqlFragment {
         self
     }
 
-    pub(crate) fn param(&mut self, v: impl Into<Value>) -> &mut Self {
+    pub(crate) fn param(&mut self, v: impl Into<Param>) -> &mut Self {
         self.pieces.push(FragmentPart::Param(v.into()));
         self
     }
@@ -64,29 +64,25 @@ impl SqlFragment {
         out
     }
 
-    /// The SQL text with numbered placeholders, and the parameters in order,
-    /// as values that can cross an `.await`.
+    /// The SQL text with numbered placeholders, and the parameters in order.
     pub(crate) fn render(&self) -> (String, Vec<Param>) {
-        let mut builder = RawSqlQueryBuilder::new(PostgresQueryBuilder);
+        let mut sql = String::new();
         let mut values = Vec::new();
         for piece in &self.pieces {
             match piece {
-                FragmentPart::Text(t) => {
-                    builder.push_fragment(t);
-                }
+                FragmentPart::Text(t) => sql.push_str(t),
                 FragmentPart::Param(v) => {
-                    builder.push_parameters(1);
-                    values.push(Param::from(v.clone()));
+                    values.push(v.clone());
+                    write!(sql, "${}", values.len()).expect("writing to a String cannot fail");
                 }
             }
         }
-        (builder.finish(), values)
+        (sql, values)
     }
 }
 
-/// A parameter of a rendered statement. sea-query's values are not `Send`;
-/// these are, so a rendered statement can be awaited on any thread.
-#[derive(Clone, Debug)]
+/// A parameter of a rendered statement.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Param {
     Bool(Option<bool>),
     Int(Option<i32>),
@@ -97,18 +93,51 @@ pub(crate) enum Param {
     Time(Option<time::OffsetDateTime>),
 }
 
-impl From<Value> for Param {
-    fn from(v: Value) -> Self {
-        match v {
-            Value::Bool(b) => Param::Bool(b),
-            Value::Int(i) => Param::Int(i),
-            Value::BigInt(i) => Param::BigInt(i),
-            Value::Double(d) => Param::Double(d),
-            Value::String(s) => Param::Text(s),
-            Value::Uuid(u) => Param::Uuid(u),
-            Value::TimeDateTimeWithTimeZone(t) => Param::Time(t),
-            other => unreachable!("the compiler emits no {other:?} parameters"),
-        }
+impl From<bool> for Param {
+    fn from(v: bool) -> Self {
+        Param::Bool(Some(v))
+    }
+}
+
+impl From<i32> for Param {
+    fn from(v: i32) -> Self {
+        Param::Int(Some(v))
+    }
+}
+
+impl From<i64> for Param {
+    fn from(v: i64) -> Self {
+        Param::BigInt(Some(v))
+    }
+}
+
+impl From<f64> for Param {
+    fn from(v: f64) -> Self {
+        Param::Double(Some(v))
+    }
+}
+
+impl From<String> for Param {
+    fn from(v: String) -> Self {
+        Param::Text(Some(v))
+    }
+}
+
+impl From<&str> for Param {
+    fn from(v: &str) -> Self {
+        Param::Text(Some(v.to_owned()))
+    }
+}
+
+impl From<uuid::Uuid> for Param {
+    fn from(v: uuid::Uuid) -> Self {
+        Param::Uuid(Some(v))
+    }
+}
+
+impl From<time::OffsetDateTime> for Param {
+    fn from(v: time::OffsetDateTime) -> Self {
+        Param::Time(Some(v))
     }
 }
 

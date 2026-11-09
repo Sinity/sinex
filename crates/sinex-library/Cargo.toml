@@ -20,8 +20,6 @@ ranking.workspace = true
 [dev-dependencies]
 devkit.workspace = true
 authored = { workspace = true, features = ["generator"] }
-proptest.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true

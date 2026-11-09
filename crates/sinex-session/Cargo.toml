@@ -13,9 +13,10 @@ sinex-protocol.workspace = true
 sinex-sources = { workspace = true, default-features = false }
 clap.workspace = true
 tokio.workspace = true
-serde_json.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
+# tests/capture includes sinex-source-core's NATS test support.
 sinex-transport.workspace = true
 async-nats.workspace = true
 futures.workspace = true

@@ -44,7 +44,7 @@ tar = "0.4"
 flate2 = "1"
 async-nats.workspace = true
 futures.workspace = true
-zip = { version = "2", default-features = false, features = ["deflate", "bzip2"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 allocation-counter = "0.8.1"
 proptest.workspace = true
 devkit.workspace = true

@@ -202,7 +202,7 @@ impl Compiler<'_> {
         let mut out = SqlFragment::text(format!(
             "(SELECT to_timestamp(trunc(d.{boundary}/1000000000)::double precision) + (mod(d.{boundary},1000000000)/1000)::bigint * interval '1 microsecond' FROM pg_temp.sinex_query_days d WHERE d.setting="
         ));
-        out.param(V::String(Some(setting.clone())))
+        out.param(setting.clone())
             .push(format!(" AND d.{label}="))
             .append(value)
             .push(" ORDER BY d.from_ns LIMIT 1)");
@@ -229,7 +229,7 @@ impl Compiler<'_> {
         let mut out = SqlFragment::text(format!(
             "(SELECT to_timestamp(trunc(d.{column}/1000000000)::double precision) + (mod(d.{column},1000000000)/1000)::bigint * interval '1 microsecond' FROM pg_temp.sinex_query_days d WHERE d.setting="
         ));
-        out.param(V::String(Some(setting.clone())))
+        out.param(setting.clone())
             .push(" AND d.from_ns<=")
             .append(ns.clone())
             .push(" AND ")

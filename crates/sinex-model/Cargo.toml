@@ -27,7 +27,6 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true
-proptest.workspace = true
 
 [lints]
 workspace = true
