@@ -85,7 +85,9 @@ pub enum Reference {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// A condition. `and`, `or` and `not` nest one level each, so a query nests
+/// as deeply as its text; copying, comparing, printing and dropping go one
+/// level at a time through [`query_language::depth::deeper`].
 pub enum Expr {
     Order(Box<Join>),
     Truth {
@@ -125,6 +127,161 @@ pub enum Expr {
     },
 }
 
+impl Drop for Expr {
+    fn drop(&mut self) {
+        let leaf = || Expr::Similar {
+            reference: Uuid::nil(),
+        };
+        match self {
+            Expr::And(left, right) | Expr::Or(left, right) => {
+                let left = std::mem::replace(&mut **left, leaf());
+                let right = std::mem::replace(&mut **right, leaf());
+                query_language::depth::deeper(move || drop((left, right)));
+            }
+            Expr::Not(inner) => {
+                let inner = std::mem::replace(&mut **inner, leaf());
+                query_language::depth::deeper(move || drop(inner));
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Clone for Expr {
+    fn clone(&self) -> Self {
+        query_language::depth::deeper(|| match self {
+            Expr::Order(join) => Expr::Order(join.clone()),
+            Expr::Truth { value, operand } => Expr::Truth {
+                value: value.clone(),
+                operand: operand.clone(),
+            },
+            Expr::Similar { reference } => Expr::Similar {
+                reference: *reference,
+            },
+            Expr::And(left, right) => Expr::And(left.clone(), right.clone()),
+            Expr::Or(left, right) => Expr::Or(left.clone(), right.clone()),
+            Expr::Not(inner) => Expr::Not(inner.clone()),
+            Expr::Compare { lhs, op, rhs } => Expr::Compare {
+                lhs: lhs.clone(),
+                op: op.clone(),
+                rhs: rhs.clone(),
+            },
+            Expr::Exists(operand) => Expr::Exists(operand.clone()),
+            Expr::Words(words) => Expr::Words(words.clone()),
+            Expr::FieldWords { operand, words } => Expr::FieldWords {
+                operand: operand.clone(),
+                words: words.clone(),
+            },
+            Expr::Within { lhs, from, to } => Expr::Within {
+                lhs: lhs.clone(),
+                from: *from,
+                to: *to,
+            },
+            Expr::Overlaps { from, to } => Expr::Overlaps {
+                from: *from,
+                to: *to,
+            },
+        })
+    }
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        query_language::depth::deeper(|| match (self, other) {
+            (Expr::Order(a), Expr::Order(b)) => a == b,
+            (
+                Expr::Truth { value, operand },
+                Expr::Truth {
+                    value: other_value,
+                    operand: other_operand,
+                },
+            ) => value == other_value && operand == other_operand,
+            (Expr::Similar { reference }, Expr::Similar { reference: other }) => reference == other,
+            (Expr::And(a, b), Expr::And(c, d)) | (Expr::Or(a, b), Expr::Or(c, d)) => {
+                a == c && b == d
+            }
+            (Expr::Not(a), Expr::Not(b)) => a == b,
+            (
+                Expr::Compare { lhs, op, rhs },
+                Expr::Compare {
+                    lhs: other_lhs,
+                    op: other_op,
+                    rhs: other_rhs,
+                },
+            ) => lhs == other_lhs && op == other_op && rhs == other_rhs,
+            (Expr::Exists(a), Expr::Exists(b)) => a == b,
+            (Expr::Words(a), Expr::Words(b)) => a == b,
+            (
+                Expr::FieldWords { operand, words },
+                Expr::FieldWords {
+                    operand: other_operand,
+                    words: other_words,
+                },
+            ) => operand == other_operand && words == other_words,
+            (
+                Expr::Within { lhs, from, to },
+                Expr::Within {
+                    lhs: other_lhs,
+                    from: other_from,
+                    to: other_to,
+                },
+            ) => lhs == other_lhs && from == other_from && to == other_to,
+            (
+                Expr::Overlaps { from, to },
+                Expr::Overlaps {
+                    from: other_from,
+                    to: other_to,
+                },
+            ) => from == other_from && to == other_to,
+            _ => false,
+        })
+    }
+}
+
+impl std::fmt::Debug for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        query_language::depth::deeper(|| match self {
+            Expr::Order(join) => f.debug_tuple("Order").field(join).finish(),
+            Expr::Truth { value, operand } => f
+                .debug_struct("Truth")
+                .field("value", value)
+                .field("operand", operand)
+                .finish(),
+            Expr::Similar { reference } => f
+                .debug_struct("Similar")
+                .field("reference", reference)
+                .finish(),
+            Expr::And(left, right) => f.debug_tuple("And").field(left).field(right).finish(),
+            Expr::Or(left, right) => f.debug_tuple("Or").field(left).field(right).finish(),
+            Expr::Not(inner) => f.debug_tuple("Not").field(inner).finish(),
+            Expr::Compare { lhs, op, rhs } => f
+                .debug_struct("Compare")
+                .field("lhs", lhs)
+                .field("op", op)
+                .field("rhs", rhs)
+                .finish(),
+            Expr::Exists(operand) => f.debug_tuple("Exists").field(operand).finish(),
+            Expr::Words(words) => f.debug_tuple("Words").field(words).finish(),
+            Expr::FieldWords { operand, words } => f
+                .debug_struct("FieldWords")
+                .field("operand", operand)
+                .field("words", words)
+                .finish(),
+            Expr::Within { lhs, from, to } => f
+                .debug_struct("Within")
+                .field("lhs", lhs)
+                .field("from", from)
+                .field("to", to)
+                .finish(),
+            Expr::Overlaps { from, to } => f
+                .debug_struct("Overlaps")
+                .field("from", from)
+                .field("to", to)
+                .finish(),
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Words {
     /// Normalized words: case-folded, NFC.
@@ -135,7 +292,9 @@ pub struct Words {
     pub prefix: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// A value a condition compares. Arithmetic and the functions nest one level
+/// each, so copying, comparing, printing and dropping go one level at a time
+/// through [`query_language::depth::deeper`].
 pub enum Operand {
     Field(FieldRef),
     TimeFn(TimeFn, FieldRef),
@@ -167,9 +326,188 @@ pub enum Operand {
     },
 }
 
+impl Drop for Operand {
+    fn drop(&mut self) {
+        let leaf = || Operand::Literal {
+            value: Value::Unknown,
+            kind: query_language::catalog::FieldKind::Text,
+        };
+        let mut children = Vec::new();
+        match self {
+            Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
+                children.push(std::mem::replace(&mut **left, leaf()));
+                children.push(std::mem::replace(&mut **right, leaf()));
+            }
+            Operand::CaseEqual { left, right, value } => {
+                children.push(std::mem::replace(&mut **left, leaf()));
+                children.push(std::mem::replace(&mut **right, leaf()));
+                children.push(std::mem::replace(&mut **value, leaf()));
+            }
+            Operand::Length(inner)
+            | Operand::Absolute(inner)
+            | Operand::Text(inner)
+            | Operand::Named { operand: inner, .. } => {
+                children.push(std::mem::replace(&mut **inner, leaf()));
+            }
+            _ => return,
+        }
+        query_language::depth::deeper(move || drop(children));
+    }
+}
+
+impl Clone for Operand {
+    fn clone(&self) -> Self {
+        query_language::depth::deeper(|| match self {
+            Operand::Field(field) => Operand::Field(field.clone()),
+            Operand::TimeFn(function, field) => Operand::TimeFn(function.clone(), field.clone()),
+            Operand::Literal { value, kind } => Operand::Literal {
+                value: value.clone(),
+                kind: kind.clone(),
+            },
+            Operand::Arithmetic {
+                operator,
+                left,
+                right,
+                kind,
+            } => Operand::Arithmetic {
+                operator: operator.clone(),
+                left: left.clone(),
+                right: right.clone(),
+                kind: kind.clone(),
+            },
+            Operand::Length(inner) => Operand::Length(inner.clone()),
+            Operand::Absolute(inner) => Operand::Absolute(inner.clone()),
+            Operand::Text(inner) => Operand::Text(inner.clone()),
+            Operand::Glob { left, right } => Operand::Glob {
+                left: left.clone(),
+                right: right.clone(),
+            },
+            Operand::CaseEqual { left, right, value } => Operand::CaseEqual {
+                left: left.clone(),
+                right: right.clone(),
+                value: value.clone(),
+            },
+            Operand::Named { operand, name } => Operand::Named {
+                operand: operand.clone(),
+                name: name.clone(),
+            },
+        })
+    }
+}
+
+impl PartialEq for Operand {
+    fn eq(&self, other: &Self) -> bool {
+        query_language::depth::deeper(|| match (self, other) {
+            (Operand::Field(a), Operand::Field(b)) => a == b,
+            (Operand::TimeFn(f, a), Operand::TimeFn(g, b)) => f == g && a == b,
+            (
+                Operand::Literal { value, kind },
+                Operand::Literal {
+                    value: other_value,
+                    kind: other_kind,
+                },
+            ) => value == other_value && kind == other_kind,
+            (
+                Operand::Arithmetic {
+                    operator,
+                    left,
+                    right,
+                    kind,
+                },
+                Operand::Arithmetic {
+                    operator: other_operator,
+                    left: other_left,
+                    right: other_right,
+                    kind: other_kind,
+                },
+            ) => {
+                operator == other_operator
+                    && kind == other_kind
+                    && left == other_left
+                    && right == other_right
+            }
+            (Operand::Length(a), Operand::Length(b))
+            | (Operand::Absolute(a), Operand::Absolute(b))
+            | (Operand::Text(a), Operand::Text(b)) => a == b,
+            (
+                Operand::Glob { left, right },
+                Operand::Glob {
+                    left: other_left,
+                    right: other_right,
+                },
+            ) => left == other_left && right == other_right,
+            (
+                Operand::CaseEqual { left, right, value },
+                Operand::CaseEqual {
+                    left: other_left,
+                    right: other_right,
+                    value: other_value,
+                },
+            ) => left == other_left && right == other_right && value == other_value,
+            (
+                Operand::Named { operand, name },
+                Operand::Named {
+                    operand: other_operand,
+                    name: other_name,
+                },
+            ) => name == other_name && operand == other_operand,
+            _ => false,
+        })
+    }
+}
+
+impl std::fmt::Debug for Operand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        query_language::depth::deeper(|| match self {
+            Operand::Field(field) => f.debug_tuple("Field").field(field).finish(),
+            Operand::TimeFn(function, field) => f
+                .debug_tuple("TimeFn")
+                .field(function)
+                .field(field)
+                .finish(),
+            Operand::Literal { value, kind } => f
+                .debug_struct("Literal")
+                .field("value", value)
+                .field("kind", kind)
+                .finish(),
+            Operand::Arithmetic {
+                operator,
+                left,
+                right,
+                kind,
+            } => f
+                .debug_struct("Arithmetic")
+                .field("operator", operator)
+                .field("left", left)
+                .field("right", right)
+                .field("kind", kind)
+                .finish(),
+            Operand::Length(inner) => f.debug_tuple("Length").field(inner).finish(),
+            Operand::Absolute(inner) => f.debug_tuple("Absolute").field(inner).finish(),
+            Operand::Text(inner) => f.debug_tuple("Text").field(inner).finish(),
+            Operand::Glob { left, right } => f
+                .debug_struct("Glob")
+                .field("left", left)
+                .field("right", right)
+                .finish(),
+            Operand::CaseEqual { left, right, value } => f
+                .debug_struct("CaseEqual")
+                .field("left", left)
+                .field("right", right)
+                .field("value", value)
+                .finish(),
+            Operand::Named { operand, name } => f
+                .debug_struct("Named")
+                .field("operand", operand)
+                .field("name", name)
+                .finish(),
+        })
+    }
+}
+
 impl Operand {
     pub fn name(&self) -> String {
-        match self {
+        query_language::depth::deeper(|| match self {
             Operand::Field(f) => f.name(),
             Operand::TimeFn(func, f) => format!("{}({})", func.name(), f.name()),
             Operand::Literal { value, .. } => format!("{value:?}"),
@@ -190,7 +528,7 @@ impl Operand {
                 value.name()
             ),
             Operand::Named { name, .. } => name.clone(),
-        }
+        })
     }
 
     /// The shared semantic kind, before physical payload narrowing.
@@ -224,7 +562,7 @@ impl Operand {
     }
     /// The column name a grouped stage gives this key.
     pub fn column(&self) -> String {
-        match self {
+        query_language::depth::deeper(|| match self {
             Operand::Field(f) => f.name(),
             Operand::TimeFn(func, _) => func.name().to_string(),
             Operand::Literal { .. } => "value".into(),
@@ -240,7 +578,7 @@ impl Operand {
             Operand::CaseEqual { .. } => "case_eq".into(),
             Operand::Glob { .. } => "glob".into(),
             Operand::Named { name, .. } => name.clone(),
-        }
+        })
     }
 }
 
@@ -617,32 +955,34 @@ impl Query {
             allowed: bool,
             found: &mut Option<Uuid>,
         ) -> Result<(), super::QueryError> {
-            match e {
-                Expr::Similar { reference } => {
-                    if !allowed {
-                        return Err(super::QueryError::new(
-                            "similar is a ranking directive and cannot appear under OR or NOT",
-                        ));
+            query_language::depth::deeper(|| {
+                match e {
+                    Expr::Similar { reference } => {
+                        if !allowed {
+                            return Err(super::QueryError::new(
+                                "similar is a ranking directive and cannot appear under OR or NOT",
+                            ));
+                        }
+                        if found.is_some_and(|old| old != *reference) {
+                            return Err(super::QueryError::new(
+                                "a query must choose one supplied similarity vector",
+                            ));
+                        }
+                        *found = Some(*reference);
                     }
-                    if found.is_some_and(|old| old != *reference) {
-                        return Err(super::QueryError::new(
-                            "a query must choose one supplied similarity vector",
-                        ));
+                    Expr::And(a, b) => {
+                        visit(a, allowed, found)?;
+                        visit(b, allowed, found)?;
                     }
-                    *found = Some(*reference);
+                    Expr::Or(a, b) => {
+                        visit(a, false, found)?;
+                        visit(b, false, found)?;
+                    }
+                    Expr::Not(e) => visit(e, false, found)?,
+                    _ => {}
                 }
-                Expr::And(a, b) => {
-                    visit(a, allowed, found)?;
-                    visit(b, allowed, found)?;
-                }
-                Expr::Or(a, b) => {
-                    visit(a, false, found)?;
-                    visit(b, false, found)?;
-                }
-                Expr::Not(e) => visit(e, false, found)?,
-                _ => {}
-            }
-            Ok(())
+                Ok(())
+            })
         }
         let mut found = None;
         if let Some(e) = &self.filter {

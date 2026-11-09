@@ -323,3 +323,23 @@ fn native_maildir_names_keep_distinct_identity_and_survive_flag_changes() {
     assert_ne!(native.native_id, text.native_id);
     assert_eq!(native.text, text.text);
 }
+
+#[devkit::test]
+fn deeply_nested_mime_parts_parse_without_overflowing_the_stack() {
+    // Each level is a multipart with its own boundary; the innermost part is
+    // the text. Deep enough to overflow a test thread's 2 MiB stack if the
+    // parse ran on it.
+    let levels = 3_000;
+    let mut message = String::from("Message-ID: <deep@example.com>\nMIME-Version: 1.0\n");
+    for level in 0..levels {
+        message.push_str(&format!(
+            "Content-Type: multipart/mixed; boundary=\"b{level}\"\n\n--b{level}\n"
+        ));
+    }
+    message.push_str("Content-Type: text/plain\n\ninnermost\n");
+    for level in (0..levels).rev() {
+        message.push_str(&format!("--b{level}--\n"));
+    }
+    let parsed = parse_message(message.as_bytes()).unwrap();
+    assert_eq!(parsed.text.as_deref().map(str::trim), Some("innermost"));
+}

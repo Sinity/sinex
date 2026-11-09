@@ -7,42 +7,44 @@ fn bounds(
     from: &mut Option<jiff::Timestamp>,
     to: &mut Option<jiff::Timestamp>,
 ) {
-    let mut lower = |t| *from = Some(from.map_or(t, |old| old.max(t)));
-    let mut upper = |t| *to = Some(to.map_or(t, |old| old.min(t)));
-    match e {
-        Expr::And(a, b) => {
-            bounds(a, field, from, to);
-            bounds(b, field, from, to);
-        }
-        Expr::Within {
-            lhs: Operand::Field(f),
-            from,
-            to,
-        } if f == field => {
-            lower(*from);
-            upper(*to);
-        }
-        Expr::Compare {
-            lhs: Operand::Field(f),
-            op,
-            rhs: Value::Time(t),
-        } if f == field => match op {
-            Op::Ge => lower(*t),
-            Op::Gt => {
-                if let Ok(t) = t.checked_add(jiff::SignedDuration::from_nanos(1)) {
-                    lower(t);
-                }
+    query_language::depth::deeper(|| {
+        let mut lower = |t| *from = Some(from.map_or(t, |old| old.max(t)));
+        let mut upper = |t| *to = Some(to.map_or(t, |old| old.min(t)));
+        match e {
+            Expr::And(a, b) => {
+                bounds(a, field, from, to);
+                bounds(b, field, from, to);
             }
-            Op::Lt => upper(*t),
-            Op::Le => {
-                if let Ok(t) = t.checked_add(jiff::SignedDuration::from_nanos(1)) {
-                    upper(t);
-                }
+            Expr::Within {
+                lhs: Operand::Field(f),
+                from,
+                to,
+            } if f == field => {
+                lower(*from);
+                upper(*to);
             }
+            Expr::Compare {
+                lhs: Operand::Field(f),
+                op,
+                rhs: Value::Time(t),
+            } if f == field => match op {
+                Op::Ge => lower(*t),
+                Op::Gt => {
+                    if let Ok(t) = t.checked_add(jiff::SignedDuration::from_nanos(1)) {
+                        lower(t);
+                    }
+                }
+                Op::Lt => upper(*t),
+                Op::Le => {
+                    if let Ok(t) = t.checked_add(jiff::SignedDuration::from_nanos(1)) {
+                        upper(t);
+                    }
+                }
+                _ => {}
+            },
             _ => {}
-        },
-        _ => {}
-    }
+        }
+    })
 }
 pub(super) fn bind(q: &mut Query, ctx: &Context) -> Result<(), QueryError> {
     let mut filters: Vec<Expr> = q.filter.iter().cloned().collect();

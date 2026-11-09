@@ -63,3 +63,93 @@ fn manifest_details_keep_overflowing_integer_roundtrip() {
     assert!(manifest.details["me$i"][0]["end"].is_f64());
     manifest_roundtrip(input);
 }
+
+/// Words of the query language, so generated queries reach past the first
+/// token far more often than random text does.
+const QUERY_WORDS: &[&str] = &[
+    "events",
+    "commands",
+    "where",
+    "not",
+    "and",
+    "or",
+    "(",
+    ")",
+    "source",
+    "event_type",
+    "text",
+    "=",
+    "!=",
+    ">",
+    "<",
+    "'synthetic'",
+    "\"phrase\"",
+    "since:7d",
+    "|",
+    "count",
+    "by",
+    "sort",
+    "limit",
+    "10",
+    "group",
+    "fields",
+    "as",
+    "of",
+    "-",
+    "!",
+    "near:",
+    "sinex:ev/",
+    "2026-11-09",
+    "1d",
+    "len(",
+    "exists",
+    "in",
+];
+
+fn seed_texts() -> Vec<Vec<u8>> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("seeds/query");
+    let mut seeds: Vec<Vec<u8>> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+        .collect();
+    seeds.sort();
+    seeds
+}
+
+// Each run tries new inputs: queries assembled from the language's words and
+// the seed queries with bytes changed, inserted or removed. A pull request
+// runs the default number of cases; the nightly run raises PROPTEST_CASES.
+proptest::proptest! {
+    #[test]
+    fn generated_queries_keep_the_query_properties(
+        words in proptest::collection::vec(proptest::sample::select(QUERY_WORDS), 0..40),
+    ) {
+        query(words.join(" ").as_bytes());
+    }
+
+    #[test]
+    fn changed_seed_queries_keep_the_query_properties(
+        seed in proptest::prelude::any::<proptest::sample::Index>(),
+        edits in proptest::collection::vec((proptest::prelude::any::<proptest::sample::Index>(), proptest::num::u8::ANY, 0u8..3), 1..16),
+    ) {
+        let seeds = seed_texts();
+        let mut bytes = seeds[seed.index(seeds.len())].clone();
+        for (at, byte, kind) in edits {
+            let position = at.index(bytes.len() + 1);
+            match kind {
+                0 if position < bytes.len() => bytes[position] = byte,
+                1 => bytes.insert(position, byte),
+                _ if position < bytes.len() => {
+                    bytes.remove(position);
+                }
+                _ => bytes.push(byte),
+            }
+        }
+        query(&bytes);
+    }
+
+    #[test]
+    fn arbitrary_text_keeps_the_query_properties(text in "\\PC{0,200}") {
+        query(text.as_bytes());
+    }
+}

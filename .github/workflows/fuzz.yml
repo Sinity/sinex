@@ -1,0 +1,25 @@
+name: fuzz
+
+# A long run of the generated-input properties on master each night; pull
+# requests run the same properties with the default number of cases as part
+# of `cargo xtask test`.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Generated query inputs
+        env:
+          PROPTEST_CASES: "200000"
+        run: nix develop --command cargo test --release -p sinex-fuzz -- generated changed_seed arbitrary_text

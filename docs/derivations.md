@@ -209,7 +209,7 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 
 ### Documents and citable chunks
 
-- `document.parsed` and `document.chunk` derive from admitted note text, extracted document text (`document.text` over stored bytes: PDF pages, plain text, Markdown, HTML, DOCX, ODT) and captured terminal output. A command with no captured output produces no chunks.
+- `document.parsed` and `document.chunk` derive from admitted note text, extracted document text (`document.text` over stored bytes: PDF pages, plain text, Markdown, HTML, DOCX, ODT) and captured terminal output. DOCX and ODT text is read from the archive member in pieces, never decompressed whole into memory; the PDF reader may run for a minute plus ten seconds per MiB of the document, after which it is stopped and that document is a failed input. A command with no captured output produces no chunks.
 - Computation reads the stored record, never the original path; a moved or vanished file changes nothing.
 - Document metadata: stable record and part identity, format, title, parsed front matter and its status, wikilinks, text length, body range, chunk count, optional source time.
 - A chunk holds its record, part, index, complete text, and `(input field, byte start, byte end)` on UTF-8 boundaries, with `input[field][start..end]` equal to the chunk. For converted documents a range addresses the extracted text or a page, never fictional source offsets; page or region references are added where the extractor supplies them.

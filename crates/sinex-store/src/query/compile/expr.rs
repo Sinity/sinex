@@ -147,7 +147,7 @@ impl Compiler<'_> {
     }
 
     pub(super) fn operand(&self, cols: &Cols, o: &Operand) -> Result<(SqlFragment, Kind)> {
-        match o {
+        query_language::depth::deeper(|| match o {
             Operand::Field(f) => self.field(cols, f),
             Operand::Named { operand, .. } => self.operand(cols, operand),
             Operand::Literal { value, kind } => {
@@ -334,7 +334,7 @@ impl Compiler<'_> {
                     },
                 ))
             }
-        }
+        })
     }
 
     fn semantic_operand(&self, cols: &Cols, operand: &Operand) -> Result<(SqlFragment, Kind)> {
@@ -685,92 +685,94 @@ impl Compiler<'_> {
     }
 
     pub(super) fn expr(&self, cols: &Cols, e: &Expr) -> Result<SqlFragment> {
-        Ok(match e {
-            Expr::Order(join) => self.order_predicate(cols, join)?,
-            Expr::And(a, b) => {
-                let mut f = SqlFragment::text("(");
-                f.append(self.expr(cols, a)?)
-                    .push(" AND ")
-                    .append(self.expr(cols, b)?)
-                    .push(")");
-                f
-            }
-            Expr::Or(a, b) => {
-                let mut f = SqlFragment::text("(");
-                f.append(self.expr(cols, a)?)
-                    .push(" OR ")
-                    .append(self.expr(cols, b)?)
-                    .push(")");
-                f
-            }
-            Expr::Not(a) => {
-                let mut f = SqlFragment::text("(NOT ");
-                f.append(self.expr(cols, a)?).push(")");
-                f
-            }
-            Expr::Truth { value, operand } => {
-                self.operand(cols, operand)?;
-                SqlFragment::text(match value {
-                    query_language::semantics::Truth::True => "true",
-                    query_language::semantics::Truth::False => "false",
-                    query_language::semantics::Truth::Unknown => "NULL::boolean",
-                })
-            }
-            Expr::Compare { lhs, op, rhs } => {
-                if let Value::Operand(right) = rhs {
-                    let (left, left_kind) = self.semantic_operand(cols, lhs)?;
-                    let (right, right_kind) = self.semantic_operand(cols, right)?;
-                    self.compare_operands(left, left_kind, *op, right, right_kind)?
-                } else {
-                    let (left, kind) = self.operand(cols, lhs)?;
-                    self.compare(left, kind, *op, rhs)?
+        query_language::depth::deeper(|| {
+            Ok(match e {
+                Expr::Order(join) => self.order_predicate(cols, join)?,
+                Expr::And(a, b) => {
+                    let mut f = SqlFragment::text("(");
+                    f.append(self.expr(cols, a)?)
+                        .push(" AND ")
+                        .append(self.expr(cols, b)?)
+                        .push(")");
+                    f
                 }
-            }
-            Expr::Exists(o) => {
-                let (l, kind) = self.operand(cols, o)?;
-                let mut f = SqlFragment::text("(");
-                if matches!(kind, Kind::Typed(FieldType::Json)) {
-                    f.append(l.clone())
-                        .push(" IS NOT NULL AND jsonb_typeof(")
-                        .append(l)
-                        .push(") <> 'null'");
-                } else {
-                    f.append(l).push(" IS NOT NULL");
+                Expr::Or(a, b) => {
+                    let mut f = SqlFragment::text("(");
+                    f.append(self.expr(cols, a)?)
+                        .push(" OR ")
+                        .append(self.expr(cols, b)?)
+                        .push(")");
+                    f
                 }
-                f.push(")");
-                f
-            }
-            Expr::Words(w) => self.words(cols, w)?,
-            Expr::FieldWords { operand, words } => {
-                let (value, _) = self.operand(cols, operand)?;
-                let mut out = SqlFragment::text("(CASE WHEN ");
-                out.append(value.clone()).push(" IS NULL THEN NULL ELSE EXISTS (SELECT 1 FROM regexp_split_to_table(lower(")
+                Expr::Not(a) => {
+                    let mut f = SqlFragment::text("(NOT ");
+                    f.append(self.expr(cols, a)?).push(")");
+                    f
+                }
+                Expr::Truth { value, operand } => {
+                    self.operand(cols, operand)?;
+                    SqlFragment::text(match value {
+                        query_language::semantics::Truth::True => "true",
+                        query_language::semantics::Truth::False => "false",
+                        query_language::semantics::Truth::Unknown => "NULL::boolean",
+                    })
+                }
+                Expr::Compare { lhs, op, rhs } => {
+                    if let Value::Operand(right) = rhs {
+                        let (left, left_kind) = self.semantic_operand(cols, lhs)?;
+                        let (right, right_kind) = self.semantic_operand(cols, right)?;
+                        self.compare_operands(left, left_kind, *op, right, right_kind)?
+                    } else {
+                        let (left, kind) = self.operand(cols, lhs)?;
+                        self.compare(left, kind, *op, rhs)?
+                    }
+                }
+                Expr::Exists(o) => {
+                    let (l, kind) = self.operand(cols, o)?;
+                    let mut f = SqlFragment::text("(");
+                    if matches!(kind, Kind::Typed(FieldType::Json)) {
+                        f.append(l.clone())
+                            .push(" IS NOT NULL AND jsonb_typeof(")
+                            .append(l)
+                            .push(") <> 'null'");
+                    } else {
+                        f.append(l).push(" IS NOT NULL");
+                    }
+                    f.push(")");
+                    f
+                }
+                Expr::Words(w) => self.words(cols, w)?,
+                Expr::FieldWords { operand, words } => {
+                    let (value, _) = self.operand(cols, operand)?;
+                    let mut out = SqlFragment::text("(CASE WHEN ");
+                    out.append(value.clone()).push(" IS NULL THEN NULL ELSE EXISTS (SELECT 1 FROM regexp_split_to_table(lower(")
                     .append(value).push("), '[^[:alnum:]]+') AS matched_word(word) WHERE word = ")
                     .param(words.words.join(" ")).push(") END)");
-                out
-            }
-            Expr::Within { lhs, from, to } => {
-                let (l, kind) = self.semantic_operand(cols, lhs)?;
-                let l = if kind == Kind::Typed(FieldType::Json) {
-                    Self::typed_json(l, FieldType::Time)
-                } else {
-                    l
-                };
-                let mut f = SqlFragment::text("(");
-                f.append(l.clone())
-                    .push(" >= ")
-                    .param(time_value(*from)?)
-                    .push(" AND ")
-                    .append(l)
-                    .push(" < ")
-                    .param(time_value(*to)?)
-                    .push(")");
-                f
-            }
-            Expr::Similar { .. } => {
-                return Err(invalid("rank directive reached predicate compiler"));
-            }
-            Expr::Overlaps { from, to } => self.overlaps(cols, *from, *to)?,
+                    out
+                }
+                Expr::Within { lhs, from, to } => {
+                    let (l, kind) = self.semantic_operand(cols, lhs)?;
+                    let l = if kind == Kind::Typed(FieldType::Json) {
+                        Self::typed_json(l, FieldType::Time)
+                    } else {
+                        l
+                    };
+                    let mut f = SqlFragment::text("(");
+                    f.append(l.clone())
+                        .push(" >= ")
+                        .param(time_value(*from)?)
+                        .push(" AND ")
+                        .append(l)
+                        .push(" < ")
+                        .param(time_value(*to)?)
+                        .push(")");
+                    f
+                }
+                Expr::Similar { .. } => {
+                    return Err(invalid("rank directive reached predicate compiler"));
+                }
+                Expr::Overlaps { from, to } => self.overlaps(cols, *from, *to)?,
+            })
         })
     }
 

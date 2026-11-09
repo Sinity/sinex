@@ -263,39 +263,41 @@ impl Compiler<'_> {
     /// Event contributors of successful positive order predicates. Ordinary
     /// predicates add none; negation never invents a positive match.
     pub(super) fn predicate_parents(&self, outer: &Cols, expression: &Expr) -> Result<SqlFragment> {
-        match expression {
-            Expr::Order(join) => {
-                let (inner, _display) = self.compile_inner(join)?;
-                let condition = self.join_condition(outer, &join.on, &inner, "proof_inner")?;
-                let mut out = SqlFragment::text(
-                    "ARRAY(SELECT DISTINCT unnest(proof_inner.\"_parents\") FROM (",
-                );
-                out.append(inner.answer)
-                    .push(") proof_inner WHERE ")
-                    .append(condition)
-                    .push(")");
-                Ok(out)
-            }
-            Expr::And(left, right) | Expr::Or(left, right) => {
-                let left = self.predicate_parents(outer, left)?;
-                let right = self.predicate_parents(outer, right)?;
-                // Calling this helper for a scalar-only condition emits no
-                // second evaluation of that predicate.
-                let empty = "ARRAY[]::uuid[]";
-                if left.render().0 == empty && right.render().0 == empty {
-                    return Ok(SqlFragment::text(empty));
+        query_language::depth::deeper(|| {
+            match expression {
+                Expr::Order(join) => {
+                    let (inner, _display) = self.compile_inner(join)?;
+                    let condition = self.join_condition(outer, &join.on, &inner, "proof_inner")?;
+                    let mut out = SqlFragment::text(
+                        "ARRAY(SELECT DISTINCT unnest(proof_inner.\"_parents\") FROM (",
+                    );
+                    out.append(inner.answer)
+                        .push(") proof_inner WHERE ")
+                        .append(condition)
+                        .push(")");
+                    Ok(out)
                 }
-                let mut out = SqlFragment::text("(CASE WHEN ");
-                out.append(self.expr(outer, expression)?)
-                    .push(" IS TRUE THEN ARRAY(SELECT DISTINCT unnest(")
-                    .append(left)
-                    .push(" || ")
-                    .append(right)
-                    .push(")) ELSE ARRAY[]::uuid[] END)");
-                Ok(out)
+                Expr::And(left, right) | Expr::Or(left, right) => {
+                    let left = self.predicate_parents(outer, left)?;
+                    let right = self.predicate_parents(outer, right)?;
+                    // Calling this helper for a scalar-only condition emits no
+                    // second evaluation of that predicate.
+                    let empty = "ARRAY[]::uuid[]";
+                    if left.render().0 == empty && right.render().0 == empty {
+                        return Ok(SqlFragment::text(empty));
+                    }
+                    let mut out = SqlFragment::text("(CASE WHEN ");
+                    out.append(self.expr(outer, expression)?)
+                        .push(" IS TRUE THEN ARRAY(SELECT DISTINCT unnest(")
+                        .append(left)
+                        .push(" || ")
+                        .append(right)
+                        .push(")) ELSE ARRAY[]::uuid[] END)");
+                    Ok(out)
+                }
+                _ => Ok(SqlFragment::text("ARRAY[]::uuid[]")),
             }
-            _ => Ok(SqlFragment::text("ARRAY[]::uuid[]")),
-        }
+        })
     }
 
     /// Exactly one positive top-level order exposes a matching row. This is the

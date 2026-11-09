@@ -52,4 +52,5 @@ doc = false
 bench = false
 
 [dev-dependencies]
+proptest.workspace = true
 devkit.workspace = true

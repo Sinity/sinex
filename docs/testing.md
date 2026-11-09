@@ -189,8 +189,12 @@ The native Rust suite tests GNU tar restoration of sparse files, native names, e
 
 Fuzzing runs as tests over the real boundaries: COPY encoding, manifests,
 producer frames and the query parser. Bounded replay of each target's corpus
-runs inside the ordinary test run; longer runs are a test profile over the
-same harness, not a separate command. The harness (`fuzz/`) is a workspace
+runs inside the ordinary test run, and so do property tests that generate new
+query inputs on every run: queries assembled from the language's words, seed
+queries with bytes changed, inserted or removed, and arbitrary text. The
+nightly `fuzz` workflow runs those properties on master with
+`PROPTEST_CASES=200000`; longer runs are a test profile over the same
+harness, not a separate command. The harness (`fuzz/`) is a workspace
 member, so its tests build in the same feature resolution as every other
 test. (ruling 2026-03-12, cc-queued:065c511c-e336-4e59-825b-eeefc71cdaae@2026-03-12T00:31:10Z).
 

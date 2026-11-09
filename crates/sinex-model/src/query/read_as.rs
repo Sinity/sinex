@@ -145,7 +145,7 @@ fn reference_text(r: &Reference) -> String {
 }
 
 fn expr(e: &Expr) -> String {
-    match e {
+    query_language::depth::deeper(|| match e {
         Expr::Order(j) => format!("having a match {}", join(j)),
         Expr::Truth {
             value,
@@ -195,7 +195,7 @@ fn expr(e: &Expr) -> String {
             Some(to) => format!("its span overlaps {from} until {to}"),
             None => format!("its span contains {from}"),
         },
-    }
+    })
 }
 
 fn grouped(e: &Expr, inside_and: bool) -> String {
@@ -206,7 +206,7 @@ fn grouped(e: &Expr, inside_and: bool) -> String {
 }
 
 fn operand(o: &Operand) -> String {
-    match o {
+    query_language::depth::deeper(|| match o {
         Operand::Field(FieldRef::Field(f)) => f.phrase.to_string(),
         Operand::Field(other) => other.name(),
         Operand::TimeFn(func, f) => format!(
@@ -244,7 +244,7 @@ fn operand(o: &Operand) -> String {
             operand: inner,
             name,
         } => format!("{} as {name}", operand(inner)),
-    }
+    })
 }
 
 fn field_phrase(f: &FieldRef) -> String {

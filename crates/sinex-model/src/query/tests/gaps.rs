@@ -66,10 +66,10 @@ fn saved_parameters_cannot_introduce_conditions_or_change_the_question_shape() {
         &definitions,
     )
     .unwrap();
-    let Some(Expr::And(a, b)) = bound.filter else {
+    let Some(Expr::And(a, b)) = &bound.filter else {
         panic!()
     };
-    let terms = [*a, *b];
+    let terms = [&**a, &**b];
     assert!(terms.iter().any(|term| matches!(term,
         Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
         if field.name == "cwd" && value == "x\" or source exists"
