@@ -35,7 +35,7 @@ NixOS, the flake's module sets all of this up
 ## First questions
 
 ```sh
-sinexctl query 'shell-sessions where cwds ^ ~/src/tide sort start desc'
+sinexctl query 'shell-sessions where cwds ^ /home/me/src/tide | sort by start desc'
 sinexctl recall last --cwd ~/src/tide
 sinexctl brief
 sinexctl show sinex:ev/EVENT_ID

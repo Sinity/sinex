@@ -34,6 +34,9 @@ test.
 | [library.md](library.md) | the library: items with any locator, encounters, page captures, curation, rankings, the link to Polylogue |
 | [operations.md](operations.md) | deployment, the NixOS and Home Manager modules, configuration, backup and restore |
 | [testing.md](testing.md) | the test database, the synthetic world, the properties tested, crash, VM and fuzz tests, benchmarks |
+| [development.md](development.md) | building, the dev shell, xtask, CI, the test database |
+| [private-history-test.md](private-history-test.md) | the opt-in acceptance test over a prepared private Atuin snapshot |
+| [window-title-rules.md](window-title-rules.md) | the opt-in rules that classify window focus records by app and title |
 | [vocabulary.md](vocabulary.md) | each concept and its one name |
 
 Shared mechanics (the segment container, the query grammar, references and
