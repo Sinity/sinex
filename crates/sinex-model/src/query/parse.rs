@@ -746,8 +746,8 @@ impl Binder<'_> {
                 let inner_path = path.field("kind").field("query");
                 let inner_scope = self.output_scope(&inner_path)?;
                 let pick = match pick {
-                    syntax::WitnessChoice::Nearest => Vec::new(),
-                    syntax::WitnessChoice::FirstBy { keys } => keys
+                    syntax::MatchChoice::Nearest => Vec::new(),
+                    syntax::MatchChoice::FirstBy { keys } => keys
                         .iter()
                         .enumerate()
                         .map(|(index, key)| {
