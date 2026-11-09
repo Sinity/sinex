@@ -711,14 +711,27 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
             .unwrap();
         assert_eq!(outcome.admitted, 1);
     }
+    // Index before the cut, so the dump has search rows and a position to
+    // leave out.
     index_search(&mut conn).await;
-    let indexed = search_rows(&mut conn).await;
-    assert_eq!(indexed.len(), 2);
-    let position = sinex_store::read_models::search_position(&mut conn)
+    assert_eq!(search_rows(&mut conn).await.len(), 2);
+    assert!(
+        sinex_store::read_models::search_position(&mut conn)
+            .await
+            .unwrap()
+            > 0
+    );
+    let mut snapshot = writer.backup_snapshot("operator").await.unwrap();
+    // What the dump holds, read through the exported snapshot itself.
+    let at_cut: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
+        .fetch_all(snapshot.connection())
         .await
         .unwrap();
-    assert!(position > 0);
-    let snapshot = writer.backup_snapshot("operator").await.unwrap();
+    let head_at_cut: i64 =
+        sqlx::query_scalar("SELECT value FROM core.counters WHERE name = 'commit_seq'")
+            .fetch_one(snapshot.connection())
+            .await
+            .unwrap();
     let (_stop, stop) = watch::channel(false);
     prepare(
         snapshot,
@@ -733,6 +746,14 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
     .unwrap();
     drop(writer);
     task.await.unwrap();
+    // The hold commits its own operation event inside the cut. Index
+    // everything, then expect the rows of exactly the events the dump holds.
+    index_search(&mut conn).await;
+    let indexed: Vec<(uuid::Uuid, String)> = search_rows(&mut conn)
+        .await
+        .into_iter()
+        .filter(|(id, _)| at_cut.contains(id))
+        .collect();
     conn.close().await.unwrap();
     let listing = tokio::process::Command::new("pg_restore")
         .arg("--list")
@@ -783,11 +804,11 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         .execute(&mut restored)
         .await
         .unwrap();
-    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
-        .fetch_one(&mut restored)
+    let events: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
+        .fetch_all(&mut restored)
         .await
         .unwrap();
-    assert_eq!(events, 2);
+    assert_eq!(events, at_cut);
     assert!(search_rows(&mut restored).await.is_empty());
     assert_eq!(
         sinex_store::read_models::search_position(&mut restored)
@@ -801,6 +822,6 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         sinex_store::read_models::search_position(&mut restored)
             .await
             .unwrap(),
-        position
+        head_at_cut
     );
 }

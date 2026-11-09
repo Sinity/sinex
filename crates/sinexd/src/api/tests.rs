@@ -544,7 +544,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
         .await
         .unwrap();
     let mut positions_lock = sqlx::Connection::begin(&mut *positions).await.unwrap();
-    sqlx::query("LOCK TABLE core.consumer_positions IN ACCESS EXCLUSIVE MODE")
+    sqlx::query("LOCK TABLE core.search_position IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *positions_lock)
         .await
         .unwrap();

@@ -21,6 +21,22 @@ async fn populated(conn: &mut PgConnection) {
 async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
     let compact: bool = sqlx::query_scalar("SELECT data_type='bytea' FROM information_schema.columns WHERE table_schema='core' AND table_name='live_equivalence' AND column_name='equivalence_key'")
         .fetch_one(&mut *conn).await.unwrap();
+    // The search reader's position moves from `core.consumer_positions` to
+    // its own row; it is compared as one value wherever it is kept.
+    let search_position = match sqlx::query_scalar::<_, bool>(
+        "SELECT to_regclass('core.search_position') IS NOT NULL",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap()
+    {
+        true => {
+            "SELECT jsonb_build_object('consumer','read.search_text','commit_seq',commit_seq) FROM core.search_position"
+        }
+        false => {
+            "SELECT jsonb_build_object('consumer',consumer,'commit_seq',commit_seq) FROM core.consumer_positions WHERE consumer='read.search_text'"
+        }
+    };
     let tables: Vec<(String,String)> = sqlx::query_as("SELECT schemaname,tablename FROM pg_tables WHERE schemaname=ANY($1) AND schemaname<>'sinex_schema' AND tablename<>'admission_stage' ORDER BY 1,2")
         .bind(schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut result = Vec::new();
@@ -29,6 +45,7 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
         // readings are no longer kept out of replay and re-import.
         if table == "event_children"
             || table == "hidden_records"
+            || table == "search_position"
             || schema == "registry"
             || (schema == "core"
                 && matches!(table.as_str(), "query_cursor_key" | "owner_protocol_key"))
@@ -61,6 +78,9 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
             "search_text" => {
                 format!("SELECT to_jsonb(t)-'trigram_indexed' FROM {name} t ORDER BY 1")
             }
+            "consumer_positions" => format!(
+                "SELECT row FROM (SELECT to_jsonb(t) AS row FROM {name} t WHERE consumer<>'read.search_text' UNION ALL {search_position}) p ORDER BY 1"
+            ),
             "event_tombstones" => format!(
                 "SELECT to_jsonb(t)-'commit_seq'-'original_commit_seq'-'class'-'ts_quality'-'reason'-'material_id'-'anchor'-'output_index'-'key_hash' FROM {name} t ORDER BY 1"
             ),
