@@ -142,7 +142,9 @@ impl From<Error> for Failure {
             Error::Source(sinex_source_core::DriverError::Cancelled) => {
                 Failure::new(FailureKind::Cancelled, message)
             }
-            Error::Source(_) => Failure::new(FailureKind::Io, message),
+            Error::Source(error) => {
+                Failure::new(error.io_kind().map_or(FailureKind::Io, io_kind), message)
+            }
             Error::Sealing(_) => Failure::new(FailureKind::Refused, message),
             Error::Telemetry(error) => match error {
                 crate::telemetry::Error::Read(error) => error.into(),

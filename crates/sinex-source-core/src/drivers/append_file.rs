@@ -270,7 +270,7 @@ impl AppendFile {
             });
         }
         let mut file =
-            std::fs::File::open(&self.path).map_err(|e| DriverError::Io(e.to_string()))?;
+            std::fs::File::open(&self.path).map_err(|e| DriverError::file(&self.path, e))?;
         let kept = if !cursor.is_null() && previous.inode == inode && previous.offset <= size {
             let prefix = Prefix::read(&mut file, previous.offset)?;
             (Some(prefix.digest()) == previous.window).then_some(prefix)
@@ -295,7 +295,7 @@ impl AppendFile {
             (0, RevisionChange::Rewritten)
         };
         file.seek(SeekFrom::Start(start))
-            .map_err(|e| DriverError::Io(e.to_string()))?;
+            .map_err(DriverError::from)?;
         // Read in parts of at most PART bytes, ending on a record boundary,
         // so a file of any size is read in bounded state. A record longer
         // than a part grows the read until it completes; no record is
@@ -315,11 +315,11 @@ impl AppendFile {
             // up to twice a part.
             data.reserve_exact(usize::try_from(want).unwrap_or(usize::MAX));
             file.seek(SeekFrom::Start(start))
-                .map_err(|e| DriverError::Io(e.to_string()))?;
+                .map_err(DriverError::from)?;
             (&mut file)
                 .take(want)
                 .read_to_end(&mut data)
-                .map_err(|e| DriverError::Io(e.to_string()))?;
+                .map_err(DriverError::from)?;
             let framed = self.framer.frame(&data);
             if framed.1 > 0 || want >= available {
                 break framed;
@@ -327,7 +327,7 @@ impl AppendFile {
             want = (want * 2).min(available);
         };
         if consumed > 0 {
-            let after = file_facts(&self.path).map_err(|e| DriverError::Io(e.to_string()))?;
+            let after = file_facts(&self.path).map_err(|e| DriverError::file(&self.path, e))?;
             let same_file = after.inode == facts.inode;
             let changed = after.size != facts.size
                 || after.mtime_ns != facts.mtime_ns
@@ -519,12 +519,12 @@ impl Prefix {
 
     /// Hash the complete prefix without holding it in memory.
     fn read(file: &mut std::fs::File, offset: u64) -> Result<Self, DriverError> {
-        let io = |e: std::io::Error| DriverError::Io(e.to_string());
+        let io = |e: std::io::Error| DriverError::from(e);
         file.seek(SeekFrom::Start(0)).map_err(io)?;
         let mut prefix = Self::empty();
         let read = std::io::copy(&mut file.take(offset), &mut prefix.0).map_err(io)?;
         if read != offset {
-            return Err(DriverError::Io(
+            return Err(DriverError::Read(
                 "the file shrank while its prefix was read".into(),
             ));
         }

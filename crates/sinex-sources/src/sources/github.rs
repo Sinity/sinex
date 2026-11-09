@@ -438,27 +438,27 @@ fn next_link(link: &str) -> Option<String> {
 }
 
 fn time(raw: &str) -> Result<Timestamp, DriverError> {
-    fields::rfc3339(raw).map_err(|e| DriverError::Io(format!("GitHub time {raw:?}: {}", e.0)))
+    fields::rfc3339(raw).map_err(|e| DriverError::Read(format!("GitHub time {raw:?}: {}", e.0)))
 }
 
 fn item_time(item: &Value, name: &str) -> Result<Timestamp, DriverError> {
     time(
         item.get(name)
             .and_then(Value::as_str)
-            .ok_or_else(|| DriverError::Io(format!("GitHub item without `{name}`")))?,
+            .ok_or_else(|| DriverError::Read(format!("GitHub item without `{name}`")))?,
     )
 }
 
 fn item_number(item: &Value, name: &str) -> Result<u64, DriverError> {
     item.get(name)
         .and_then(Value::as_u64)
-        .ok_or_else(|| DriverError::Io(format!("GitHub item without `{name}`")))
+        .ok_or_else(|| DriverError::Read(format!("GitHub item without `{name}`")))
 }
 
 fn array<'a>(value: &'a Value, name: &str) -> Result<&'a Vec<Value>, DriverError> {
     value
         .as_array()
-        .ok_or_else(|| DriverError::Io(format!("GitHub {name} is not an array")))
+        .ok_or_else(|| DriverError::Read(format!("GitHub {name} is not an array")))
 }
 
 fn next_cursor(
@@ -468,7 +468,7 @@ fn next_cursor(
     let has_next = connection
         .pointer("/pageInfo/hasNextPage")
         .and_then(Value::as_bool)
-        .ok_or_else(|| DriverError::Io("GitHub connection has no page information".into()))?;
+        .ok_or_else(|| DriverError::Read("GitHub connection has no page information".into()))?;
     if !has_next {
         return Ok(None);
     }
@@ -476,9 +476,9 @@ fn next_cursor(
         .pointer("/pageInfo/endCursor")
         .and_then(Value::as_str)
         .filter(|cursor| !cursor.is_empty())
-        .ok_or_else(|| DriverError::Io("GitHub next page has no cursor".into()))?;
+        .ok_or_else(|| DriverError::Read("GitHub next page has no cursor".into()))?;
     if !seen.insert(cursor.to_owned()) {
-        return Err(DriverError::Io("GitHub repeated a page cursor".into()));
+        return Err(DriverError::Read("GitHub repeated a page cursor".into()));
     }
     Ok(Some(cursor.to_owned()))
 }
@@ -541,7 +541,7 @@ fn page_to_end(
             if pointer == CONTEXTS {
                 return Ok(());
             }
-            return Err(DriverError::Io(format!("GitHub node without {pointer}")));
+            return Err(DriverError::Read(format!("GitHub node without {pointer}")));
         };
         array(&current["nodes"], connection)?;
         let Some(after) = next_cursor(current, &mut seen)? else {
@@ -550,21 +550,21 @@ fn page_to_end(
         let id = node
             .pointer(id_pointer)
             .and_then(Value::as_str)
-            .ok_or_else(|| DriverError::Io(format!("GitHub node without {id_pointer}")))?
+            .ok_or_else(|| DriverError::Read(format!("GitHub node without {id_pointer}")))?
             .to_owned();
         let answer = github.graphql(token, query, json!({"id": id, "after": after}))?;
         let more = answer
             .pointer(&format!("/node/{connection}"))
-            .ok_or_else(|| DriverError::Io(format!("GitHub answer without {connection}")))?;
+            .ok_or_else(|| DriverError::Read(format!("GitHub answer without {connection}")))?;
         let new = array(&more["nodes"], connection)?;
         let target = node
             .pointer_mut(pointer)
             .and_then(Value::as_object_mut)
-            .ok_or_else(|| DriverError::Io(format!("GitHub node without {pointer}")))?;
+            .ok_or_else(|| DriverError::Read(format!("GitHub node without {pointer}")))?;
         let have = target
             .get_mut("nodes")
             .and_then(Value::as_array_mut)
-            .ok_or_else(|| DriverError::Io(format!("GitHub {connection} has no nodes")))?;
+            .ok_or_else(|| DriverError::Read(format!("GitHub {connection} has no nodes")))?;
         have.extend(new.iter().cloned());
         target.insert("pageInfo".into(), more["pageInfo"].clone());
     }
@@ -580,9 +580,8 @@ const ROLLUP_ID: &str = "/commits/nodes/0/commit/statusCheckRollup/id";
 
 impl Github {
     fn token(&self) -> Result<String, DriverError> {
-        let token = std::fs::read_to_string(&self.token_file).map_err(|e| {
-            DriverError::Io(format!("GitHub token {}: {e}", self.token_file.display()))
-        })?;
+        let token = std::fs::read_to_string(&self.token_file)
+            .map_err(|e| DriverError::file(&self.token_file, e))?;
         Ok(token.trim().to_owned())
     }
 
@@ -590,21 +589,21 @@ impl Github {
         if let Some(name) = &self.repository {
             return Ok(name.clone());
         }
-        let repo = gix::open(&self.path).map_err(|e| DriverError::Io(e.to_string()))?;
+        let repo = gix::open(&self.path).map_err(|error| DriverError::Read(error.to_string()))?;
         let key = format!("remote.{}.url", self.remote);
         let url = repo
             .config_snapshot()
             .string(key.as_str())
             .map(|u| u.to_string())
             .ok_or_else(|| {
-                DriverError::Io(format!(
+                DriverError::Read(format!(
                     "{}: no remote {}",
                     self.path.display(),
                     self.remote
                 ))
             })?;
         repository_of(&url).ok_or_else(|| {
-            DriverError::Io(format!(
+            DriverError::Read(format!(
                 "remote {} ({url}) is not a GitHub repository",
                 self.remote
             ))
@@ -617,7 +616,8 @@ impl Github {
         what: &str,
         response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<(Value, Option<String>), DriverError> {
-        let mut response = response.map_err(|e| DriverError::Io(format!("GitHub {what}: {e}")))?;
+        let mut response =
+            response.map_err(|e| DriverError::Read(format!("GitHub {what}: {e}")))?;
         let header = |name: &str| {
             response
                 .headers()
@@ -635,7 +635,7 @@ impl Github {
             .with_config()
             .limit(u64::MAX)
             .read_to_string()
-            .map_err(|e| DriverError::Io(format!("GitHub {what}: {e}")))?;
+            .map_err(|e| DriverError::Read(format!("GitHub {what}: {e}")))?;
         if !(200..300).contains(&status) {
             let wait = if let Some(seconds) = retry_after {
                 Some(Duration::from_secs(seconds))
@@ -651,7 +651,7 @@ impl Github {
                 let deadline = Instant::now()
                     .checked_add(wait.max(self.interval))
                     .ok_or_else(|| {
-                        DriverError::Io(
+                        DriverError::Read(
                             "GitHub retry deadline is outside the monotonic clock's range".into(),
                         )
                     })?;
@@ -661,18 +661,18 @@ impl Github {
                 .ok()
                 .and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_owned))
                 .unwrap_or(body);
-            return Err(DriverError::Io(format!(
+            return Err(DriverError::Read(format!(
                 "GitHub {what}: HTTP {status}: {message}"
             )));
         }
         let value = serde_json::from_str(&body)
-            .map_err(|e| DriverError::Io(format!("GitHub {what}: {e}")))?;
+            .map_err(|e| DriverError::Read(format!("GitHub {what}: {e}")))?;
         Ok((value, next))
     }
 
     fn get(&self, token: &str, url: &str) -> Result<(Value, Option<String>), DriverError> {
         if !url.starts_with(&format!("{}/", self.api.trim_end_matches('/'))) {
-            return Err(DriverError::Io(
+            return Err(DriverError::Read(
                 "GitHub next page is outside the configured API".into(),
             ));
         }
@@ -710,7 +710,7 @@ impl Github {
         if let Some(errors) = answer.get("errors").and_then(Value::as_array)
             && !errors.is_empty()
         {
-            return Err(DriverError::Io(format!(
+            return Err(DriverError::Read(format!(
                 "GitHub GraphQL: {}",
                 Value::Array(errors.clone())
             )));
@@ -718,7 +718,7 @@ impl Github {
         answer
             .get("data")
             .cloned()
-            .ok_or_else(|| DriverError::Io("GitHub GraphQL answer without data".into()))
+            .ok_or_else(|| DriverError::Read("GitHub GraphQL answer without data".into()))
     }
 
     /// Pull requests updated since `since`, newest first, each complete.
@@ -740,7 +740,9 @@ impl Github {
             )?;
             let connection = data
                 .pointer("/repository/pullRequests")
-                .ok_or_else(|| DriverError::Io(format!("GitHub has no repository {owner}/{name}")))?
+                .ok_or_else(|| {
+                    DriverError::Read(format!("GitHub has no repository {owner}/{name}"))
+                })?
                 .clone();
             for mut node in array(&connection["nodes"], "pull requests")?
                 .iter()
@@ -804,7 +806,9 @@ impl Github {
             )?;
             let connection = data
                 .pointer("/repository/pullRequests")
-                .ok_or_else(|| DriverError::Io(format!("GitHub has no repository {owner}/{name}")))?
+                .ok_or_else(|| {
+                    DriverError::Read(format!("GitHub has no repository {owner}/{name}"))
+                })?
                 .clone();
             for mut node in array(&connection["nodes"], "pull requests")?
                 .iter()
@@ -835,7 +839,7 @@ impl Github {
         let mut seen = std::collections::BTreeSet::new();
         while let Some(url) = next {
             if !seen.insert(url.clone()) {
-                return Err(DriverError::Io("GitHub repeated a page URL".into()));
+                return Err(DriverError::Read("GitHub repeated a page URL".into()));
             }
             let (page, link) = self.get(token, &url)?;
             out.extend(array(&page, "REST list")?.iter().cloned());
@@ -860,7 +864,7 @@ impl Github {
         let mut seen = std::collections::BTreeSet::new();
         while let Some(url) = next {
             if !seen.insert(url.clone()) {
-                return Err(DriverError::Io("GitHub repeated a page URL".into()));
+                return Err(DriverError::Read("GitHub repeated a page URL".into()));
             }
             let (page, link) = self.get(token, &url)?;
             let runs = array(&page["workflow_runs"], "workflow runs")?
@@ -937,7 +941,7 @@ impl Api for Github {
             let mut wait = self.wait_until.lock().expect("lock");
             if wait.is_none_or(|until| until <= Instant::now()) {
                 let deadline = Instant::now().checked_add(self.interval).ok_or_else(|| {
-                    DriverError::Io(
+                    DriverError::Read(
                         "GitHub interval deadline is outside the monotonic clock's range".into(),
                     )
                 })?;
@@ -961,7 +965,7 @@ impl Github {
         let token = self.token()?;
         let repository = self.repository()?;
         let (owner, name) = repository.split_once('/').ok_or_else(|| {
-            DriverError::Io(format!(
+            DriverError::Read(format!(
                 "GitHub repository {repository:?} is not owner/name"
             ))
         })?;
@@ -1005,7 +1009,8 @@ impl Github {
         );
         if let Some(at) = position.issues.at {
             // RFC 3339 in UTC (`...Z`): nothing in it needs escaping.
-            let at = serde_json::to_value(at).map_err(|e| DriverError::Io(e.to_string()))?;
+            let at =
+                serde_json::to_value(at).map_err(|error| DriverError::Read(error.to_string()))?;
             url.push_str(&format!("&since={}", at.as_str().unwrap_or_default()));
         }
         for item in self.list(&token, url)? {

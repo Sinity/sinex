@@ -150,8 +150,9 @@ impl Export {
     }
 }
 
-fn io(path: &std::path::Path, e: impl std::fmt::Display) -> DriverError {
-    DriverError::Io(format!("{}: {e}", path.display()))
+/// A problem with the export at `path` that is not a file error.
+fn invalid_export(path: &std::path::Path, reason: impl std::fmt::Display) -> DriverError {
+    DriverError::Read(format!("{}: {reason}", path.display()))
 }
 
 impl Api for Export {
@@ -173,18 +174,23 @@ impl Api for Export {
             )
         };
         let facts = |metadata: &std::fs::Metadata| -> Result<(u64, i128), DriverError> {
-            let modified = metadata.modified().map_err(|error| io(&self.path, error))?;
+            let modified = metadata
+                .modified()
+                .map_err(|error| DriverError::file(&self.path, error))?;
             let modified_ns = modified
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| io(&self.path, error))?
+                .map_err(|error| invalid_export(&self.path, error))?
                 .as_nanos();
             Ok((
                 metadata.len(),
-                i128::try_from(modified_ns).map_err(|error| io(&self.path, error))?,
+                i128::try_from(modified_ns).map_err(|error| invalid_export(&self.path, error))?,
             ))
         };
-        let mut file = std::fs::File::open(&self.path).map_err(|error| io(&self.path, error))?;
-        let metadata = file.metadata().map_err(|error| io(&self.path, error))?;
+        let mut file = std::fs::File::open(&self.path)
+            .map_err(|error| DriverError::file(&self.path, error))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| DriverError::file(&self.path, error))?;
         let (size, modified_ns) = facts(&metadata)?;
         if previous
             .as_ref()
@@ -196,10 +202,13 @@ impl Api for Export {
             });
         }
         let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|error| io(&self.path, error))?;
-        let after = file.metadata().map_err(|error| io(&self.path, error))?;
+        std::io::Read::read_to_end(&mut file, &mut bytes)
+            .map_err(|error| DriverError::file(&self.path, error))?;
+        let after = file
+            .metadata()
+            .map_err(|error| DriverError::file(&self.path, error))?;
         if facts(&after)? != (size, modified_ns) || bytes.len() as u64 != size {
-            return Err(io(&self.path, "export changed while reading"));
+            return Err(invalid_export(&self.path, "export changed while reading"));
         }
         let mut issues = BTreeMap::new();
         let mut records = Vec::new();
@@ -217,7 +226,10 @@ impl Api for Export {
                             records.push(issue.clone());
                         }
                         if issues.insert(id.to_owned(), hash).is_some() {
-                            return Err(io(&self.path, format!("duplicate issue ID {id:?}")));
+                            return Err(invalid_export(
+                                &self.path,
+                                format!("duplicate issue ID {id:?}"),
+                            ));
                         }
                     }
                     _ => {
@@ -237,8 +249,8 @@ impl Api for Export {
             }
         }
         if let Some(previous) = previous {
-            let removed_at =
-                serde_json::to_value(Timestamp::now()).map_err(|error| io(&self.path, error))?;
+            let removed_at = serde_json::to_value(Timestamp::now())
+                .map_err(|error| invalid_export(&self.path, error))?;
             for id in previous.issues.keys() {
                 if !issues.contains_key(id) && !complete {
                     issues.insert(id.clone(), previous.issues[id].clone());

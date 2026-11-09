@@ -131,7 +131,7 @@ struct Connection {
 }
 
 fn io(context: &str, e: impl std::fmt::Display) -> DriverError {
-    DriverError::Io(format!("IMAP {context}: {e}"))
+    DriverError::Read(format!("IMAP {context}: {e}"))
 }
 
 /// One untagged or tagged response line, with any literals it carries.

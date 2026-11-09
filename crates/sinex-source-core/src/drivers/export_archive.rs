@@ -133,9 +133,16 @@ fn file_name(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
+/// An archive member that cannot be read: a file error keeps its kind, any
+/// other zip failure is unreadable input.
 #[cfg(feature = "archives")]
-fn io(e: impl std::fmt::Display) -> DriverError {
-    DriverError::Io(e.to_string())
+impl From<zip::result::ZipError> for DriverError {
+    fn from(error: zip::result::ZipError) -> Self {
+        match error {
+            zip::result::ZipError::Io(source) => source.into(),
+            other => Self::Read(other.to_string()),
+        }
+    }
 }
 
 fn lines(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {

@@ -1,5 +1,5 @@
 //! Frame decoded archive members one record at a time.
-use super::{DriverError, Framing, io};
+use super::{DriverError, Framing};
 use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
 use std::{fmt, io::Read};
@@ -31,11 +31,11 @@ pub(super) fn visit(
         if let Some(error) = sink.stopped {
             return Err(error);
         }
-        return parsed.map_err(|error| DriverError::Io(format!("JSON member: {error}")));
+        return parsed.map_err(|error| DriverError::Read(format!("JSON member: {error}")));
     }
     if framing == Framing::Whole {
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).map_err(io)?;
+        reader.read_to_end(&mut bytes).map_err(DriverError::from)?;
         if !bytes.is_empty() {
             emit(bytes)?;
         }
@@ -48,7 +48,7 @@ pub(super) fn visit(
         (&mut *reader)
             .take(want as u64)
             .read_to_end(&mut buffer)
-            .map_err(io)?;
+            .map_err(DriverError::from)?;
         let eof = buffer.len() - before < want;
         let (records, consumed) = framing.frame(&buffer, eof);
         for (start, end) in &records {

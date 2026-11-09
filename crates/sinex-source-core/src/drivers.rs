@@ -39,14 +39,48 @@ pub enum DriverError {
     Cancelled,
     #[error("material: {0}")]
     InvalidMaterial(String),
+    /// A file or stream the driver reads failed, keeping the error's kind, so
+    /// a vanished input reaches its caller as not found.
+    #[error("{}{source}", path.as_ref().map(|path| format!("{}: ", path.display())).unwrap_or_default())]
+    Io {
+        path: Option<std::path::PathBuf>,
+        #[source]
+        source: std::io::Error,
+    },
+    /// The input could not be read for a reason other than a file error: a
+    /// service's answer it cannot use, a database file it cannot query.
     #[error("{0}")]
-    Io(String),
+    Read(String),
     #[error("stored cursor does not decode: {0}")]
     Cursor(String),
     #[error("content store: {0}")]
     Store(String),
     #[error("parser carry: {0}")]
     Carry(String),
+}
+
+impl From<std::io::Error> for DriverError {
+    fn from(source: std::io::Error) -> Self {
+        Self::Io { path: None, source }
+    }
+}
+
+impl DriverError {
+    /// A file error at `path`.
+    pub fn file(path: impl AsRef<std::path::Path>, source: std::io::Error) -> Self {
+        Self::Io {
+            path: Some(path.as_ref().to_owned()),
+            source,
+        }
+    }
+
+    /// The kind of the file error underneath, if this is one.
+    pub fn io_kind(&self) -> Option<std::io::ErrorKind> {
+        match self {
+            Self::Io { source, .. } => Some(source.kind()),
+            _ => None,
+        }
+    }
 }
 
 /// What one poll of an input produced.
@@ -249,10 +283,7 @@ pub fn prepare<'s>(
             let (blob, length) = match &m.stored {
                 Some(StoredBytes::FramedFile(file)) => {
                     use std::os::fd::AsRawFd;
-                    let length = file
-                        .metadata()
-                        .map_err(|e| DriverError::Io(e.to_string()))?
-                        .len();
+                    let length = file.metadata().map_err(DriverError::from)?.len();
                     // Linux exposes the live unnamed file without giving it a crash-leaking
                     // directory entry. The Arc keeps it open through storage and draining.
                     let path =
@@ -405,7 +436,7 @@ impl Prepared<'_> {
                 Ok(chunk) => chunk,
                 Err(error) => {
                     failed = true;
-                    return Some(Err(DriverError::Io(error.to_string())));
+                    return Some(Err(DriverError::Read(error.to_string())));
                 }
             };
             // After the last chunk the whole material is read, records

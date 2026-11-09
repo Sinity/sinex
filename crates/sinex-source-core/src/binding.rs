@@ -343,7 +343,7 @@ impl Reader for Appended {
         };
         let (records, complete) =
             crate::drivers::tail_ranges(material.bytes.as_ref(), self.driver.framer, admitted)
-                .map_err(|e| DriverError::Io(e.to_string()))?;
+                .map_err(DriverError::from)?;
         let tail = self.tail.get_or_insert_with(Default::default);
         for (start, end) in records
             .into_iter()
@@ -354,7 +354,7 @@ impl Reader for Appended {
             material
                 .bytes
                 .read_exact_at(start as u64, &mut raw)
-                .map_err(|e| DriverError::Io(e.to_string()))?;
+                .map_err(DriverError::from)?;
             let location = sinex_model::RecordLocation {
                 material: reference.id,
                 anchor: start as u64,
@@ -427,13 +427,13 @@ impl Reader for Rows {
         let mut bytes = vec![
             0;
             usize::try_from(admitted).map_err(|_| {
-                DriverError::Io("a stored row part exceeds the address space".into())
+                DriverError::Read("a stored row part exceeds the address space".into())
             })?
         ];
         material
             .bytes
             .read_exact_at(0, &mut bytes)
-            .map_err(|e| DriverError::Io(e.to_string()))?;
+            .map_err(DriverError::from)?;
         self.state.remember_rows(&bytes);
         Ok(true)
     }

@@ -1,5 +1,5 @@
 //! PAX members keep native names, file metadata and sparse data ranges.
-use super::{DriverError, io, metadata_mtime, same_file};
+use super::{DriverError, metadata_mtime, same_file};
 use sinex_model::manifest::{ExtendedAttribute, FileExtent, FileNode};
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -119,7 +119,7 @@ pub(super) fn capture(
             extents.iter().map(|extent| extent.length).sum()
         }
     };
-    node.extended_attributes = extensions(output, fields).map_err(io)?;
+    node.extended_attributes = extensions(output, fields).map_err(DriverError::from)?;
     let mut header = header(
         length,
         before.mode(),
@@ -128,12 +128,14 @@ pub(super) fn capture(
         before.mtime().max(0) as u64,
     )?;
     if node.sparse.is_some() {
-        header.set_path("GNUSparseFile/data").map_err(io)?;
+        header
+            .set_path("GNUSparseFile/data")
+            .map_err(DriverError::from)?;
     }
     header.set_cksum();
     let offset = position(output)?
         .checked_add(512)
-        .ok_or_else(|| DriverError::Io("tar offset exceeds addressable size".into()))?;
+        .ok_or_else(|| DriverError::Read("tar offset exceeds addressable size".into()))?;
     let mut ranges = Ranges {
         input: &mut input,
         ranges: node
@@ -163,7 +165,7 @@ pub(super) fn capture(
             }
             return Ok(Err(reason));
         }
-        return Err(io(error));
+        return Err(DriverError::from(error));
     }
     ranges.zeroes(size - ranges.logical);
     node.content_hash = *ranges.hash.finalize().as_bytes();
@@ -171,7 +173,7 @@ pub(super) fn capture(
         Ok(after) if same_file(&before, &after) => Ok(Ok(Some(Captured {
             offset,
             length: usize::try_from(length)
-                .map_err(|_| DriverError::Io("file exceeds addressable size".into()))?,
+                .map_err(|_| DriverError::Read("file exceeds addressable size".into()))?,
             node,
         }))),
         Ok(_) => Ok(Ok(None)),
@@ -184,24 +186,32 @@ pub(super) fn marker(output: &mut Archive, name: &str, bytes: &[u8]) -> Result<u
         output,
         BTreeMap::from([(b"path".to_vec(), name.as_bytes().to_vec())]),
     )
-    .map_err(io)?;
+    .map_err(DriverError::from)?;
     let header = header(bytes.len() as u64, 0o600, 0, 0, 0)?;
     let offset = position(output)? + 512;
-    output.append(&header, bytes).map_err(io)?;
+    output.append(&header, bytes).map_err(DriverError::from)?;
     Ok(offset)
 }
 
 pub(super) fn position(output: &mut Archive) -> Result<usize, DriverError> {
-    usize::try_from(output.get_mut().stream_position().map_err(io)?)
-        .map_err(|_| DriverError::Io("tar exceeds addressable size".into()))
+    usize::try_from(
+        output
+            .get_mut()
+            .stream_position()
+            .map_err(DriverError::from)?,
+    )
+    .map_err(|_| DriverError::Read("tar exceeds addressable size".into()))
 }
 
 pub(super) fn rewind(output: &mut Archive, at: usize) -> Result<(), DriverError> {
-    output.get_mut().set_len(at as u64).map_err(io)?;
+    output
+        .get_mut()
+        .set_len(at as u64)
+        .map_err(DriverError::from)?;
     output
         .get_mut()
         .seek(SeekFrom::Start(at as u64))
-        .map_err(io)?;
+        .map_err(DriverError::from)?;
     Ok(())
 }
 
@@ -213,7 +223,7 @@ fn header(
     mtime: u64,
 ) -> Result<tar::Header, DriverError> {
     let mut header = tar::Header::new_ustar();
-    header.set_path("file").map_err(io)?;
+    header.set_path("file").map_err(DriverError::from)?;
     header.set_entry_type(tar::EntryType::Regular);
     header.set_size(length);
     header.set_mode(mode & 0o7777);

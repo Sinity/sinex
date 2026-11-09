@@ -212,7 +212,7 @@ impl DirSnapshot {
             .collect();
 
         let id = MaterialId::new();
-        let mut bundle = tar::Archive::new(tempfile::tempfile().map_err(io)?);
+        let mut bundle = tar::Archive::new(tempfile::tempfile().map_err(DriverError::from)?);
         let mut length = 0usize;
         let mut next_files = state.files.clone();
         let mut next_locations = state.locations.clone();
@@ -305,7 +305,7 @@ impl DirSnapshot {
             let offset = captured.offset;
             let end = offset
                 .checked_add(captured.length)
-                .ok_or_else(|| DriverError::Io("tar exceeds addressable size".into()))?;
+                .ok_or_else(|| DriverError::Read("tar exceeds addressable size".into()))?;
             members.push(json!({
                 "path": display,
                 "stream_offset": offset,
@@ -462,7 +462,7 @@ impl DirSnapshot {
                 id,
                 bytes: Vec::new(),
                 stored: Some(StoredBytes::FramedFile(Arc::new(
-                    bundle.into_inner().map_err(io)?,
+                    bundle.into_inner().map_err(DriverError::from)?,
                 ))),
                 records,
                 part_index,
@@ -488,10 +488,6 @@ impl DirSnapshot {
         });
         Ok(acquired)
     }
-}
-
-fn io(error: std::io::Error) -> DriverError {
-    DriverError::Io(error.to_string())
 }
 
 fn entry_failure(

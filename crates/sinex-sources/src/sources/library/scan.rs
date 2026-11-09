@@ -241,7 +241,7 @@ impl ScanState {
         admitted: u64,
     ) -> Result<(), DriverError> {
         let ranges = sinex_source_core::drivers::record_ranges(bytes, SCAN.framer)
-            .map_err(|e| DriverError::Io(e.to_string()))?;
+            .map_err(DriverError::from)?;
         for (start, end) in ranges.into_iter().rev() {
             if end as u64 > admitted {
                 continue;
@@ -249,7 +249,7 @@ impl ScanState {
             let mut line = vec![0; end - start];
             bytes
                 .read_exact_at(start as u64, &mut line)
-                .map_err(|e| DriverError::Io(e.to_string()))?;
+                .map_err(DriverError::from)?;
             let line: ScanLine = serde_json::from_slice(&line)
                 .map_err(|e| DriverError::Cursor(format!("stored scan line: {e}")))?;
             let ScanLine::File(d) = line else {

@@ -12,9 +12,9 @@ impl Reader for SlowReader {
         self.release
             .recv_timeout(std::time::Duration::from_secs(5))
             .map_err(|_| {
-                drivers::DriverError::Io("runtime did not progress during the poll".into())
+                drivers::DriverError::Read("runtime did not progress during the poll".into())
             })?;
-        Err(drivers::DriverError::Io("synthetic poll finished".into()))
+        Err(drivers::DriverError::Read("synthetic poll finished".into()))
     }
 }
 

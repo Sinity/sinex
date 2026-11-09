@@ -57,10 +57,7 @@ impl HeldMaterial {
                 (StoredBytes::FramedMemory(Arc::new(m.bytes)), length)
             }
             Some(StoredBytes::FramedFile(file)) => {
-                let length = file
-                    .metadata()
-                    .map_err(|e| DriverError::Io(e.to_string()))?
-                    .len() as usize;
+                let length = file.metadata().map_err(DriverError::from)?.len() as usize;
                 (StoredBytes::FramedFile(file), length)
             }
             Some(StoredBytes::FramedMemory(bytes)) => {

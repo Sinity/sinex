@@ -36,3 +36,18 @@ fn a_note_keeps_the_kind_and_retryability() {
     assert!(failure.retryable);
     assert!(failure.message.ends_with("; backup hold 7 remains open"));
 }
+
+#[test]
+fn driver_io_error_keeps_kind() {
+    let missing = std::env::temp_dir().join(format!("sinex-missing-{}.zip", uuid::Uuid::now_v7()));
+    let Err(error) = sinex_source_core::drivers::export_archive::group::members(&missing) else {
+        panic!("a missing archive has no members");
+    };
+    assert_eq!(error.io_kind(), Some(std::io::ErrorKind::NotFound));
+    let failure = Error::from(error).failure();
+    assert_eq!(failure.kind, FailureKind::NotFound);
+    assert!(
+        failure.message.contains(&missing.display().to_string()),
+        "{failure:?}"
+    );
+}

@@ -37,6 +37,13 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// A database file the driver cannot query is unreadable input.
+impl From<rusqlite::Error> for DriverError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Read(error.to_string())
+    }
+}
+
 pub struct SqliteRows {
     pub path: PathBuf,
     pub host: String,
@@ -259,10 +266,10 @@ impl SqliteRows {
                     "SELECT name FROM pragma_table_info('{}')",
                     self.table
                 ))
-                .map_err(|e| DriverError::Io(e.to_string()))?;
+                .map_err(DriverError::from)?;
             stmt.query_map([], |r| r.get::<_, String>(0))
                 .and_then(|rows| rows.collect::<Result<_, _>>())
-                .map_err(|e| DriverError::Io(e.to_string()))?
+                .map_err(DriverError::from)?
         };
         if let Some(missing) = self
             .required
@@ -297,11 +304,9 @@ impl SqliteRows {
             "SELECT {open_column} AS _open, rowid AS _rowid, * FROM {} WHERE ({filter}) AND ?1 IS NOT NULL AND ?2 IS NOT NULL ORDER BY rowid{page}",
             self.from.unwrap_or(self.table)
         );
-        let mut stmt = connection
-            .prepare(&sql)
-            .map_err(|e| DriverError::Io(e.to_string()))?;
+        let mut stmt = connection.prepare(&sql).map_err(DriverError::from)?;
         let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        let mut staged = tempfile::tempfile().map_err(|e| DriverError::Io(e.to_string()))?;
+        let mut staged = tempfile::tempfile().map_err(DriverError::from)?;
         let mut length = 0usize;
         let mut hashes = Vec::new();
         let mut records = Vec::new();
@@ -313,13 +318,13 @@ impl SqliteRows {
                     now_ns - 86_400_000_000_000,
                     previous.max_rowid
                 ])
-                .map_err(|e| DriverError::Io(e.to_string()))?;
-            while let Some(row) = rows.next().map_err(|e| DriverError::Io(e.to_string()))? {
+                .map_err(DriverError::from)?;
+            while let Some(row) = rows.next().map_err(DriverError::from)? {
                 let mut object = Map::new();
                 let is_open: i64 = row.get(0).unwrap_or(0);
-                let rowid: i64 = row.get(1).map_err(|e| DriverError::Io(e.to_string()))?;
+                let rowid: i64 = row.get(1).map_err(DriverError::from)?;
                 for (i, name) in names.iter().enumerate().skip(1) {
-                    let value = match row.get_ref(i).map_err(|e| DriverError::Io(e.to_string()))? {
+                    let value = match row.get_ref(i).map_err(DriverError::from)? {
                         ValueRef::Null => Value::Null,
                         ValueRef::Integer(n) => json!(n),
                         ValueRef::Real(f) => json!(f),
@@ -349,9 +354,9 @@ impl SqliteRows {
                 staged
                     .write_all(line.as_bytes())
                     .and_then(|_| staged.write_all(b"\n"))
-                    .map_err(|e| DriverError::Io(e.to_string()))?;
+                    .map_err(DriverError::from)?;
                 length = length.checked_add(line.len() + 1).ok_or_else(|| {
-                    DriverError::Io("row material exceeds addressable size".into())
+                    DriverError::Read("row material exceeds addressable size".into())
                 })?;
                 records.push((start, length));
                 ends.push((length, rowid));
