@@ -60,6 +60,11 @@ async fn a_spool_is_produced_once_material_first() {
         (sent.materials, sent.events, sent.admitted, sent.unread),
         (1, 2, 2, 0)
     );
+    let position_file = || {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(positions.join("hyprland_h.json")).unwrap();
+        (meta.ino(), meta.mtime_nsec(), meta.mtime())
+    };
     let again = producer
         .produce(
             &source,
@@ -74,6 +79,40 @@ async fn a_spool_is_produced_once_material_first() {
     assert_eq!(
         again.events, 0,
         "the position advanced; nothing is sent twice"
+    );
+    // Once the spool's last change is older than the racy-clean margin, a
+    // poll that finds nothing new has nothing new to record either.
+    std::thread::sleep(Duration::from_nanos(
+        2 * sinex_source_core::drivers::append_file::RACY_NS as u64,
+    ));
+    producer
+        .produce(
+            &source,
+            "hyprland@h",
+            poll(&positions),
+            &store,
+            &positions,
+            &spool,
+        )
+        .await
+        .unwrap();
+    let saved = position_file();
+    let idle = producer
+        .produce(
+            &source,
+            "hyprland@h",
+            poll(&positions),
+            &store,
+            &positions,
+            &spool,
+        )
+        .await
+        .unwrap();
+    assert_eq!(idle.events, 0);
+    assert_eq!(
+        position_file(),
+        saved,
+        "a poll that read nothing new leaves the position file untouched"
     );
 
     let frames: Vec<_> = received

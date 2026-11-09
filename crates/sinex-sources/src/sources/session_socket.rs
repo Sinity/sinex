@@ -28,7 +28,7 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "session.integrations",
@@ -108,6 +108,13 @@ fn capture_until(
 
 const ACCEPT_BATCH: usize = 32;
 
+/// How long a received line may sit in the spool before it is synced. Lines
+/// are written to the spool as they arrive; syncing them in groups, like every
+/// other live stream, keeps a burst of reports from costing one sync each. A
+/// host crash can lose at most this window of reports, which nothing upstream
+/// keeps either.
+const SYNC_EVERY: Duration = Duration::from_secs(1);
+
 fn capture_connections(
     listener: UnixListener,
     writer: Arc<Mutex<SpoolWriter>>,
@@ -116,6 +123,7 @@ fn capture_connections(
     listener.set_nonblocking(true)?;
     let mut handlers = Vec::new();
     let mut count = 0;
+    let mut last_sync = Instant::now();
     let mut failure = None;
     loop {
         // Check stop between bounded batches even when new clients keep
@@ -162,6 +170,16 @@ fn capture_connections(
             } else {
                 i += 1;
             }
+        }
+        if last_sync.elapsed() >= SYNC_EVERY {
+            if let Err(error) = writer
+                .lock()
+                .map_err(|_| std::io::Error::other("spool lock poisoned"))
+                .and_then(|mut writer| writer.sync())
+            {
+                failure.get_or_insert(error);
+            }
+            last_sync = Instant::now();
         }
         if failure.is_some() || stop() {
             break;
@@ -220,7 +238,6 @@ fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::i
                 .lock()
                 .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
             writer.append(Timestamp::now(), body)?;
-            writer.sync()?;
             count += 1;
         }
         line.clear();

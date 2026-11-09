@@ -172,6 +172,18 @@ fn start_capture() -> (
     std::sync::mpsc::Sender<()>,
     std::thread::JoinHandle<std::io::Result<u64>>,
 ) {
+    let (socket, spool, stop, handle, _) = start_capture_with_writer();
+    (socket, spool, stop, handle)
+}
+
+#[allow(clippy::type_complexity)]
+fn start_capture_with_writer() -> (
+    PathBuf,
+    PathBuf,
+    std::sync::mpsc::Sender<()>,
+    std::thread::JoinHandle<std::io::Result<u64>>,
+    Arc<Mutex<SpoolWriter>>,
+) {
     let dir = std::env::temp_dir().join(format!("sx-sock-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     let socket = dir.join("s.sock");
@@ -181,10 +193,38 @@ fn start_capture() -> (
         SpoolWriter::open(&spool, Rotation::default()).unwrap(),
     ));
     let (stop, stopped) = std::sync::mpsc::channel();
+    let shared = writer.clone();
     let handle = std::thread::spawn(move || {
         capture_connections(listener, writer, || stopped.try_recv().is_ok())
     });
-    (socket, spool, stop, handle)
+    (socket, spool, stop, handle, shared)
+}
+
+/// A burst of reports is synced as one group, not one sync per line, and
+/// every line is in the spool when capture stops.
+#[devkit::test]
+fn a_burst_of_lines_is_synced_once() {
+    let (socket, spool, stop, handle, writer) = start_capture_with_writer();
+    let mut client = UnixStream::connect(&socket).unwrap();
+    let burst: String = (0..200)
+        .map(|n| format!("{{\"source\":\"kitty\",\"event\":\"focus\",\"n\":{n}}}\n"))
+        .collect();
+    client.write_all(burst.as_bytes()).unwrap();
+    drop(client);
+    stop.send(()).unwrap();
+    assert_eq!(handle.join().unwrap().unwrap(), 200);
+    let syncs = writer.lock().unwrap().syncs();
+    assert!(
+        (1..=2).contains(&syncs),
+        "200 lines cost {syncs} syncs; one group (plus at most one timer tick) is expected"
+    );
+    let material = driver(spool, "h".into())
+        .poll(&Value::Null)
+        .unwrap()
+        .material
+        .unwrap();
+    assert_eq!(material.records.len(), 200);
+    let _ = std::fs::remove_dir_all(socket.parent().unwrap());
 }
 
 #[devkit::test]
