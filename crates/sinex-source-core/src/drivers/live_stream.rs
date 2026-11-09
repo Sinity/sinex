@@ -49,6 +49,7 @@ pub struct SpoolWriter {
     written: u64,
     opened: Instant,
     unsynced: usize,
+    syncs: u64,
 }
 
 const SEGMENT_SUFFIX: &str = ".ndjson";
@@ -113,6 +114,7 @@ impl SpoolWriter {
             written: 0,
             opened: Instant::now(),
             unsynced: 0,
+            syncs: 0,
         })
     }
 
@@ -138,8 +140,14 @@ impl SpoolWriter {
         if self.unsynced > 0 {
             self.file.sync_data()?;
             self.unsynced = 0;
+            self.syncs += 1;
         }
         Ok(())
+    }
+
+    /// How many data syncs this writer has made.
+    pub fn syncs(&self) -> u64 {
+        self.syncs
     }
 
     fn rotate(&mut self) -> std::io::Result<()> {

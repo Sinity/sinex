@@ -781,6 +781,10 @@ impl Producer {
         }
         let snapshots = Snapshots::new()?;
         let position = Position::load(state, binding)?;
+        // The cursor and carry last written for this binding. A poll that
+        // read nothing new leaves them unchanged, and rewriting the file then
+        // would cost a sync and a rename every poll for nothing.
+        let mut saved = (position.cursor.clone(), position.carry.clone());
         let batches = drivers::batches(
             source,
             binding,
@@ -921,7 +925,10 @@ impl Producer {
                     .prepare(&after.cursor, batch.records.len() as u64);
             }
             if frames.is_empty() {
-                after.save(state, binding)?;
+                if (&after.cursor, &after.carry) != (&saved.0, &saved.1) {
+                    after.save(state, binding)?;
+                    saved = (after.cursor.clone(), after.carry.clone());
+                }
                 if let Some(counter) = self.health.get(binding) {
                     counter.lock().unwrap().recovered(&after.cursor);
                 }
@@ -955,6 +962,10 @@ impl Producer {
                 }
             }
             pending.position.save(state, binding)?;
+            saved = (
+                pending.position.cursor.clone(),
+                pending.position.carry.clone(),
+            );
             if let Some(counter) = self.health.get(binding) {
                 let mut counter = counter.lock().unwrap();
                 if delivered.skipped_material {
