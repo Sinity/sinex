@@ -244,6 +244,7 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
         &mut crate::binding_reader::polled::PolledReader::new(Box::new(reader)),
         stop,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -320,6 +321,7 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
         Class::Open,
         &mut reader,
         stop,
+        None,
         None,
     )
     .await

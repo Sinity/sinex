@@ -57,6 +57,8 @@ pub(crate) struct Intake<'a> {
     pub priority: Priority,
     /// Requests commit together and refuse parser failures before admission.
     pub atomic: bool,
+    /// Readings per admission batch; the drain's default when unset.
+    pub batch_events: Option<u64>,
     /// The material and its data key are already registered.
     pub registered: Option<MaterialId>,
 }
@@ -148,6 +150,7 @@ impl Intake<'_> {
             run: self.run,
             material: self.material.clone(),
             atomic: self.atomic,
+            batch_events: self.batch_events,
             registered: self.registered,
             check: check.clone(),
         };
@@ -384,6 +387,7 @@ async fn request_inner(
             check: Arc::new(|| Ok(())),
             priority: Priority::Live,
             atomic: true,
+            batch_events: None,
             registered: None,
         };
         match admission {
@@ -434,6 +438,7 @@ struct Preparation {
     run: RunId,
     material: crate::material_access::MaterialAccess,
     atomic: bool,
+    batch_events: Option<u64>,
     registered: Option<MaterialId>,
     check: AdmissionCheck,
 }
@@ -464,7 +469,13 @@ impl Preparation {
                     max_bytes: usize::MAX,
                 }
             } else {
-                Limits::default()
+                let default = Limits::default();
+                Limits {
+                    max_events: self.batch_events.map_or(default.max_events, |n| {
+                        usize::try_from(n).unwrap_or(usize::MAX)
+                    }),
+                    ..default
+                }
             },
         )
         .map_err(|e| e.to_string())?

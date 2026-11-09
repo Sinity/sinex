@@ -50,6 +50,9 @@ pub(crate) struct Request {
     /// binding; the system zone when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
+    /// Readings per admission batch; the drain's default when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_events: Option<u64>,
 }
 
 /// The staged items for `paths` read with `parsers`: none (each file is
@@ -403,6 +406,7 @@ impl Staging<'_> {
                 for (format, binding) in planned {
                     match crate::binding_reader::BindingReader::new(format, binding.clone()) {
                         Ok(mut reader) => {
+                            reader.batch_events = request.batch_events;
                             reader.committed = Some(Committed {
                                 operation,
                                 accounting: progress
@@ -716,6 +720,7 @@ pub(crate) async fn drive(
     reader: &mut crate::binding_reader::polled::PolledReader,
     stop: tokio::sync::watch::Receiver<bool>,
     committed: Option<Committed>,
+    batch_events: Option<u64>,
 ) -> Result<Totals, String> {
     let mut totals = Totals::committed(committed);
     let started = Instant::now();
@@ -771,6 +776,7 @@ pub(crate) async fn drive(
             check: check.clone(),
             priority: crate::writer::Priority::Bulk,
             atomic: false,
+            batch_events,
             registered,
         }
         .submit(acquired, carry, &mut totals)

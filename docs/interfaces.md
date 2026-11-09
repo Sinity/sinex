@@ -223,7 +223,7 @@ here pack.
 The semantics are [lifecycle](lifecycle.md)'s and [staging](materials.md#staging)'s;
 the surfaces are:
 
-- `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow]`,
+- `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow] [--batch-events N]`,
   answering with the operation and the inventory of every staged member at once, and
   with `--follow` ending with each product's accounting and `stopped_early` when it did
   not finish ([staging](materials.md#inventory-and-accounting)); `stage-list

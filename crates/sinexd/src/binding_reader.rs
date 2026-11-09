@@ -29,6 +29,8 @@ pub(crate) struct BindingReader {
     /// For a binding a stage reads: the stage and what the binding's
     /// committed batches have accounted for so far.
     pub committed: Option<stage::Committed>,
+    /// Readings per admission batch, when a stage asked for its own size.
+    pub batch_events: Option<u64>,
 }
 impl BindingReader {
     pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
@@ -57,6 +59,7 @@ impl BindingReader {
             history_floor: Class::Open,
             settled: None,
             committed: None,
+            batch_events: None,
         })
     }
 }
@@ -341,6 +344,7 @@ pub(crate) async fn read(
                 reader,
                 stop.clone(),
                 b.committed.clone(),
+                b.batch_events,
             )
             .await;
             let result = match result {

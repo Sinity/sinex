@@ -106,7 +106,7 @@ A continuous binding is a staged input declared in configuration: Sinex's own Ni
 
 ### One-shot staging
 
-`stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow]` is the imperative form. It is an [operation](lifecycle.md#operations-and-actors), and each source it reads has its [run](events.md#producer-versions-runs-and-manifests). The daemon runs it for `sinexctl stage`; with the daemon stopped, `sinexd admin stage` runs the same command with its own writer. Paths are absolute, because the daemon reads them and the operation records them. The CLI form and its output are in [the CLI](interfaces.md#cli).
+`stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow] [--batch-events N]` is the imperative form. `--batch-events` sets how many readings commit together (10,000 by default). It is an [operation](lifecycle.md#operations-and-actors), and each source it reads has its [run](events.md#producer-versions-runs-and-manifests). The daemon runs it for `sinexctl stage`; with the daemon stopped, `sinexd admin stage` runs the same command with its own writer. Paths are absolute, because the daemon reads them and the operation records them. The CLI form and its output are in [the CLI](interfaces.md#cli).
 
 - **One parser for every path, or one per path.** `--parser` once names the format for every path; given once per path, the n-th names the n-th path's; without it, each file is recognised by [parser selection](#parser-selection).
 - **Who may stage what.** An agent stages only paths under the declared source locations (every location a source's declaration reads on this host) and the staging roots the operator configures (`services.sinex.stagingRoots`, empty by default). Staging any other path needs the operator as caller, and a refused stage answers with the places an agent may stage from. Decided 2026-11-01: an agent must not turn the daemon's read access into a way to admit arbitrary files (`~/.ssh`) as events. The caller is the daemon's computed author; once Sinex adopts common's `author_of(caller, via)`, "the operator" is its `Author::Operator`.
@@ -183,7 +183,7 @@ stage op:01J9…  takeout-20261101 (3 parts, 4.7 GiB, stored as received)
   covers 2010-01-04 … 2026-10-31 · paced by: writer (derivations have priority)
 ```
 
-- `stage PATH… [--parser NAME] [--account NAME] [--export-date DATE] [--follow]` returns the operation and the inventory; `--follow` prints the live inventory and ends with the operation's outcome. `stage list [--active]` and `stage show OP` read it later; the web Stage page is a drop zone plus the same list.
+- `stage PATH… [--parser NAME] [--account NAME] [--export-date DATE] [--follow] [--batch-events N]` returns the operation and the inventory; `--follow` prints the live inventory and ends with the operation's outcome. `stage list [--active]` and `stage show OP` read it later; the web Stage page is a drop zone plus the same list.
 - Every status-like answer names what holds work back (`paced by: writer serving derivations`, `paced by: provider backoff until 10:42`) and shows no estimate unless the rate has held steady for 30 s.
 - Materials stored without a parser are a queue with a visible size.
 

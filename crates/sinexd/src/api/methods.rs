@@ -577,6 +577,7 @@ impl Api {
                 account,
                 export_date,
                 follow,
+                batch_events,
             } => {
                 self.stage(
                     caller,
@@ -585,6 +586,7 @@ impl Api {
                     account,
                     export_date,
                     follow.unwrap_or(false),
+                    batch_events,
                 )
                 .await
             }

@@ -657,6 +657,11 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Bool,
                 "wait for the stage to end and return its final inventory and accounting",
             ),
+            opt(
+                "batch-events",
+                ArgKind::Integer,
+                "readings per admission batch instead of 10,000; smaller batches commit more often",
+            ),
         ],
         access: Access::Agent,
         mcp: true,

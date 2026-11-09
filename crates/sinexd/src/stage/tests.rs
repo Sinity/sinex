@@ -13,6 +13,7 @@ fn request(items: Vec<Item>) -> Request {
         export_date: Some("2030-01-02".into()),
         host: "fixture-host".into(),
         zone: Some("UTC".into()),
+        batch_events: None,
     }
 }
 
