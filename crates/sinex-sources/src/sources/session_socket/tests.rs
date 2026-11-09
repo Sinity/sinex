@@ -447,3 +447,42 @@ fn capture_keeps_repository_and_terminal_identity_beside_each_recorded_cwd() {
         assert_eq!(extra["terminal_identity"]["window_id"], "7");
     }
 }
+
+/// The same fixture Polylogue's repository lookup and session hook assert:
+/// a repository whose history merges two unrelated roots. Both products read
+/// it through common's `git-identity`, so both record the sorted pair.
+#[test]
+fn git_identity_roots_equal_across_products() {
+    use std::process::Command;
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    let first = git(&["rev-parse", "HEAD"]);
+    git(&["checkout", "-q", "--orphan", "other"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "second"]);
+    let second = git(&["rev-parse", "HEAD"]);
+    git(&["checkout", "-q", "main"]);
+    git(&[
+        "merge",
+        "-q",
+        "--allow-unrelated-histories",
+        "--no-edit",
+        "other",
+    ]);
+    let mut both = vec![first, second];
+    both.sort();
+    let identity = git_identity(dir.path(), Duration::from_secs(20)).expect("a repository");
+    assert_eq!(identity.root_commits, both);
+    assert_eq!(identity.branch.as_deref(), Some("main"));
+}
