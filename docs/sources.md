@@ -93,7 +93,7 @@ One driver per shape, shared by every source of that shape:
 | directory capture | per file, the change classifier; a path missing from a completed scan is recorded apart from any move | each changed file, or the whole selection, as a [PAX tar material](#directory-captures) |
 | journal | the journal cursor | journal export-format bytes in rotating parts |
 | live IPC stream | the stream itself | captured bytes with capture timestamps in the stream's spool ([streams](streams.md)) |
-| live media | the capture process | encoded segments in the media spool |
+| live media | the capture process | encoded segments in the media spool; a segment and its sidecar are synced before they get their final names, so a listed segment is always whole |
 | API cursor | the provider's cursor or page token | each response body as received, with its request metadata |
 | export archive | the archive's hash | the archive stored as received; records anchored in its member stream; one forward pass serves every binding that reads the archive, each with its own parts and cursor |
 | file drop | new files | each file as received |

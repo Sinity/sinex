@@ -313,6 +313,25 @@ pub async fn set_consumer_position(
     Ok(())
 }
 
+/// Move a consumer's saved position back to `commit_seq`. Used only when the
+/// confirmed stream lost messages the position covered (a host crash before
+/// JetStream synced them), so the lost positions are published again.
+pub async fn rewind_consumer_position(
+    conn: &mut PgConnection,
+    consumer: &str,
+    commit_seq: i64,
+) -> Result<()> {
+    sqlx::query!(
+        r#"UPDATE core.consumer_positions SET commit_seq = $2, change_seq = 0, updated_at = now()
+           WHERE consumer = $1 AND commit_seq > $2"#,
+        consumer,
+        commit_seq,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// What Sinex recorded for one ingress frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredFrame {
@@ -433,6 +452,23 @@ pub async fn producer_materials(
 #[cfg(test)]
 pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]) -> Result<()> {
     record_published_in(conn, "", published).await
+}
+
+/// Forget every recorded stream position above `last_seq`: the stream no
+/// longer holds those messages, and its next messages will reuse the numbers.
+pub async fn forget_published_above(
+    conn: &mut PgConnection,
+    stream_instance: &str,
+    last_seq: i64,
+) -> Result<u64> {
+    Ok(sqlx::query!(
+        "DELETE FROM core.published WHERE stream_instance = $1 AND stream_seq > $2",
+        stream_instance,
+        last_seq,
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected())
 }
 
 pub async fn record_published_in(
