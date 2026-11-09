@@ -112,7 +112,7 @@ with `gh pr checks`.
 | `cargo xtask test -p <crate> -E 'test(<name>)'` | selected Rust tests under nextest |
 | `cargo xtask test` | every Rust test and bounded fuzz-corpus replay |
 | `cargo xtask test --no-run` | build every test binary without running tests |
-| `cargo xtask warm` | build every test binary and run the workspace and fuzz Clippy without running tests: the warm target new checkouts copy |
+| `cargo xtask warm` | build every test binary and run the workspace and fuzz Clippy without running tests |
 | `cargo xtask run --watch --output DIR` | an isolated development stack and watched rebuilds |
 | `cargo xtask vm --output DIR` | the module check and three exported NixOS VM scenarios |
 | `cargo xtask coverage --output DIR --format html -- -p <crate>` | LLVM coverage of selected tests |
