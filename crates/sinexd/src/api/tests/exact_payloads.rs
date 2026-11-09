@@ -129,8 +129,10 @@ async fn no_rules_preserve_credential_shaped_request_errors(db: devkit::pg::Test
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let body: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["outcome"], "failed", "{body}");
+        // The query refusal shows the submitted line, unmasked, under its caret.
+        assert_eq!(body["failure"]["kind"], "invalid_query", "{body}");
         assert!(
-            body["failure"]["message"].as_str().unwrap().contains(&text),
+            body["failure"]["caret"].as_str().unwrap().contains(&text),
             "{body}"
         );
     }
