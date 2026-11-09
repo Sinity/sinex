@@ -18,7 +18,8 @@ cargo xtask compile -p sinex-model
 nix build
 ```
 
-Entering the shell configures `.githooks` when Git has no hooks path. The
+Entering the shell configures `.githooks` when Git has no hooks path; its
+commit hook checks staged whitespace and formats staged Rust files. The
 xtask command owns any services its run needs.
 
 `direnv allow` loads the same shell through `.envrc`. Its ignored

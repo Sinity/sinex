@@ -148,10 +148,10 @@ operator's host does so with AgentCTL, whose descriptor in `.agentctl/`
 carries only host tuning. Use it where your environment provides it; the
 commands and their results are the same either way.
 
-The pre-push hook (`.githooks/pre-push`, with its own test) runs `cargo fmt
---check` and `cargo xtask boundaries` when Rust inputs changed. There is no
-hosted CI for now; `nix flake check` and `cargo xtask test` are written so it
-can be added.
+The pre-commit hook checks whitespace and formatting of staged files in
+seconds. Crate boundaries, Clippy and tests run in `cargo xtask check` and
+`cargo xtask test`, which GitHub Actions runs for every pull request; pull
+requests run the tests their changes can affect, and master runs all of them.
 
 **Performance is a product goal.** The pipeline overlaps every stage:
 acquisition, parsing on blocking workers, one writer that takes one
