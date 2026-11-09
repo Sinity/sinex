@@ -672,7 +672,7 @@ pub(crate) const REVISIONS_BY_INPUT: &str = "CREATE INDEX IF NOT EXISTS revision
 /// chunks keep no B-tree, so their commit-position ranges exclude the chunks
 /// wholly before it.
 pub(crate) const EVENTS_COMMIT_SEQ_SKIPPING: &str =
-    "SELECT enable_chunk_skipping('core.events', 'commit_seq')";
+    "SELECT enable_chunk_skipping('core.events', 'commit_seq', if_not_enabled => true)";
 
 pub(crate) const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
   event_id uuid PRIMARY KEY,
