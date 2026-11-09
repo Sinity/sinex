@@ -213,10 +213,8 @@ impl KindDeclaration {
     }
 
     pub fn definition_hash(&self) -> String {
-        let value = serde_json::to_value(self).expect("declarations serialize");
-        blake3::hash(&serde_json::to_vec(&sorted_json(&value)).expect("JSON serializes"))
-            .to_hex()
-            .to_string()
+        let canonical = canonical_json::canonical_json(self).expect("declarations serialize");
+        blake3::hash(&canonical).to_hex().to_string()
     }
 
     pub fn evaluate(&self, payload: &Value, class: Class) -> Result<Evaluated, String> {
@@ -321,20 +319,6 @@ impl KindDeclaration {
             owned_blobs,
             class,
         })
-    }
-}
-
-pub fn sorted_json(value: &Value) -> Value {
-    match value {
-        Value::Object(object) => {
-            let sorted: std::collections::BTreeMap<_, _> = object
-                .iter()
-                .map(|(k, v)| (k.clone(), sorted_json(v)))
-                .collect();
-            Value::Object(sorted.into_iter().collect())
-        }
-        Value::Array(values) => Value::Array(values.iter().map(sorted_json).collect()),
-        value => value.clone(),
     }
 }
 

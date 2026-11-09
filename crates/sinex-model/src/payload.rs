@@ -29,8 +29,10 @@ pub enum ReplaceRule {
     SuppressRepeat,
 }
 
-/// The key under which a keyed record is remembered: BLAKE3 over the sorted
-/// JSON of its key fields, in declared order.
+/// The key under which a keyed record is remembered: BLAKE3 of the event type,
+/// a zero byte and the canonical JSON array of its key fields' values in
+/// declared order (common's canonical JSON: object keys sorted, numbers as
+/// held).
 #[derive(
     Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -46,15 +48,9 @@ impl EquivalenceKey {
             .iter()
             .map(|f| payload.get(*f).unwrap_or(&Value::Null))
             .collect();
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(event_type.as_bytes());
-        hasher.update(&[0]);
-        hasher.update(
-            serde_json::to_string(&values)
-                .expect("JSON values always serialize")
-                .as_bytes(),
-        );
-        Self(hasher.finalize().to_hex().to_string())
+        let hash = canonical_json::canonical_hash(event_type, &values)
+            .expect("JSON values always serialize");
+        Self(hash.to_hex().to_string())
     }
 }
 

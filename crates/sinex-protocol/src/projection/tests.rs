@@ -1,10 +1,10 @@
 use super::*;
 #[devkit::test]
-fn sjson1_hashes_sorted_nested_objects_and_numeric_unicode_values_without_source_hash_claims() {
+fn record_hash_uses_common_canonical_bytes() {
     let value:Value=serde_json::from_str(r#"{"𝄞":{"z":null,"a":true},"negative_zero":-0.0,"unicode":"é𝄞","large":18446744073709551615,"float":1.25,"escapes":"\n\\\"","array":[3,{"z":2,"a":1}],"":false}"#).unwrap();
     let golden = r#"{"array":[3,{"a":1,"z":2}],"escapes":"\n\\\"","float":1.25,"large":18446744073709551615,"negative_zero":-0.0,"unicode":"é𝄞","":false,"𝄞":{"a":true,"z":null}}"#;
     assert_eq!(
-        String::from_utf8(sinex_model::json_identity::bytes(&value)).unwrap(),
+        String::from_utf8(canonical_json::canonical_json(&value).unwrap()).unwrap(),
         golden
     );
     let identity = ProjectionIdentity::for_payload(&value);

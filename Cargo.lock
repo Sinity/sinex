@@ -4498,6 +4498,7 @@ version = "0.1.0"
 dependencies = [
  "authored",
  "blake3",
+ "canonical-json",
  "devkit",
  "jiff",
  "serde",
@@ -4553,6 +4554,7 @@ version = "0.1.0"
 dependencies = [
  "authored",
  "blake3",
+ "canonical-json",
  "caseless",
  "devkit",
  "jiff",
@@ -4576,6 +4578,7 @@ name = "sinex-protocol"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "canonical-json",
  "clap",
  "devkit",
  "query-language",
@@ -4786,6 +4789,7 @@ dependencies = [
  "base64 0.23.1",
  "bcrypt",
  "blake3",
+ "canonical-json",
  "clap",
  "devkit",
  "flate2",

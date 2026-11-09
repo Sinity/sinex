@@ -15,6 +15,24 @@ fn key_depends_on_type_fields_and_order() {
 }
 
 #[devkit::test]
+fn equivalence_key_independent_of_object_key_order() {
+    // The workspace builds serde_json with preserve_order, so these parsed
+    // objects keep their members in the order written.
+    let forward: Value = serde_json::from_str(r#"{"id": {"x": 1, "y": [2]}}"#).unwrap();
+    let reverse: Value = serde_json::from_str(r#"{"id": {"y": [2], "x": 1}}"#).unwrap();
+    assert_ne!(forward.to_string(), reverse.to_string());
+    let key = EquivalenceKey::of("t", &["id"], &forward);
+    assert_eq!(key, EquivalenceKey::of("t", &["id"], &reverse));
+    // The bytes are common's canonical JSON under the event type as its tag.
+    assert_eq!(
+        key.0,
+        blake3::hash(b"t\0[{\"x\":1,\"y\":[2]}]")
+            .to_hex()
+            .to_string()
+    );
+}
+
+#[devkit::test]
 fn missing_key_field_is_null() {
     assert_eq!(
         EquivalenceKey::of("t", &["a"], &json!({})),

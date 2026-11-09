@@ -12,7 +12,6 @@ pub mod clock;
 pub mod event;
 pub mod event_types;
 pub mod id;
-pub mod json_identity;
 pub mod kinds;
 pub mod lifecycle;
 pub mod manifest;
