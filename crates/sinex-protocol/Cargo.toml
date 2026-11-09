@@ -15,11 +15,12 @@ query-language.workspace = true
 signals.workspace = true
 sinex-model.workspace = true
 serde.workspace = true
+blake3.workspace = true
+canonical-json.workspace = true
 serde_json.workspace = true
 clap = { workspace = true, optional = true }
 
 [dev-dependencies]
-blake3.workspace = true
 devkit.workspace = true
 
 [lints]

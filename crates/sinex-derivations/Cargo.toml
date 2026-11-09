@@ -10,6 +10,7 @@ license.workspace = true
 sinex-model.workspace = true
 authored.workspace = true
 serde.workspace = true
+canonical-json.workspace = true
 serde_json.workspace = true
 time.workspace = true
 blake3.workspace = true

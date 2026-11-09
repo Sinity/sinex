@@ -138,7 +138,7 @@ pub fn payload_hash(payload: &Value, parents: &[EventId]) -> [u8; 32] {
     let mut sorted = parents.to_vec();
     sorted.sort_unstable();
     let mut hasher = blake3::Hasher::new();
-    hasher.update(payload.to_string().as_bytes());
+    hasher.update(&canonical_json::canonical_json(payload).expect("JSON values serialize"));
     for parent in sorted {
         hasher.update(parent.0.as_bytes());
     }

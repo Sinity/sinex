@@ -17,9 +17,9 @@ impl SourceDeclaration {
     pub fn fingerprint(&self) -> String {
         let mut normalized = self.clone();
         normalized.kinds.sort_by(|a, b| a.kind.cmp(&b.kind));
-        crate::json_identity::hash(
-            &serde_json::to_value(normalized).expect("source declarations serialize"),
-        )
+        let canonical =
+            canonical_json::canonical_json(&normalized).expect("source declarations serialize");
+        blake3::hash(&canonical).to_hex().to_string()
     }
 
     pub fn allows(&self, kind: &crate::KindRef, hash: &str) -> bool {
@@ -43,9 +43,9 @@ impl ProjectionCatalog {
     pub fn fingerprint(&self) -> String {
         let mut normalized = self.clone();
         normalized.kinds.sort_by(|a, b| a.kind.cmp(&b.kind));
-        crate::json_identity::hash(
-            &serde_json::to_value(normalized).expect("projection catalogs serialize"),
-        )
+        let canonical =
+            canonical_json::canonical_json(&normalized).expect("projection catalogs serialize");
+        blake3::hash(&canonical).to_hex().to_string()
     }
 }
 

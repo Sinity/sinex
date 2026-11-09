@@ -121,9 +121,14 @@ fn contract(
         .collect::<Vec<_>>();
     sources.sort();
     sources.dedup();
-    let catalog = sinex_model::json_identity::hash(
-        &serde_json::json!({"contract":"sinex.indexed_projection.v1","indexed":artifact.fingerprint(),"raw":raw,"sources":sources}),
-    );
+    let catalog = blake3::hash(
+        &canonical_json::canonical_json(
+            &serde_json::json!({"contract":"sinex.indexed_projection.v1","indexed":artifact.fingerprint(),"raw":raw,"sources":sources}),
+        )
+        .expect("JSON values serialize"),
+    )
+    .to_hex()
+    .to_string();
     let mut classes = grant
         .classes
         .iter()
@@ -410,8 +415,12 @@ impl Requests {
                     source_fingerprint: row.source_fingerprint,
                 });
             }
-            cursor.chain =
-                sinex_model::json_identity::hash(&serde_json::json!([cursor.chain, &inputs]));
+            cursor.chain = blake3::hash(
+                &canonical_json::canonical_json(&(&cursor.chain, &inputs))
+                    .expect("coverage inputs serialize"),
+            )
+            .to_hex()
+            .to_string();
             if !more {
                 cursor.claims.replay_root = Some(cursor.chain.clone());
             }

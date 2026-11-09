@@ -94,7 +94,7 @@ from another export therefore compares with its existing live reading.
 
 ### Key kinds
 
-Each kind declares exactly one key kind, or explicitly none; the builder cannot omit the declaration. A source may declare its own key for its events of a kind. The key includes the source, so two sources' keys never meet. One shared function builds every key from exactly the declared fields: parts are length-encoded, never joined with a separator, and long keys are hashed whole with full equality kept (a short hash without collision equality is not a key).
+Each kind declares exactly one key kind, or explicitly none; the builder cannot omit the declaration. A source may declare its own key for its events of a kind. The key includes the source, so two sources' keys never meet. One shared function builds every key from exactly the declared fields: BLAKE3 of the event type, a zero byte, and the declared fields' values as a JSON array in [canonical JSON](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/canonical-json/README.md) (object keys sorted at every depth, numbers as the parsed value holds them), so a key field holding an object gives the same key whatever order its members arrived in.
 
 | Key kind | Key | Used by |
 |---|---|---|
@@ -137,8 +137,10 @@ A number set when the record is read:
 The reading's revision fingerprint:
 
 - BLAKE3 of the record's material bytes;
-- when the source declares volatile fields, BLAKE3 of the parsed record without them, as sorted-key JSON;
-- for a derived event, BLAKE3 of the sorted-key payload.
+- when the source declares volatile fields, BLAKE3 of the parsed record without them, as canonical JSON;
+- for a derived event, BLAKE3 of the payload as canonical JSON.
+
+Canonical JSON is the shared encoding every identity hash in Sinex and Polylogue reads (the link above): object keys sorted at every depth, no whitespace, numbers and strings as serde_json writes the parsed value.
 
 It is computed over source bytes, before and independent of any privacy rule, so a rule never changes what counts as a repeat.
 
