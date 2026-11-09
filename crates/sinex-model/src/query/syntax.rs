@@ -163,7 +163,38 @@ pub fn parse(text: &str, ctx: &Context) -> Result<query_language::ast::Query, Qu
             format!("`{first}` is a Sinex operation, not a relation query"),
         ));
     }
-    query_language::parse::parse(text, &catalog).map_err(error)
+    // The shared parser recurses once per parenthesis and negation; it runs
+    // on a stack sized for this text's nesting, so no query text can
+    // overflow the daemon's stack.
+    stacker::maybe_grow(parse_stack(text), parse_stack(text), || {
+        query_language::parse::parse(text, &catalog)
+    })
+    .map_err(error)
+}
+
+/// Stack bytes the shared parser may need for `text`: a fixed base plus a
+/// share for each level of nesting the text could open (each `(` still open
+/// and each negation word or sign).
+fn parse_stack(text: &str) -> usize {
+    let mut open = 0usize;
+    let mut deepest = 0usize;
+    for c in text.chars() {
+        match c {
+            '(' => {
+                open += 1;
+                deepest = deepest.max(open);
+            }
+            ')' => open = open.saturating_sub(1),
+            _ => {}
+        }
+    }
+    let negations = text
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+        .filter(|word| {
+            word.eq_ignore_ascii_case("not") || word.starts_with('-') || word.starts_with('!')
+        })
+        .count();
+    1024 * 1024 + (deepest + negations) * 64 * 1024
 }
 pub fn error(e: query_language::Error) -> QueryError {
     let not_built = e.kind == query_language::ErrorKind::NotAQuery;

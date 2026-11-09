@@ -44,10 +44,10 @@ fn bare_words_search_events() {
         }
     );
     assert!(query.ranked);
-    let Some(Expr::And(a, b)) = query.filter else {
+    let Some(Expr::And(a, b)) = &query.filter else {
         panic!("two words are joined with and")
     };
-    let terms = [*a, *b];
+    let terms = [&**a, &**b];
     assert!(
         terms
             .iter()
@@ -63,10 +63,10 @@ fn bare_words_search_events() {
 #[devkit::test]
 fn quoted_phrases_and_prefixes() {
     let query = q(r#""cargo test" deploy*"#);
-    let Some(Expr::And(a, b)) = query.filter else {
+    let Some(Expr::And(a, b)) = &query.filter else {
         panic!()
     };
-    let terms = [*a, *b];
+    let terms = [&**a, &**b];
     assert!(
         terms
             .iter()
@@ -160,10 +160,10 @@ fn field_colon_value_means_equals() {
 #[devkit::test]
 fn and_binds_tighter_than_or_and_both_bounds_are_kept() {
     let query = q("events where source = a OR source = b AND event_type = c");
-    let Some(Expr::Or(left, right)) = query.filter else {
+    let Some(Expr::Or(left, right)) = &query.filter else {
         panic!("or at the top")
     };
-    let branches = [*left, *right];
+    let branches = [&**left, &**right];
     assert!(branches.iter().any(|term| matches!(term,
         Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::Text(value) }
         if field.name == "source" && value == "a"
@@ -270,10 +270,10 @@ fn a_bare_duration_with_an_ordering_is_refused() {
 #[devkit::test]
 fn payload_paths_use_their_schema_types() {
     let query = q("events where payload.exit_code > 0 AND payload.url ~ github");
-    let Some(Expr::And(a, b)) = query.filter else {
+    let Some(Expr::And(a, b)) = &query.filter else {
         panic!()
     };
-    let terms = [*a, *b];
+    let terms = [&**a, &**b];
     assert!(terms.iter().any(|term| matches!(term,
         Expr::Compare { lhs: Operand::Field(FieldRef::TypedPayload { path, ty: FieldType::Integer }), op: Op::Gt, rhs: Value::Text(value) }
         if path == &["exit_code"] && value == "0"
@@ -297,10 +297,10 @@ fn payload_paths_use_their_schema_types() {
 fn lists_and_exists() {
     let query =
         q("events where event_type = (command.executed |command.imported) AND NOT material:known");
-    let Some(Expr::And(a, b)) = query.filter else {
+    let Some(Expr::And(a, b)) = &query.filter else {
         panic!()
     };
-    let terms = [*a, *b];
+    let terms = [&**a, &**b];
     assert!(terms.iter().any(|term| matches!(term,
         Expr::Compare { lhs: Operand::Field(FieldRef::Field(field)), op: Op::Eq, rhs: Value::List(values) }
         if field.name == "event_type" && values == &[Value::Text("command.executed".into()), Value::Text("command.imported".into())]
@@ -766,3 +766,39 @@ fn curation_fields_bind_without_shadowing_core_fields() {
 }
 
 mod expressions;
+
+mod depth {
+    use super::*;
+
+    #[devkit::test]
+    fn deeply_nested_negations_bind_and_read_back_without_overflowing_the_stack() {
+        let text = format!("events where {}source = 'synthetic'", "not ".repeat(20_000));
+        let query = q(&text);
+        assert!(read_as(&query).contains("not ("));
+    }
+
+    #[devkit::test]
+    fn deeply_nested_parentheses_bind_without_overflowing_the_stack() {
+        let depth = 20_000;
+        let text = format!(
+            "events where {}source = 'synthetic'{}",
+            "(".repeat(depth),
+            ")".repeat(depth)
+        );
+        assert!(read_as(&q(&text)).contains("synthetic"));
+    }
+
+    #[devkit::test]
+    fn a_long_chain_of_conditions_binds_reads_back_and_drops() {
+        let text = format!(
+            "events where {}",
+            (0..20_000)
+                .map(|i| format!("source = 's{i}'"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        );
+        let query = q(&text);
+        assert!(read_as(&query).contains("s19999"));
+        drop(query);
+    }
+}

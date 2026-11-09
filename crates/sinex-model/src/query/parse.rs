@@ -578,227 +578,234 @@ impl Binder<'_> {
         scope: &Scope,
         path: &NodePath,
     ) -> Result<Expr, QueryError> {
-        use syntax::ConditionKind as C;
-        let at = c.span.start;
-        Ok(match &c.kind {
-            C::And { conditions } | C::Or { conditions } => {
-                let mut iter = conditions.iter().enumerate();
-                let mut out = self.condition(
-                    iter.next()
-                        .ok_or_else(|| QueryError::at(at, "empty condition"))?
-                        .1,
-                    scope,
-                    &path.field("kind").field("conditions").index(0),
-                )?;
-                for (index, c2) in iter {
-                    let rhs = self.condition(
-                        c2,
+        super::ensure_stack(|| {
+            use syntax::ConditionKind as C;
+            let at = c.span.start;
+            Ok(match &c.kind {
+                C::And { conditions } | C::Or { conditions } => {
+                    let mut iter = conditions.iter().enumerate();
+                    let mut out = self.condition(
+                        iter.next()
+                            .ok_or_else(|| QueryError::at(at, "empty condition"))?
+                            .1,
                         scope,
-                        &path.field("kind").field("conditions").index(index),
+                        &path.field("kind").field("conditions").index(0),
                     )?;
-                    out = if matches!(c.kind, C::And { .. }) {
-                        Expr::And(Box::new(out), Box::new(rhs))
-                    } else {
-                        Expr::Or(Box::new(out), Box::new(rhs))
-                    };
+                    for (index, c2) in iter {
+                        let rhs = self.condition(
+                            c2,
+                            scope,
+                            &path.field("kind").field("conditions").index(index),
+                        )?;
+                        out = if matches!(c.kind, C::And { .. }) {
+                            Expr::And(Box::new(out), Box::new(rhs))
+                        } else {
+                            Expr::Or(Box::new(out), Box::new(rhs))
+                        };
+                    }
+                    out
                 }
-                out
-            }
-            C::Not { condition } => Expr::Not(Box::new(self.condition(
-                condition,
-                scope,
-                &path.field("kind").field("condition"),
-            )?)),
-            C::Match { field, value } => self.natural_match(field, value, scope, at)?,
-            C::Compare { left, op, right } => {
-                let lhs = self.operand(left, scope, at)?;
-                match right {
-                    syntax::Expression::Value { value } => self.comparison(lhs, *op, value, at)?,
-                    expression => Expr::Compare {
-                        lhs,
-                        op: *op,
-                        rhs: Value::Operand(Box::new(self.operand(expression, scope, at)?)),
-                    },
+                C::Not { condition } => Expr::Not(Box::new(self.condition(
+                    condition,
+                    scope,
+                    &path.field("kind").field("condition"),
+                )?)),
+                C::Match { field, value } => self.natural_match(field, value, scope, at)?,
+                C::Compare { left, op, right } => {
+                    let lhs = self.operand(left, scope, at)?;
+                    match right {
+                        syntax::Expression::Value { value } => {
+                            self.comparison(lhs, *op, value, at)?
+                        }
+                        expression => Expr::Compare {
+                            lhs,
+                            op: *op,
+                            rhs: Value::Operand(Box::new(self.operand(expression, scope, at)?)),
+                        },
+                    }
                 }
-            }
-            C::Since { field, value } | C::Until { field, value } => {
-                let lhs = Operand::Field(self.resolve(field, scope, at)?);
-                let resolved =
-                    query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
-                        .map_err(super::syntax::error)?;
-                let until = matches!(c.kind, C::Until { .. });
-                let bound = if until {
-                    resolved.value.until_bound()
-                } else {
-                    resolved.value.start()
-                };
-                Expr::Compare {
-                    lhs,
-                    op: if until { Op::Lt } else { Op::Ge },
-                    rhs: Value::Time(bound),
-                }
-            }
-            C::Rank {
-                list: syntax::RankList::Similar,
-                value,
-            } => {
-                let raw = self.scalar(value, at)?;
-                let reference=super::reference::parse_id(raw).ok_or_else(||QueryError::not_built(at,"similar requires a supplied text.embedding event reference; no embedding provider is configured for text"))?;
-                Expr::Similar { reference }
-            }
-            C::Text { text, mode } => {
-                if *mode == syntax::TextMode::Approximate {
-                    return Err(QueryError::not_built(at, "approximate search is not built"));
-                }
-                let words = text::words(text);
-                if words.is_empty() {
-                    return Err(QueryError::at(at, "search contains no words"));
-                }
-                Expr::Words(Words {
-                    phrase: *mode == syntax::TextMode::Phrase || words.len() > 1,
-                    prefix: *mode == syntax::TextMode::Prefix,
-                    words,
-                })
-            }
-            C::TimeRange { left, value } => {
-                let lhs = self.operand(left, scope, at)?;
-                let field = match &lhs {
-                    Operand::Field(f) | Operand::TimeFn(_, f) => f,
-                    _ => return Err(QueryError::at(at, "time range requires a time field")),
-                };
-                self.time_field(field, scope, at)?;
-                let r = query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
-                    .map_err(super::syntax::error)?
-                    .value
-                    .range()
-                    .ok_or_else(|| QueryError::at(at, "expected a time range"))?;
-                Expr::Within {
-                    lhs,
-                    from: r.start,
-                    to: r.end,
-                }
-            }
-            C::Between { left, from, to } => {
-                let lhs = self.operand(left, scope, at)?;
-                let a = self.comparison(lhs.clone(), Op::Ge, from, at)?;
-                let b = self.comparison(lhs, Op::Le, to, at)?;
-                Expr::And(Box::new(a), Box::new(b))
-            }
-            C::Extension { name, arguments } if name == "holding" || name == "overlaps" => {
-                use syntax::ExtensionArgument as A;
-                let (from, to) = if name == "holding" {
-                    let [A::Name(mode), A::Value(value)] = arguments.as_slice() else {
-                        return Err(QueryError::at(
-                            at,
-                            "holding takes at INSTANT or during PERIOD",
-                        ));
-                    };
+                C::Since { field, value } | C::Until { field, value } => {
+                    let lhs = Operand::Field(self.resolve(field, scope, at)?);
                     let resolved =
                         query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
+                            .map_err(super::syntax::error)?;
+                    let until = matches!(c.kind, C::Until { .. });
+                    let bound = if until {
+                        resolved.value.until_bound()
+                    } else {
+                        resolved.value.start()
+                    };
+                    Expr::Compare {
+                        lhs,
+                        op: if until { Op::Lt } else { Op::Ge },
+                        rhs: Value::Time(bound),
+                    }
+                }
+                C::Rank {
+                    list: syntax::RankList::Similar,
+                    value,
+                } => {
+                    let raw = self.scalar(value, at)?;
+                    let reference=super::reference::parse_id(raw).ok_or_else(||QueryError::not_built(at,"similar requires a supplied text.embedding event reference; no embedding provider is configured for text"))?;
+                    Expr::Similar { reference }
+                }
+                C::Text { text, mode } => {
+                    if *mode == syntax::TextMode::Approximate {
+                        return Err(QueryError::not_built(at, "approximate search is not built"));
+                    }
+                    let words = text::words(text);
+                    if words.is_empty() {
+                        return Err(QueryError::at(at, "search contains no words"));
+                    }
+                    Expr::Words(Words {
+                        phrase: *mode == syntax::TextMode::Phrase || words.len() > 1,
+                        prefix: *mode == syntax::TextMode::Prefix,
+                        words,
+                    })
+                }
+                C::TimeRange { left, value } => {
+                    let lhs = self.operand(left, scope, at)?;
+                    let field = match &lhs {
+                        Operand::Field(f) | Operand::TimeFn(_, f) => f,
+                        _ => return Err(QueryError::at(at, "time range requires a time field")),
+                    };
+                    self.time_field(field, scope, at)?;
+                    let r =
+                        query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
                             .map_err(super::syntax::error)?
-                            .value;
-                    match mode.as_str() {
-                        "at" => (resolved.start(), None),
-                        "during" => {
-                            let range = resolved.range().ok_or_else(|| {
-                                QueryError::at(at, "holding during takes a period")
-                            })?;
-                            (range.start, Some(range.end))
-                        }
-                        _ => {
+                            .value
+                            .range()
+                            .ok_or_else(|| QueryError::at(at, "expected a time range"))?;
+                    Expr::Within {
+                        lhs,
+                        from: r.start,
+                        to: r.end,
+                    }
+                }
+                C::Between { left, from, to } => {
+                    let lhs = self.operand(left, scope, at)?;
+                    let a = self.comparison(lhs.clone(), Op::Ge, from, at)?;
+                    let b = self.comparison(lhs, Op::Le, to, at)?;
+                    Expr::And(Box::new(a), Box::new(b))
+                }
+                C::Extension { name, arguments } if name == "holding" || name == "overlaps" => {
+                    use syntax::ExtensionArgument as A;
+                    let (from, to) = if name == "holding" {
+                        let [A::Name(mode), A::Value(value)] = arguments.as_slice() else {
                             return Err(QueryError::at(
                                 at,
                                 "holding takes at INSTANT or during PERIOD",
                             ));
+                        };
+                        let resolved = query_language::time::resolve(
+                            self.scalar(value, at)?,
+                            &self.ctx.clock()?,
+                        )
+                        .map_err(super::syntax::error)?
+                        .value;
+                        match mode.as_str() {
+                            "at" => (resolved.start(), None),
+                            "during" => {
+                                let range = resolved.range().ok_or_else(|| {
+                                    QueryError::at(at, "holding during takes a period")
+                                })?;
+                                (range.start, Some(range.end))
+                            }
+                            _ => {
+                                return Err(QueryError::at(
+                                    at,
+                                    "holding takes at INSTANT or during PERIOD",
+                                ));
+                            }
                         }
+                    } else {
+                        let [A::Value(from), A::Optional(rest)] = arguments.as_slice() else {
+                            return Err(QueryError::at(at, "invalid interval arguments"));
+                        };
+                        let end = match rest.as_slice() {
+                            [] => None,
+                            [A::Keyword(_), A::Value(to)] => Some(self.instant(to, at)?),
+                            _ => return Err(QueryError::at(at, "invalid interval end")),
+                        };
+                        (self.instant(from, at)?, end)
+                    };
+                    if to.is_some_and(|to| to <= from) {
+                        return Err(QueryError::at(at, "interval end must follow its start"));
                     }
-                } else {
-                    let [A::Value(from), A::Optional(rest)] = arguments.as_slice() else {
-                        return Err(QueryError::at(at, "invalid interval arguments"));
-                    };
-                    let end = match rest.as_slice() {
-                        [] => None,
-                        [A::Keyword(_), A::Value(to)] => Some(self.instant(to, at)?),
-                        _ => return Err(QueryError::at(at, "invalid interval end")),
-                    };
-                    (self.instant(from, at)?, end)
-                };
-                if to.is_some_and(|to| to <= from) {
-                    return Err(QueryError::at(at, "interval end must follow its start"));
+                    Expr::Overlaps { from, to }
                 }
-                Expr::Overlaps { from, to }
-            }
-            C::Order {
-                relation,
-                query,
-                within,
-                at: point,
-                scope: order_scope,
-                pick,
-            } => {
-                let on = self.order_on(
-                    *relation,
-                    within.as_ref(),
-                    *point,
-                    order_scope.as_deref(),
-                    at,
-                )?;
-                let inner_path = path.field("kind").field("query");
-                let inner_scope = self.output_scope(&inner_path)?;
-                let pick = match pick {
-                    syntax::MatchChoice::Nearest => Vec::new(),
-                    syntax::MatchChoice::FirstBy { keys } => keys
-                        .iter()
-                        .enumerate()
-                        .map(|(index, key)| {
-                            Ok(SortKey {
-                                key: SortBy::Operand(
-                                    self.operand_at(
-                                        &key.expression,
-                                        &inner_scope,
-                                        at,
-                                        Some(
-                                            &path
-                                                .field("kind")
-                                                .field("pick")
-                                                .field("keys")
-                                                .index(index)
-                                                .field("expression"),
-                                        ),
-                                    )?,
-                                ),
-                                descending: key.descending,
-                            })
-                        })
-                        .collect::<Result<Vec<_>, QueryError>>()?,
-                };
-                Expr::Order(Box::new(Join {
-                    on,
+                C::Order {
+                    relation,
+                    query,
+                    within,
+                    at: point,
+                    scope: order_scope,
                     pick,
-                    columns: self.inner_columns(&inner_scope, at)?,
-                    required: vec![],
-                    inner: Box::new(self.query((**query).clone(), &inner_path)?),
-                }))
-            }
-            C::Reference { reference } => {
-                let Reference::Event(id) = super::reference::parse_reference(reference)? else {
-                    return Err(QueryError::at(
+                } => {
+                    let on = self.order_on(
+                        *relation,
+                        within.as_ref(),
+                        *point,
+                        order_scope.as_deref(),
                         at,
-                        "use read or trace for a source-coordinate reference",
-                    ));
-                };
-                Expr::Compare {
-                    lhs: Operand::Field(self.resolve("id", scope, at)?),
-                    op: Op::Eq,
-                    rhs: Value::Id(id),
+                    )?;
+                    let inner_path = path.field("kind").field("query");
+                    let inner_scope = self.output_scope(&inner_path)?;
+                    let pick = match pick {
+                        syntax::MatchChoice::Nearest => Vec::new(),
+                        syntax::MatchChoice::FirstBy { keys } => keys
+                            .iter()
+                            .enumerate()
+                            .map(|(index, key)| {
+                                Ok(SortKey {
+                                    key: SortBy::Operand(
+                                        self.operand_at(
+                                            &key.expression,
+                                            &inner_scope,
+                                            at,
+                                            Some(
+                                                &path
+                                                    .field("kind")
+                                                    .field("pick")
+                                                    .field("keys")
+                                                    .index(index)
+                                                    .field("expression"),
+                                            ),
+                                        )?,
+                                    ),
+                                    descending: key.descending,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, QueryError>>()?,
+                    };
+                    Expr::Order(Box::new(Join {
+                        on,
+                        pick,
+                        columns: self.inner_columns(&inner_scope, at)?,
+                        required: vec![],
+                        inner: Box::new(self.query((**query).clone(), &inner_path)?),
+                    }))
                 }
-            }
-            _ => {
-                return Err(QueryError::not_built(
-                    at,
-                    "this query operator has no Sinex execution adapter",
-                ));
-            }
+                C::Reference { reference } => {
+                    let Reference::Event(id) = super::reference::parse_reference(reference)? else {
+                        return Err(QueryError::at(
+                            at,
+                            "use read or trace for a source-coordinate reference",
+                        ));
+                    };
+                    Expr::Compare {
+                        lhs: Operand::Field(self.resolve("id", scope, at)?),
+                        op: Op::Eq,
+                        rhs: Value::Id(id),
+                    }
+                }
+                _ => {
+                    return Err(QueryError::not_built(
+                        at,
+                        "this query operator has no Sinex execution adapter",
+                    ));
+                }
+            })
         })
     }
 

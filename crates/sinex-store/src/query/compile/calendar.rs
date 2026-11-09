@@ -58,7 +58,7 @@ fn calendar_operands(operand: &Operand, out: &mut Vec<(TimeFn, FieldRef)>) {
     }
 }
 fn expression_operands(e: &Expr, out: &mut Vec<(TimeFn, FieldRef)>) {
-    match e {
+    sinex_model::query::ensure_stack(|| match e {
         Expr::And(a, b) | Expr::Or(a, b) => {
             expression_operands(a, out);
             expression_operands(b, out);
@@ -73,22 +73,24 @@ fn expression_operands(e: &Expr, out: &mut Vec<(TimeFn, FieldRef)>) {
         Expr::Exists(lhs) | Expr::Within { lhs, .. } => calendar_operands(lhs, out),
         Expr::Truth { operand, .. } => calendar_operands(operand, out),
         _ => {}
-    }
+    })
 }
 fn ordinary(e: &Expr) -> Option<Expr> {
-    let mut needs = Vec::new();
-    expression_operands(e, &mut needs);
-    if needs.is_empty() {
-        return Some(e.clone());
-    }
-    if let Expr::And(a, b) = e {
-        match (ordinary(a), ordinary(b)) {
-            (Some(a), Some(b)) => Some(Expr::And(Box::new(a), Box::new(b))),
-            (a, b) => a.or(b),
+    sinex_model::query::ensure_stack(|| {
+        let mut needs = Vec::new();
+        expression_operands(e, &mut needs);
+        if needs.is_empty() {
+            return Some(e.clone());
         }
-    } else {
-        None
-    }
+        if let Expr::And(a, b) = e {
+            match (ordinary(a), ordinary(b)) {
+                (Some(a), Some(b)) => Some(Expr::And(Box::new(a), Box::new(b))),
+                (a, b) => a.or(b),
+            }
+        } else {
+            None
+        }
+    })
 }
 fn stage_operands(stage: &Stage) -> Vec<(TimeFn, FieldRef)> {
     let mut out = Vec::new();

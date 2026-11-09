@@ -125,6 +125,35 @@ pub enum Expr {
     },
 }
 
+/// Dropping a query takes its `and`/`or`/`not` chains apart one node at a
+/// time, so a query of any length is dropped without recursing as deep as it
+/// is long.
+impl Drop for Expr {
+    fn drop(&mut self) {
+        fn take_children(expression: &mut Expr, pending: &mut Vec<Expr>) {
+            let leaf = || Expr::Similar {
+                reference: Uuid::nil(),
+            };
+            match expression {
+                Expr::And(left, right) | Expr::Or(left, right) => {
+                    pending.push(std::mem::replace(&mut **left, leaf()));
+                    pending.push(std::mem::replace(&mut **right, leaf()));
+                }
+                Expr::Not(inner) => pending.push(std::mem::replace(&mut **inner, leaf())),
+                _ => {}
+            }
+        }
+        if !matches!(self, Expr::And(..) | Expr::Or(..) | Expr::Not(..)) {
+            return;
+        }
+        let mut pending = Vec::new();
+        take_children(self, &mut pending);
+        while let Some(mut expression) = pending.pop() {
+            take_children(&mut expression, &mut pending);
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Words {
     /// Normalized words: case-folded, NFC.
@@ -617,32 +646,34 @@ impl Query {
             allowed: bool,
             found: &mut Option<Uuid>,
         ) -> Result<(), super::QueryError> {
-            match e {
-                Expr::Similar { reference } => {
-                    if !allowed {
-                        return Err(super::QueryError::new(
-                            "similar is a ranking directive and cannot appear under OR or NOT",
-                        ));
+            super::ensure_stack(|| {
+                match e {
+                    Expr::Similar { reference } => {
+                        if !allowed {
+                            return Err(super::QueryError::new(
+                                "similar is a ranking directive and cannot appear under OR or NOT",
+                            ));
+                        }
+                        if found.is_some_and(|old| old != *reference) {
+                            return Err(super::QueryError::new(
+                                "a query must choose one supplied similarity vector",
+                            ));
+                        }
+                        *found = Some(*reference);
                     }
-                    if found.is_some_and(|old| old != *reference) {
-                        return Err(super::QueryError::new(
-                            "a query must choose one supplied similarity vector",
-                        ));
+                    Expr::And(a, b) => {
+                        visit(a, allowed, found)?;
+                        visit(b, allowed, found)?;
                     }
-                    *found = Some(*reference);
+                    Expr::Or(a, b) => {
+                        visit(a, false, found)?;
+                        visit(b, false, found)?;
+                    }
+                    Expr::Not(e) => visit(e, false, found)?,
+                    _ => {}
                 }
-                Expr::And(a, b) => {
-                    visit(a, allowed, found)?;
-                    visit(b, allowed, found)?;
-                }
-                Expr::Or(a, b) => {
-                    visit(a, false, found)?;
-                    visit(b, false, found)?;
-                }
-                Expr::Not(e) => visit(e, false, found)?,
-                _ => {}
-            }
-            Ok(())
+                Ok(())
+            })
         }
         let mut found = None;
         if let Some(e) = &self.filter {

@@ -78,7 +78,7 @@ fn template_serialization_keeps_parameter_values_out_of_query_structure() {
             rhs: Value::Text(root),
             ..
         }),
-    } = bound.source
+    } = &bound.source
     else {
         panic!("expected one scalar session predicate")
     };

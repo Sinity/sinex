@@ -2,9 +2,10 @@
 //! that reads each stored document's bytes and writes its text, so documents
 //! are found by the same search as everything else. A PDF is read with the
 //! local PDF reader (`pdftotext`, from Poppler) and gives one event per page;
-//! text, Markdown, HTML, Word (`.docx`) and OpenDocument
-//! (`.odt`) files are read here, whole. The format comes from the bytes and,
-//! for text, the file's extension; a copy that is not a document, or whose
+//! text, Markdown, HTML, Word (`.docx`) and OpenDocument (`.odt`) files are
+//! read here, a Word or OpenDocument file in pieces rather than decompressed
+//! whole into memory. The format comes from the bytes and, for text, the
+//! file's extension; a copy that is not a document, or whose
 //! bytes were not stored, gives nothing.
 //!
 //! It lives here rather than in `sinex-derivations` because it runs a local
@@ -31,22 +32,58 @@ pub(crate) fn pdf_reader() -> Result<String, String> {
     Ok(text.lines().next().unwrap_or("pdftotext").trim().to_owned())
 }
 
+/// How long the PDF reader may take on a document of `len` bytes: a minute,
+/// plus ten seconds per MiB. A reader still running after that is stuck on
+/// this document, and the document counts as a failed input.
+pub(crate) fn pdf_time(len: usize) -> std::time::Duration {
+    std::time::Duration::from_secs(60 + 10 * (len as u64).div_ceil(1024 * 1024))
+}
+
 /// The text of each page of a PDF.
 fn pdf_pages(bytes: &[u8]) -> Result<Vec<String>, String> {
+    pdf_pages_within(bytes, pdf_time(bytes.len()), "pdftotext")
+}
+
+fn pdf_pages_within(
+    bytes: &[u8],
+    limit: std::time::Duration,
+    reader: &str,
+) -> Result<Vec<String>, String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let file = dir.path().join("document.pdf");
+    let text_file = dir.path().join("document.txt");
     std::fs::write(&file, bytes).map_err(|e| e.to_string())?;
-    // At idle priority, like every reader of stored bytes.
-    let out = Command::new("nice")
-        .args(["-n", "19", "pdftotext", "-enc", "UTF-8"])
+    // At idle priority, like every reader of stored bytes. The text goes to
+    // a file, so waiting never depends on draining a pipe.
+    let mut child = Command::new("nice")
+        .args(["-n", "19", reader, "-enc", "UTF-8"])
         .arg(&file)
-        .arg("-")
-        .output()
+        .arg(&text_file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
         .map_err(|e| format!("pdftotext: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("pdftotext exited with {}", out.status));
+    let deadline = std::time::Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| format!("pdftotext: {e}"))? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "pdftotext did not finish a {} byte PDF within {} s",
+                bytes.len(),
+                limit.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    if !status.success() {
+        return Err(format!("pdftotext exited with {status}"));
     }
-    let text = String::from_utf8(out.stdout)
+    let text = String::from_utf8(std::fs::read(&text_file).map_err(|e| e.to_string())?)
         .map_err(|_| "pdftotext returned text that is not UTF-8".to_owned())?;
     // Pages end with a form feed, the last one too.
     let mut pages: Vec<String> = text.split('\u{c}').map(|p| p.trim().to_owned()).collect();

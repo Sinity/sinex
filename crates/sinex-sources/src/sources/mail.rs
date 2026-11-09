@@ -102,7 +102,21 @@ impl Parser for MailParser {
 
 pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
     let message = mbox_unescape(raw);
-    let parsed = mailparse::parse_mail(&message)
+    // The MIME parser recurses once per nested multipart, and each nesting
+    // level needs its own `boundary` parameter, so the count of that word
+    // bounds the depth. The parse, the walk over its parts and the drop of
+    // the parsed tree run on a stack sized for that depth: no message,
+    // however nested, can overflow the daemon's stack.
+    let levels = message
+        .windows(b"boundary".len())
+        .filter(|w| w.eq_ignore_ascii_case(b"boundary"))
+        .count();
+    let stack = 1024 * 1024 + levels * 64 * 1024;
+    stacker::maybe_grow(stack, stack, || read_message(&message))
+}
+
+fn read_message(message: &[u8]) -> Result<MailMessage, RecordError> {
+    let parsed = mailparse::parse_mail(message)
         .map_err(|e| RecordError::new(format!("not a mail message: {e}")))?;
     let headers = &parsed.headers;
     let one = |name: &str| {

@@ -1,4 +1,4 @@
-use super::extract::{Format, format, markup_text, text};
+use super::extract::{Format, MarkupText, format, markup_text, text};
 use super::*;
 use std::io::Write;
 
@@ -293,4 +293,76 @@ fn html_titles_use_the_title_element_and_respect_quoted_attributes() {
             .0,
         None
     );
+}
+
+const SPLIT_MARKUP: &str = "<w:document><w:p title='a > b'><w:t>Zażółć &amp; gęślą</w:t></w:p>\
+    <!-- hidden <w:p> --><w:p><w:t>jaźń &#0000000000000000000065; &#x1F34B;</w:t><w:br/></w:p>\
+    <style>skip &amp; this</style>tail &unknown; & bare</w:document>";
+
+proptest::proptest! {
+    #[test]
+    fn markup_read_in_pieces_matches_markup_read_whole(cuts in proptest::collection::vec(0usize..200, 0..12)) {
+        let blocks = ["w:p", "w:br"];
+        let dropped = ["style"];
+        let whole = markup_text(SPLIT_MARKUP, &blocks, &dropped);
+        let mut reader = MarkupText::new(&blocks, &dropped);
+        let mut cuts: Vec<usize> = cuts
+            .into_iter()
+            .map(|c| c.min(SPLIT_MARKUP.len()))
+            .filter(|c| SPLIT_MARKUP.is_char_boundary(*c))
+            .collect();
+        cuts.sort_unstable();
+        let mut from = 0;
+        for cut in cuts {
+            reader.feed(&SPLIT_MARKUP[from..cut]);
+            from = cut;
+        }
+        reader.feed(&SPLIT_MARKUP[from..]);
+        proptest::prop_assert_eq!(reader.finish(), whole);
+    }
+}
+
+#[devkit::test]
+fn markup_read_in_pieces_reads_references_tags_and_comments() {
+    assert_eq!(
+        markup_text(SPLIT_MARKUP, &["w:p", "w:br"], &["style"]),
+        "Zażółć & gęślą\njaźń A \u{1F34B}\ntail &unknown; & bare"
+    );
+}
+
+#[devkit::test]
+fn a_word_document_larger_than_one_read_is_read_in_pieces() {
+    // Far more markup than one 64 KiB read, with a character and a tag cut
+    // at read boundaries somewhere along the way.
+    let paragraph = "<w:p><w:r><w:t>zażółć</w:t></w:r></w:p>";
+    let body = paragraph.repeat(20_000);
+    let docx = zip_of(&[(
+        "word/document.xml",
+        &format!("<w:document>{body}</w:document>"),
+    )]);
+    let (_, read) = text(Format::Docx, &docx).unwrap();
+    assert_eq!(read.lines().count(), 20_000);
+    assert!(read.lines().all(|line| line == "zażółć"));
+}
+
+#[devkit::test]
+fn a_pdf_reader_that_does_not_finish_in_time_is_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = dir.path().join("stuck-reader");
+    std::fs::write(&reader, "#!/bin/sh\nexec sleep 60\n").unwrap();
+    let mut permissions = std::fs::metadata(&reader).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&reader, permissions).unwrap();
+    let error = pdf_pages_within(
+        b"%PDF-1.4",
+        std::time::Duration::from_millis(500),
+        reader.to_str().unwrap(),
+    )
+    .unwrap_err();
+    assert!(error.contains("did not finish"), "{error}");
+}
+
+#[devkit::test]
+fn the_pdf_time_limit_grows_with_the_document() {
+    assert!(pdf_time(100 * 1024 * 1024) > pdf_time(1024 * 1024));
 }

@@ -145,7 +145,7 @@ fn reference_text(r: &Reference) -> String {
 }
 
 fn expr(e: &Expr) -> String {
-    match e {
+    super::ensure_stack(|| match e {
         Expr::Order(j) => format!("having a match {}", join(j)),
         Expr::Truth {
             value,
@@ -195,7 +195,7 @@ fn expr(e: &Expr) -> String {
             Some(to) => format!("its span overlaps {from} until {to}"),
             None => format!("its span contains {from}"),
         },
-    }
+    })
 }
 
 fn grouped(e: &Expr, inside_and: bool) -> String {
