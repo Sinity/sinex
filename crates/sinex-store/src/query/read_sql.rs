@@ -25,6 +25,11 @@ pub async fn run(conn: &mut PgConnection, statement: &str) -> Result<Vec<Json>> 
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
         .execute(&mut *tx)
         .await?;
+    // One statement may not occupy the database indefinitely: the server
+    // cancels it at this bound even after the caller has gone away.
+    sqlx::query!("SET LOCAL statement_timeout = '120s'")
+        .execute(&mut *tx)
+        .await?;
     // Wrapping keeps column order (json, not jsonb) and refuses anything that
     // is not a query.
     let wrapped = format!("SELECT row_to_json(q) FROM ({statement}) q");
