@@ -397,11 +397,15 @@ async fn stream_lost_its_newest_messages(
     let groups = [ids(&a), ids(&b), ids(&c)];
 
     admit(&mut conn, batch(a)).await;
-    publish_pending(&mut publisher, &js, subjects).await.unwrap();
+    publish_pending(&mut publisher, &js, subjects)
+        .await
+        .unwrap();
     let copy = broker.copy_store();
     let js = context(async_nats::connect(broker.url.as_str()).await.unwrap());
     admit(&mut conn, batch(b)).await;
-    publish_pending(&mut publisher, &js, subjects).await.unwrap();
+    publish_pending(&mut publisher, &js, subjects)
+        .await
+        .unwrap();
     broker.lose_newest(&copy);
     admit(&mut conn, batch(c)).await;
     (broker, conn, publisher, groups)
@@ -422,7 +426,10 @@ async fn recorded_positions_hold_their_events(
             .unwrap();
     assert!(!recorded.is_empty());
     for (event, seq) in recorded {
-        assert!(seq <= last, "{event} recorded at {seq}, past the stream's last {last}");
+        assert!(
+            seq <= last,
+            "{event} recorded at {seq}, past the stream's last {last}"
+        );
         let message = stream.get_raw_message(seq as u64).await.unwrap();
         assert!(
             matches!(
@@ -440,7 +447,9 @@ async fn publisher_rewinds_to_last_marker_after_stream_truncation(db: devkit::pg
     let (broker, mut conn, mut publisher, groups) =
         stream_lost_its_newest_messages(&db, &subjects).await;
     let js = context(async_nats::connect(broker.url.as_str()).await.unwrap());
-    publish_pending(&mut publisher, &js, &subjects).await.unwrap();
+    publish_pending(&mut publisher, &js, &subjects)
+        .await
+        .unwrap();
 
     let on_stream: Vec<EventId> = read_filtered(
         &js,
@@ -470,11 +479,15 @@ async fn erasure_never_deletes_a_reused_sequence(db: devkit::pg::TestDatabase) {
     let (broker, mut conn, mut publisher, [_, lost, after]) =
         stream_lost_its_newest_messages(&db, &subjects).await;
     let js = context(async_nats::connect(broker.url.as_str()).await.unwrap());
-    publish_pending(&mut publisher, &js, &subjects).await.unwrap();
+    publish_pending(&mut publisher, &js, &subjects)
+        .await
+        .unwrap();
 
     lifecycle(&mut conn, Act::Archive, vec![lost[0]]).await;
     lifecycle(&mut conn, Act::Tombstone, vec![lost[0]]).await;
-    let done = publish_pending(&mut publisher, &js, &subjects).await.unwrap();
+    let done = publish_pending(&mut publisher, &js, &subjects)
+        .await
+        .unwrap();
     assert_eq!(done.tombstoned, 1);
 
     let events: Vec<EventId> = read_filtered(
@@ -491,7 +504,10 @@ async fn erasure_never_deletes_a_reused_sequence(db: devkit::pg::TestDatabase) {
     .collect();
     assert!(!events.contains(&lost[0]), "the tombstoned event is erased");
     for kept in [lost[1], after[0]] {
-        assert!(events.contains(&kept), "{kept} survives another event's erasure");
+        assert!(
+            events.contains(&kept),
+            "{kept} survives another event's erasure"
+        );
     }
     recorded_positions_hold_their_events(&mut conn, &js, &subjects).await;
 }
