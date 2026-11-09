@@ -9,6 +9,14 @@ concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
 
+# Master builds from scratch and saves its whole target directory, the exact
+# build of that commit; a pull request starts from it. Cargo decides freshness
+# by file times, and a fresh checkout makes every source newer than the saved
+# build, so every source is dated before the build and the files that differ
+# from the saved commit are dated now: Cargo rebuilds the packages those files
+# belong to and the ones depending on them, and reuses the rest. Pull requests
+# run the tests their changes can affect (devkit's selection); master runs all.
+#
 # The development shell carries PostgreSQL 18 with the patched TimescaleDB and
 # pgvector that the compile-time query checks and database tests need.
 jobs:
@@ -23,24 +31,82 @@ jobs:
           sudo nohup rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL >/dev/null 2>&1 &
       - uses: cachix/install-nix-action@v31
       - uses: DeterminateSystems/magic-nix-cache-action@v8
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore master's build
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
         with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: check-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-${{ github.sha }}
+          restore-keys: check-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-
+      - name: Date sources against the restored build
+        if: github.event_name == 'pull_request'
+        run: |
+          built=$(cat target/source-commit 2>/dev/null) || exit 0
+          git fetch --no-tags --depth=1 origin "$built" || exit 0
+          git ls-files -z | xargs -0 touch -h -d '2000-01-01 00:00:00 UTC'
+          git diff --no-renames --name-only -z "$built" HEAD | xargs -0 -r touch -h -c
+          echo "restored build of $built; $(git diff --no-renames --name-only "$built" HEAD | wc -l) files differ"
       - name: cargo xtask check
         run: nix develop --command cargo xtask check
+      # A failed test leaves a valid build, so it is saved too.
+      - name: Save master's build
+        if: ${{ !cancelled() && github.ref == 'refs/heads/master' }}
+        run: git rev-parse HEAD > target/source-commit
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/master' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: check-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-${{ github.sha }}
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
+      # A pull request's checkout is its merge commit; the first parent is the
+      # base branch's tip.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: Free disk space for the test build
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc
           sudo nohup rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL >/dev/null 2>&1 &
       - uses: cachix/install-nix-action@v31
       - uses: DeterminateSystems/magic-nix-cache-action@v8
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore master's build
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
         with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-${{ github.sha }}
+          restore-keys: test-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-
+      - name: Date sources against the restored build
+        if: github.event_name == 'pull_request'
+        run: |
+          built=$(cat target/source-commit 2>/dev/null) || exit 0
+          git fetch --no-tags --depth=1 origin "$built" || exit 0
+          git ls-files -z | xargs -0 touch -h -d '2000-01-01 00:00:00 UTC'
+          git diff --no-renames --name-only -z "$built" HEAD | xargs -0 -r touch -h -c
+          echo "restored build of $built; $(git diff --no-renames --name-only "$built" HEAD | wc -l) files differ"
       - name: cargo xtask test
-        run: nix develop --command cargo xtask test
+        run: nix develop --command cargo xtask test ${{ github.event_name == 'pull_request' && '--changed-base=HEAD^1' || '' }}
+      # A failed test leaves a valid build, so it is saved too.
+      - name: Save master's build
+        if: ${{ !cancelled() && github.ref == 'refs/heads/master' }}
+        run: git rev-parse HEAD > target/source-commit
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/master' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-${{ github.sha }}
