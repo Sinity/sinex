@@ -118,6 +118,10 @@ pub enum Request {
     },
     Sql {
         sql: String,
+        #[serde(default)]
+        page: Option<u64>,
+        #[serde(default)]
+        cursor: Option<String>,
     },
     Show {
         reference: String,

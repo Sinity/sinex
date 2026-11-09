@@ -34,6 +34,8 @@ tokio = { workspace = true, features = ["net"] }
 clap.workspace = true
 time.workspace = true
 uuid.workspace = true
+getrandom.workspace = true
+mimalloc.workspace = true
 thiserror.workspace = true
 async-nats.workspace = true
 bcrypt.workspace = true

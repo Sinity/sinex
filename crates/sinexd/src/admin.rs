@@ -298,6 +298,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         source_config: Default::default(),
         read_failures: Default::default(),
         running_stages: Default::default(),
+        sql_cursors: Default::default(),
         stop,
         reads,
         writer: Some(ctx.writer.clone()),

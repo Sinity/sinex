@@ -401,8 +401,12 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "sql",
-        summary: "Run one read-only SQL statement as the reader role; rows as JSON objects.",
-        args: &[pos("sql", ArgKind::Rest, "the SQL statement")],
+        summary: "Run one read-only SQL statement as the reader role; rows as JSON objects, a page at a time.",
+        args: &[
+            pos("sql", ArgKind::Rest, "the SQL statement"),
+            opt("page", ArgKind::Integer, "rows per page (default 1000)"),
+            CURSOR,
+        ],
         access: Access::Read,
         mcp: true,
     },

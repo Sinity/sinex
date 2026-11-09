@@ -1924,6 +1924,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         source_config: Default::default(),
         read_failures: Default::default(),
         running_stages: Default::default(),
+        sql_cursors: Default::default(),
         stop,
         library_roots: Vec::new(),
         reads: h.reads.clone(),

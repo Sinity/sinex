@@ -316,6 +316,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         source_config: Arc::new(sources.clone()),
         read_failures: read_failures.clone(),
         running_stages: Default::default(),
+        sql_cursors: Default::default(),
         stop: stop.clone(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
