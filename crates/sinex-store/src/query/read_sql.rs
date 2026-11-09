@@ -79,7 +79,17 @@ pub async fn fetch(conn: &mut PgConnection, rows: u64) -> Result<Rows> {
     let mut page = Vec::new();
     let mut bytes: i64 = 0;
     loop {
-        let chunk = (want - page.len() as u64).min(500);
+        // The first read takes one row; later reads take as many rows as the
+        // remaining byte budget holds at the average row size so far, so one
+        // read cannot carry the page far past its bytes.
+        let left = want - page.len() as u64;
+        let chunk = if page.is_empty() {
+            1
+        } else {
+            let average = (bytes / page.len() as i64).max(1);
+            let fits = ((PAGE_BYTES - bytes) / average).max(1) as u64;
+            left.min(fits).min(500)
+        };
         let texts: Vec<String> = sqlx::query_scalar(&format!("FETCH {chunk} FROM sinex_sql"))
             .fetch_all(&mut *conn)
             .await?;
