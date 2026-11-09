@@ -251,6 +251,12 @@ outer read snapshot. `hour()` continues to name the local clock hour.
   same output rules as every output; the reader role cannot reach withheld fields or keys
   ([privacy](privacy.md)). PostgreSQL cancels a statement that runs longer than 120 seconds,
   even after its caller has gone away.
+- `sql` answers a page at a time from a database cursor: up to `--page` rows (1000 when
+  not given), ending early once a page holds 8 MiB of row text, so a statement costs the
+  daemon one page however many rows it selects. While rows remain, the answer's
+  `page.cursor` continues the same statement; the cursor serves only that statement and
+  caller, and closes after five idle minutes (rerun the statement then). `sinexctl sql`
+  reads every page and prints the whole result; MCP and HTTP callers pass the cursor back.
 
 ## Saved queries
 

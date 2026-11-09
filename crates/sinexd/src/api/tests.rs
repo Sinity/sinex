@@ -171,6 +171,7 @@ async fn world_with_config(
         source_config: Arc::new(source_config),
         read_failures: Default::default(),
         running_stages: Default::default(),
+        sql_cursors: Default::default(),
         stop: stopped.clone(),
         reads: reads.clone(),
         writer: Some(handle.clone()),
@@ -387,6 +388,114 @@ async fn sql_reads_as_the_reader_role(db: devkit::pg::TestDatabase) {
     )
     .await;
     assert_eq!(body["outcome"], json!("refused"));
+}
+
+#[devkit::test]
+async fn sql_answers_a_page_at_a_time_and_every_row_is_reachable(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let sql = "SELECT n FROM generate_series(1, 7) AS n";
+    let mut cursor: Option<String> = None;
+    let mut seen = Vec::new();
+    let mut pages = 0;
+    loop {
+        let (_, body) = call(
+            &w,
+            Some(READ),
+            json!({"method": "sql", "sql": sql, "page": 3, "cursor": cursor}),
+        )
+        .await;
+        let rows = body["result"]["rows"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{body}"));
+        assert!(rows.len() <= 3, "{body}");
+        seen.extend(rows.iter().map(|r| r["n"].as_i64().unwrap()));
+        pages += 1;
+        cursor = body["result"]["page"]["cursor"].as_str().map(String::from);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(seen, (1..=7).collect::<Vec<_>>());
+    assert_eq!(pages, 3);
+}
+
+#[devkit::test]
+async fn sql_pages_end_early_once_they_hold_their_bytes(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    // Rows of 3 MiB each: an 8 MiB page holds three at most, whatever the
+    // row count asked for, and the rest stay reachable.
+    let sql = "SELECT repeat('x', 3 * 1024 * 1024) AS wide FROM generate_series(1, 5)";
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": sql, "page": 10}),
+    )
+    .await;
+    let first = body["result"]["rows"].as_array().unwrap().len();
+    assert!((1..=3).contains(&first), "{first} rows on the first page");
+    let cursor = body["result"]["page"]["cursor"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": sql, "page": 10, "cursor": cursor}),
+    )
+    .await;
+    assert!(
+        !body["result"]["rows"].as_array().unwrap().is_empty(),
+        "{body}"
+    );
+}
+
+#[devkit::test]
+async fn an_sql_cursor_serves_only_its_statement_and_caller(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let sql = "SELECT n FROM generate_series(1, 4) AS n";
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": sql, "page": 1}),
+    )
+    .await;
+    let cursor = body["result"]["page"]["cursor"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (_, other) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method": "sql", "sql": sql, "page": 1, "cursor": cursor}),
+    )
+    .await;
+    assert_eq!(other["outcome"], json!("refused"), "{other}");
+    let (_, other) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": "SELECT 1 AS n", "page": 1, "cursor": cursor}),
+    )
+    .await;
+    assert_eq!(other["outcome"], json!("refused"), "{other}");
+    let (_, next) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": sql, "page": 1, "cursor": cursor}),
+    )
+    .await;
+    assert_eq!(next["result"]["rows"], json!([{"n": 2}]), "{next}");
+}
+
+#[devkit::test]
+async fn sql_reads_a_column_named_like_the_row_alias(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": "SELECT 1 AS q"}),
+    )
+    .await;
+    assert_eq!(body["result"]["rows"], json!([{"q": 1}]), "{body}");
 }
 
 #[devkit::test]

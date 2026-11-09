@@ -421,6 +421,34 @@ async fn main() -> ExitCode {
         if name == "status" {
             capture_health::attach(&mut result, capture_state);
         }
+        if let Request::Sql { sql, page, .. } = &request {
+            // The daemon answers a statement a page at a time; the command
+            // line reads every page and prints the whole result.
+            collected.extend(result["rows"].as_array().cloned().unwrap_or_default());
+            if let Some(cursor) = result["page"]["cursor"].as_str() {
+                request = Request::Sql {
+                    sql: sql.clone(),
+                    page: *page,
+                    cursor: Some(cursor.to_owned()),
+                };
+                continue;
+            }
+            if json {
+                print_json(&serde_json::json!({ "rows": collected, "count": collected.len() }));
+            } else {
+                let columns: Vec<String> = collected
+                    .first()
+                    .and_then(Value::as_object)
+                    .map(|o| o.keys().cloned().collect())
+                    .unwrap_or_default();
+                print!(
+                    "{}",
+                    output::table(&columns, &collected, &output::Local::new(None))
+                );
+                println!("{} rows", collected.len());
+            }
+            return ExitCode::SUCCESS;
+        }
         let paged = result["page"].is_object() && result["rows"].is_array();
         if !paged {
             if json {
@@ -440,18 +468,6 @@ async fn main() -> ExitCode {
                 for report in &reports.stages {
                     print!("{}", sinex_protocol::stage_report::render(report));
                 }
-            } else if name == "sql" {
-                let rows = result["rows"].as_array().cloned().unwrap_or_default();
-                let columns: Vec<String> = rows
-                    .first()
-                    .and_then(Value::as_object)
-                    .map(|o| o.keys().cloned().collect())
-                    .unwrap_or_default();
-                print!(
-                    "{}",
-                    output::table(&columns, &rows, &output::Local::new(None))
-                );
-                println!("{} rows", rows.len());
             } else if let Some(text) = rendered_text(&result) {
                 print!("{text}");
                 if !text.ends_with('\n') {

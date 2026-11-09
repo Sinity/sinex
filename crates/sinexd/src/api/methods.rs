@@ -21,6 +21,9 @@ mod privacy;
 mod queries;
 mod recall;
 mod signals;
+mod sql;
+
+pub(crate) use sql::SqlCursors;
 
 /// The daemon's read side and its handle on the writer.
 #[derive(Clone)]
@@ -50,6 +53,8 @@ pub(crate) struct Api {
     /// ends `stopped_early`, and `resume` reads it again later.
     pub stop: tokio::sync::watch::Receiver<bool>,
     pub library_roots: Vec<std::path::PathBuf>,
+    /// Read-only SQL statements with pages still to read.
+    pub sql_cursors: SqlCursors,
 }
 
 /// An unlock session: the operator's identity until it expires, and the data
@@ -329,16 +334,7 @@ impl Api {
                 )
                 .await
             }
-            Request::Sql { sql } => {
-                let mut conn = match self.acquire(caller).await {
-                    Ok(c) => c,
-                    Err(e) => return refused(e.to_string()),
-                };
-                match sinex_store::query::read_sql::run(&mut conn, &sql).await {
-                    Ok(rows) => data(json!({ "total": rows.len(), "rows": rows })),
-                    Err(e) => refused(e.to_string()),
-                }
-            }
+            Request::Sql { sql, page, cursor } => self.sql(caller, sql, page, cursor).await,
             Request::Show { reference } => {
                 let r = match query::parse_reference(&reference) {
                     Ok(r) => r,

@@ -36,6 +36,13 @@ mod writer;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// mimalloc instead of glibc's allocator. The running daemon's glibc held
+/// 1.38 GB from the system with 0.66 GB in use (`malloc_stats`, 2026-11-09):
+/// 24 per-thread arenas kept what each day's derivation reads freed, and the
+/// rest sat in swap. mimalloc returns freed pages instead of keeping them.
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(name = "sinexd", about = "The Sinex daemon")]
 struct Cli {
