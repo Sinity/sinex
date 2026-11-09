@@ -55,7 +55,7 @@ Cargo's selected packages, default features and explicit feature flags own
 feature resolution. `sinex-sources` defaults to its full source set, and
 `sinexd` explicitly enables that set, archive/SQLite readers and CLI
 protocol support. Selecting different packages can produce a different
-feature build. Use the complete workspace run for landing qualification.
+feature build. The complete workspace run is what CI runs on master.
 
 ## PostgreSQL provider
 
