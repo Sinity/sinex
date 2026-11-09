@@ -118,7 +118,7 @@ async fn producer_restart_refuses_the_old_pause_instead_of_copying_new_state() {
             .acquire(&boundary(), output.path())
             .await
             .unwrap_err()
-            .contains("did not capture")
+            .contains("did not copy its files")
     );
 }
 
