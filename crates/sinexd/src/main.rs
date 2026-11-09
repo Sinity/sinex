@@ -305,13 +305,13 @@ fn effective_time_settings(
         Some(name) => {
             let zone =
                 jiff::tz::TimeZone::get(name).map_err(|error| format!("zone {name}: {error}"))?;
-            query_language::time::DaySetting::new(zone, start)
+            query_language::time::DaySetting::new(zone, start).map_err(|error| error.to_string())?
         }
         // The host's named zone, the same default Polylogue uses, so both
         // products on one host share one logical day.
-        None => query_language::time::DaySetting::system(start),
-    }
-    .map_err(|error| format!("{error}; pass --zone"))?;
+        None => query_language::time::DaySetting::system(start)
+            .map_err(|_| "system time zone has no IANA name; pass --zone".to_string())?,
+    };
     Ok(sinex_model::time_settings::TimeSettings::from_parts(
         day.zone().clone(),
         start,

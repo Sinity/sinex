@@ -97,7 +97,7 @@ async fn sql_gap_and_second_precision_boundaries_match_shared_days_and_weeks(
     point(&mut conn, "calendar-month-after", "2026-11-01T00:00:15Z").await;
     let seconds = clock(jiff::civil::Time::constant(0, 0, 15, 0), "UTC");
     for text in [
-        "runs where producer = calendar-second-before AND day(started) = 2026-09-13 AND week(started) = 2026-W37 AND weekday(started) = sun AND month_day(started) = 09-13",
+        "runs where producer = calendar-second-before AND day(started) = 2026-09-13 AND week(started) = 2026-W37 AND week(started) = 2026-09-07 AND weekday(started) = sun AND month_day(started) = 09-13",
         "runs where producer = calendar-second-after AND day(started) = 2026-09-14 AND week(started) = 2026-W38 AND weekday(started) = mon",
         "runs where producer = calendar-month-before AND month(started) = 2026-10",
         "runs where producer = calendar-month-after AND month(started) = 2026-11",
