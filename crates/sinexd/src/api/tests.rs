@@ -123,12 +123,10 @@ async fn admit_events(w: &World, events: Vec<Event>) {
     let seq = submit_events(w, events).await;
     // The commit reader indexes the new events' text.
     loop {
-        let (indexed, _) = sinex_store::commit_log::consumer_position(
-            &mut w.reads.acquire().await.unwrap(),
-            sinex_store::read_models::SEARCH_TEXT,
-        )
-        .await
-        .unwrap();
+        let indexed =
+            sinex_store::read_models::search_position(&mut w.reads.acquire().await.unwrap())
+                .await
+                .unwrap();
         if indexed >= seq {
             break;
         }

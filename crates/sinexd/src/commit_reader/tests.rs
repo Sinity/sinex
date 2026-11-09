@@ -247,6 +247,9 @@ impl ReadModel for FailingSearch {
             Err("stopped before saving position".into())
         })
     }
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
+        SearchText.position(conn)
+    }
 }
 
 #[devkit::test]

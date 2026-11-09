@@ -649,3 +649,158 @@ fn libpq_uri_options_preserve_spaces_and_literal_plus_signs() {
         assert!(!uri.query().unwrap().contains('+'));
     }
 }
+
+/// Index search over the committed events, page by page, the way the search
+/// reader does.
+async fn index_search(conn: &mut PgConnection) {
+    let mut position = sinex_store::read_models::search_position(conn)
+        .await
+        .unwrap();
+    loop {
+        let page = sinex_store::commit_log::after(conn, position, 100, sinex_store::PAGE_BYTES)
+            .await
+            .unwrap();
+        let Some(up_to) = page.up_to else { return };
+        let mut tx = conn.begin().await.unwrap();
+        sinex_store::read_models::apply_search_text(&mut tx, &page.events)
+            .await
+            .unwrap();
+        sinex_store::read_models::set_search_position(&mut tx, up_to)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        position = up_to;
+    }
+}
+
+async fn search_rows(conn: &mut PgConnection) -> Vec<(uuid::Uuid, String)> {
+    sqlx::query_as("SELECT event_id, text FROM core.search_text ORDER BY event_id")
+        .fetch_all(conn)
+        .await
+        .unwrap()
+}
+
+/// The main dump is uncompressed, so a deduplicating backup tool stores only
+/// what changed, and it leaves out the search tables and their position. A
+/// copy restored from it has no search rows and no position, and the search
+/// reader rebuilds the same rows from the restored events.
+#[devkit::test]
+async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let source = tempfile::tempdir().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let artifact = output.path().join("artifact");
+    create(&artifact).unwrap();
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    let blobs = sinex_store::Blobs::open(source.path()).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    let (writer, queues) = crate::writer::channels();
+    let task = tokio::spawn(crate::writer::run(
+        url.clone(),
+        crate::writer::claim(PgConnection::connect(&url).await.unwrap())
+            .await
+            .unwrap(),
+        queues,
+        std::sync::Arc::new(sinex_store::NoDerivations),
+        Some(blobs.clone()),
+    ));
+    for command in ["cargo build --release", "git rebase origin/master"] {
+        let outcome = writer
+            .submit(crate::writer::Priority::Live, live_batch(command))
+            .await
+            .unwrap();
+        assert_eq!(outcome.admitted, 1);
+    }
+    index_search(&mut conn).await;
+    let indexed = search_rows(&mut conn).await;
+    assert_eq!(indexed.len(), 2);
+    let position = sinex_store::read_models::search_position(&mut conn)
+        .await
+        .unwrap();
+    assert!(position > 0);
+    let snapshot = writer.backup_snapshot("operator").await.unwrap();
+    let (_stop, stop) = watch::channel(false);
+    prepare(
+        snapshot,
+        source.path(),
+        &artifact,
+        stop,
+        "synthetic-source-revision".into(),
+        Vec::new(),
+        None,
+    )
+    .await
+    .unwrap();
+    drop(writer);
+    task.await.unwrap();
+    conn.close().await.unwrap();
+    let listing = tokio::process::Command::new("pg_restore")
+        .arg("--list")
+        .arg(artifact.join("main/sinex.dump"))
+        .output()
+        .await
+        .unwrap();
+    assert!(listing.status.success());
+    let listing = String::from_utf8(listing.stdout).unwrap();
+    assert!(
+        listing.contains("Compression: none"),
+        "the main dump must be uncompressed:\n{listing}"
+    );
+
+    // Restore into an empty database, as the restore procedure does.
+    let mut admin_url = reqwest::Url::parse(&url).unwrap();
+    admin_url.set_path("/postgres");
+    let mut admin = PgConnection::connect(admin_url.as_str()).await.unwrap();
+    let name = format!("\"{}\"", db.name.replace('"', "\"\""));
+    sqlx::query(&format!("DROP DATABASE {name}"))
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    sqlx::query(&format!("CREATE DATABASE {name} TEMPLATE template0"))
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    admin.close().await.unwrap();
+    let mut restored = PgConnection::connect(&url).await.unwrap();
+    let owner: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(&mut restored)
+        .await
+        .unwrap();
+    sinex_schema::prepare(&mut restored, &owner).await.unwrap();
+    sqlx::query("SELECT timescaledb_pre_restore()")
+        .execute(&mut restored)
+        .await
+        .unwrap();
+    let status = pg_command("pg_restore", &url)
+        .unwrap()
+        .args(["--no-password", "--no-owner", "--exit-on-error"])
+        .arg(artifact.join("main/sinex.dump"))
+        .status()
+        .await
+        .unwrap();
+    assert!(status.success());
+    sqlx::query("SELECT timescaledb_post_restore()")
+        .execute(&mut restored)
+        .await
+        .unwrap();
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut restored)
+        .await
+        .unwrap();
+    assert_eq!(events, 2);
+    assert!(search_rows(&mut restored).await.is_empty());
+    assert_eq!(
+        sinex_store::read_models::search_position(&mut restored)
+            .await
+            .unwrap(),
+        0
+    );
+    index_search(&mut restored).await;
+    assert_eq!(search_rows(&mut restored).await, indexed);
+    assert_eq!(
+        sinex_store::read_models::search_position(&mut restored)
+            .await
+            .unwrap(),
+        position
+    );
+}

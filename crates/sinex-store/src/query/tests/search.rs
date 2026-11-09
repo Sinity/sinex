@@ -171,10 +171,9 @@ async fn search_answers_and_position_hold_while_trigram_rewrite_runs(db: devkit:
     loop {
         assert_eq!(current_seq(&mut conn).await.unwrap(), position);
         assert_eq!(
-            crate::commit_log::consumer_position(&mut conn, crate::read_models::SEARCH_TEXT)
+            crate::read_models::search_position(&mut conn)
                 .await
-                .unwrap()
-                .0,
+                .unwrap(),
             position,
             "the rewrite never moves search coverage"
         );

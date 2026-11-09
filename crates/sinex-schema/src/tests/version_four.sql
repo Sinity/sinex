@@ -1,3 +1,5 @@
+-- Undo the search position upgrade.
+DROP TABLE core.search_position;
 -- Undo the search refusals upgrade.
 DROP TABLE core.search_refusals;
 -- Undo the online backup upgrade before exercising its forward application.

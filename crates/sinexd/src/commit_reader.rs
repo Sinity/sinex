@@ -146,6 +146,27 @@ pub(crate) trait ReadModel: Send + Sync {
         events: &'a [Committed],
         tx: &'a mut PgConnection,
     ) -> BoxFuture<'a, Result<(), String>>;
+    /// The saved position, by default in `core.consumer_positions`.
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
+        Box::pin(async move {
+            commit_log::consumer_position(conn, self.name())
+                .await
+                .map(|(seq, _)| seq)
+                .map_err(|e| e.to_string())
+        })
+    }
+    /// Save the position inside the transaction that applied up to it.
+    fn save_position<'a>(
+        &'a self,
+        tx: &'a mut PgConnection,
+        up_to: i64,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            commit_log::set_consumer_position(tx, self.name(), up_to, 0)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
 }
 
 /// Every read model, in one list.
@@ -173,6 +194,26 @@ impl ReadModel for SearchText {
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             sinex_store::read_models::apply_search_text(tx, events)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
+        Box::pin(async move {
+            sinex_store::read_models::search_position(conn)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn save_position<'a>(
+        &'a self,
+        tx: &'a mut PgConnection,
+        up_to: i64,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            sinex_store::read_models::set_search_position(tx, up_to)
                 .await
                 .map_err(|e| e.to_string())
         })
@@ -224,10 +265,7 @@ impl Consumer for ReadModelRunner {
     fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
         Box::pin(async move {
             self.0.initialize(conn).await?;
-            commit_log::consumer_position(conn, self.0.name())
-                .await
-                .map(|(seq, _)| seq)
-                .map_err(|e| e.to_string())
+            self.0.position(conn).await
         })
     }
 
@@ -240,9 +278,7 @@ impl Consumer for ReadModelRunner {
         Box::pin(async move {
             let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
             self.0.apply(events, &mut tx).await?;
-            commit_log::set_consumer_position(&mut tx, self.0.name(), up_to, 0)
-                .await
-                .map_err(|e| e.to_string())?;
+            self.0.save_position(&mut tx, up_to).await?;
             tx.commit().await.map_err(|e| e.to_string())
         })
     }

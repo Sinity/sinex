@@ -12,7 +12,7 @@ fn rec(line: &str, ns: i128) -> Map<String, Value> {
 }
 
 fn parse_all(lines: &[&str]) -> Vec<Desktop> {
-    let mut carry = None;
+    let mut carry = Carry::default();
     let mut out = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let (events, next) = HyprlandParser
@@ -143,4 +143,86 @@ fn spooled_capture_drains_to_typed_events() {
     assert_eq!(types, vec!["window.focused", "window.title_changed"]);
     // Four records read, two events: every record accounted for.
     assert_eq!(chunks.iter().map(|c| c.outcomes.len()).sum::<usize>(), 4);
+}
+
+fn titles(out: &[Desktop]) -> Vec<(&str, &str)> {
+    out.iter()
+        .filter_map(|event| match event {
+            Desktop::TitleChanged(changed) => {
+                Some((changed.window.as_str(), changed.title.as_str()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[devkit::test]
+fn spinner_frames_of_one_title_make_one_event() {
+    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let mut lines = vec!["openwindow>>55aa,1,kitty,zsh".to_owned()];
+    lines.extend(
+        frames
+            .iter()
+            .map(|frame| format!("windowtitlev2>>55aa,{frame} cargo build")),
+    );
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    assert_eq!(titles(&parse_all(&lines)), vec![("55aa", "⠋ cargo build")]);
+}
+
+#[devkit::test]
+fn a_new_text_behind_the_spinner_is_a_change() {
+    let out = parse_all(&[
+        "windowtitlev2>>55aa,✳ Write the report",
+        "windowtitlev2>>55aa,✶ Write the report",
+        "windowtitlev2>>55aa,· Write the report",
+        "windowtitlev2>>55aa,* Write the report",
+        "windowtitlev2>>55aa,Write the report",
+        "windowtitlev2>>55aa,✻ Read the logs",
+        "windowtitlev2>>77bb,◐ Write the report",
+        "windowtitlev2>>77bb,◓ Write the report",
+    ]);
+    assert_eq!(
+        titles(&out),
+        vec![
+            ("55aa", "✳ Write the report"),
+            ("55aa", "✻ Read the logs"),
+            ("77bb", "◐ Write the report"),
+        ]
+    );
+}
+
+#[devkit::test]
+fn an_unsaved_mark_and_a_reopened_window_are_changes() {
+    let out = parse_all(&[
+        "windowtitlev2>>55aa,draft.md",
+        "windowtitlev2>>55aa,*draft.md",
+        "closewindow>>55aa",
+        "openwindow>>55aa,1,kitty,⠋ cargo build",
+        "windowtitlev2>>55aa,⠙ cargo build",
+        "closewindow>>55aa",
+        "windowtitlev2>>55aa,⠹ cargo build",
+    ]);
+    assert_eq!(
+        titles(&out),
+        vec![
+            ("55aa", "draft.md"),
+            ("55aa", "*draft.md"),
+            ("55aa", "⠹ cargo build"),
+        ]
+    );
+}
+
+#[devkit::test]
+fn progress_glyphs_and_their_spaces_leave_the_text() {
+    for (title, text) in [
+        ("⣾ build", "build"),
+        ("✳✶ two glyphs", "two glyphs"),
+        ("◴ quarter", "quarter"),
+        ("* asterisk alone", "asterisk alone"),
+        ("*draft", "*draft"),
+        ("plain", "plain"),
+        ("⠋", ""),
+    ] {
+        assert_eq!(without_progress(title), text, "{title}");
+    }
 }

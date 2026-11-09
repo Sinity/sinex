@@ -17,14 +17,9 @@ async fn follow_watermark_waits_for_durable_search_projection(db: devkit::pg::Te
     crate::read_models::apply_search_text(&mut tx, &page.events)
         .await
         .unwrap();
-    crate::commit_log::set_consumer_position(
-        &mut tx,
-        crate::read_models::SEARCH_TEXT,
-        page.up_to.unwrap(),
-        0,
-    )
-    .await
-    .unwrap();
+    crate::read_models::set_search_position(&mut tx, page.up_to.unwrap())
+        .await
+        .unwrap();
     assert_eq!(follow_position(&mut conn).await.unwrap(), 0);
     tx.commit().await.unwrap();
     assert_eq!(follow_position(&mut conn).await.unwrap(), committed);

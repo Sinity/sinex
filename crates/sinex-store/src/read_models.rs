@@ -5,9 +5,35 @@ use crate::commit_log::Committed;
 use sinex_model::query::text::payload_text;
 use sqlx::{Connection, PgConnection};
 
-/// The search read model's consumer name, and its position's key in
-/// `core.consumer_positions`.
+/// The search read model's consumer name.
 pub const SEARCH_TEXT: &str = "read.search_text";
+
+/// How far search has indexed. The position lives in `core.search_position`,
+/// beside the search tables a backup leaves out, so a restored copy without
+/// them starts at 0 and rebuilds.
+pub async fn search_position(conn: &mut PgConnection) -> Result<i64> {
+    Ok(
+        sqlx::query_scalar!("SELECT commit_seq FROM core.search_position")
+            .fetch_optional(&mut *conn)
+            .await?
+            .unwrap_or(0),
+    )
+}
+
+/// Save how far search has indexed, inside the transaction that indexed it.
+/// The position only moves forward.
+pub async fn set_search_position(conn: &mut PgConnection, commit_seq: i64) -> Result<()> {
+    sqlx::query!(
+        r#"INSERT INTO core.search_position (commit_seq) VALUES ($1)
+           ON CONFLICT (only_row) DO UPDATE SET
+             commit_seq = greatest(core.search_position.commit_seq, EXCLUDED.commit_seq),
+             updated_at = now()"#,
+        commit_seq,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
 
 /// Index committed events' payload text in `core.search_text`, inside the
 /// caller's transaction. The commit-log reader calls this with the events of

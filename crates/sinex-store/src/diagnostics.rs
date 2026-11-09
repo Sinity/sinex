@@ -111,10 +111,9 @@ pub async fn positions(conn: &mut PgConnection) -> Result<Positions> {
         r#"SELECT
              (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
              (SELECT max(version) FROM sinex_schema.applied) AS schema_version,
-             (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS search_position,
+             (SELECT commit_seq FROM core.search_position) AS search_position,
              (SELECT count(*) FROM raw.failures WHERE failed_at > now() - interval '24 hours') AS "failures_24h!",
-             (SELECT count(*) FROM core.search_refusals) AS "search_refusals!""#,
-        crate::read_models::SEARCH_TEXT
+             (SELECT count(*) FROM core.search_refusals) AS "search_refusals!""#
     )
     .fetch_one(&mut *conn)
     .await?)
