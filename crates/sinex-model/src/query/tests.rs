@@ -483,11 +483,12 @@ fn recall_windows() {
         panic!()
     };
     assert_eq!(from, ts("2026-09-13T02:00:00Z"));
+    // docs/recall.md: a moment has a radius, "default ±15 min".
     let query = native_q("recall");
     let Source::Recall { from, to } = query.source else {
         panic!()
     };
-    assert_eq!(to.duration_since(from).as_secs(), 3600);
+    assert_eq!(to.duration_since(from).as_secs(), 1800);
     assert!(matches!(
         native_q("recall last").source,
         Source::RecallLast { filter: None }
