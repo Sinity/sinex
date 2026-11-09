@@ -109,6 +109,14 @@ fn projected_sets_require_matching_types_in_the_product_catalog() {
     for operator in ["union", "intersect", "except", "diff"] {
         let incompatible =
             format!("events | fields id | {operator} (events | fields text(id) as id)");
+        // Shared semantics: `intersect` and `except` over the same native row
+        // domain compare row identities whatever each side projects; projected
+        // `union` and `diff` operands need the same names and declared types.
+        if matches!(operator, "intersect" | "except") {
+            let parsed = syntax::parse(&incompatible, &context).unwrap();
+            query_language::bind::bind(&parsed, &catalog).unwrap();
+            continue;
+        }
         let error = syntax::parse(&incompatible, &context).unwrap_err();
         assert!(error.message.contains("same projected fields and types"));
         let compatible =
