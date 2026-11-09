@@ -856,6 +856,7 @@ async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
 }
 
 mod output_ordinals;
+mod registration;
 
 #[devkit::test]
 async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_insert(

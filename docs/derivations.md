@@ -18,6 +18,7 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 - Paged readers choose event identities and apply their row and byte budgets before fetching payloads. A separate materialized fetch loads payloads for that ID batch once before joining its page metadata. Its inclusive UUID bounds exclude chunks and compressed row groups outside the selected ID range; exact membership excludes gaps inside that range. A sparse batch can span unselected row groups inside its bounds, so the row budget alone does not bound decompression work.
 - The daemon does the I/O; the `sinex-derivations` crate computes from supplied values, so every computation is testable without a database.
 - Admission commits a derivation's outputs, the replacement of the key's previous output set, the derivation's saved position, its read ranges and the downstream dirty marks in one transaction.
+- A per-event pass that finds no event of its kinds up to the head it read at starts its next pass from that head, so an idle derivation reads only new commits. The saved position moves only with admitted outputs; after a restart, or when a version switch resets it, the next pass starts from the saved position. Compressed chunks wholly before a pass's start are skipped by their commit-position range.
 - Dirty keys are marked in the same transaction as the inputs that dirty them. There is no separate invalidation stream.
 - Recomputing a derivation is idempotent: the same live inputs give the same outputs by key and payload.
 

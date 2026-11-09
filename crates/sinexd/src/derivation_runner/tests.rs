@@ -607,6 +607,36 @@ async fn per_event_derivations_read_in_commit_order_and_keep_their_place(
     );
 }
 
+/// A pass that finds no event of its kinds starts the next pass at the head it
+/// saw, so idle passes stop reading the same history. A later event of its
+/// kinds is still read, and a stored position that went back (a version
+/// switch resets it) is read from again.
+#[devkit::test]
+async fn per_event_position_advances_without_matching_events(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
+    w.admit(vec![focus("a", 0), focus("b", 10)]).await;
+    let mut d = w.driver_with(vec![], vec![Box::new(Echo)]).await;
+    d.catch_up().await.unwrap();
+    let head = w
+        .count("SELECT value FROM core.counters WHERE name = 'commit_seq'")
+        .await;
+    let empty = &d.empty_passes["test.echo"];
+    assert_eq!((empty.stored, empty.head), (0, head));
+
+    w.admit(vec![zsh("c", 20, 3)]).await;
+    d.catch_up().await.unwrap();
+    let out: Vec<CommandFused> = w.live().await;
+    let commands: Vec<&str> = out.iter().map(|f| f.command.as_str()).collect();
+    assert_eq!(commands, vec!["C"]);
+    let read = d.counts["test.echo"].inputs;
+    assert_eq!(read, 1);
+
+    w.count("WITH gone AS (DELETE FROM derivation.positions WHERE derivation = 'test.echo' RETURNING 1) SELECT count(*) FROM gone")
+        .await;
+    d.catch_up().await.unwrap();
+    assert_eq!(d.counts["test.echo"].inputs, read + 1);
+}
+
 /// Reading many windows page by page returns, for each, exactly what reading
 /// it alone returns: adjacent windows share a paged query, distant windows and
 /// windows with another filter do not, and pages end between rows of one
