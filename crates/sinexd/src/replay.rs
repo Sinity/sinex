@@ -55,6 +55,8 @@ pub(crate) struct Scope {
     pub event_types: Option<Vec<String>>,
     pub from: Option<Timestamp>,
     pub until: Option<Timestamp>,
+    /// Readings per admission batch; the drain's default when unset.
+    pub batch_events: Option<u64>,
 }
 
 impl Scope {
@@ -65,6 +67,7 @@ impl Scope {
             "event_types": self.event_types,
             "from": self.from,
             "until": self.until,
+            "batch_events": self.batch_events,
         })
     }
 
@@ -78,6 +81,8 @@ impl Scope {
                 .map_err(|_| bad("event_types"))?,
             from: serde_json::from_value(v["from"].clone()).map_err(|_| bad("from"))?,
             until: serde_json::from_value(v["until"].clone()).map_err(|_| bad("until"))?,
+            batch_events: serde_json::from_value(v["batch_events"].clone())
+                .map_err(|_| bad("batch_events"))?,
         })
     }
 }
@@ -592,7 +597,13 @@ fn read_sequence_into(
                 records: &records,
                 carry: carry.clone(),
                 reading_order: &*order,
-                limits: Limits::default(),
+                limits: match scope.batch_events {
+                    Some(n) => Limits {
+                        max_events: usize::try_from(n).unwrap_or(usize::MAX),
+                        ..Limits::default()
+                    },
+                    None => Limits::default(),
+                },
                 manifest: &m.manifest,
             })
             .map_err(|e| format!("material {}: {e}", m.id))?;

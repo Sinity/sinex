@@ -237,7 +237,7 @@ the surfaces are:
   archived, for an archive, a restore, a replay or an undo;
 - `resume OPERATION` continues an archive, restore, tombstone, undo, replay or stage that
   ended `stopped_early` or whose daemon stopped mid-run;
-- `replay QUERY [--parser NAME] [--compare]` and its undo, with `--compare` showing per-field changes; `recompute DERIVATION [--compare]` and
+- `replay QUERY [--parser NAME] [--compare] [--batch-events N]` and its undo, with `--compare` showing per-field changes; `recompute DERIVATION [--compare]` and
   `recompute DERIVATION --switch` ([versions](derivations.md#versions));
 - `tombstone` over the same scopes as `restore`, only on archived chains; `--compare`
   previews the cascade, and the act is reserved to the operator

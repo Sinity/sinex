@@ -109,9 +109,12 @@ impl Inputs {
         inputs
     }
 
-    // Two zsh batches inside one replay transaction; the Atuin rows stay small.
+    // Two zsh batches inside one replay transaction; the Atuin rows stay
+    // small. Stage and replay commit 200 readings per batch.
     fn zsh_batches() -> Self {
-        Self::new(10_500, 127)
+        let mut inputs = Self::new(350, 127);
+        inputs.batch_events = Some(200);
+        inputs
     }
 
     // Several publisher pages (1,000 events per page).
@@ -215,8 +218,12 @@ impl Target {
         c
     }
 
-    fn replay(&self, extra: &[&str]) -> Command {
+    fn replay(&self, inputs: &Inputs, extra: &[&str]) -> Command {
+        let batch = inputs.batch_events.map(|n| n.to_string());
         let mut args = vec!["admin", "replay"];
+        if let Some(n) = &batch {
+            args.extend(["--batch-events", n.as_str()]);
+        }
         args.extend_from_slice(extra);
         self.sinexd(&args)
     }
@@ -706,8 +713,8 @@ async fn stage_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
             "--event-type",
             "command.executed",
         ];
-        finish(&mut reference.replay(&scope));
-        finish(&mut target.replay(&scope));
+        finish(&mut reference.replay(&inputs, &scope));
+        finish(&mut target.replay(&inputs, &scope));
         consistent(&reference).await;
         consistent(&target).await;
         let replayed_reference = verified_stage_state(&reference, &inputs).await;
@@ -784,7 +791,7 @@ async fn replay_survives(lock_sql: &str) {
         let reference = Target::new(&inputs);
         finish(&mut reference.stage(&inputs));
         note("reference stage complete");
-        finish(&mut reference.replay(&["--binding", &inputs.zsh_binding()]));
+        finish(&mut reference.replay(&inputs, &["--binding", &inputs.zsh_binding()]));
         note("reference replay complete");
         state(&mut reference.connect().await).await
     };
@@ -796,7 +803,7 @@ async fn replay_survives(lock_sql: &str) {
     assert_eq!(before.live, expected.live, "replay changes no content");
     kill_at(
         &target,
-        &mut target.replay(&["--binding", &inputs.zsh_binding()]),
+        &mut target.replay(&inputs, &["--binding", &inputs.zsh_binding()]),
         None,
         lock_sql,
     )
@@ -808,7 +815,7 @@ async fn replay_survives(lock_sql: &str) {
         before,
         "a killed sequence changed nothing"
     );
-    finish(&mut target.replay(&["--binding", &inputs.zsh_binding()]));
+    finish(&mut target.replay(&inputs, &["--binding", &inputs.zsh_binding()]));
     note("retried replay complete");
     note("target operation finished");
     consistent(&target).await;
@@ -853,7 +860,7 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
     let before = state(&mut target.connect().await).await;
     kill_at(
         &target,
-        &mut target.replay(&scope),
+        &mut target.replay(&inputs, &scope),
         Some("SELECT EXISTS (SELECT 1 FROM core.replayed_sequences)"),
         &lock("core.replayed_sequences"),
     )

@@ -475,6 +475,11 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Bool,
                 "list every change, not only the first few of each kind",
             ),
+            opt(
+                "batch-events",
+                ArgKind::Integer,
+                "readings per admission batch instead of 10,000; smaller batches commit more often",
+            ),
         ],
         access: Access::Agent,
         mcp: false,
