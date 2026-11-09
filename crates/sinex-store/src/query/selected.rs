@@ -101,7 +101,6 @@ pub(super) async fn capture(
         query: text.trim().into(),
         template: template.clone(),
         definitions: Default::default(),
-        original_question: None,
         now: Timestamp::from_unix_ns(ctx.now.as_nanosecond())
             .map_err(|error| Error::Invalid(error.to_string()))?,
         read_as: explicit.then_some(seq),

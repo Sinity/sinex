@@ -15,8 +15,9 @@ fn hello_runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
-// One budget covers setup and all waits/iterations in a test. Kernel I/O waits
-// are not product latency failures; leave 30s of nextest's 120s for cleanup.
+// One budget per test detects a session that hangs. The fake capture children
+// sleep for an hour, far past this budget, so a session that waits for them to
+// exit instead of stopping them fails rather than passing slowly.
 fn fixture_deadline() -> Instant {
     Instant::now() + Duration::from_secs(90)
 }
@@ -95,7 +96,7 @@ impl Session {
         loop {
             assert!(
                 Instant::now() < self.until,
-                "fixture watchdog expired observing publications: expected {count}, observed {failed}; {}",
+                "session did not report {count} publishing failures (saw {failed}); {}",
                 self.evidence("waiting for publishing failure")
             );
             let read = reader.read_line(&mut line).unwrap();
@@ -135,7 +136,7 @@ impl Session {
             }
             assert!(
                 Instant::now() < self.until,
-                "fixture watchdog expired waiting for session exit; {}",
+                "session did not stop on its own; {}",
                 self.evidence("waiting for session exit")
             );
             std::thread::sleep(Duration::from_millis(10));
@@ -192,7 +193,7 @@ if [ -n "$FAKE_DELAYED_EMIT" ]; then
     while [ ! -e "$FAKE_DELAYED_EMIT" ]; do sleep 0.01; done
     printf '%s\n' '{"selection":"clipboard","types":[],"secret":false,"text":"synthetic capture"}'
 fi
-exec sleep 30
+exec sleep 3600
 "#,
             ),
             (
@@ -203,7 +204,7 @@ printf 'synthetic audio bytes' > "$file"
 (while :; do printf x >> "$FAKE_HEARTBEAT"; sleep 0.01; done) &
 printf '%s\n' "$!" >> "$FAKE_DESCENDANTS"
 while [ ! -s "$FAKE_HEARTBEAT" ]; do sleep 0.01; done
-exec sleep 30
+exec sleep 3600
 "#,
             ),
             ("ffmpeg", "exit 1\n"),
@@ -296,7 +297,7 @@ exec sleep 30
         {
             assert!(
                 Instant::now() < session.until,
-                "fixture watchdog expired waiting for fake capture readiness; pids={:?}; descendants={:?}; heartbeat={:?}; {}",
+                "fake capture children did not start; pids={:?}; descendants={:?}; heartbeat={:?}; {}",
                 self.pids().into_iter().take(4).collect::<Vec<_>>(),
                 self.descendants().into_iter().take(4).collect::<Vec<_>>(),
                 std::fs::metadata(self.root.join("heartbeat")).map(|m| m.len()),
@@ -335,7 +336,7 @@ exec sleep 30
             );
             assert!(
                 Instant::now() < session.until,
-                "fixture watchdog expired waiting for capture heartbeat; {}",
+                "capture stopped after publishing failed; {}",
                 session.evidence("waiting for capture heartbeat after publishing failure")
             );
             std::thread::sleep(Duration::from_millis(10));
@@ -505,7 +506,7 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
         }
         assert!(
             Instant::now() < session.until,
-            "fixture watchdog expired waiting for saved empty spool polls; {}",
+            "both empty spool polls were not saved; {}",
             session.evidence("waiting for saved empty spool polls")
         );
         std::thread::sleep(Duration::from_millis(10));
@@ -603,7 +604,7 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
     let child_pid_file = dir.path().join("child.pid");
     std::fs::write(
         &journalctl,
-        "#!/bin/sh\necho $$ > \"$TEST_CHILD_PID\"\nexec sleep 300\n",
+        "#!/bin/sh\necho $$ > \"$TEST_CHILD_PID\"\nexec sleep 3600\n",
     )
     .unwrap();
     std::fs::set_permissions(&journalctl, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -635,7 +636,7 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
         }
         assert!(
             Instant::now() < daemon.until,
-            "fixture watchdog expired waiting for journal reader; {}",
+            "journal reader did not start; {}",
             daemon.evidence("waiting for journal reader startup")
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -654,7 +655,7 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
         }
         assert!(
             Instant::now() < daemon.until,
-            "fixture watchdog expired waiting for command exit; {}",
+            "capture did not stop after SIGTERM; {}",
             daemon.evidence("waiting for journal command exit")
         );
         tokio::time::sleep(Duration::from_millis(10)).await;

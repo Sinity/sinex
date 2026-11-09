@@ -1,6 +1,6 @@
 //! Pair relations and order predicates over the actual output of an inner query.
 //! Joins retain every matching pair; a single positive order predicate also
-//! exposes one deterministic nearest witness without changing the outer grain.
+//! exposes one deterministic nearest matching row without changing the outer grain.
 use super::*;
 use sinex_model::query::JoinOn;
 
@@ -261,7 +261,7 @@ impl Compiler<'_> {
     }
 
     /// Event contributors of successful positive order predicates. Ordinary
-    /// predicates add none; negation never invents a positive witness.
+    /// predicates add none; negation never invents a positive match.
     pub(super) fn predicate_parents(&self, outer: &Cols, expression: &Expr) -> Result<SqlFragment> {
         match expression {
             Expr::Order(join) => {
@@ -298,13 +298,9 @@ impl Compiler<'_> {
         }
     }
 
-    /// Exactly one positive top-level order exposes a witness. This is the
+    /// Exactly one positive top-level order exposes a matching row. This is the
     /// same AND-only traversal used by shared scope binding and evaluation.
-    pub(super) fn order_witnesses(
-        &mut self,
-        outer: &Cols,
-        expression: &Expr,
-    ) -> Result<Vec<Joined>> {
+    pub(super) fn matched_rows(&mut self, outer: &Cols, expression: &Expr) -> Result<Vec<Joined>> {
         match expression.exposed_order() {
             Some(join) => Ok(vec![self.join_lateral(outer, join, true)?]),
             None => Ok(vec![]),
@@ -401,7 +397,7 @@ impl Compiler<'_> {
                 for key in &join.pick {
                     let SortBy::Operand(operand) = &key.key else {
                         return Err(invalid(
-                            "witness choice needs explicit candidate expressions",
+                            "choosing the matched row needs explicit candidate expressions",
                         ));
                     };
                     lateral

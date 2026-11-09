@@ -183,29 +183,13 @@ fn each_join_checks_only_the_matched_columns_it_produces() {
 }
 
 #[devkit::test]
-fn generated_reading_fields_have_real_types_and_old_grammar_stays_frozen() {
+fn generated_reading_fields_have_real_types() {
     let query = q("events | fields start, end, snippet");
     let Stage::Fields(columns) = &query.stages[0] else {
         panic!("projection")
     };
     assert_eq!(columns[0].field_type().unwrap(), FieldType::Time);
     assert_eq!(columns[2].field_type().unwrap(), FieldType::Text);
-    for text in [
-        "events fields snippet",
-        "events fields start",
-        "events where glob(source, \"*\") = true",
-    ] {
-        assert!(
-            historical::parse_format_one(text, &ctx()).is_err(),
-            "{text}"
-        );
-    }
-    let template =
-        historical::decode_format_one("events where text:workspace fields id", &ctx()).unwrap();
-    let current = template.bind(&ctx()).unwrap();
-    assert!(
-        matches!(current.stages.last(),Some(Stage::Fields(columns)) if columns.iter().any(|column|column.column()=="snippet"))
-    );
 }
 
 #[devkit::test]
@@ -222,7 +206,7 @@ fn absolute_values_preserve_numeric_dimensions_and_refuse_affine_time() {
 }
 
 #[devkit::test]
-fn explicit_witness_keys_bind_the_candidate_relation_and_metadata() {
+fn explicit_match_keys_bind_the_candidate_relation_and_metadata() {
     let query = q(
         "commands where near (commands) within 1m pick first by abs(match.distance), when, match.id | fields command",
     );
@@ -290,7 +274,7 @@ fn text_cast_clears_entity_typing_without_stringifying_other_scalars() {
 }
 
 #[devkit::test]
-fn natural_search_ranks_the_entering_text_but_not_an_inner_witness() {
+fn natural_search_ranks_the_entering_text_but_not_an_inner_match() {
     assert!(q("events where text:workspace").ranked);
     assert!(!q("events where NOT text:workspace").ranked);
     assert!(

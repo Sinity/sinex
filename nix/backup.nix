@@ -1,4 +1,4 @@
-# One coordinator acquires the native cut; Borg owns archive durability.
+# The service prepares one backup through sinexd, then archives it with Borg.
 { cfg, pkgs }:
 let
   root = cfg.backup.artifactDir;
@@ -17,7 +17,7 @@ let
     failOnWarnings = true;
     appendFailedSuffix = true;
     # The upstream sandbox is read-only. Both repository identity reads take
-    # Borg's ordinary locks, and the hooks retain root and daemon receipts.
+    # Borg's ordinary locks, and the hooks keep root and daemon copies of each archive's info.
     readWritePaths = [ control root ] ++ localRepositories;
     preHook = ''
       sinexBackupRun=$(cat ${pkgs.lib.escapeShellArg "${control}/active"})
@@ -41,9 +41,9 @@ let
       archiveName="sinex-core-$hold"
       # The root Borg walk starts at the descriptor-pinned cwd, not a mutable parent path.
     '';
-    # Runs after a successful create and .failed rename. A successful sibling
-    # cannot manufacture this repository's receipt. Root writes only its own
-    # control directory; writes through daemon-owned paths run as that user.
+    # Runs after a successful create and .failed rename. Each job records its
+    # own repository's archive info. Root writes only its own control
+    # directory; writes through daemon-owned paths run as that user.
     postCreate = ''
       borgWrapper info "''${extraArgs[@]}" --json "::$archiveName" > ${pkgs.lib.escapeShellArg "${control}/${component}.borg-info.json.tmp"}
       ${pkgs.jq}/bin/jq -e --arg name "$archiveName" \
@@ -71,11 +71,11 @@ in {
     };
     script = ''
       set -euo pipefail
-      # systemd serializes the coordinator. Refuse to coalesce with a manual
-      # sibling that may already be copying a different immutable cut.
+      # systemd runs one backup service at a time. Refuse to overlap a manually
+      # started Borg job, which may be archiving a different backup.
       for unit in borgbackup-job-sinex.service borgbackup-job-sinex-keys.service; do
         if systemctl is-active --quiet "$unit"; then
-          echo "$unit is already running; retain its current backup cut" >&2
+          echo "$unit is already running; leaving its backup in place" >&2
           exit 1
         fi
       done
@@ -88,30 +88,30 @@ in {
       ${asUser} tee "$run/prepare.json" < ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
       printf '%s\n' "$run" > ${pkgs.lib.escapeShellArg "${control}/active.tmp"}
       mv -- ${pkgs.lib.escapeShellArg "${control}/active.tmp"} ${pkgs.lib.escapeShellArg "${control}/active"}
-      # A missing participant retains the native artifact and hold. It cannot
-      # become a completed nightly backup through successful core archives.
-      jq -e '.artifact.producer_custody == "complete"' ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
+      # A producer that could not be copied leaves the artifact and hold in
+      # place; the backup is not complete even if both archives succeed.
+      jq -e '.artifact.producers_complete == true' ${pkgs.lib.escapeShellArg "${control}/prepare.json"} >/dev/null
       systemctl start --wait borgbackup-job-sinex.service
       systemctl start --wait borgbackup-job-sinex-keys.service
-      # Both receipts came from actual archive reads, never unrelated latest
-      # entries or solely a successful systemctl transport.
+      # Both archive infos were read back from the archives just created, not
+      # taken from whichever archive is latest or from systemctl's exit status.
       jq -e --arg name "sinex-core-$hold" '.archives[0].name == $name and (.archives[0].id | length > 0)' ${pkgs.lib.escapeShellArg "${control}/main.borg-info.json"} >/dev/null
       jq -e --arg name "sinex-core-$hold" '.archives[0].name == $name and (.archives[0].id | length > 0)' ${pkgs.lib.escapeShellArg "${control}/keys.borg-info.json"} >/dev/null
       jq -n --arg hold "$hold" \
         --slurpfile main ${pkgs.lib.escapeShellArg "${control}/main.borg-info.json"} \
         --slurpfile keys ${pkgs.lib.escapeShellArg "${control}/keys.borg-info.json"} \
         --slurpfile prepared ${pkgs.lib.escapeShellArg "${control}/prepare.json"} \
-        '{hold:$hold,main:$main[0].archives[0],keys:$keys[0].archives[0],producer_custody:$prepared[0].artifact.producer_custody,required_producers:$prepared[0].artifact.required_producers,producer_cuts:$prepared[0].artifact.producer_cuts}' \
+        '{hold:$hold,main:$main[0].archives[0],keys:$keys[0].archives[0],producers_complete:$prepared[0].artifact.producers_complete,required_producers:$prepared[0].artifact.required_producers,producer_snapshots:$prepared[0].artifact.producer_snapshots}' \
         > ${pkgs.lib.escapeShellArg "${control}/complete.json"}
       sync -f ${pkgs.lib.escapeShellArg "${control}/complete.json"}
       ${asUser} tee "$run/complete.json" < ${pkgs.lib.escapeShellArg "${control}/complete.json"} >/dev/null
-      # A warning or failed sibling retains both artifact and hold. Admission
-      # stayed online; only this successfully archived cut is released.
+      # A warning or a failed job leaves both artifact and hold in place.
+      # Admission stayed online; only this successfully archived backup is released.
       ${asUser} ${client} backup release "$hold" | ${asUser} tee "$run/release.json" >/dev/null
       ${asUser} ln -s -- "$(basename "$run")/complete.json" "$run/latest-complete.tmp"
       ${asUser} mv -Tf -- "$run/latest-complete.tmp" ${pkgs.lib.escapeShellArg "${root}/latest-complete.json"}
-      # These copies belong solely to the completed run. Retain failed runs
-      # and receipts; never perform privileged cleanup through daemon paths.
+      # These copies belong solely to the completed run. Keep failed runs and
+      # the archive records; never perform privileged cleanup through daemon paths.
       ${asUser} rm -rf -- "$run/main" "$run/keys"
       rm -- ${pkgs.lib.escapeShellArg "${control}/active"}
     '';

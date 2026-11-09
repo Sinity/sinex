@@ -2355,18 +2355,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "historical-query-format-v1"
-version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#8a84a4d9566c2d3b1c99507ed65c5fbfafeec59e"
-dependencies = [
- "blake3",
- "jiff",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4585,7 +4573,6 @@ dependencies = [
  "blake3",
  "caseless",
  "devkit",
- "historical-query-format-v1",
  "jiff",
  "proptest",
  "query-language",

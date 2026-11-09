@@ -13,16 +13,16 @@ fn boundary() -> Hold {
 }
 
 #[devkit::test]
-async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
+async fn paused_producer_backup_keeps_checkpoint_before_later_acknowledgment() {
     let broker = devkit::nats::test_nats().unwrap();
     let producer = broker.prefix().to_owned();
     let client = async_nats::connect(broker.url()).await.unwrap();
     let source = Arc::new(tempfile::tempdir().unwrap());
-    std::fs::write(source.path().join("checkpoint"), b"before-core-cut").unwrap();
+    std::fs::write(source.path().join("checkpoint"), b"before-hold").unwrap();
     std::fs::write(source.path().join("outbox"), b"stable-frame-id:raw-bytes").unwrap();
     let publication = Publication::default();
     let captured_source = source.clone();
-    let participant = Participant::start(
+    let responder = BackupResponder::start(
         client.clone(),
         Subjects::sinex(),
         producer.clone(),
@@ -35,7 +35,7 @@ async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
     )
     .await
     .unwrap();
-    let cut = Frozen::freeze(client.clone(), Subjects::sinex(), producer.clone())
+    let paused = PausedProducer::pause(client.clone(), Subjects::sinex(), producer.clone())
         .await
         .unwrap();
     // An ACK arriving after P may not retire raw bytes or advance this checkpoint.
@@ -44,18 +44,18 @@ async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
     let advance = tokio::spawn(async move {
         attempting.send(()).unwrap();
         let _publication = publication.enter().await;
-        std::fs::write(later_source.path().join("checkpoint"), b"after-core-cut").unwrap();
+        std::fs::write(later_source.path().join("checkpoint"), b"after-hold").unwrap();
         std::fs::remove_file(later_source.path().join("outbox")).unwrap();
     });
     attempted.await.unwrap();
     let output = tempfile::tempdir().unwrap();
-    let files = cut.acquire(&boundary(), output.path()).await.unwrap();
+    let files = paused.acquire(&boundary(), output.path()).await.unwrap();
     assert_eq!(files.len(), 2);
-    cut.release().await.unwrap();
+    paused.release().await.unwrap();
     advance.await.unwrap();
     assert_eq!(
         std::fs::read(output.path().join("checkpoint")).unwrap(),
-        b"before-core-cut"
+        b"before-hold"
     );
     assert_eq!(
         std::fs::read(output.path().join("outbox")).unwrap(),
@@ -70,14 +70,14 @@ async fn frozen_producer_cut_keeps_checkpoint_before_later_acknowledgment() {
     .unwrap();
     assert_eq!(
         std::fs::read(source.path().join("checkpoint")).unwrap(),
-        b"before-core-cut"
+        b"before-hold"
     );
-    cut.release().await.unwrap();
-    drop(participant);
+    paused.release().await.unwrap();
+    drop(responder);
 }
 
 #[devkit::test]
-async fn producer_restart_rejects_old_freeze_instead_of_certifying_new_checkpoint() {
+async fn producer_restart_refuses_the_old_pause_instead_of_copying_new_state() {
     let broker = devkit::nats::test_nats().unwrap();
     let producer = broker.prefix().to_owned();
     let client = async_nats::connect(broker.url()).await.unwrap();
@@ -88,7 +88,7 @@ async fn producer_restart_rejects_old_freeze_instead_of_certifying_new_checkpoin
                 files: Vec::new(),
             })
         });
-    let participant = Participant::start(
+    let responder = BackupResponder::start(
         client.clone(),
         Subjects::sinex(),
         producer.clone(),
@@ -97,13 +97,13 @@ async fn producer_restart_rejects_old_freeze_instead_of_certifying_new_checkpoin
     )
     .await
     .unwrap();
-    let cut = Frozen::freeze(client.clone(), Subjects::sinex(), producer.clone())
+    let paused = PausedProducer::pause(client.clone(), Subjects::sinex(), producer.clone())
         .await
         .unwrap();
-    drop(participant);
+    drop(responder);
     // Flush a new subscription only after the old task's abort has run.
     tokio::task::yield_now().await;
-    let _restarted = Participant::start(
+    let _restarted = BackupResponder::start(
         client,
         Subjects::sinex(),
         producer.clone(),
@@ -114,10 +114,11 @@ async fn producer_restart_rejects_old_freeze_instead_of_certifying_new_checkpoin
     .unwrap();
     let output = tempfile::tempdir().unwrap();
     assert!(
-        cut.acquire(&boundary(), output.path())
+        paused
+            .acquire(&boundary(), output.path())
             .await
             .unwrap_err()
-            .contains("did not capture")
+            .contains("did not copy its files")
     );
 }
 
@@ -229,7 +230,7 @@ async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash
 }
 
 #[devkit::test]
-async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request() {
+async fn unacknowledged_pause_reply_ends_that_backup_before_the_next_request() {
     use sinex_protocol::replies::{FlowAck, ReplyFrame};
     let broker = devkit::nats::test_nats().unwrap();
     let producer = broker.prefix().to_owned();
@@ -242,7 +243,7 @@ async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request()
                 files: Vec::new(),
             })
         });
-    let _participant = Participant::start(
+    let _responder = BackupResponder::start(
         client.clone(),
         subjects.clone(),
         producer.clone(),
@@ -258,7 +259,7 @@ async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request()
         .publish_with_reply(
             subjects.backup(&producer),
             inbox.clone(),
-            serde_json::to_vec(&Request::Freeze {
+            serde_json::to_vec(&Request::Pause {
                 token: "abandoned-coordinator".into(),
             })
             .unwrap()
@@ -268,10 +269,10 @@ async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request()
         .unwrap();
     let frame = response.next().await.unwrap();
     let ReplyFrame::Data { stream, .. } = serde_json::from_slice(&frame.payload).unwrap() else {
-        panic!("expected frozen response data");
+        panic!("expected paused response data");
     };
-    // Refuse acknowledgment of the freeze reply. Native custody must drop
-    // before the next coordinator request, rather than waiting for expiry.
+    // Refuse acknowledgment of the pause reply. The producer must end that
+    // backup before the daemon's next request, rather than waiting for expiry.
     client
         .publish(
             format!("{inbox}.flow"),
@@ -281,7 +282,7 @@ async fn cancelled_freeze_response_invalidates_its_cut_before_the_next_request()
         )
         .await
         .unwrap();
-    let next = Frozen::freeze(client, subjects, producer.clone())
+    let next = PausedProducer::pause(client, subjects, producer.clone())
         .await
         .unwrap();
     next.release().await.unwrap();

@@ -2,12 +2,13 @@ use super::*;
 use serde_json::json;
 
 #[devkit::test]
-fn original_walk_cursors_authenticate_before_matching_the_complete_operation() {
+fn cursors_bind_only_to_their_own_question_and_refuse_tampering() {
     let ctx = Context::utc("2026-09-14T12:00:00Z".parse().unwrap());
     let text = "trace sinex:ev/00000000-0000-4000-8000-000000000001";
-    let operation = sinex_model::query::native::parse(text, &ctx).unwrap();
-    let (_, original) = sinex_model::query::historical::decode_with_identity(text, &ctx).unwrap();
-    assert_eq!(original_walk_question(&operation).unwrap(), original);
+    let question = sinex_model::query::native::parse(text, &ctx)
+        .unwrap()
+        .identity()
+        .unwrap();
     let seal = CursorSeal::new([7; 32]);
     let after = OrderPosition {
         values: vec![json!(4)],
@@ -15,24 +16,16 @@ fn original_walk_cursors_authenticate_before_matching_the_complete_operation() {
     };
     let raw = encode(
         &seal,
-        identity("query", &original, "open").unwrap(),
+        identity("query", &question, "open").unwrap(),
         &ctx,
         BTreeMap::new(),
         BTreeMap::new(),
         after.clone(),
     )
     .unwrap();
-    let authenticated = authenticate(&seal, &raw).unwrap();
-    let (form, question) = authenticated_operation_question(
-        &authenticated,
-        operation.identity().unwrap(),
-        Some(&operation),
-        "open",
-    )
-    .unwrap();
-    assert_eq!(form, original);
+    let own = identity("query", &question, "open").unwrap();
     assert_eq!(
-        bind_authenticated(authenticated, question, &ctx)
+        bind_authenticated(authenticate(&seal, &raw).unwrap(), own, &ctx)
             .unwrap()
             .after,
         after
@@ -48,28 +41,15 @@ fn original_walk_cursors_authenticate_before_matching_the_complete_operation() {
         ),
         (text, "guarded"),
     ] {
-        let changed = sinex_model::query::native::parse(text, &ctx).unwrap();
-        let authenticated = authenticate(&seal, &raw).unwrap();
-        let (_, question) = authenticated_operation_question(
-            &authenticated,
-            changed.identity().unwrap(),
-            Some(&changed),
-            grants,
-        )
-        .unwrap();
-        assert!(bind_authenticated(authenticated, question, &ctx).is_err());
+        let other = sinex_model::query::native::parse(text, &ctx)
+            .unwrap()
+            .identity()
+            .unwrap();
+        let other = identity("query", &other, grants).unwrap();
+        assert!(bind_authenticated(authenticate(&seal, &raw).unwrap(), other, &ctx).is_err());
     }
     let mut tampered = raw.into_bytes();
     let last = tampered.last_mut().unwrap();
     *last = if *last == b'0' { b'1' } else { b'0' };
     assert!(authenticate(&seal, std::str::from_utf8(&tampered).unwrap()).is_err());
-    let mut changed = operation.clone();
-    changed
-        .relation
-        .transforms
-        .push(query_language::ast::Transform {
-            span: Default::default(),
-            kind: query_language::ast::TransformKind::Limit { count: 1 },
-        });
-    assert!(original_walk_question(&changed).is_none());
 }

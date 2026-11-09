@@ -1,13 +1,7 @@
-//! An immutable core backup cut. Producer custody and archive durability are separate.
+//! The manifest of one prepared backup: the hold it was taken at, the copied
+//! files, and the producer state copied with it. Archiving is the backup tool's job.
 use crate::{OperationId, Timestamp};
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProducerCustody {
-    Incomplete,
-    Complete,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Hold {
@@ -39,11 +33,12 @@ pub struct File {
     pub blake3: String,
 }
 
-/// Exact native custody for one configured producer, or its missing evidence.
+/// The files copied from one configured producer, or why they could not be.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ProducerCut {
+pub struct ProducerSnapshot {
     pub producer: String,
-    pub incarnation: Option<String>,
+    /// Identifies the producer process that answered; a restart changes it.
+    pub run_id: Option<String>,
     pub files: Vec<File>,
     pub unavailable: Option<String>,
 }
@@ -56,6 +51,7 @@ pub struct Manifest {
     pub source_revision: String,
     pub files: Vec<File>,
     pub required_producers: Option<Vec<String>>,
-    pub producer_custody: ProducerCustody,
-    pub producer_cuts: Vec<ProducerCut>,
+    /// Every required producer's state was copied.
+    pub producers_complete: bool,
+    pub producer_snapshots: Vec<ProducerSnapshot>,
 }

@@ -10,10 +10,7 @@ pub struct QuerySelection {
     pub query: String,
     /// Executable definition; authored query text remains unchanged evidence.
     pub template: crate::query::native::Template,
-    /// Original canonical question for cursors issued before the format upgrade.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub original_question: Option<Value>,
-    /// Executable snapshots; selected._saved retains original identity evidence.
+    /// The saved definitions the question used, as they were when it was asked.
     pub definitions: std::collections::BTreeMap<String, crate::query::saved::SavedQuery>,
     pub now: Timestamp,
     /// Only an explicitly historical question fixes the producer position.

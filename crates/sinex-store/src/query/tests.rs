@@ -389,7 +389,7 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
 }
 
 #[devkit::test]
-async fn near_conditions_pick_the_nearest_witness_once(db: devkit::pg::TestDatabase) {
+async fn near_conditions_pick_the_nearest_match_once(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();

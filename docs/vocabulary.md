@@ -101,6 +101,9 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinexd admin upgrade` while the daemon is stopped.
 - **work after start**: the part of a schema upgrade the daemon finishes after it starts (filling tables from stored rows, building indexes), as ordered tasks that each resume from a mark.
 - **upgrade preparation**: what `sinexd admin upgrade --prepare` builds beside the serving daemon for the upgrade to swap in.
+- **hold**: a recorded backup boundary (commit position, schema version, protected segment prefixes) that keeps the extents it covers from being punched until it is released ([backup](operations.md#holds-and-the-boundary)).
+- **producer snapshot**: the copied state of one producer in a backup (checkpoint, pending frames, spool bytes), or the reason it could not be copied.
+- **pause publication**: what a producer does during a backup: it stops sending, acknowledging and retiring while capture continues, until the backup's copy is taken.
 
 ## Producers and transport
 

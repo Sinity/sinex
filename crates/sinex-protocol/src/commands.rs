@@ -609,7 +609,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "backup",
-        summary: "Hold a core backup boundary, prepare a local immutable paired dump and segment artifact, release a hold, or list open holds. Producer custody is explicitly incomplete; archive custody belongs to the deployment.",
+        summary: "Hold a backup boundary, prepare a local backup (database and key dumps, segment prefixes and producer state), release a hold, or list open holds. Archiving the backup belongs to the deployment's backup tool.",
         args: &[
             pos("action", ArgKind::Text, "hold, prepare, release or list"),
             pos_opt("hold", ArgKind::Text, "the hold UUID, with release"),

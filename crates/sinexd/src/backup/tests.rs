@@ -33,10 +33,10 @@ async fn key(conn: &mut PgConnection, name: &str, bytes: &[u8]) {
 }
 
 /// The two real pg_dump children import one still-live snapshot. Admission
-/// and wrapped keys changed after the cut are absent from both the SQL cut
+/// and wrapped keys changed after the hold are absent from both SQL dumps
 /// and the immutable byte prefix, without stopping the original writer.
 #[devkit::test]
-async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
+async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_advances(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);
@@ -74,13 +74,13 @@ async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
     let outcome = writer
         .submit(
             crate::writer::Priority::Live,
-            live_batch("post-cut-admission"),
+            live_batch("after-hold-admission"),
         )
         .await
         .unwrap();
     assert_eq!(outcome.admitted, 1);
     key(&mut conn, "later-key", b"later-wrapped-key").await;
-    let at_cut: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+    let at_hold: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(snapshot.connection())
         .await
         .unwrap();
@@ -88,7 +88,7 @@ async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(at_cut, 0);
+    assert_eq!(at_hold, 0);
     assert_eq!(current, 1);
     let (_stop, stop) = watch::channel(false);
     let manifest = prepare(
@@ -104,10 +104,7 @@ async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
     .unwrap();
     assert_private_roots(&artifact);
     assert_eq!(manifest.boundary.id, hold);
-    assert_eq!(
-        manifest.producer_custody,
-        sinex_model::backup::ProducerCustody::Incomplete
-    );
+    assert!(!manifest.producers_complete);
     assert_eq!(
         std::fs::read(artifact.join("main/segments/current.hb")).unwrap(),
         original
@@ -162,7 +159,7 @@ async fn paired_dumps_and_segment_copy_keep_the_cut_while_the_writer_advances(
     assert!(result.status.success());
     let dumped = String::from_utf8(result.stdout).unwrap();
     assert!(dumped.contains(&hold.to_string()));
-    assert!(!dumped.contains("post-cut-admission"));
+    assert!(!dumped.contains("after-hold-admission"));
     let descriptor = blobs.descriptors(&original_name).unwrap();
     assert!(
         hashed_blobs::Reader::new(&artifact.join("main"))
@@ -305,11 +302,11 @@ async fn exporter_loss_between_actual_dump_imports_refuses_the_second_dump(
     );
 }
 
-/// Restore the real older SQL checkpoint and native spool cut after ordinary
+/// Restore the older SQL checkpoint and the copied source spool after ordinary
 /// publication advanced and deleted the original segment. Resume must admit
 /// the retained pending record rather than skip it using the newer checkpoint.
 #[devkit::test]
-async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
+async fn restored_backup_resumes_source_spools_after_later_retirement(
     db: devkit::pg::TestDatabase,
 ) {
     use crate::{
@@ -366,9 +363,9 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
     .await
     .unwrap();
     assert_eq!(original_ids.len(), 1);
-    append(&mut capture, "pending-cursor", "pending-before-cut");
+    append(&mut capture, "pending-cursor", "pending-before-hold");
     let publication = context.writer.source_publication();
-    let frozen = publication.freeze().await;
+    let paused = publication.pause().await;
     let snapshot = context
         .writer
         .backup_snapshot("synthetic-backup")
@@ -383,10 +380,10 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
         "native source bytes must be acquired"
     );
     assert_private_roots(&artifact);
-    drop(frozen);
+    drop(paused);
     drop(capture);
     let mut next = SpoolWriter::open(&spool, Rotation::default()).unwrap();
-    append(&mut next, "later-cursor", "after-cut-record");
+    append(&mut next, "later-cursor", "after-hold-record");
     for (_, result) in binding_reader::read(
         &mut context.read_conn,
         &context.blobs,
@@ -417,16 +414,13 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
         &source,
         &artifact,
         stop.clone(),
-        "synthetic-source-cut".into(),
+        "synthetic-source-backup".into(),
         vec![local],
         Some(vec!["@daemon".into()]),
     )
     .await
     .unwrap();
-    assert_eq!(
-        manifest.producer_custody,
-        sinex_model::backup::ProducerCustody::Complete
-    );
+    assert!(manifest.producers_complete);
     assert_private_roots(&artifact);
     drop(next);
     drop(sink);
@@ -526,8 +520,8 @@ async fn older_core_and_native_source_cut_resume_after_post_cut_retirement(
     .unwrap();
     assert_eq!(payloads.len(), 2);
     let encoded = serde_json::to_string(&payloads).unwrap();
-    assert!(encoded.contains("pending-before-cut"));
-    assert!(!encoded.contains("after-cut-record"));
+    assert!(encoded.contains("pending-before-hold"));
+    assert!(!encoded.contains("after-hold-record"));
     drop(sink);
     context.close().await.unwrap();
 }

@@ -43,7 +43,7 @@ pub struct Saved {
     #[event(class = guarded)]
     pub query: String,
     #[event(class = guarded)]
-    pub template: crate::query::saved::Definition,
+    pub template: crate::query::native::Template,
     #[event(class = guarded)]
     pub parameters: Vec<Parameter>,
     #[event(class = guarded)]

@@ -122,14 +122,6 @@ pub fn catalog(ctx: &Context) -> Catalog {
                     ],
                     help: "Intersect state intervals with an instant or interval".into(),
                 },
-                Extension {
-                    name: "measure".into(),
-                    position: P::Transform,
-                    arguments: vec![S::Name, S::List(Box::new(S::Expression))],
-                    help:
-                        "Stored historical measure syntax; execution requires an analysis operation"
-                            .into(),
-                },
             ]
         },
         references: vec![ReferenceForm::Prefix {

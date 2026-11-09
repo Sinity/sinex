@@ -1,4 +1,4 @@
-# The online core restore drill, including a post-cut write and a partial pair.
+# The online restore drill, including a write after the hold and a partial archive pair.
 self: {
   name = "sinex-restore";
   nodes.machine = { pkgs, lib, ... }: {
@@ -68,7 +68,7 @@ self: {
     before = events()
     assert not before.startswith("0|"), before
 
-    with subtest("a failed key archive retains the cut without completing the pair"):
+    with subtest("a failed key archive keeps the backup without completing the pair"):
         machine.succeed("touch /run/fail-key-create")
         machine.fail("systemctl start sinex-backup.service")
         failed_run = machine.succeed("cat /run/sinex-backup/active").strip()
@@ -86,31 +86,31 @@ self: {
         machine.succeed("rm /run/poison-backup-path")
         machine.succeed(f"sudo -u sinex rm {poisoned}/main; sudo -u sinex mv {poisoned}/main.original {poisoned}/main")
 
-    with subtest("admission advances while the immutable cut is being archived"):
+    with subtest("admission advances while the backup is being archived"):
         machine.succeed("touch /run/hold-backup-copy")
         machine.succeed("systemctl start --no-block sinex-backup.service")
         machine.wait_until_succeeds("test -e /run/sinex-backup/artifact-ready")
         run = machine.succeed("cat /run/sinex-backup/active").strip()
         manifest = json.loads(machine.succeed(f"cat {run}/manifest.json"))
-        assert manifest["producer_custody"] == "complete"
+        assert manifest["producers_complete"] is True
         assert manifest["required_producers"] == ["@daemon"]
         # Independently read exactly the original protected prefix. A growing
-        # live segment's later bytes are not part of this cut.
+        # live segment's later bytes are not part of this backup.
         prefix = next(f["bytes"] for f in manifest["files"] if f["path"] == "main/segments/current.hb")
         machine.succeed("mkdir -p /run/expected-store/segments")
         machine.succeed(f"head -c {prefix} /var/lib/sinex/store/segments/current.hb > /run/expected-store/segments/current.hb")
         before_files = files("/run/expected-store")
-        assert events() == before, "the fixture admitted unrequested input before the controlled post-cut write"
-        machine.succeed("printf ': 1700000300:0;after backup cut\\n' > /var/lib/sinex/after-cut")
-        machine.succeed(f"{ctl} stage /var/lib/sinex/after-cut --parser zsh --follow")
-        assert events() != before, "post-cut admission must remain available"
+        assert events() == before, "the fixture admitted unrequested input before the controlled write after the hold"
+        machine.succeed("printf ': 1700000300:0;after backup hold\\n' > /var/lib/sinex/after-hold")
+        machine.succeed(f"{ctl} stage /var/lib/sinex/after-hold --parser zsh --follow")
+        assert events() != before, "admission after the hold must remain available"
         machine.succeed("touch /run/release-backup-copy")
         machine.succeed("systemctl start --wait sinex-backup.service")
         pair = json.loads(machine.succeed("cat /run/sinex-backup/complete.json"))
         assert pair["hold"] == manifest["boundary"]["id"]
-        assert pair["producer_custody"] == manifest["producer_custody"]
+        assert pair["producers_complete"] == manifest["producers_complete"]
         assert pair["required_producers"] == manifest["required_producers"]
-        assert pair["producer_cuts"] == manifest["producer_cuts"]
+        assert pair["producer_snapshots"] == manifest["producer_snapshots"]
         assert pair["main"]["name"] == pair["keys"]["name"]
         assert pair["main"]["id"] and pair["keys"]["id"]
         machine.succeed(f"test ! -d {run}/main; test ! -d {run}/keys")
@@ -119,7 +119,7 @@ self: {
         machine.succeed("systemctl stop sinexd.service")
         machine.succeed("sudo -u postgres dropdb sinex")
         machine.succeed("rm -rf /var/lib/sinex/store/* /var/lib/sinex/backups/*")
-        machine.succeed("rm /var/lib/sinex/zsh_history /var/lib/sinex/after-cut")
+        machine.succeed("rm /var/lib/sinex/zsh_history /var/lib/sinex/after-hold")
 
     with subtest("restore this exact main and key archive pair alone"):
         machine.succeed("mkdir -p /restore/main /restore/keys")

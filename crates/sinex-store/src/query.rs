@@ -10,7 +10,6 @@ mod fields;
 mod follow;
 mod products;
 mod recall;
-pub mod representation;
 mod saved;
 mod selected;
 pub mod signals;
@@ -176,12 +175,6 @@ async fn run_inner(
     let seal = continuation::seal_key(&mut tx).await?;
     let pinned = if let Some(raw) = page.cursor.as_deref() {
         let authenticated = continuation::authenticate(&seal, raw)?;
-        (question_form, question_id) = continuation::authenticated_operation_question(
-            &authenticated,
-            question_form,
-            operation,
-            &grants,
-        )?;
         Some(cursor::Cursor::decode_authenticated(
             authenticated,
             question_id,

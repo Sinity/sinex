@@ -75,9 +75,7 @@ impl Api {
                 let definition = SavedQuery {
                     name: name.clone(),
                     query: query.clone(),
-                    template: query::native::parse(&query, &self.context())
-                        .map_err(error)?
-                        .into(),
+                    template: query::native::parse(&query, &self.context()).map_err(error)?,
                     parameters: parameters.clone(),
                 };
                 definitions.insert(name.clone(), definition.clone());

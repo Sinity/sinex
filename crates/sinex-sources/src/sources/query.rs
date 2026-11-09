@@ -67,63 +67,6 @@ impl Parser for RequestParser {
         let mut object = record.clone();
         object.insert("by".into(), json!(actor));
         object.insert("written_at".into(), json!(at));
-        let format = match context.manifest.details.get("format_version") {
-            None => 1,
-            Some(value) => value
-                .as_u64()
-                .ok_or_else(|| RecordError::new("query format_version is not an integer"))?,
-        };
-        match format {
-            1 if object.get("record").and_then(Value::as_str) == Some("saved") => {
-                if object.contains_key("template") {
-                    return Err(RecordError::new(
-                        "historical saved request has an unexpected template",
-                    ));
-                }
-                let mut original = object.clone();
-                original.remove("record");
-                sinex_model::query::historical::validate_original_payload(
-                    &sinex_model::KindRef {
-                        name: "query.saved".into(),
-                        version: 2,
-                    },
-                    &Value::Object(original),
-                )
-                .map_err(|error| RecordError::new(error.to_string()))?;
-                let query = object.get("query").and_then(Value::as_str).ok_or_else(|| {
-                    RecordError::new("historical saved query has no authored text")
-                })?;
-                let now = jiff::Timestamp::from_nanosecond(at.unix_ns())
-                    .map_err(|error| RecordError::new(error.to_string()))?;
-                let template = sinex_model::query::historical::definition_format_one(
-                    query,
-                    &sinex_model::query::Context::utc(now),
-                )
-                .map_err(|error| RecordError::new(error.to_string()))?;
-                object.insert(
-                    "template".into(),
-                    serde_json::to_value(template)
-                        .map_err(|error| RecordError::new(error.to_string()))?,
-                );
-            }
-            2 if object.get("record").and_then(Value::as_str) == Some("saved") => {
-                let definition: sinex_model::query::saved::Definition =
-                    serde_json::from_value(object.get("template").cloned().ok_or_else(|| {
-                        RecordError::new("current saved query has no typed template")
-                    })?)
-                    .map_err(|error| RecordError::new(error.to_string()))?;
-                if !matches!(
-                    definition,
-                    sinex_model::query::saved::Definition::Current { .. }
-                ) {
-                    return Err(RecordError::new(
-                        "current saved requests require a current query template",
-                    ));
-                }
-            }
-            1 | 2 => {}
-            _ => return Err(RecordError::new("unknown query request input format")),
-        }
         let line: Line = serde_json::from_value(Value::Object(object))
             .map_err(|e| RecordError::new(e.to_string()))?;
         let payload = match line {
@@ -189,7 +132,7 @@ pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timest
             part_index: 0,
             previous_part: None,
             manifest: sinex_model::Manifest::from_json(
-                json!({"path":"query", "format_version":2, "host":host, "actor":actor, "written_at_ns":at.unix_ns().to_string(), "read_at_ns":order, "media_type":"application/x-sinex-query-request"}),
+                json!({"path":"query", "host":host, "actor":actor, "written_at_ns":at.unix_ns().to_string(), "read_at_ns":order, "media_type":"application/x-sinex-query-request"}),
             ),
             reading_order: Box::new(move |_| ReadingOrder(order)),
             cursor_at: Box::new(|_| Ok(Value::Null)),
