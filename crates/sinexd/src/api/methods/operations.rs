@@ -349,17 +349,22 @@ impl Api {
         account: Option<String>,
         export_date: Option<String>,
         follow: bool,
+        batch_events: Option<u64>,
     ) -> Reply {
         let items = match crate::stage::items(paths, parsers) {
             Ok(items) => items,
             Err(e) => return refused(e),
         };
+        if batch_events == Some(0) {
+            return refused("--batch-events needs at least one reading per batch");
+        }
         let request = crate::stage::Request {
             items,
             account,
             export_date,
             host: self.host.clone(),
             zone: self.zone.iana_name().map(str::to_owned),
+            batch_events,
         };
         self.start_stage(caller, OperationId::new(), request, None, follow)
             .await

@@ -84,6 +84,7 @@ fn stage_takes_several_paths_and_its_options() {
             account: Some("owner@example.test".into()),
             export_date: Some("2030-01-01".into()),
             follow: Some(true),
+            batch_events: None,
         }
     );
     assert_eq!(request.access(), sinex_protocol::Access::Agent);

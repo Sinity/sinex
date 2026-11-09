@@ -168,6 +168,7 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
         }),
         priority: Priority::Bulk,
         atomic: false,
+        batch_events: None,
         registered: None,
     }
     .submit_using(
@@ -307,6 +308,7 @@ async fn overlap(fail_first: bool) {
         check: Arc::new(|| Ok(())),
         priority: Priority::Bulk,
         atomic: false,
+        batch_events: None,
         registered: None,
     };
     let mut submitted = 0;
@@ -497,6 +499,7 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
             check: Arc::new(|| Ok(())),
             priority: Priority::Bulk,
             atomic: false,
+            batch_events: None,
             registered: None,
         };
         let mut first = true;

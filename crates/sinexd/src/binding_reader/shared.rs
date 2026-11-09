@@ -254,6 +254,7 @@ pub(super) async fn read_shared(
                 }),
                 priority: crate::writer::Priority::Bulk,
                 atomic: false,
+                batch_events: b.batch_events,
                 registered: acquired.material.as_ref().and_then(|material| {
                     matches!(
                         &material.stored,

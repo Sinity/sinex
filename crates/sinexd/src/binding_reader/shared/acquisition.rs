@@ -66,6 +66,7 @@ pub(super) async fn retain(
         check,
         priority: crate::writer::Priority::Bulk,
         atomic: true,
+        batch_events: None,
         registered: None,
     }
     .submit(acquired, carry, totals)

@@ -238,6 +238,7 @@ async fn record(
         check: Arc::new(|| Ok(())),
         priority: Priority::Live,
         atomic: true,
+        batch_events: None,
         registered: None,
     }
     .submit(acquired, serde_json::Value::Null, &mut Totals::default())

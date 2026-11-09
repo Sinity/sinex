@@ -72,6 +72,8 @@ struct Inputs {
     expected_events: usize,
     zsh_records: usize,
     atuin_rows: usize,
+    /// Readings per admission batch for the stage; the default when unset.
+    batch_events: Option<usize>,
 }
 
 impl Inputs {
@@ -98,10 +100,13 @@ impl Inputs {
         Self::new(128, 127)
     }
 
-    // Two admission batches per source (10,000 events per batch), so a kill
-    // can land between commits or replay sequences.
+    // Two admission batches per source, so a kill can land between commits
+    // or replay sequences. The stage commits 200 readings per batch, so a few
+    // hundred records give the same states the default 10,000 would.
     fn multiple_batches() -> Self {
-        Self::new(10_500, 10_200)
+        let mut inputs = Self::new(350, 320);
+        inputs.batch_events = Some(200);
+        inputs
     }
 
     // Two zsh batches inside one replay transaction; the Atuin rows stay small.
@@ -158,6 +163,7 @@ impl Inputs {
             expected_events: zsh_lines + atuin_rows,
             zsh_records: zsh_lines,
             atuin_rows,
+            batch_events: None,
         }
     }
 }
@@ -202,6 +208,9 @@ impl Target {
     /// recognised by its declared structure.
     fn stage(&self, inputs: &Inputs) -> Command {
         let mut c = self.sinexd(&["admin", "stage", "--host", HOST]);
+        if let Some(n) = inputs.batch_events {
+            c.args(["--batch-events", &n.to_string()]);
+        }
         c.arg(&inputs.atuin).arg(&inputs.zsh);
         c
     }

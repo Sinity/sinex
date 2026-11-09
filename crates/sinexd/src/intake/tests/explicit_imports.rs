@@ -23,6 +23,7 @@ async fn stage(
             export_date: None,
             host: "example-host".into(),
             zone: Some("Europe/Warsaw".into()),
+            batch_events: None,
         },
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),

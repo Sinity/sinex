@@ -142,6 +142,8 @@ pub enum Request {
         export_date: Option<String>,
         #[serde(default)]
         follow: Option<bool>,
+        #[serde(default, rename = "batch-events")]
+        batch_events: Option<u64>,
     },
     #[serde(rename = "stage-list")]
     StageList {
