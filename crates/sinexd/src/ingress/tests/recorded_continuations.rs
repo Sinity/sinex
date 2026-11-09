@@ -301,8 +301,15 @@ async fn known_recorded_binding_survives_current_authority_loss_without_permitti
 async fn negative_or_legacy_material_receipts_remain_unknown(db: devkit::pg::TestDatabase) {
     let (h, _, _, claim) = prepared(db).await;
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let admitted: serde_json::Value = sqlx::query_scalar(
+        "SELECT outcome FROM core.ingress_frames WHERE producer='kitty' AND frame=$1",
+    )
+    .bind(&claim.frame)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
     for kind in ["conflict", "content"] {
-        sqlx::query("UPDATE core.ingress_frames SET refusal='synthetic retained negative',outcome=jsonb_set(outcome,'{refusal_kind}',to_jsonb($2::text)) WHERE producer='kitty' AND frame=$1")
+        sqlx::query("UPDATE core.ingress_frames SET refusal='synthetic retained negative',outcome=jsonb_build_object('content_hash',outcome->'content_hash','result','refused','kind',$2::text,'failures',0,'source',NULL,'event_types','[]'::jsonb) WHERE producer='kitty' AND frame=$1")
             .bind(&claim.frame).bind(kind).execute(&mut conn).await.unwrap();
         assert!(
             matches!(
@@ -312,7 +319,7 @@ async fn negative_or_legacy_material_receipts_remain_unknown(db: devkit::pg::Tes
             "{kind}"
         );
     }
-    sqlx::query("UPDATE core.ingress_frames SET refusal=NULL,outcome=outcome-'refusal_kind',source_fingerprint=NULL WHERE producer='kitty' AND frame=$1").bind(&claim.frame).execute(&mut conn).await.unwrap();
+    sqlx::query("UPDATE core.ingress_frames SET refusal=NULL,outcome=$2,source_fingerprint=NULL WHERE producer='kitty' AND frame=$1").bind(&claim.frame).bind(&admitted).execute(&mut conn).await.unwrap();
     assert!(
         matches!(
             lookup(&h, "kitty", claim.clone()).await,
