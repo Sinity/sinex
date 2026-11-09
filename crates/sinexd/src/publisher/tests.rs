@@ -461,6 +461,7 @@ async fn archive_consumer_observes_archive_restore_archive_without_duplicate_eve
 }
 
 mod commit_order;
+mod erase;
 mod outage;
 
 /// Only acknowledged event positions are paired; visibility messages and

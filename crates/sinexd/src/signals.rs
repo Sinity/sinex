@@ -6,6 +6,7 @@ mod config;
 mod evaluate;
 mod outlets;
 use crate::api::Api;
+use crate::intake::SubmitError;
 pub(crate) use config::Config;
 use sinex_model::event_types::signal::{
     DeliveryRecorded, OutcomeRecorded, ReportReceived, SignalRecord,
@@ -281,14 +282,8 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
     // the same frozen inputs are never retried twice.
     match persist(api, &mut conn, records, commit, now).await {
         Ok(()) => Ok(Step::Committed),
-        Err(reason)
-            if reason.contains("signal evaluation input snapshot changed")
-                || reason.contains("signal checkpoint changed")
-                || reason.contains("signal delivery inputs stopped being available") =>
-        {
-            Ok(Step::Again)
-        }
-        Err(reason) => Err(reason),
+        Err(SubmitError::Stale(_)) => Ok(Step::Again),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -692,11 +687,11 @@ async fn persist(
     records: Vec<SignalRecord>,
     mut commit: Commit,
     at: Timestamp,
-) -> Result<(), String> {
+) -> Result<(), SubmitError> {
     settle(&mut commit.checkpoint);
     let writer = api.writer.as_ref().ok_or("signals require the writer")?;
     if records.is_empty() {
-        writer.submit_signals(None, commit).await.map_err(error)?;
+        writer.submit_signals(None, commit).await?;
         return Ok(());
     }
     crate::intake::request_checkpoint(
@@ -751,7 +746,8 @@ async fn persist_update(
         },
         at,
     )
-    .await?;
+    .await
+    .map_err(|error| error.to_string())?;
     let _ = update.persisted.send(());
     Ok(())
 }
@@ -846,6 +842,7 @@ async fn forget(host: &Host<'_>, id: &str) -> Result<(), String> {
         Timestamp::now(),
     )
     .await
+    .map_err(|error| error.to_string())
 }
 
 /// Record one outlet attempt for a value or action. The first record, the
@@ -883,7 +880,8 @@ async fn record_effect(
         },
         at,
     )
-    .await?;
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(true)
 }
 

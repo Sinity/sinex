@@ -377,6 +377,8 @@ impl Ingest {
                 Ok(_) => {}
                 Err(WriteError::Unavailable(error)) => return Err(error),
                 Err(WriteError::Stopped) => return Err("the writer stopped".into()),
+                // Only signal steps compute from inputs that can move under them.
+                Err(error @ WriteError::Stale(_)) => return Err(error.to_string()),
                 Err(WriteError::Refused(reason)) => {
                     self.writer
                         .submit(

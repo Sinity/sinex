@@ -524,7 +524,7 @@ async fn erase_tombstoned_in(
         for item in &pending {
             let seq = u64::try_from(item.stream_seq).map_err(|error| error.to_string())?;
             if let Err(error) = stream.delete_message(seq).await
-                && !error.to_string().contains("no message found")
+                && !message_gone(&stream, seq).await?
             {
                 return Err(format!("erase stream message {seq}: {error}"));
             }
@@ -600,6 +600,21 @@ pub(crate) async fn publish_all(
         done.tombstoned,
         wall.as_secs_f64()
     ))
+}
+
+/// Whether the stream no longer holds a message, which is what erasing it
+/// wants. A failed delete reports a missing message only in its description
+/// (generic code 10057), so the stream is asked directly.
+async fn message_gone(stream: &stream::Stream, seq: u64) -> Result<bool, String> {
+    match stream.get_raw_message(seq).await {
+        Ok(_) => Ok(false),
+        Err(error) if missing(&error) => Ok(true),
+        Err(error) => Err(format!("check stream message {seq}: {error}")),
+    }
+}
+
+fn missing(error: &stream::RawMessageError) -> bool {
+    matches!(error.kind(), stream::RawMessageErrorKind::NoMessageFound)
 }
 
 #[cfg(test)]

@@ -147,9 +147,7 @@ pub async fn save(
             .bind(host).bind(stored).bind(state).bind(i64::try_from(expected).map_err(|_|Error::Invalid("signal checkpoint revision exceeds bigint".into()))?).execute(conn).await?.rows_affected(),
     };
     if changed != 1 {
-        return Err(Error::Invalid(
-            "signal checkpoint changed; evaluate the committed state again".into(),
-        ));
+        return Err(Error::StaleCheckpoint);
     }
     Ok(next)
 }

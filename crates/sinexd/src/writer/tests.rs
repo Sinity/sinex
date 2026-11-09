@@ -709,3 +709,17 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
     drop(handle);
     writer.await.unwrap();
 }
+
+#[test]
+fn a_moved_signal_checkpoint_is_a_stale_write() {
+    assert!(matches!(
+        admission_error(sinex_store::Error::StaleCheckpoint),
+        WriteError::Stale(_)
+    ));
+    assert!(matches!(
+        admission_error(sinex_store::Error::Invalid(
+            "signal checkpoint changed".into()
+        )),
+        WriteError::Refused(_)
+    ));
+}

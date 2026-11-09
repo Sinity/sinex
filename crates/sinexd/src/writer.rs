@@ -36,6 +36,10 @@ pub(crate) enum WriteError {
     Unavailable(String),
     #[error("the writer has stopped")]
     Stopped,
+    /// The inputs this write was computed from changed before it committed;
+    /// the caller computes it again from the committed state.
+    #[error("{0}; evaluate again")]
+    Stale(&'static str),
 }
 
 fn store_error(error: sinex_store::Error) -> WriteError {
@@ -885,8 +889,8 @@ async fn signal_step(
             .map_err(store_error)?
             != expected
     {
-        return Err(WriteError::Refused(
-            "signal evaluation input snapshot changed; evaluate again".into(),
+        return Err(WriteError::Stale(
+            "signal evaluation input snapshot changed",
         ));
     }
     if let Some(batch) = batch {
@@ -917,8 +921,8 @@ async fn signal_step(
             };
             let admitted = tx.admit(&delivery, keys).await.map_err(store_error)?;
             if admitted.superseded_input != 0 {
-                return Err(WriteError::Refused(
-                    "signal delivery inputs stopped being available".into(),
+                return Err(WriteError::Stale(
+                    "signal delivery inputs stopped being available",
                 ));
             }
             outcome += admitted;
@@ -972,6 +976,9 @@ fn refused_source(batch: &Batch, reason: &str) -> Option<Batch> {
 /// A transaction that could not run must remain pending at the producer.
 /// Only invalid content can be recorded as a final refusal.
 fn admission_error(error: sinex_store::Error) -> WriteError {
+    if let sinex_store::Error::StaleCheckpoint = error {
+        return WriteError::Stale("signal checkpoint changed");
+    }
     let temporary = match &error {
         sinex_store::Error::Database(sqlx::Error::Database(error)) => {
             error.code().is_some_and(|code| {
