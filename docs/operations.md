@@ -130,7 +130,7 @@ The stores are the backup unit, and the deployment chooses the backup tool; Sine
 
 ### What a backup contains
 
-- a consistent logical dump of PostgreSQL;
+- a consistent logical dump of PostgreSQL, uncompressed so the backup tool's own compression and deduplication store only what changed, and without the rows of the search tables (`core.search_text`, `core.search_refusals`, `core.search_position`), which are rebuilt from the events;
 - the segment log;
 - the wrapped data keys, through their protected route ([privacy.md](privacy.md));
 - configuration and credentials, through their owners (the deployment's secret store);
@@ -155,7 +155,7 @@ These operations require the operator token. The daemon computes the operation's
 
 `prepare` creates a fresh hold and exports its snapshot inside the same writer job, after the hold commits and before another admission advances either counter. It then lets the writer continue while the snapshot exporter stays alive for both real `pg_dump` calls. The new output directory must be absolute, private and writable by the daemon; an existing attempt is refused. The artifact contains:
 
-- `main/sinex.dump`, with wrapped-key table data excluded;
+- `main/sinex.dump`, uncompressed, with wrapped-key table data and the rebuilt search tables' rows excluded;
 - `main/segments/`, containing only the committed prefixes, copied with bounded memory while later appends continue;
 - `keys/data-keys.dump`, containing the wrapped-key table data from that same snapshot;
 - the same versioned `manifest.json` in both parts, with the hold, database identity, source revision, file lengths and byte digests.
@@ -181,6 +181,7 @@ Backup expiry belongs to the deployment's backup tool and never deletes Sinex da
 Restore is an ordinary rebuild from a backup plus the retained materials, not a repair path. Select the main and key archives by their shared hold and actual archive identities, compare their manifests and restore both dumps and the segment prefixes. The restored core answers exactly as it did at the boundary. Its snapshot includes the then-open hold; that hold remains visible until the restore owner verifies the copy and explicitly releases it. It never expires on restart. Producer state is restored separately; a backup whose producers were not all copied says so in its manifest.
 
 - the same event IDs, payloads, lifecycle states and positions at the boundary;
+- search starts empty with no position, and the search reader rebuilds it from the restored events; status shows its progress, and follows wait for it;
 - exact bytes traced from any event;
 - replay works after the original source files are gone;
 - producers resume their resends without duplicates.

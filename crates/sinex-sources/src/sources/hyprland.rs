@@ -9,6 +9,11 @@
 //! stored twice. Focus is the exception: `activewindow` carries the class and
 //! title and `activewindowv2` the address, so the first is carried until the
 //! second arrives and they become one `window.focused`.
+//!
+//! A terminal running a busy program animates a spinner at the start of its
+//! title, many times a second. A title change that only alters such a leading
+//! progress glyph is read with no event; the stored line keeps every frame.
+use super::titles::without_progress;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::desktop::{
@@ -19,6 +24,7 @@ use sinex_model::{Class, InputRef, Timestamp};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
+use std::collections::BTreeMap;
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -33,7 +39,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Window titles are free text that can contain anything.
     class: Class::Guarded,
     parser: "hyprland-socket2",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &[
         "window.focused",
         "window.opened",
@@ -82,6 +88,46 @@ pub struct Pending {
     pub received_ns: String,
 }
 
+/// What one line leaves for the next: a waiting first half of a focus change,
+/// and each open window's last stored title without its progress glyph.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Carry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Pending>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub titles: BTreeMap<String, String>,
+}
+
+impl Carry {
+    /// Keep the events of one line, dropping a title change whose text apart
+    /// from progress glyphs equals the window's last stored title, and carry
+    /// `pending` and the windows' titles on.
+    fn next(&self, mut out: Vec<Desktop>, pending: Option<Pending>) -> (Vec<Desktop>, Carry) {
+        let mut titles = self.titles.clone();
+        out.retain(|event| match event {
+            Desktop::Opened(opened) => {
+                titles.insert(
+                    opened.window.clone(),
+                    without_progress(&opened.title).into(),
+                );
+                true
+            }
+            Desktop::Closed(closed) => {
+                titles.remove(&closed.window);
+                true
+            }
+            Desktop::TitleChanged(changed) => {
+                let text = without_progress(&changed.title);
+                let same = titles.get(&changed.window).is_some_and(|last| last == text);
+                titles.insert(changed.window.clone(), text.into());
+                !same
+            }
+            _ => true,
+        });
+        (out, Carry { pending, titles })
+    }
+}
+
 pub struct HyprlandParser;
 
 fn nonempty(s: &str) -> Option<String> {
@@ -90,15 +136,16 @@ fn nonempty(s: &str) -> Option<String> {
 
 impl Parser for HyprlandParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = Option<Pending>;
+    type Carry = Carry;
     type Payload = Desktop;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        pending: &Option<Pending>,
+        carry: &Carry,
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<Desktop>, Option<Pending>), RecordError> {
+    ) -> Result<(Vec<Desktop>, Carry), RecordError> {
+        let pending = &carry.pending;
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let line = String::from_utf8(bytes)
             .map_err(|_| RecordError::new("Hyprland event is not UTF-8"))?;
@@ -128,7 +175,7 @@ impl Parser for HyprlandParser {
                     data: line,
                 }));
             }
-            return Ok((out, None));
+            return Ok(carry.next(out, None));
         };
         match name {
             "activewindow" => {
@@ -139,7 +186,7 @@ impl Parser for HyprlandParser {
                     title: title.to_owned(),
                     received_ns: received_at.unix_ns().to_string(),
                 };
-                return Ok((out, Some(next)));
+                return Ok(carry.next(out, Some(next)));
             }
             "activewindowv2" => {
                 let (class, title, at) = match pending {
@@ -160,12 +207,12 @@ impl Parser for HyprlandParser {
                     class,
                     title,
                 }));
-                return Ok((out, None));
+                return Ok(carry.next(out, None));
             }
             _ => flush(&mut out, pending),
         }
         if DUPLICATE_FORMS.contains(&name) {
-            return Ok((out, None));
+            return Ok(carry.next(out, None));
         }
         let event = match name {
             // openwindow>>ADDRESS,WORKSPACENAME,CLASS,TITLE
@@ -232,7 +279,7 @@ impl Parser for HyprlandParser {
             }),
         };
         out.push(event);
-        Ok((out, None))
+        Ok(carry.next(out, None))
     }
 }
 

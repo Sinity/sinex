@@ -337,7 +337,7 @@ Journald is stored in journal export format: every entry with repeated and binar
 
 ## Hyprland
 
-Hyprland's socket2 is stored whole in its own line framing, with `hyprctl -j` snapshots on connection and on relevant changes; the reader subscribes before taking a snapshot and drains events concurrently, and a snapshot is present state, never a fabricated open or start. Its records are the window and workspace kinds; unknown event text is kept. Other window managers are ordinary sources ([source families](source-families.md)).
+Hyprland's socket2 is stored whole in its own line framing, with `hyprctl -j` snapshots on connection and on relevant changes; the reader subscribes before taking a snapshot and drains events concurrently, and a snapshot is present state, never a fabricated open or start. Its records are the window and workspace kinds; unknown event text is kept. A busy terminal program animates a spinner at the start of its title many times a second; a title change whose text, apart from a leading run of progress glyphs followed by a space (Braille patterns, the dingbat stars and asterisks, circles with a half or quarter marked, the middle dot, the asterisk), equals the window's last stored title is read with no event. ActivityWatch's kitty titles use the same rule. The stored line keeps every frame. Other window managers are ordinary sources ([source families](source-families.md)).
 
 ## browser
 

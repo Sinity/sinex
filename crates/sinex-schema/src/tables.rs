@@ -545,6 +545,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
         "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed".into(),
         SEARCH_REFUSALS.into(),
+        SEARCH_POSITION.into(),
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.
@@ -678,6 +679,16 @@ pub(crate) const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
   event_id uuid PRIMARY KEY,
   reason text NOT NULL,
   refused_at timestamptz NOT NULL DEFAULT now()
+)";
+
+/// How far the search reader has indexed. It is kept apart from
+/// `core.consumer_positions` so that a backup leaving out the rebuilt search
+/// tables leaves out this row with them: a restored copy has no position and
+/// rebuilds search from the start.
+pub(crate) const SEARCH_POSITION: &str = "CREATE TABLE core.search_position (
+  only_row boolean PRIMARY KEY DEFAULT true CHECK (only_row),
+  commit_seq bigint NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
 )";
 
 pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (

@@ -129,6 +129,14 @@ fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command, 
     Ok(command)
 }
 
+/// Tables whose rows are rebuilt from the events after a restore, left out of
+/// the main dump's data.
+pub(crate) const REBUILT_TABLES: [&str; 3] = [
+    "core.search_text",
+    "core.search_refusals",
+    "core.search_position",
+];
+
 async fn dump(
     snapshot: &Snapshot,
     output: &Path,
@@ -148,9 +156,13 @@ async fn dump(
     });
     let stderr = file(&stderr_path)?;
     let mut command = pg_command("pg_dump", snapshot.database_url())?;
+    // Uncompressed, so the backup tool's own compression and deduplication
+    // see unchanged rows as unchanged; a compressed dump differs throughout
+    // from night to night.
     command
         .arg("--no-password")
         .arg("--format=custom")
+        .arg("--compress=0")
         .arg(format!("--snapshot={}", snapshot.exported))
         .stderr(stderr)
         .stdout(file(&output.join(name))?)
@@ -159,6 +171,11 @@ async fn dump(
         command.arg("--data-only").arg("--table=privacy.data_keys");
     } else {
         command.arg("--exclude-table-data=privacy.data_keys");
+        // The search tables are rebuilt from the events; their position goes
+        // with them, so a restored copy rebuilds search from the start.
+        for table in REBUILT_TABLES {
+            command.arg(format!("--exclude-table-data={table}"));
+        }
     }
     let mut child = command.spawn().map_err(|e| format!("start pg_dump: {e}"))?;
     let status = tokio::select! {

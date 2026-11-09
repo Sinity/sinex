@@ -51,9 +51,19 @@ impl Description {
         description
     }
 
+    /// The description just before the search reader's position moved to
+    /// its own table.
+    pub(crate) fn before_search_position() -> Self {
+        let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| !statement.starts_with("CREATE TABLE core.search_position"));
+        description
+    }
+
     /// The description just before search refusals were recorded.
     pub(crate) fn before_search_refusals() -> Self {
-        let mut description = Self::current();
+        let mut description = Self::before_search_position();
         description
             .tables
             .retain(|statement| !statement.starts_with("CREATE TABLE core.search_refusals"));

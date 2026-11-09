@@ -3,7 +3,7 @@ use super::*;
 /// Bring the search read model up to the newest commit without the daemon's
 /// reader, page by page with its position.
 pub(crate) async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64> {
-    let (mut position, _) = crate::commit_log::consumer_position(conn, SEARCH_TEXT).await?;
+    let mut position = search_position(conn).await?;
     loop {
         let page = crate::commit_log::after(conn, position, 2_000, i64::MAX).await?;
         let Some(up_to) = page.up_to else {
@@ -11,7 +11,7 @@ pub(crate) async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64>
         };
         let mut tx = sqlx::Connection::begin(&mut *conn).await?;
         apply_search_text(&mut tx, &page.events).await?;
-        crate::commit_log::set_consumer_position(&mut tx, SEARCH_TEXT, up_to, 0).await?;
+        set_search_position(&mut tx, up_to).await?;
         tx.commit().await?;
         position = up_to;
     }
@@ -262,7 +262,7 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
         .unwrap();
     let mut tx = conn.begin().await.unwrap();
     apply_search_text(&mut tx, &page.events).await.unwrap();
-    crate::commit_log::set_consumer_position(&mut tx, SEARCH_TEXT, page.up_to.unwrap(), 0)
+    set_search_position(&mut tx, page.up_to.unwrap())
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -272,10 +272,7 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
         .unwrap();
     assert_eq!(n, 1);
     assert_eq!(
-        crate::commit_log::consumer_position(&mut conn, SEARCH_TEXT)
-            .await
-            .unwrap()
-            .0,
+        search_position(&mut conn).await.unwrap(),
         page.up_to.unwrap()
     );
 }

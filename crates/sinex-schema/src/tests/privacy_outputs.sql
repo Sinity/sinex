@@ -1,3 +1,5 @@
+-- Undo the later search position table.
+DROP TABLE core.search_position;
 -- Undo the later search refusals table.
 DROP TABLE core.search_refusals;
 -- Undo the later online backup tables before replaying the named forward chain.

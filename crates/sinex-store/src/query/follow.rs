@@ -6,8 +6,7 @@ use sinex_model::query::{Op, SortBy, SortKey};
 /// for every event query also covers text fields selected or used by joins.
 pub async fn follow_position(conn: &mut PgConnection) -> Result<i64> {
     let committed = current_seq(conn).await?;
-    let (indexed, _) =
-        crate::commit_log::consumer_position(conn, crate::read_models::SEARCH_TEXT).await?;
+    let indexed = crate::read_models::search_position(conn).await?;
     Ok(committed.min(indexed))
 }
 

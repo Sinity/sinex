@@ -186,12 +186,10 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
         .unwrap()
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT commit_seq FROM core.consumer_positions WHERE consumer='read.search_text'"
-        )
-        .fetch_one(&mut conn)
-        .await
-        .unwrap(),
+        sqlx::query_scalar::<_, i64>("SELECT commit_seq FROM core.search_position")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
         33
     );
     assert_eq!(
