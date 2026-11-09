@@ -249,7 +249,8 @@ outer read snapshot. `hour()` continues to name the local clock hour.
   a cap would truncate valid answers.
 - `sql` is read-only SQL on the reader role over the documented relations, under the
   same output rules as every output; the reader role cannot reach withheld fields or keys
-  ([privacy](privacy.md)).
+  ([privacy](privacy.md)). PostgreSQL cancels a statement that runs longer than 120 seconds,
+  even after its caller has gone away.
 
 ## Saved queries
 

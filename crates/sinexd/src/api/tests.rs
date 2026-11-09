@@ -391,6 +391,19 @@ async fn sql_reads_as_the_reader_role(db: devkit::pg::TestDatabase) {
     assert_eq!(body["outcome"], json!("refused"));
 }
 
+#[devkit::test]
+async fn sql_runs_under_a_statement_time_limit(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    admit(&w, &["ls"], 0).await;
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "sql", "sql": "SELECT current_setting('statement_timeout') AS bound"}),
+    )
+    .await;
+    assert_eq!(body["result"]["rows"], json!([{"bound": "2min"}]), "{body}");
+}
+
 /// Read the stream until `needle` appears, for at most ten seconds.
 async fn read_until(body: &mut Body, seen: &mut String, needle: &str) {
     let read = async {
