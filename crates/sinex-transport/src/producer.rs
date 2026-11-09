@@ -157,10 +157,11 @@ fn check_receipt_for(
     let invalid_name = frame.frame().is_empty() || frame.frame().contains('\0');
     let correlated_malformed = invalid_name
         && transmitted_malformed == Some(receipt.frame.as_str())
-        && receipt.refusal.is_some()
-        && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed)
-        && receipt.number.is_some_and(|number| number > 0)
-        && receipt.content_hash() == Some(expected.as_str());
+        && receipt
+            .refusal()
+            .is_some_and(|(kind, _)| kind == sinex_model::FrameRefusal::Malformed)
+        && receipt.number > 0
+        && receipt.content_hash.as_deref() == Some(expected.as_str());
     if receipt.frame != frame.frame() && !correlated_malformed {
         return Err(SubmitError::Refused {
             frame: frame.frame().into(),
@@ -168,8 +169,8 @@ fn check_receipt_for(
             kind: sinex_model::FrameRefusal::Conflict,
         });
     }
-    if receipt.content_hash() != Some(expected.as_str()) {
-        if receipt.number.is_none_or(|number| number <= 0) {
+    if receipt.content_hash.as_deref() != Some(expected.as_str()) {
+        if receipt.number <= 0 {
             return Err(SubmitError::NoReceipt(frame.frame().into()));
         }
         return Err(SubmitError::ReceiptConflict {
@@ -213,7 +214,9 @@ pub async fn submit_frame(
     let correlated = |receipt: &Acknowledgment| {
         receipt.frame == id
             || (receipt.frame == malformed
-                && receipt.refusal_kind() == Some(sinex_model::FrameRefusal::Malformed))
+                && receipt
+                    .refusal()
+                    .is_some_and(|(kind, _)| kind == sinex_model::FrameRefusal::Malformed))
     };
     if published.duplicate {
         // JetStream can acknowledge an already consumed frame without
@@ -343,10 +346,7 @@ pub async fn transfer_frame(
                 data: base64::engine::general_purpose::STANDARD.encode(&buffer[..n]),
             };
             let receipt = submit_frame(client, subjects, producer, acks, &chunk, idle).await?;
-            let kind = receipt
-                .refusal_kind()
-                .unwrap_or(sinex_model::FrameRefusal::Bytes);
-            if let Some(reason) = receipt.refusal {
+            if let sinex_protocol::FrameResult::Refused { kind, reason } = receipt.result {
                 return Err(SubmitError::Refused {
                     frame: receipt.frame,
                     reason,

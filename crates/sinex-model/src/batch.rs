@@ -97,11 +97,11 @@ pub struct IngressFrame {
     pub frame: String,
     /// A material frame registers its material like a source batch does.
     pub material: Option<SourceProgress>,
-    /// Set when the frame was refused as a whole: it is recorded, with no
-    /// events, so asking again gets the same answer.
-    pub refusal: Option<String>,
+    /// Set when the frame was refused as a whole, with what the producer must
+    /// do and the reason: it is recorded, with no events, so asking again
+    /// gets the same answer.
+    pub refusal: Option<(FrameRefusal, String)>,
     pub declarations: Vec<crate::KindDeclaration>,
-    pub refusal_kind: Option<FrameRefusal>,
     /// The source named at the start of a capture binding; otherwise unknown.
     pub source: Option<String>,
     pub event_types: Vec<String>,
@@ -127,6 +127,31 @@ pub enum FrameRefusal {
     Bytes,
     Malformed,
     Configuration,
+}
+
+/// Counts of what admission did with the readings of one frame or batch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionCounts {
+    pub admitted: usize,
+    /// Same content as the live reading: suppressed.
+    pub repeats: usize,
+    /// Newer readings that replaced (and archived) a live one.
+    pub replaced: usize,
+    /// Older readings of a record that has a newer live reading: suppressed.
+    pub older: usize,
+    /// Superseded by a newer reading of the same record in this batch.
+    pub superseded: usize,
+    /// Derived outputs dropped because an input they cite stopped being live
+    /// after the derivation read it; the replacement input gets its own.
+    pub superseded_input: usize,
+    pub failures: usize,
+    pub dirty_keys: usize,
+    /// Live readings a replay archived before admitting its new readings.
+    pub replay_archived: usize,
+    /// Readings admission made for records their source dropped, one per
+    /// live reading of each: offered beside the batch's own events.
+    pub removed_at_source: usize,
 }
 
 /// One framed record's result: its events, or why the parser could not read it.

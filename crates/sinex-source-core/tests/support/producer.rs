@@ -1,8 +1,7 @@
 use async_nats::jetstream;
 use futures::StreamExt;
-use serde_json::json;
 use sinex_model::FrameRefusal;
-use sinex_protocol::{Acknowledgment, Ingress, RecordedQuery, Subjects};
+use sinex_protocol::{Acknowledgment, FrameResult, Ingress, RecordedQuery, Subjects};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -56,9 +55,9 @@ pub(crate) async fn refusing(
             sinex_transport::replies::publish_json(
                 &declarer,
                 message.reply.unwrap().to_string(),
-                sinex_protocol::ProducerWelcome {
-                    refusal: None,
-                    ..Default::default()
+                sinex_protocol::ProducerWelcome::Welcome {
+                    family: None,
+                    canonical_publisher: false,
                 },
                 std::time::Duration::from_secs(10),
             )
@@ -96,10 +95,8 @@ pub(crate) async fn refusing(
                 rows.values()
                     .filter(|receipt| {
                         (query.frames.contains(&receipt.frame)
-                            || receipt
-                                .number
-                                .is_some_and(|number| query.numbers.contains(&number)))
-                            && receipt.number.is_some_and(|number| number > query.after)
+                            || query.numbers.contains(&receipt.number))
+                            && receipt.number > query.after
                     })
                     .cloned()
                     .collect()
@@ -137,7 +134,7 @@ pub(crate) async fn refusing(
                     .publish(
                         ack_subject.clone(),
                         serde_json::to_vec(&sinex_protocol::ReceiptHint {
-                            number: ack.number.unwrap(),
+                            number: ack.number,
                             frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
                         })
                         .unwrap()
@@ -188,27 +185,38 @@ pub(crate) async fn refusing(
             let number = {
                 let rows = recorded.lock().unwrap();
                 rows.get(frame.frame())
-                    .and_then(|receipt| receipt.number)
+                    .map(|receipt| receipt.number)
                     .unwrap_or(rows.len() as i64 + 1)
             };
             let content_hash = sinex_transport::producer::content_hash(&frame).unwrap();
             let ack = Acknowledgment {
-                number: Some(number),
-                material_extents: vec![],
+                number,
                 frame: if frame.frame().is_empty() || frame.frame().contains('\0') {
                     format!("malformed/{}", blake3::hash(&message.payload).to_hex())
                 } else {
                     frame.frame().to_owned()
                 },
-                material,
-                admitted,
-                outcome: if refusal.is_some() {
-                    json!({"refusal_kind": if matches!(frame, Ingress::Chunk { .. }) { FrameRefusal::Bytes } else { refusal_kind }, "failures": 1, "frame_content_hash": content_hash})
-                } else {
-                    json!({"frame_content_hash": content_hash})
+                content_hash: Some(content_hash),
+                result: match refusal {
+                    Some(reason) => FrameResult::Refused {
+                        kind: if matches!(frame, Ingress::Chunk { .. }) {
+                            FrameRefusal::Bytes
+                        } else {
+                            refusal_kind
+                        },
+                        reason,
+                    },
+                    None => FrameResult::Admitted {
+                        material,
+                        material_extents: vec![],
+                        counts: sinex_model::AdmissionCounts {
+                            admitted: admitted.len(),
+                            ..Default::default()
+                        },
+                        admitted,
+                        commit_seq,
+                    },
                 },
-                refusal,
-                commit_seq,
             };
             recorded
                 .lock()
@@ -219,7 +227,7 @@ pub(crate) async fn refusing(
                 .publish(
                     ack_subject.clone(),
                     serde_json::to_vec(&sinex_protocol::ReceiptHint {
-                        number: ack.number.unwrap(),
+                        number: ack.number,
                         frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
                     })
                     .unwrap()

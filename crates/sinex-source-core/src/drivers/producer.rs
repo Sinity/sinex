@@ -354,7 +354,7 @@ impl Producer {
         )
         .await
         .map_err(nats)?;
-        if let Some(reason) = welcome.refusal {
+        if let ProducerWelcome::Refused { reason } = welcome {
             return Err(Error::Configuration(reason));
         }
         let max_message = client.server_info().max_payload;
@@ -418,19 +418,16 @@ impl Producer {
                                 .map_err(submit_error)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    if let Some(receipt) = recorded.iter().find(|receipt| {
-                        matches!(receipt.refusal_kind(), Some(FrameRefusal::Conflict))
-                    }) {
+                    if let Some((kind, reason)) = recorded
+                        .iter()
+                        .filter_map(Acknowledgment::refusal)
+                        .find(|(kind, _)| *kind == FrameRefusal::Conflict)
+                    {
                         return Err(Error::Refused {
                             frame: prepared.frame().to_owned(),
-                            reason: receipt
-                                .refusal
-                                .clone()
-                                .unwrap_or_else(|| "terminal recorded refusal".into()),
+                            reason: reason.to_owned(),
                             recorded: true,
-                            kind: receipt
-                                .refusal_kind()
-                                .expect("terminal refusal was matched"),
+                            kind,
                         });
                     }
                     let retryable = |kind| {
@@ -443,7 +440,8 @@ impl Producer {
                     if retryable(batch.refusal)
                         || recorded
                             .iter()
-                            .any(|ack| ack.refusal.is_some() && retryable(ack.refusal_kind()))
+                            .filter_map(Acknowledgment::refusal)
+                            .any(|(kind, _)| retryable(Some(kind)))
                     {
                         retry(frame);
                         batch.refusal = None;
@@ -737,13 +735,12 @@ impl Producer {
         )
         .await
         .map_err(submit_error)?;
-        let recorded = true;
-        if let Some(reason) = &ack.refusal {
+        if let Some((kind, reason)) = ack.refusal() {
             return Err(Error::Refused {
                 frame: id,
-                reason: reason.clone(),
-                recorded,
-                kind: ack.refusal_kind().unwrap_or(FrameRefusal::Malformed),
+                reason: reason.to_owned(),
+                recorded: true,
+                kind,
             });
         }
         Ok(ack)
@@ -957,7 +954,7 @@ impl Producer {
                 if is_events {
                     sent.frames += 1;
                     if let Some(ack) = ack {
-                        sent.admitted += ack.admitted.len();
+                        sent.admitted += ack.admitted().len();
                     }
                 }
             }

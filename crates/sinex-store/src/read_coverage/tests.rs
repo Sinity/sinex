@@ -89,7 +89,6 @@ fn covered_frame(claims: &Claims, stamp: String) -> sinex_model::IngressFrame {
         material: None,
         refusal: None,
         declarations: vec![],
-        refusal_kind: None,
         source: None,
         event_types: vec![],
     }

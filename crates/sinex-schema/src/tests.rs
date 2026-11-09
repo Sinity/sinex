@@ -337,6 +337,7 @@ async fn equivalence_key_encoding_round_trips_and_keeps_keys_distinct(
     assert_eq!((changed, merged), (0, 0));
 }
 
+mod frame_outcomes;
 mod online;
 mod preservation;
 

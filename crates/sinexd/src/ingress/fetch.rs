@@ -121,10 +121,7 @@ pub(crate) fn load(path: Option<&std::path::Path>) -> Result<ProducerGrants, Str
     super::authority::validate(&grants)?;
     Ok(grants)
 }
-pub(super) struct Refusal {
-    kind: FetchRefusalKind,
-    reason: String,
-}
+use sinex_protocol::FetchRefusal as Refusal;
 type ReadResult<T> = Result<T, Refusal>;
 fn denied() -> Refusal {
     Refusal {
@@ -185,14 +182,11 @@ impl Requests {
                     "erased event has unknown historical positions; confirmed history has a gap",
                 ));
             };
-            return Ok(FetchEventReply {
-                erased: Some(sinex_protocol::ErasedEvent {
-                    event: id,
-                    commit_seq,
-                    original_commit_seq,
-                }),
-                ..Default::default()
-            });
+            return Ok(FetchEventReply::Erased(sinex_protocol::ErasedEvent {
+                event: id,
+                commit_seq,
+                original_commit_seq,
+            }));
         }
         let classes = grant
             .classes
@@ -275,51 +269,43 @@ impl Requests {
             .get(&reference)
             .ok_or_else(|| unavailable("event kind definition is unavailable"))?
             .definition_hash();
-        Ok(FetchEventReply {
-            event: Some(ConfirmedEvent {
-                source_ref,
-                source_fingerprint,
-                producer_family,
-                producer_identity,
-                kind_version,
-                kind_definition_hash,
-                validation: field(&view, "validation")?,
-                commit_seq: field(&view, "commit_seq")?,
-                id: field(&view, "id")?,
-                event_type,
-                source: field(&view, "source")?,
-                run: field(&view, "run")?,
-                location,
-                output_index: field(&view, "output")?,
-                parents: field::<Option<Vec<EventId>>>(&view, "parents")?.unwrap_or_default(),
-                ts_orig: field(&view, "when")?,
-                ts_quality: field(&view, "time_quality")?,
-                ts_coided: field(&view, "seen")?,
-                ts_persisted: field(&view, "written")?,
-                record_state: field(&view, "record_state")?,
-                class,
-                equivalence_key: field(&view, "key")?,
-                reading_order: field(&view, "reading_order")?,
-                record_hash: field(&view, "record_hash")?,
-                projection: sinex_protocol::ProjectionIdentity::for_payload(&view["payload"]),
-                payload: view["payload"].clone(),
-            }),
-            ..Default::default()
-        })
+        Ok(FetchEventReply::Event(Box::new(ConfirmedEvent {
+            source_ref,
+            source_fingerprint,
+            producer_family,
+            producer_identity,
+            kind_version,
+            kind_definition_hash,
+            validation: field(&view, "validation")?,
+            commit_seq: field(&view, "commit_seq")?,
+            id: field(&view, "id")?,
+            event_type,
+            source: field(&view, "source")?,
+            run: field(&view, "run")?,
+            location,
+            output_index: field(&view, "output")?,
+            parents: field::<Option<Vec<EventId>>>(&view, "parents")?.unwrap_or_default(),
+            ts_orig: field(&view, "when")?,
+            ts_quality: field(&view, "time_quality")?,
+            ts_coided: field(&view, "seen")?,
+            ts_persisted: field(&view, "written")?,
+            record_state: field(&view, "record_state")?,
+            class,
+            equivalence_key: field(&view, "key")?,
+            reading_order: field(&view, "reading_order")?,
+            record_hash: field(&view, "record_hash")?,
+            projection: sinex_protocol::ProjectionIdentity::for_payload(&view["payload"]),
+            payload: view["payload"].clone(),
+        })))
     }
     pub(super) async fn fetch_event(
         &self,
         producer: &str,
         request: &FetchEvent,
     ) -> FetchEventReply {
-        match self.event_for(producer, request.event).await {
-            Ok(reply) => reply,
-            Err(error) => FetchEventReply {
-                refusal: Some(error.reason),
-                refusal_kind: Some(error.kind),
-                ..Default::default()
-            },
-        }
+        self.event_for(producer, request.event)
+            .await
+            .unwrap_or_else(FetchEventReply::Refused)
     }
     pub(super) async fn fetch_material(
         &self,
@@ -428,8 +414,8 @@ impl Requests {
                     reason: "sealed material requires an operator unlock".into(),
                 });
             }
-            Ok(FetchMaterialReply {
-                material: Some(MaterialFrame {
+            Ok(FetchMaterialReply::Material {
+                material: Box::new(MaterialFrame {
                     source,
                     id: material.id,
                     input,
@@ -442,15 +428,10 @@ impl Requests {
                     manifest: material.manifest,
                 }),
                 extents: vec![descriptor],
-                ..Default::default()
             })
         }
         .await;
-        result.unwrap_or_else(|error| FetchMaterialReply {
-            refusal: Some(error.reason),
-            refusal_kind: Some(error.kind),
-            ..Default::default()
-        })
+        result.unwrap_or_else(FetchMaterialReply::Refused)
     }
 }
 

@@ -2,7 +2,9 @@
 //! material) and the acknowledgment of an ingress frame.
 use super::*;
 use crate::Error;
+use crate::commit_log::{FrameOutcome, FrameResult};
 use sinex_model::{InputId, ObservationId, RevisionChange, RevisionId, SourceProgress, Timestamp};
+use sqlx::types::Json;
 use std::collections::BTreeSet;
 
 /// Upsert the input, record the observation, open a revision when the content
@@ -210,7 +212,7 @@ pub(super) async fn frame(
     number: i64,
 ) -> Result<()> {
     let admitted: Vec<Uuid> = outcome.admitted_ids.iter().map(|id| id.0).collect();
-    let counts = outcome.frame_counts(frame);
+    let recorded = Json(outcome.frame_outcome(frame));
     sqlx::query!(
         r#"INSERT INTO core.ingress_frames (producer, frame, material_id, admitted, outcome, refusal, commit_seq, family, write_kind_prefixes, number, source_name, source_version, source_fingerprint, producer_host)
            OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
@@ -222,8 +224,8 @@ pub(super) async fn frame(
             .and_then(|m| m.material.as_ref())
             .map(|m| m.id.0),
         &admitted,
-        counts,
-        frame.refusal,
+        recorded as _,
+        frame.refusal.as_ref().map(|(_, reason)| reason.as_str()),
         outcome.commit_seq.map(|(_, last)| last),
         frame.family,
         &frame.write_kind_prefixes,
@@ -244,7 +246,8 @@ pub(crate) async fn recorded(
     frame: &sinex_model::IngressFrame,
 ) -> Result<Option<Outcome>> {
     let row = sqlx::query!(
-        "SELECT admitted,outcome,refusal FROM core.ingress_frames WHERE producer=$1 AND frame=$2",
+        r#"SELECT admitted, outcome AS "outcome: Json<FrameOutcome>", refusal
+           FROM core.ingress_frames WHERE producer=$1 AND frame=$2"#,
         frame.producer,
         frame.frame
     )
@@ -253,56 +256,39 @@ pub(crate) async fn recorded(
     let Some(row) = row else {
         return Ok(None);
     };
-    if let (Some(offered), Some(saved)) = (
-        &frame.content_hash,
-        row.outcome
-            .get("frame_content_hash")
-            .and_then(Value::as_str),
-    ) && offered != saved
+    let Json(recorded) = row.outcome;
+    if let (Some(offered), Some(saved)) = (&frame.content_hash, &recorded.content_hash)
+        && offered != saved
     {
         return Err(Error::Invalid("frame_body_conflict".into()));
     }
     if let Some(refusal) = row.refusal {
         return Err(Error::Invalid(format!("recorded_frame_refused: {refusal}")));
     }
-    let count = |name: &str| -> Result<usize> {
-        match row.outcome.get(name) {
-            None => Ok(0),
-            Some(value) => value
-                .as_u64()
-                .and_then(|v| usize::try_from(v).ok())
-                .ok_or_else(|| Error::Invalid(format!("stored frame has invalid {name} count"))),
+    let admitted_ids: Vec<EventId> = row.admitted.into_iter().map(EventId).collect();
+    Ok(Some(match recorded.result {
+        FrameResult::Admitted {
+            counts,
+            commit_range,
+        } => Outcome {
+            commit_seq: commit_range,
+            admitted_ids,
+            ..Outcome::from_counts(counts)
+        },
+        FrameResult::KindsRegistered { kinds } => Outcome {
+            registered_kinds: kinds,
+            ..Outcome::default()
+        },
+        FrameResult::Replayed { .. } => Outcome {
+            admitted: admitted_ids.len(),
+            admitted_ids,
+            ..Outcome::default()
+        },
+        FrameResult::Refused { .. } => {
+            return Err(Error::Invalid(
+                "recorded frame records a refusal without its reason".into(),
+            ));
         }
-    };
-    Ok(Some(Outcome {
-        admitted: count("admitted")?,
-        repeats: count("repeats")?,
-        replaced: count("replaced")?,
-        older: count("older")?,
-        superseded: count("superseded")?,
-        superseded_input: count("superseded_input")?,
-        failures: count("failures")?,
-        dirty_keys: count("dirty_keys")?,
-        replay_archived: count("replay_archived")?,
-        removed_at_source: count("removed_at_source")?,
-        commit_seq: row
-            .outcome
-            .get("commit_range")
-            .filter(|v| !v.is_null())
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()
-            .map_err(|e| Error::Invalid(format!("stored frame has invalid commit range: {e}")))?,
-        admitted_ids: row.admitted.into_iter().map(EventId).collect(),
-        registered_kinds: row
-            .outcome
-            .get("registered_kinds")
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()
-            .map_err(|e| {
-                Error::Invalid(format!("stored frame has invalid kind registrations: {e}"))
-            })?
-            .unwrap_or_default(),
-        timings: Default::default(),
     }))
 }
 
@@ -411,25 +397,27 @@ pub(super) async fn provenance(
 }
 
 impl Outcome {
-    pub(crate) fn frame_counts(&self, frame: &sinex_model::IngressFrame) -> Value {
-        serde_json::json!({
-            "frame_content_hash": frame.content_hash,
-            "registered_kinds": self.registered_kinds,
-            "commit_range": self.commit_seq,
-            "superseded_input": self.superseded_input,
-            "replay_archived": self.replay_archived,
-            "removed_at_source": self.removed_at_source,
-            "dirty_keys": self.dirty_keys,
-            "admitted": self.admitted,
-            "repeats": self.repeats,
-            "replaced": self.replaced,
-            "older": self.older,
-            "superseded": self.superseded,
-            "failures": self.failures,
-            "refusal_kind": frame.refusal_kind,
-            "source": frame.source,
-            "event_types": frame.event_types,
-        })
+    /// What the frame's row records of this admission.
+    fn frame_outcome(&self, frame: &sinex_model::IngressFrame) -> FrameOutcome {
+        let result = match &frame.refusal {
+            Some((kind, _)) => FrameResult::Refused {
+                kind: *kind,
+                failures: self.failures,
+                source: frame.source.clone(),
+                event_types: frame.event_types.clone(),
+            },
+            None if !frame.declarations.is_empty() => FrameResult::KindsRegistered {
+                kinds: self.registered_kinds.clone(),
+            },
+            None => FrameResult::Admitted {
+                counts: self.counts(),
+                commit_range: self.commit_seq,
+            },
+        };
+        FrameOutcome {
+            content_hash: frame.content_hash.clone(),
+            result,
+        }
     }
 }
 

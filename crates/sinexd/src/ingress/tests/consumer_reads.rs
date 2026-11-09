@@ -36,7 +36,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     )
     .await;
     let (open, frame) = h.material_frame("open", b"open source\n");
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let ack = h
         .send(
             "kitty",
@@ -49,10 +49,10 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
             },
         )
         .await;
-    assert_eq!(ack.refusal, None);
-    let open_id = ack.admitted[0];
+    assert_eq!(ack.refusal(), None);
+    let open_id = ack.admitted()[0];
     let (guarded, frame) = h.material_for("phone", "guarded", b"guarded source\n");
-    assert_eq!(h.send("phone", &frame).await.refusal, None);
+    assert_eq!(h.send("phone", &frame).await.refusal(), None);
     let mut event = imported(guarded, 0, "guarded");
     event.class = sinex_model::Class::Guarded;
     assert_eq!(
@@ -67,7 +67,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let js = jetstream::new(h.client.clone());
@@ -93,14 +93,23 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     .await
     .unwrap();
     let denied = provision(&h, "unconfigured", 0).await;
-    assert!(denied.refusal.is_some());
-    let declared = provision(&h, "replica", 0).await;
-    assert_eq!(declared.refusal, None);
-    assert_eq!(declared.gap, None);
-    assert_eq!(declared.consumer, h.subjects.consumer_name(&declared.scope));
-    let stream = js.get_stream(&declared.stream).await.unwrap();
+    assert!(
+        matches!(denied, ConfirmedConsumerReply::Refused { .. }),
+        "{denied:?}"
+    );
+    let ConfirmedConsumerReply::Provisioned {
+        stream: declared_stream,
+        consumer: declared_consumer,
+        scope: declared_scope,
+        ..
+    } = provision(&h, "replica", 0).await
+    else {
+        panic!("replica consumer is provisioned")
+    };
+    assert_eq!(declared_consumer, h.subjects.consumer_name(&declared_scope));
+    let stream = js.get_stream(&declared_stream).await.unwrap();
     let mut consumer: jetstream::consumer::PullConsumer =
-        stream.get_consumer(&declared.consumer).await.unwrap();
+        stream.get_consumer(&declared_consumer).await.unwrap();
     let mut batch = consumer
         .fetch()
         .max_messages(100)
@@ -139,27 +148,42 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     .await
     .unwrap();
     let status: ConfirmedConsumerReply = serde_json::from_slice(&status.payload).unwrap();
-    assert_eq!(status.position, Some(head));
+    assert!(
+        matches!(status, ConfirmedConsumerReply::Provisioned { position, stream_instance: None, .. } if position == head),
+        "{status:?}"
+    );
     assert_eq!(
         consumer.info().await.unwrap().delivered.consumer_sequence,
         delivered,
         "status does not reset the native durable"
     );
-    assert_eq!(provision(&h, "replica", head).await.refusal, None);
+    let reply = provision(&h, "replica", head).await;
+    assert!(
+        matches!(reply, ConfirmedConsumerReply::Provisioned { .. }),
+        "{reply:?}"
+    );
     let current: jetstream::consumer::PullConsumer =
-        stream.get_consumer(&declared.consumer).await.unwrap();
+        stream.get_consumer(&declared_consumer).await.unwrap();
     assert_eq!(
         current.cached_info().delivered.consumer_sequence,
         delivered,
         "exact acknowledged barrier resumes native durable"
     );
-    assert_eq!(provision(&h, "replica", head - 1).await.refusal, None);
+    let reply = provision(&h, "replica", head - 1).await;
+    assert!(
+        matches!(reply, ConfirmedConsumerReply::Provisioned { .. }),
+        "{reply:?}"
+    );
     let restored: jetstream::consumer::PullConsumer =
-        stream.get_consumer(&declared.consumer).await.unwrap();
+        stream.get_consumer(&declared_consumer).await.unwrap();
     assert_eq!(
         restored.cached_info().delivered.consumer_sequence,
         0,
         "restored older index replays retained stream rather than skipping native acknowledgments"
     );
-    assert!(provision(&h, "replica", head + 1).await.gap.is_some());
+    let reply = provision(&h, "replica", head + 1).await;
+    assert!(
+        matches!(reply, ConfirmedConsumerReply::Gap { .. }),
+        "{reply:?}"
+    );
 }

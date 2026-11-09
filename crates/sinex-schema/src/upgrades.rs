@@ -83,6 +83,7 @@ pub(crate) const NAMED: &[&str] = &[
     "search_refusals",
     "derivation_read_indexes",
     "search_position",
+    "frame_outcomes",
 ];
 
 #[cfg(test)]
@@ -176,6 +177,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
             .into(),
         "DELETE FROM core.consumer_positions WHERE consumer = 'read.search_text'".into(),
     ]);
+    steps.push(crate::frame_outcomes::statements());
     steps
 }
 

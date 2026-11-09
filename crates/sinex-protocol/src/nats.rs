@@ -493,33 +493,78 @@ pub struct ProducerEvent {
 /// returned again for the same frame.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Acknowledgment {
-    #[serde(default)]
-    pub number: Option<i64>,
+    /// The order Sinex recorded the frame in.
+    pub number: i64,
     pub frame: String,
-    /// The material a material frame registered.
-    pub material: Option<MaterialId>,
-    /// Committed encoded segment descriptors for the acknowledged material.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub material_extents: Vec<Vec<u8>>,
-    /// Events admitted as new or newer readings.
-    pub admitted: Vec<EventId>,
-    /// Counts by what admission did: admitted, repeats, replaced, older,
-    /// superseded.
-    pub outcome: Value,
-    /// Why the whole frame was refused; a refusal is never an empty success.
-    pub refusal: Option<String>,
-    /// The last commit position of the frame's events.
-    pub commit_seq: Option<i64>,
+    /// `blake3:<hex>` of the logical frame body Sinex recorded under this
+    /// name. A conflict refusal carries the recorded body's hash, not the
+    /// offered one; frames recorded before Sinex kept the hash have none.
+    pub content_hash: Option<String>,
+    #[serde(flatten)]
+    pub result: FrameResult,
+}
+
+/// What admission did with one frame.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum FrameResult {
+    /// Events, material, signal and chunk frames.
+    Admitted {
+        /// The material a material frame registered.
+        material: Option<MaterialId>,
+        /// Committed encoded segment descriptors for that material.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        material_extents: Vec<Vec<u8>>,
+        /// Events admitted as new or newer readings.
+        admitted: Vec<EventId>,
+        counts: sinex_model::AdmissionCounts,
+        /// The last commit position of the frame's events; none when the
+        /// frame admitted nothing new.
+        commit_seq: Option<i64>,
+    },
+    /// Kind declarations registered, with their definition hashes.
+    KindsRegistered {
+        kinds: Vec<(sinex_model::KindRef, String)>,
+    },
+    /// A producer replay's replacement readings.
+    Replayed {
+        operation: sinex_model::OperationId,
+        admitted: Vec<EventId>,
+        commit_seq: Option<i64>,
+    },
+    /// The whole frame was refused; a refusal is never an empty success.
+    Refused {
+        kind: sinex_model::FrameRefusal,
+        reason: String,
+    },
 }
 
 impl Acknowledgment {
-    pub fn content_hash(&self) -> Option<&str> {
-        self.outcome
-            .get("frame_content_hash")
-            .and_then(Value::as_str)
+    pub fn refusal(&self) -> Option<(sinex_model::FrameRefusal, &str)> {
+        match &self.result {
+            FrameResult::Refused { kind, reason } => Some((*kind, reason)),
+            _ => None,
+        }
     }
-    pub fn refusal_kind(&self) -> Option<sinex_model::FrameRefusal> {
-        serde_json::from_value(self.outcome["refusal_kind"].clone()).ok()
+
+    /// The last commit position of the frame's events.
+    pub fn commit_seq(&self) -> Option<i64> {
+        match &self.result {
+            FrameResult::Admitted { commit_seq, .. } | FrameResult::Replayed { commit_seq, .. } => {
+                *commit_seq
+            }
+            FrameResult::KindsRegistered { .. } | FrameResult::Refused { .. } => None,
+        }
+    }
+
+    /// Events the frame admitted as new or newer readings.
+    pub fn admitted(&self) -> &[EventId] {
+        match &self.result {
+            FrameResult::Admitted { admitted, .. } | FrameResult::Replayed { admitted, .. } => {
+                admitted
+            }
+            FrameResult::KindsRegistered { .. } | FrameResult::Refused { .. } => &[],
+        }
     }
 }
 
@@ -546,26 +591,35 @@ pub struct ErasedEvent {
     pub original_commit_seq: i64,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct FetchEventReply {
-    /// Mutually exclusive with a retained event. Unknown historical positions stay unavailable.
-    #[serde(default)]
-    pub erased: Option<ErasedEvent>,
-    pub event: Option<ConfirmedEvent>,
-    pub refusal: Option<String>,
-    pub refusal_kind: Option<FetchRefusalKind>,
+/// Why a payload read was refused.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FetchRefusal {
+    pub kind: FetchRefusalKind,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "reply", rename_all = "snake_case")]
+pub enum FetchEventReply {
+    Event(Box<ConfirmedEvent>),
+    /// The event was tombstoned. Unknown historical positions stay
+    /// unavailable, as a refusal.
+    Erased(ErasedEvent),
+    Refused(FetchRefusal),
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FetchMaterial {
     pub material: MaterialId,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct FetchMaterialReply {
-    pub material: Option<MaterialFrame>,
-    pub extents: Vec<Vec<u8>>,
-    pub refusal: Option<String>,
-    pub refusal_kind: Option<FetchRefusalKind>,
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "reply", rename_all = "snake_case")]
+pub enum FetchMaterialReply {
+    Material {
+        material: Box<MaterialFrame>,
+        extents: Vec<Vec<u8>>,
+    },
+    Refused(FetchRefusal),
 }
 /// A broadcast is only a wakeup hint. Progress requires the complete verified receipt.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -574,7 +628,7 @@ pub struct ReceiptHint {
     pub frame_hash: String,
 }
 
-pub const PRODUCER_VERSION: u32 = 2;
+pub const PRODUCER_VERSION: u32 = 3;
 
 /// Checked before any material or events are sent. Event declarations can
 /// be registered here before checking the names the producer will emit.
@@ -595,13 +649,18 @@ impl Default for ProducerHello {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ProducerWelcome {
-    pub refusal: Option<String>,
-    #[serde(default)]
-    pub family: Option<String>,
-    #[serde(default)]
-    pub canonical_publisher: bool,
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "reply", rename_all = "snake_case")]
+pub enum ProducerWelcome {
+    Welcome {
+        /// The kind family the producer's grants configure.
+        family: Option<String>,
+        /// Whether this producer publishes its family's canonical readings.
+        canonical_publisher: bool,
+    },
+    Refused {
+        reason: String,
+    },
 }
 
 /// A request on `<root>.recorded.<producer>`: which of these frames Sinex has
@@ -775,16 +834,27 @@ pub struct ConfirmedConsumer {
     #[serde(default)]
     pub status_only: bool,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConfirmedConsumerReply {
-    #[serde(default)]
-    pub position: Option<i64>,
-    pub stream: String,
-    pub stream_instance: Option<String>,
-    pub consumer: String,
-    pub scope: String,
-    pub refusal: Option<String>,
-    pub gap: Option<String>,
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "reply", rename_all = "snake_case")]
+pub enum ConfirmedConsumerReply {
+    /// The scoped durable consumer to read; `stream_instance` is absent for
+    /// a status-only request, which provisions nothing.
+    Provisioned {
+        position: i64,
+        stream: String,
+        stream_instance: Option<String>,
+        consumer: String,
+        scope: String,
+    },
+    /// The requested position is past the durable commit history at `position`.
+    Gap {
+        position: i64,
+        scope: String,
+        reason: String,
+    },
+    Refused {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

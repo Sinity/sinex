@@ -57,8 +57,8 @@ async fn prepared(
         }],
     };
     let receipt = h.send("kitty", &frame).await;
-    assert_eq!(receipt.refusal, None);
-    assert_eq!(receipt.material, Some(claim.material));
+    assert_eq!(receipt.refusal(), None);
+    assert_eq!(super::material(&receipt), Some(claim.material));
     (h, frame, receipt, claim)
 }
 async fn lookup(
@@ -171,7 +171,10 @@ async fn recorded_material_continuation_conserves_source3_when_startup_artifact_
         failures: vec![],
     };
     assert_eq!(
-        h.send("kitty", &invalid).await.refusal_kind(),
+        h.send("kitty", &invalid)
+            .await
+            .refusal()
+            .map(|(kind, _)| kind),
         Some(FrameRefusal::Content)
     );
     let retagged = Ingress::Events {
@@ -185,7 +188,10 @@ async fn recorded_material_continuation_conserves_source3_when_startup_artifact_
         failures: vec![],
     };
     assert_eq!(
-        h.send("kitty", &retagged).await.refusal_kind(),
+        h.send("kitty", &retagged)
+            .await
+            .refusal()
+            .map(|(kind, _)| kind),
         Some(FrameRefusal::Configuration)
     );
 }

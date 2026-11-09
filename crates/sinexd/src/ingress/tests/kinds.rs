@@ -77,7 +77,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         declarations: vec![d.clone()],
     };
     let registered = h.send("example", &frame).await;
-    assert_eq!(registered.refusal, None);
+    assert_eq!(registered.refusal(), None);
     let hello = ProducerHello {
         event_types: vec![d.kind.name.clone()],
         ..ProducerHello::default()
@@ -106,10 +106,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         ))
     ));
     assert_eq!(registered, h.send("example", &frame).await);
-    assert_eq!(
-        registered.outcome["registered_kinds"],
-        json!([[d.kind, d.definition_hash()]])
-    );
+    assert_eq!(kinds(&registered), json!([[d.kind, d.definition_hash()]]));
     let mut changed = d.clone();
     changed.search = sinex_model::kinds::Search::None;
     let mut tenth = d.clone();
@@ -123,11 +120,15 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             },
         )
         .await;
-    assert_eq!(refused.refusal_kind(), Some(FrameRefusal::Configuration));
+    assert_eq!(
+        refused.refusal().map(|(kind, _)| kind),
+        Some(FrameRefusal::Configuration)
+    );
     assert!(
         refused
-            .refusal
+            .refusal()
             .unwrap()
+            .1
             .contains("outside the configured logical family")
     );
     assert_eq!(
@@ -148,8 +149,9 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             }
         )
         .await
-        .refusal
+        .refusal()
         .unwrap()
+        .1
         .contains("outside the configured logical family")
     );
     for name in ["example..reading", "example.reading.", "example."] {
@@ -164,11 +166,15 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
                 },
             )
             .await;
-        assert_eq!(refused.refusal_kind(), Some(FrameRefusal::Configuration));
+        assert_eq!(
+            refused.refusal().map(|(kind, _)| kind),
+            Some(FrameRefusal::Configuration)
+        );
         assert!(
             refused
-                .refusal
+                .refusal()
                 .unwrap()
+                .1
                 .contains("outside the configured logical family")
         );
         assert_eq!(
@@ -180,7 +186,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         );
     }
     let (material, frame) = h.material_for("example", "bytes", b"one\n");
-    assert_eq!(h.send("example", &frame).await.refusal, None);
+    assert_eq!(h.send("example", &frame).await.refusal(), None);
     let mut unknown = event(&d, material, "one", 1);
     unknown.kind.version = 10;
     assert!(
@@ -195,7 +201,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             }
         )
         .await
-        .refusal
+        .refusal()
         .is_some()
     );
     let mut invalid = event(&d, material, "private fixture", 1);
@@ -212,7 +218,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             },
         )
         .await;
-    assert!(refusal.refusal.is_some());
+    assert!(refusal.refusal().is_some());
     assert_eq!(
         h.count("SELECT count(*) FROM core.events WHERE source='example'")
             .await,
@@ -240,11 +246,11 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let (material, bytes) = h.material_for("example", "bytes", b"one\n");
-    assert_eq!(h.send("example", &bytes).await.refusal, None);
+    assert_eq!(h.send("example", &bytes).await.refusal(), None);
     assert_eq!(
         h.send(
             "example",
@@ -257,7 +263,7 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let selection = scope(&h, material).await;
@@ -286,8 +292,8 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
         sequence: Box::new(sequence.clone()),
     };
     let ack = h.send("example", &replay).await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
-    assert_eq!(ack.admitted.len(), 1);
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(ack.admitted().len(), 1);
     assert_eq!(ack, h.send("example", &replay).await);
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE source='example' AND payload->>'text'='new' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
     let current = scope(&h, material).await;
@@ -310,7 +316,7 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
             }
         )
         .await
-        .refusal
+        .refusal()
         .is_some()
     );
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE source='example' AND payload->>'text'='new' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
@@ -327,8 +333,9 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
         .await;
     assert!(
         corrected_ack
-            .refusal
+            .refusal()
             .unwrap()
+            .1
             .contains("replay_build_changed")
     );
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE payload->>'text'='new' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
@@ -346,8 +353,9 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
         .await;
     assert!(
         changed_ack
-            .refusal
+            .refusal()
             .unwrap()
+            .1
             .contains("replay_build_changed")
     );
 
@@ -360,7 +368,7 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let selected = scope(&h, material).await;
@@ -395,8 +403,8 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
             },
         )
         .await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
-    assert_eq!(ack.admitted.len(), 1);
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(ack.admitted().len(), 1);
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE e.source='example' AND e.kind_version=10 AND e.validation='validated' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
 }
 
@@ -430,11 +438,11 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_an_archived_reco
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let (material, bytes) = h.material_for("polylogue", "bytes", b"requests\n");
-    assert_eq!(h.send("polylogue", &bytes).await.refusal, None);
+    assert_eq!(h.send("polylogue", &bytes).await.refusal(), None);
     let events = |text: &str, order| {
         declarations
             .iter()
@@ -453,7 +461,7 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_an_archived_reco
             },
         )
         .await;
-    assert_eq!(first.admitted.len(), 6);
+    assert_eq!(first.admitted().len(), 6);
     // Archive is not hiding: a replay reads the archived record again and
     // its new reading is live beside the replaced ones.
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
@@ -463,7 +471,7 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_an_archived_reco
         sinex_model::lifecycle::Act::Archive,
         "agent:test",
         sinex_model::lifecycle::Scope::Events {
-            events: vec![first.admitted[0]],
+            events: vec![first.admitted()[0]],
             query: None,
         },
         false,
@@ -523,8 +531,8 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_an_archived_reco
             sequence: Box::new(sequence),
         };
         let ack = h.send("polylogue", &frame).await;
-        assert_eq!(ack.refusal, None, "{ack:?}");
-        assert_eq!(ack.admitted.len(), 6);
+        assert_eq!(ack.refusal(), None, "{ack:?}");
+        assert_eq!(ack.admitted().len(), 6);
         assert_eq!(ack, h.send("polylogue", &frame).await);
         assert_eq!(h.count(&format!("SELECT count(*) FROM core.events e WHERE e.source='polylogue' AND payload->>'text'='{replacement}' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)")).await,6);
     }
@@ -544,11 +552,11 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let (material, bytes) = h.material_for("example", "bytes", b"request\n");
-    assert_eq!(h.send("example", &bytes).await.refusal, None);
+    assert_eq!(h.send("example", &bytes).await.refusal(), None);
     h.send(
         "example",
         &Ingress::Events {
@@ -573,7 +581,7 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
             },
         )
         .await;
-    assert_eq!(newer.admitted.len(), 1);
+    assert_eq!(newer.admitted().len(), 1);
     let sequence = ProducerReplay {
         source: test_source("example"),
         operation: sinex_model::OperationId::new(),
@@ -603,7 +611,7 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
             },
         )
         .await;
-    assert!(refused.refusal.unwrap().contains("replay_live_changed"));
+    assert!(refused.refusal().unwrap().1.contains("replay_live_changed"));
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE payload->>'text'='arrived' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
 }
 
@@ -626,11 +634,11 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let (material, bytes) = h.material_for("example", "bytes", b"one\n");
-    assert_eq!(h.send("example", &bytes).await.refusal, None);
+    assert_eq!(h.send("example", &bytes).await.refusal(), None);
     assert_eq!(
         h.send(
             "example",
@@ -643,7 +651,7 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let event_types = Some(vec![selected_kind.kind.name.clone()]);
@@ -660,7 +668,7 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let sequence = ProducerReplay {
@@ -692,8 +700,8 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
             },
         )
         .await;
-    assert_eq!(ack.refusal, None, "{ack:?}");
-    assert_eq!(ack.admitted.len(), 1);
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(ack.admitted().len(), 1);
     assert_eq!(h.count("SELECT count(*) FROM core.events e WHERE payload->>'text'='outside' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)").await,1);
 }
 
@@ -713,11 +721,11 @@ async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(
             }
         )
         .await
-        .refusal,
+        .refusal(),
         None
     );
     let (material, frame) = h.material_for("example", "assigned-material", b"synthetic source\n");
-    assert_eq!(h.send("example", &frame).await.refusal, None);
+    assert_eq!(h.send("example", &frame).await.refusal(), None);
     for (ordinal, text) in ["A", "B", "A"].into_iter().enumerate() {
         let mut offered = event(&d, material, text, 0);
         offered.reading_order = None;
@@ -729,11 +737,11 @@ async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(
             failures: vec![],
         };
         let first = h.send("example", &frame).await;
-        assert_eq!(first.refusal, None, "{first:?}");
-        assert_eq!(first.admitted.len(), 1);
+        assert_eq!(first.refusal(), None, "{first:?}");
+        assert_eq!(first.admitted().len(), 1);
         let again = h.send("example", &frame).await;
-        assert_eq!(again.admitted, first.admitted);
-        assert_eq!(again.commit_seq, first.commit_seq);
+        assert_eq!(again.admitted(), first.admitted());
+        assert_eq!(again.commit_seq(), first.commit_seq());
     }
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let orders=sqlx::query_scalar!("SELECT reading_order FROM core.events WHERE event_type='example.assigned' ORDER BY commit_seq").fetch_all(&mut conn).await.unwrap();

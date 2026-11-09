@@ -20,7 +20,7 @@ async fn sixty_five_thousand_outputs_have_one_complete_verified_producer_receipt
         material.manifest =
             sinex_model::Manifest::from_json(json!({"media_type":"application/json"}));
     }
-    assert_eq!(h.send("kitty", &frame).await.refusal, None);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let events = (0..OUTPUTS)
         .map(|index| {
             let mut event = imported(material, 0, "synthetic");
@@ -71,7 +71,7 @@ async fn sixty_five_thousand_outputs_have_one_complete_verified_producer_receipt
         }
     }).await.expect("admission commits with no receipt subscriber");
     let (_, probe) = h.material_frame("after-bulk", b"next capture\n");
-    assert_eq!(h.send("kitty", &probe).await.refusal, None);
+    assert_eq!(h.send("kitty", &probe).await.refusal(), None);
     let mut acks = h.client.subscribe(h.subjects.ack("kitty")).await.unwrap();
     h.client.flush().await.unwrap();
     let receipt = sinex_transport::producer::submit_frame(
@@ -84,13 +84,13 @@ async fn sixty_five_thousand_outputs_have_one_complete_verified_producer_receipt
     )
     .await
     .unwrap();
-    assert_eq!(receipt.refusal, None);
-    assert_eq!(receipt.admitted.len(), OUTPUTS);
-    assert_eq!(receipt.outcome["admitted"], OUTPUTS);
-    assert!(receipt.number.is_some());
+    assert_eq!(receipt.refusal(), None);
+    assert_eq!(receipt.admitted().len(), OUTPUTS);
+    assert_eq!(counts(&receipt).admitted, OUTPUTS);
+    assert!(receipt.number > 0);
     assert_eq!(
         receipt
-            .admitted
+            .admitted()
             .iter()
             .collect::<std::collections::HashSet<_>>()
             .len(),
@@ -174,7 +174,7 @@ async fn request_replies_cannot_be_forwarded_to_a_foreign_principal_inbox(
             h.subjects.fetch_event("kitty"),
             inbox,
             serde_json::to_vec(&sinex_protocol::FetchEvent {
-                event: receipt.admitted[0],
+                event: receipt.admitted()[0],
             })
             .unwrap()
             .into(),

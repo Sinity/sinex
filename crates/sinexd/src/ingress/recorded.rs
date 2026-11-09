@@ -24,21 +24,10 @@ impl Requests {
         else {
             return Ok(unknown("material_receipt_not_recorded"));
         };
-        if saved.receipt.number <= 0
-            || saved.receipt.refusal.is_some()
-            || saved
-                .receipt
-                .outcome
-                .get("refusal_kind")
-                .is_some_and(|kind| !kind.is_null())
-        {
+        if saved.receipt.number <= 0 || saved.receipt.refusal_kind().is_some() {
             return Ok(unknown("material_receipt_not_positive"));
         }
-        let content_hash = saved
-            .receipt
-            .outcome
-            .get("frame_content_hash")
-            .and_then(Value::as_str);
+        let content_hash = saved.receipt.content_hash();
         if content_hash.is_none_or(|hash| {
             hash.strip_prefix("blake3:")
                 .is_none_or(|hex| blake3::Hash::from_hex(hex).is_err())
@@ -70,7 +59,7 @@ impl Requests {
             return Ok(unknown("material_source_authority_unknown"));
         }
         let binding = RecordedMaterialBinding {
-            receipt: acknowledgment(saved.receipt),
+            receipt: acknowledgment(saved.receipt)?,
             material: claim.material,
             blob: claim.blob.clone(),
             length: claim.length,

@@ -143,9 +143,7 @@ pub(crate) async fn recorded(
     .map_err(|e| Check::Unavailable(e.to_string()))?;
     if let Some(frame) = frames.first() {
         if frame
-            .outcome
-            .get("frame_content_hash")
-            .and_then(Value::as_str)
+            .content_hash()
             .is_some_and(|hash| hash != request.content_hash)
         {
             return Err(Check::Refused("frame_body_conflict".into()));
@@ -425,7 +423,7 @@ impl Ingest {
             .await?
             .ok_or("replay acknowledgment is missing")?;
         self.discard(producer, frame);
-        Ok(acknowledgment(stored))
+        acknowledgment(stored)
     }
 
     async fn prepare_replay(
@@ -494,7 +492,6 @@ impl Ingest {
                     material: None,
                     refusal: None,
                     declarations: vec![],
-                    refusal_kind: None,
                     source: None,
                     event_types: vec![],
                 })),
