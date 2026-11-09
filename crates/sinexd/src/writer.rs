@@ -8,6 +8,7 @@
 //! back) in one transaction, and one batch of a lifecycle operation at a time
 //! (punching the extents of bytes a tombstone freed after commit), so live
 //! batches are admitted between an operation's batches.
+use crate::Result;
 
 use serde_json::Value;
 use sinex_model::{Batch, OperationId};
@@ -42,8 +43,25 @@ pub(crate) enum WriteError {
     Stale(&'static str),
 }
 
-fn store_error(error: sinex_store::Error) -> WriteError {
-    admission_error(error)
+impl From<WriteError> for command_surface::Failure {
+    fn from(error: WriteError) -> Self {
+        use command_surface::{Failure, FailureKind};
+        let message = error.to_string();
+        match error {
+            WriteError::Refused(_) => Failure::new(FailureKind::BadValue, message),
+            WriteError::Unavailable(_) => {
+                Failure::new(FailureKind::NotRunning, message).with_code("database_unavailable")
+            }
+            WriteError::Stopped => {
+                Failure::new(FailureKind::NotRunning, message).with_code("writer_stopped")
+            }
+            WriteError::Stale(_) => {
+                let mut failure = Failure::new(FailureKind::Conflict, message).with_code("stale");
+                failure.retryable = true;
+                failure
+            }
+        }
+    }
 }
 
 /// One replay sequence: its batches run in one transaction, admitted as they
@@ -57,7 +75,7 @@ pub(crate) struct ReplaySequence {
     pub root: uuid::Uuid,
     /// Roll back after reading the difference: a comparison.
     pub compare: bool,
-    pub batches: tokio::sync::mpsc::Receiver<Result<Batch, String>>,
+    pub batches: tokio::sync::mpsc::Receiver<Result<Batch>>,
     pub ingress: Option<crate::ingress::replay::CheckedReplay>,
 }
 
@@ -171,7 +189,7 @@ pub(crate) struct WriterHandle {
 
 /// A check run just before and after the admission (cancellation, unlock
 /// expiry); an error refuses the batch.
-pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+pub(crate) type AdmissionCheck = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 
 impl WriterHandle {
     pub(crate) fn source_publication(&self) -> sinex_transport::backup::Publication {
@@ -475,13 +493,9 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
 ///
 /// A writer that was just killed holds the lock until the server notices its
 /// backend is gone, so a restart waits up to five seconds before refusing.
-pub(crate) async fn claim(connection: PgConnection) -> Result<AdmissionContext, String> {
-    let mut context = AdmissionContext::claim(connection)
-        .await
-        .map_err(|error| error.to_string())?;
-    sinex_schema::kinds::require_bundled(&mut context)
-        .await
-        .map_err(|error| error.to_string())?;
+pub(crate) async fn claim(connection: PgConnection) -> Result<AdmissionContext> {
+    let mut context = AdmissionContext::claim(connection).await?;
+    sinex_schema::kinds::require_bundled(&mut context).await?;
     Ok(context)
 }
 
@@ -646,7 +660,7 @@ pub(crate) async fn run_notifying(
                 let result = sinex_store::backup::release(&mut connection, hold, operation, &actor)
                     .await
                     .map(|hold| Done::Backup(hold, None))
-                    .map_err(store_error);
+                    .map_err(WriteError::from);
                 if result.is_ok() {
                     released_punches = true;
                 }
@@ -667,7 +681,7 @@ pub(crate) async fn run_notifying(
             match claim(fresh).await {
                 Ok(fresh) => connection = fresh.with_blobs(store.cloned()),
                 Err(error) => {
-                    let _ = job.reply.send(Err(WriteError::Refused(error)));
+                    let _ = job.reply.send(Err(WriteError::Refused(error.to_string())));
                     return;
                 }
             }
@@ -707,7 +721,7 @@ async fn admit_checked(
     batch: &Batch,
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
-    check: &(dyn Fn() -> Result<(), String> + Send + Sync),
+    check: &(dyn Fn() -> Result<()> + Send + Sync),
     record_refusals: bool,
 ) -> Result<Outcome, WriteError> {
     admit_with_checkpoint(
@@ -727,7 +741,7 @@ async fn admit_with_checkpoint(
     batch: &Batch,
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
-    check: &(dyn Fn() -> Result<(), String> + Send + Sync),
+    check: &(dyn Fn() -> Result<()> + Send + Sync),
     record_refusals: bool,
     saved: Saved<'_>,
 ) -> Result<Outcome, WriteError> {
@@ -738,7 +752,7 @@ async fn admit_with_checkpoint(
     let curation = matches!(saved, Saved::Curation);
     let unavailable = |e: &dyn std::fmt::Display| WriteError::Unavailable(e.to_string());
     let checks_started = std::time::Instant::now();
-    check().map_err(WriteError::Refused)?;
+    check().map_err(|error| WriteError::Refused(error.to_string()))?;
     for name in batch.stored_bytes() {
         let present = match store {
             Some(store) => store.contains(name).map_err(|e| unavailable(&e))?,
@@ -752,11 +766,9 @@ async fn admit_with_checkpoint(
     }
     let checks_time = checks_started.elapsed();
     let begin_started = std::time::Instant::now();
-    let mut tx = connection.begin().await.map_err(store_error)?;
+    let mut tx = connection.begin().await?;
     let begin_time = begin_started.elapsed();
-    let since = sinex_store::query::current_seq(&mut tx)
-        .await
-        .map_err(store_error)?;
+    let since = sinex_store::query::current_seq(&mut tx).await?;
     if curation {
         let records: Vec<sinex_model::event_types::library::Curation> = batch
             .events()
@@ -765,7 +777,7 @@ async fn admit_with_checkpoint(
             .collect::<Result<_, _>>()
             .map_err(|error| WriteError::Refused(format!("a curation record: {error}")))?;
         if let Err(reason) = sinex_library::plan::verify(&mut tx, &records).await {
-            tx.rollback().await.map_err(store_error)?;
+            tx.rollback().await?;
             return Err(WriteError::Refused(format!(
                 "the library changed while this request was planned ({reason}); send the request again"
             )));
@@ -774,44 +786,42 @@ async fn admit_with_checkpoint(
     match tx.admit(batch, keys).await {
         Ok(mut outcome) => {
             if let Err(error) = check() {
-                tx.rollback().await.map_err(store_error)?;
-                return Err(WriteError::Refused(error));
+                tx.rollback().await?;
+                return Err(WriteError::Refused(error.to_string()));
             }
             if let Some(stage) = stage
                 && let Err(error) = save_stage(tx.connection(), batch, stage, &outcome).await
             {
-                tx.rollback().await.map_err(store_error)?;
-                return Err(store_error(error));
+                tx.rollback().await?;
+                return Err(WriteError::from(error));
             }
             if let Err(error) = refresh_read_models(&mut tx, since).await {
-                tx.rollback().await.map_err(store_error)?;
+                tx.rollback().await?;
                 return Err(error);
             }
             let started = std::time::Instant::now();
-            tx.commit().await.map_err(store_error)?;
+            tx.commit().await?;
             outcome.timings.insert("commit", started.elapsed());
             outcome.timings.insert("checks", checks_time);
             outcome.timings.insert("begin", begin_time);
             Ok(outcome)
         }
         Err(error) => {
-            tx.rollback().await.map_err(store_error)?;
+            tx.rollback().await?;
             let recordable = record_refusals && content_error(&error);
-            let error = store_error(error);
+            let error = WriteError::from(error);
             if recordable
                 && let WriteError::Refused(reason) = &error
                 && let Some(failed) = refused_source(batch, reason)
             {
-                check().map_err(WriteError::Refused)?;
-                let mut tx = connection.begin().await.map_err(store_error)?;
-                let outcome = tx.admit(&failed, keys).await.map_err(store_error)?;
-                check().map_err(WriteError::Refused)?;
+                check().map_err(|error| WriteError::Refused(error.to_string()))?;
+                let mut tx = connection.begin().await?;
+                let outcome = tx.admit(&failed, keys).await?;
+                check().map_err(|error| WriteError::Refused(error.to_string()))?;
                 if let Some(stage) = stage {
-                    save_stage(tx.connection(), &failed, stage, &outcome)
-                        .await
-                        .map_err(store_error)?;
+                    save_stage(tx.connection(), &failed, stage, &outcome).await?;
                 }
-                tx.commit().await.map_err(store_error)?;
+                tx.commit().await?;
                 return Ok(outcome);
             }
             Err(error)
@@ -853,22 +863,15 @@ async fn admit_signals(
             )));
         }
     }
-    let mut tx = connection
-        .begin()
-        .await
-        .map_err(|error| store_error(error.into()))?;
+    let mut tx = connection.begin().await?;
     let result = signal_step(&mut tx, batch, keys, commit).await;
     match result {
         Ok(outcome) => {
-            tx.commit()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            tx.commit().await?;
             Ok(outcome)
         }
         Err(error) => {
-            tx.rollback()
-                .await
-                .map_err(|error| store_error(error.into()))?;
+            tx.rollback().await?;
             Err(error)
         }
     }
@@ -884,17 +887,14 @@ async fn signal_step(
 ) -> Result<Outcome, WriteError> {
     let mut outcome = Outcome::default();
     if let Some(expected) = commit.observed_seq
-        && sinex_store::query::current_seq(tx)
-            .await
-            .map_err(store_error)?
-            != expected
+        && sinex_store::query::current_seq(tx).await? != expected
     {
         return Err(WriteError::Stale(
             "signal evaluation input snapshot changed",
         ));
     }
     if let Some(batch) = batch {
-        outcome += tx.admit(batch, keys).await.map_err(store_error)?;
+        outcome += tx.admit(batch, keys).await?;
     }
     if let Some(handed) = &commit.deliveries {
         for (event, read) in &handed.events {
@@ -919,7 +919,7 @@ async fn signal_step(
                 }],
                 archive: vec![],
             };
-            let admitted = tx.admit(&delivery, keys).await.map_err(store_error)?;
+            let admitted = tx.admit(&delivery, keys).await?;
             if admitted.superseded_input != 0 {
                 return Err(WriteError::Stale(
                     "signal delivery inputs stopped being available",
@@ -930,13 +930,9 @@ async fn signal_step(
     }
     let mut state = commit.checkpoint.clone();
     if commit.observed_seq.is_some() {
-        state.observed_seq = sinex_store::query::current_seq(tx)
-            .await
-            .map_err(store_error)?;
+        state.observed_seq = sinex_store::query::current_seq(tx).await?;
     }
-    sinex_store::signals::save(tx, &commit.host, commit.expected_revision, &state)
-        .await
-        .map_err(store_error)?;
+    sinex_store::signals::save(tx, &commit.host, commit.expected_revision, &state).await?;
     Ok(outcome)
 }
 
@@ -975,38 +971,48 @@ fn refused_source(batch: &Batch, reason: &str) -> Option<Batch> {
 
 /// A transaction that could not run must remain pending at the producer.
 /// Only invalid content can be recorded as a final refusal.
-fn admission_error(error: sinex_store::Error) -> WriteError {
-    if let sinex_store::Error::StaleCheckpoint = error {
-        return WriteError::Stale("signal checkpoint changed");
+impl From<sqlx::Error> for WriteError {
+    fn from(error: sqlx::Error) -> Self {
+        sinex_store::Error::from(error).into()
     }
-    let temporary = match &error {
-        sinex_store::Error::Database(sqlx::Error::Database(error)) => {
-            error.code().is_some_and(|code| {
-                ["08", "40", "53", "57", "58"]
-                    .iter()
-                    .any(|class| code.starts_with(class))
-            })
+}
+
+impl From<sinex_store::Error> for WriteError {
+    fn from(error: sinex_store::Error) -> Self {
+        if let sinex_store::Error::StaleCheckpoint = error {
+            return WriteError::Stale("signal checkpoint changed");
         }
-        sinex_store::Error::Database(error) => matches!(
-            error,
-            sqlx::Error::Io(_)
-                | sqlx::Error::Tls(_)
-                | sqlx::Error::PoolTimedOut
-                | sqlx::Error::PoolClosed
-                | sqlx::Error::WorkerCrashed
-        ),
-        sinex_store::Error::Blob(_) => true,
-        _ => false,
-    };
-    if temporary {
-        WriteError::Unavailable(error.to_string())
-    } else if let sinex_store::Error::Database(database) = &error {
-        match database.as_database_error().and_then(|error| error.code()) {
-            Some(code) => WriteError::Refused(format!("database refused invalid data ({code})")),
-            None => WriteError::Refused(error.to_string()),
+        let temporary = match &error {
+            sinex_store::Error::Database(sqlx::Error::Database(error)) => {
+                error.code().is_some_and(|code| {
+                    ["08", "40", "53", "57", "58"]
+                        .iter()
+                        .any(|class| code.starts_with(class))
+                })
+            }
+            sinex_store::Error::Database(error) => matches!(
+                error,
+                sqlx::Error::Io(_)
+                    | sqlx::Error::Tls(_)
+                    | sqlx::Error::PoolTimedOut
+                    | sqlx::Error::PoolClosed
+                    | sqlx::Error::WorkerCrashed
+            ),
+            sinex_store::Error::Blob(_) => true,
+            _ => false,
+        };
+        if temporary {
+            WriteError::Unavailable(error.to_string())
+        } else if let sinex_store::Error::Database(database) = &error {
+            match database.as_database_error().and_then(|error| error.code()) {
+                Some(code) => {
+                    WriteError::Refused(format!("database refused invalid data ({code})"))
+                }
+                None => WriteError::Refused(error.to_string()),
+            }
+        } else {
+            WriteError::Refused(error.to_string())
         }
-    } else {
-        WriteError::Refused(error.to_string())
     }
 }
 
@@ -1019,12 +1025,12 @@ async fn replay_sequence(
     if !sequence.compare
         && let Some(ingress) = &sequence.ingress
     {
-        let mut scope_tx = connection.begin().await.map_err(store_error)?;
+        let mut scope_tx = connection.begin().await?;
         if let Some(recorded) = crate::ingress::replay::recorded(&mut scope_tx, ingress)
             .await
             .map_err(crate::ingress::Check::write_error)?
         {
-            scope_tx.rollback().await.map_err(store_error)?;
+            scope_tx.rollback().await?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check_scope(&mut scope_tx, ingress)
@@ -1038,20 +1044,17 @@ async fn replay_sequence(
             &sequence.actor,
             &sequence.scope,
         )
-        .await
-        .map_err(store_error)?;
-        scope_tx.commit().await.map_err(store_error)?;
+        .await?;
+        scope_tx.commit().await?;
     }
-    let mut tx = connection.begin().await.map_err(store_error)?;
-    let since = sinex_store::query::current_seq(&mut tx)
-        .await
-        .map_err(store_error)?;
+    let mut tx = connection.begin().await?;
+    let since = sinex_store::query::current_seq(&mut tx).await?;
     if let Some(ingress) = &sequence.ingress {
         if let Some(recorded) = crate::ingress::replay::recorded(&mut tx, ingress)
             .await
             .map_err(crate::ingress::Check::write_error)?
         {
-            tx.rollback().await.map_err(store_error)?;
+            tx.rollback().await?;
             return Ok((vec![recorded], Diff::default()));
         }
         crate::ingress::replay::check(&mut tx, ingress)
@@ -1059,11 +1062,7 @@ async fn replay_sequence(
             .map_err(crate::ingress::Check::write_error)?;
     }
     let receipt_number = if sequence.ingress.is_some() {
-        Some(
-            sinex_store::commit_log::reserve_frame_number(&mut tx)
-                .await
-                .map_err(store_error)?,
-        )
+        Some(sinex_store::commit_log::reserve_frame_number(&mut tx).await?)
     } else {
         None
     };
@@ -1073,8 +1072,7 @@ async fn replay_sequence(
         &sequence.actor,
         &sequence.scope,
     )
-    .await
-    .map_err(store_error)?;
+    .await?;
     let mut outcomes = Vec::new();
     while let Some(batch) = sequence.batches.recv().await {
         let mut batch = batch.map_err(|e| refuse(&e))?;
@@ -1083,15 +1081,13 @@ async fn replay_sequence(
         {
             frame.receipt_number = receipt_number;
         }
-        outcomes.push(tx.admit(&batch, keys).await.map_err(store_error)?);
+        outcomes.push(tx.admit(&batch, keys).await?);
     }
     let admitted: Vec<uuid::Uuid> = outcomes
         .iter()
         .flat_map(|o| o.admitted_ids.iter().map(|id| id.0))
         .collect();
-    let diff = replay::diff(&mut tx, sequence.operation, &admitted)
-        .await
-        .map_err(store_error)?;
+    let diff = replay::diff(&mut tx, sequence.operation, &admitted).await?;
     if let Some(ingress) = &sequence.ingress {
         crate::ingress::replay::finish(
             &mut tx,
@@ -1103,13 +1099,11 @@ async fn replay_sequence(
         .map_err(crate::ingress::Check::write_error)?;
     }
     if sequence.compare {
-        tx.rollback().await.map_err(store_error)?;
+        tx.rollback().await?;
     } else {
-        replay::sequence_done(&mut tx, sequence.operation, sequence.root)
-            .await
-            .map_err(store_error)?;
+        replay::sequence_done(&mut tx, sequence.operation, sequence.root).await?;
         refresh_read_models(&mut tx, since).await?;
-        tx.commit().await.map_err(store_error)?;
+        tx.commit().await?;
     }
     Ok((outcomes, diff))
 }
@@ -1121,19 +1115,10 @@ async fn record_replay(
     scope: &Value,
     refusals: &[Value],
 ) -> Result<Outcome, WriteError> {
-    let mut tx = connection
-        .begin()
-        .await
-        .map_err(|error| store_error(error.into()))?;
-    replay::begin(&mut tx, operation, actor, scope)
-        .await
-        .map_err(store_error)?;
-    replay::record_refusals(&mut tx, operation, refusals)
-        .await
-        .map_err(store_error)?;
-    tx.commit()
-        .await
-        .map_err(|error| store_error(error.into()))?;
+    let mut tx = connection.begin().await?;
+    replay::begin(&mut tx, operation, actor, scope).await?;
+    replay::record_refusals(&mut tx, operation, refusals).await?;
+    tx.commit().await?;
     Ok(Outcome::default())
 }
 
@@ -1166,7 +1151,7 @@ async fn stage_write(
     write: StageWrite,
 ) -> Result<Outcome, WriteError> {
     use sinex_store::stages;
-    let mut tx = connection.begin().await.map_err(store_error)?;
+    let mut tx = connection.begin().await?;
     let written = match &write {
         StageWrite::Unparsed(unparsed) => tx.register_unparsed(unparsed).await,
         StageWrite::Begin {
@@ -1199,10 +1184,10 @@ async fn stage_write(
         }
     };
     match written {
-        Ok(()) => tx.commit().await.map_err(store_error)?,
+        Ok(()) => tx.commit().await?,
         Err(error) => {
-            tx.rollback().await.map_err(store_error)?;
-            return Err(store_error(error));
+            tx.rollback().await?;
+            return Err(WriteError::from(error));
         }
     }
     Ok(Outcome::default())
@@ -1216,33 +1201,29 @@ async fn lifecycle_step(
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
 ) -> Result<Step, WriteError> {
-    let mut tx = connection.begin().await.map_err(store_error)?;
-    let since = sinex_store::query::current_seq(&mut tx)
-        .await
-        .map_err(store_error)?;
+    let mut tx = connection.begin().await?;
+    let since = sinex_store::query::current_seq(&mut tx).await?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
         Ok(step) => step,
         Err(error) => {
-            tx.rollback().await.map_err(store_error)?;
-            return Err(store_error(error));
+            tx.rollback().await?;
+            return Err(WriteError::from(error));
         }
     };
     match &step {
-        Step::Refused(_) => tx.rollback().await.map_err(store_error)?,
+        Step::Refused(_) => tx.rollback().await?,
         Step::Moved { remove, .. } => {
             if let Err(error) = refresh_read_models(&mut tx, since).await {
-                tx.rollback().await.map_err(store_error)?;
+                tx.rollback().await?;
                 return Err(error);
             }
-            tx.commit().await.map_err(store_error)?;
+            tx.commit().await?;
             // Bytes left marked (no store here, or a failed punch) are
             // removed at the writer's next start.
             if !remove.is_empty()
                 && let Some(store) = store
             {
-                lifecycle::remove_unreferenced(connection, store)
-                    .await
-                    .map_err(store_error)?;
+                lifecycle::remove_unreferenced(connection, store).await?;
             }
         }
     }
@@ -1254,21 +1235,15 @@ async fn lifecycle_end(
     operation: OperationId,
     refusals: &[Refusal],
 ) -> Result<Outcome, WriteError> {
-    let mut tx = connection
-        .begin()
-        .await
-        .map_err(|error| store_error(error.into()))?;
+    let mut tx = connection.begin().await?;
     lifecycle::end(
         &mut tx,
         operation,
         sinex_model::lifecycle::OperationResult::StoppedEarly,
         refusals,
     )
-    .await
-    .map_err(store_error)?;
-    tx.commit()
-        .await
-        .map_err(|error| store_error(error.into()))?;
+    .await?;
+    tx.commit().await?;
     Ok(Outcome::default())
 }
 
@@ -1287,9 +1262,7 @@ async fn backup_hold(
     actor: &str,
     snapshot: bool,
 ) -> Result<Done, WriteError> {
-    let (hold, created) = sinex_store::backup::hold(connection, operation, actor)
-        .await
-        .map_err(store_error)?;
+    let (hold, created) = sinex_store::backup::hold(connection, operation, actor).await?;
     let snapshot = if snapshot {
         if !created {
             return Err(WriteError::Refused(
@@ -1302,9 +1275,7 @@ async fn backup_hold(
             .await
             .map_err(|error| WriteError::Unavailable(error.to_string()))?;
         Some(Box::new(
-            sinex_store::backup::Snapshot::export(exporter, hold.clone(), url.to_owned())
-                .await
-                .map_err(store_error)?,
+            sinex_store::backup::Snapshot::export(exporter, hold.clone(), url.to_owned()).await?,
         ))
     } else {
         None

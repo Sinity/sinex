@@ -23,6 +23,7 @@
 //! frames Sinex recorded, `<root>.materials.<producer>` pages through the
 //! materials the producer registered, and `<root>.lifecycle.<producer>` takes
 //! a lifecycle request (archive, restore, undo) with the producer as actor.
+use crate::{Error, Result};
 pub(crate) mod authority;
 mod bytes;
 mod confirmed_consumer;
@@ -64,7 +65,7 @@ const DURABLE: &str = "sinexd";
 pub(crate) async fn ensure_stream(
     js: &jetstream::Context,
     subjects: &Subjects,
-) -> Result<consumer::PullConsumer, String> {
+) -> Result<consumer::PullConsumer> {
     js.create_or_update_stream(stream::Config {
         name: subjects.ingress_stream(),
         subjects: vec![subjects.ingress_all()],
@@ -78,11 +79,11 @@ pub(crate) async fn ensure_stream(
         ..Default::default()
     })
     .await
-    .map_err(|e| format!("ingress stream: {e}"))?;
+    .map_err(|e| Error::from(e).within("ingress stream"))?;
     let stream = js
         .get_stream(subjects.ingress_stream())
         .await
-        .map_err(|e| format!("ingress stream: {e}"))?;
+        .map_err(|e| Error::from(e).within("ingress stream"))?;
     stream
         .create_consumer(consumer::pull::Config {
             durable_name: Some(DURABLE.into()),
@@ -92,7 +93,7 @@ pub(crate) async fn ensure_stream(
             ..Default::default()
         })
         .await
-        .map_err(|e| format!("ingress consumer: {e}"))
+        .map_err(|e| Error::from(e).within("ingress consumer"))
 }
 
 /// What the ingress needs from the daemon.
@@ -118,7 +119,7 @@ impl Ingest {
         blobs: Blobs,
         host: String,
         grants: std::sync::Arc<fetch::ProducerGrants>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         Ok(Self {
             public_context: None,
             transport_client: None,
@@ -136,11 +137,7 @@ impl Ingest {
     /// Handle one frame from `producer` and return its acknowledgment. `Err`
     /// means the frame could not be handled now (the database or writer is
     /// unavailable) and should be delivered again.
-    pub(crate) async fn handle(
-        &mut self,
-        producer: &str,
-        body: &[u8],
-    ) -> Result<Acknowledgment, String> {
+    pub(crate) async fn handle(&mut self, producer: &str, body: &[u8]) -> Result<Acknowledgment> {
         let decoded = serde_json::from_slice::<Ingress>(body);
         let name = decoded
             .as_ref()
@@ -304,7 +301,9 @@ impl Ingest {
                 records,
                 archive: vec![],
             },
-            Err(Check::Unavailable(error)) => return Err(error),
+            Err(Check::Unavailable(error)) => {
+                return Err(Error::new(command_surface::FailureKind::NotRunning, error));
+            }
             Err(check) => self.refusal(run, producer, &name, details, check).await?,
         };
         if let BatchKind::Ingress(frame) = &mut batch.kind {
@@ -312,10 +311,11 @@ impl Ingest {
         }
         match self.writer.submit(Priority::Live, batch).await {
             Ok(_) => {}
-            Err(WriteError::Unavailable(error)) => return Err(error),
-            Err(WriteError::Stopped) => return Err("the writer has stopped".into()),
+            Err(error @ (WriteError::Unavailable(_) | WriteError::Stopped)) => {
+                return Err(error.into());
+            }
             // Only signal steps compute from inputs that can move under them.
-            Err(error @ WriteError::Stale(_)) => return Err(error.to_string()),
+            Err(error @ WriteError::Stale(_)) => return Err(error.into()),
             Err(WriteError::Refused(reason)) => {
                 // Handled meanwhile by a redelivery: answer from the record.
                 if let Some(stored) = self.stored(producer, &name).await? {
@@ -334,16 +334,12 @@ impl Ingest {
                 if let BatchKind::Ingress(frame) = &mut refused.kind {
                     frame.content_hash = Some(content_hash.clone());
                 }
-                self.writer
-                    .submit(Priority::Live, refused)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                self.writer.submit(Priority::Live, refused).await?;
             }
         }
-        let stored = self
-            .stored(producer, &name)
-            .await?
-            .ok_or_else(|| format!("frame {name} from {producer} was not recorded"))?;
+        let stored = self.stored(producer, &name).await?.ok_or_else(|| {
+            Error::internal(format!("frame {name} from {producer} was not recorded"))
+        })?;
         self.discard_recorded(producer, &stored, decoded.as_ref().ok());
         acknowledgment(stored)
     }
@@ -379,13 +375,15 @@ impl Ingest {
         name: &str,
         frame: Option<&Ingress>,
         check: Check,
-    ) -> Result<Batch, String> {
+    ) -> Result<Batch> {
         let (kind, reason) = match check {
             Check::Refused(reason) => (FrameRefusal::Content, reason),
             Check::Bytes(reason) => (FrameRefusal::Bytes, reason),
             Check::Malformed(reason) => (FrameRefusal::Malformed, reason),
             Check::Configuration(reason) => (FrameRefusal::Configuration, reason),
-            Check::Unavailable(reason) => return Err(reason),
+            Check::Unavailable(reason) => {
+                return Err(Error::new(command_surface::FailureKind::NotRunning, reason));
+            }
         };
         let mut batch = refusal(run, producer, name, kind, reason.clone());
         if let BatchKind::Ingress(details) = &mut batch.kind {
@@ -403,9 +401,7 @@ impl Ingest {
                 .chain(failures.iter().map(|f| f.location))
                 .collect();
             let ids: Vec<_> = locations.iter().map(|l| l.material.0).collect();
-            let known = sinex_store::material_bytes::registered(&mut self.conn, &ids)
-                .await
-                .map_err(|e| e.to_string())?;
+            let known = sinex_store::material_bytes::registered(&mut self.conn, &ids).await?;
             let named = frame
                 .and_then(|frame| frame.frame().rsplit_once("/events/"))
                 .and_then(|(_, suffix)| suffix.split('/').next())
@@ -413,8 +409,7 @@ impl Ingest {
             if let Some(material) = named {
                 let owned =
                     commit_log::producer_material_registered(&mut self.conn, producer, material)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                        .await?;
                 if owned {
                     for location in &mut locations {
                         location.material = sinex_model::MaterialId(material);
@@ -444,15 +439,14 @@ impl Ingest {
         Ok(batch)
     }
 
-    async fn configuration(&mut self, producer: &str) -> Result<Option<String>, String> {
+    async fn configuration(&mut self, producer: &str) -> Result<Option<String>> {
         let family = match authority::write(&self.grants, producer) {
             Ok(write) => write.family.clone(),
-            Err(reason) => return Ok(Some(reason)),
+            Err(reason) => return Ok(Some(reason.to_string())),
         };
         let privacy =
             sinex_store::privacy::load(&mut self.conn, [producer, family.as_str()].into_iter())
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
         let version = (privacy.seq, privacy.floors.get(producer).copied());
         let changed = self
             .privacy_versions
@@ -470,11 +464,10 @@ impl Ingest {
         })
     }
 
-    async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
+    async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>> {
         Ok(
             commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
-                .await
-                .map_err(|e| e.to_string())?
+                .await?
                 .pop(),
         )
     }
@@ -484,7 +477,7 @@ impl Ingest {
         &mut self,
         producer: &str,
         source: Option<&sinex_model::SourceRef>,
-    ) -> Result<RunId, String> {
+    ) -> Result<RunId> {
         let key = format!(
             "{producer}/{}",
             source
@@ -496,9 +489,8 @@ impl Ingest {
         }
         let mut emitted = if let Some(source) = source {
             sinex_store::source_declarations::load(&mut self.conn, source)
-                .await
-                .map_err(|error| error.to_string())?
-                .ok_or("native source declaration disappeared")?
+                .await?
+                .ok_or_else(|| Error::not_found("native source declaration disappeared"))?
                 .kinds
                 .into_iter()
                 .map(|kind| kind.kind.name)
@@ -539,8 +531,7 @@ impl Ingest {
                 .and_then(|write| write.host.as_deref())
                 .unwrap_or(""),
         )
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
         self.runs.insert(key, run);
         Ok(run)
     }
@@ -625,7 +616,8 @@ impl Ingest {
         producer: &str,
         declarations: &[sinex_model::KindDeclaration],
     ) -> Result<(), Check> {
-        let write = authority::write(&self.grants, producer).map_err(Check::Configuration)?;
+        let write = authority::write(&self.grants, producer)
+            .map_err(|error| Check::Configuration(error.to_string()))?;
         for declaration in declarations {
             if declaration.declaring_producer != write.family
                 || !authority::matches(&write.kind_prefixes, &declaration.kind.name)
@@ -656,18 +648,21 @@ impl Ingest {
         replay: bool,
     ) -> Result<Vec<RecordOutcome>, Check> {
         let family = authority::write(&self.grants, producer)
-            .map_err(Check::Configuration)?
+            .map_err(|error| Check::Configuration(error.to_string()))?
             .family
             .clone();
         for event in events {
             authority::event(&self.grants, producer, &event.kind.name, event.class)
-                .map_err(Check::Configuration)?;
+                .map_err(|error| Check::Configuration(error.to_string()))?;
             // A bad identifier is durable content failure, not a transient
             // database outage. PostgreSQL text parameters cannot contain NUL.
             if event.kind.name.contains('\0') {
                 return Err(Check::Refused("event kind name contains NUL".into()));
             }
-            event.kind.database_version().map_err(Check::Refused)?;
+            event
+                .kind
+                .database_version()
+                .map_err(|error| Check::Refused(error.to_string()))?;
         }
         let references = events
             .iter()
@@ -698,7 +693,8 @@ impl Ingest {
             Some(source) => Some(self.native_declaration(producer, source).await?),
             None => None,
         };
-        let write = authority::write(&self.grants, producer).map_err(Check::Configuration)?;
+        let write = authority::write(&self.grants, producer)
+            .map_err(|error| Check::Configuration(error.to_string()))?;
         for declaration in declarations.values() {
             let allowed = match &native {
                 Some(native) => native.allows(&declaration.kind, &declaration.definition_hash()),
@@ -910,6 +906,29 @@ impl From<&str> for Check {
         Self::Refused(reason.into())
     }
 }
+/// A daemon error met while checking a frame: one the daemon cannot check
+/// now is delivered again; any other is the frame's refusal.
+impl From<Error> for Check {
+    fn from(error: Error) -> Self {
+        let failure = error.failure();
+        match failure.kind {
+            command_surface::FailureKind::NotRunning | command_surface::FailureKind::Timeout => {
+                Self::Unavailable(failure.message)
+            }
+            _ => Self::Refused(failure.message),
+        }
+    }
+}
+impl From<Check> for Error {
+    fn from(check: Check) -> Self {
+        match check {
+            Check::Unavailable(reason) => {
+                Error::new(command_surface::FailureKind::NotRunning, reason)
+            }
+            other => Error::bad_value(other),
+        }
+    }
+}
 impl Check {
     pub(crate) fn write_error(self) -> WriteError {
         match self {
@@ -1028,17 +1047,11 @@ enum ResponseBody {
 }
 
 impl Requests {
-    async fn connect(
-        &self,
-        producer: &str,
-        hello: &ProducerHello,
-    ) -> Result<ProducerWelcome, String> {
+    async fn connect(&self, producer: &str, hello: &ProducerHello) -> Result<ProducerWelcome> {
         let write = authority::write(&self.read_grants, producer).ok();
-        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
+        let mut conn = self.reads.acquire().await?;
         let family = write.map(|write| write.family.as_str()).unwrap_or(producer);
-        let privacy = sinex_store::privacy::load(&mut conn, [producer, family].into_iter())
-            .await
-            .map_err(|e| e.to_string())?;
+        let privacy = sinex_store::privacy::load(&mut conn, [producer, family].into_iter()).await?;
         let refusal = if hello.version != sinex_protocol::PRODUCER_VERSION {
             Some(format!(
                 "producer protocol version {} is unsupported; expected {}",
@@ -1068,9 +1081,7 @@ impl Requests {
         } else if hello.class == sinex_model::Class::Sealed || sealed(&privacy) {
             Some("producer bytes cannot be stored sealed".into())
         } else {
-            let declarations = sinex_schema::kinds::all(&mut conn)
-                .await
-                .map_err(|e| e.to_string())?;
+            let declarations = sinex_schema::kinds::all(&mut conn).await?;
             hello
                 .event_types
                 .iter()
@@ -1100,20 +1111,11 @@ impl Requests {
         &self,
         producer: &str,
         request: &RecordedQuery,
-    ) -> Result<sinex_protocol::RecordedPage, String> {
+    ) -> Result<sinex_protocol::RecordedPage> {
         use sqlx::Connection;
-        let mut connection = self
-            .reads
-            .acquire()
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut conn = connection
-            .begin()
-            .await
-            .map_err(|error| error.to_string())?;
-        sinex_store::query::read_one_snapshot(&mut conn)
-            .await
-            .map_err(|error| error.to_string())?;
+        let mut connection = self.reads.acquire().await?;
+        let mut conn = connection.begin().await?;
+        sinex_store::query::read_one_snapshot(&mut conn).await?;
         let (rows, next) = commit_log::frames_page(
             &mut conn,
             producer,
@@ -1121,8 +1123,7 @@ impl Requests {
             &request.numbers,
             request.after,
         )
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
         let mut continuations = Vec::with_capacity(request.continuations.len());
         for claim in &request.continuations {
             continuations.push(
@@ -1130,7 +1131,7 @@ impl Requests {
                     .await?,
             );
         }
-        conn.commit().await.map_err(|error| error.to_string())?;
+        conn.commit().await?;
         Ok(sinex_protocol::RecordedPage {
             acknowledgments: rows
                 .into_iter()
@@ -1147,32 +1148,30 @@ impl Requests {
         &self,
         producer: &str,
         request: &Materials,
-    ) -> Result<Vec<ProducerMaterial>, String> {
-        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
+    ) -> Result<Vec<ProducerMaterial>> {
+        let mut conn = self.reads.acquire().await?;
         let rows = commit_log::producer_materials(
             &mut conn,
             producer,
             request.after,
             i64::from(request.limit),
         )
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
         let ids = rows.iter().map(|row| row.material_id).collect::<Vec<_>>();
-        let sources = sinex_store::producer_reads::material_sources(&mut conn, &ids)
-            .await
-            .map_err(|error| error.to_string())?;
+        let sources = sinex_store::producer_reads::material_sources(&mut conn, &ids).await?;
         rows.into_iter()
             .map(|row| {
                 let (_, name, version) = sources
                     .iter()
                     .find(|(id, _, _)| *id == row.material_id)
-                    .ok_or(
-                    "material source authority is unknown; explicit historical mapping required",
-                )?;
+                    .ok_or_else(|| {
+                        Error::internal(
+                            "material source authority is unknown; explicit historical mapping required",
+                        )
+                    })?;
                 let source = sinex_model::SourceRef {
-                    name: name.clone().ok_or("material source authority is unknown")?,
-                    version: u32::try_from(version.ok_or("material source version is unknown")?)
-                        .map_err(|error| error.to_string())?,
+                    name: name.clone().ok_or_else(|| Error::internal("material source authority is unknown"))?,
+                    version: u32::try_from(version.ok_or_else(|| Error::internal("material source version is unknown"))?)?,
                 };
                 Ok(ProducerMaterial {
                     extents: row.extents,
@@ -1187,15 +1186,13 @@ impl Requests {
                             host: row.host,
                         },
                         blob: row.blob,
-                        length: u64::try_from(row.length).map_err(|e| e.to_string())?,
+                        length: u64::try_from(row.length)?,
                         chunks: Vec::new(),
                         parser: row.parser,
-                        parser_version: u32::try_from(row.parser_version)
-                            .map_err(|e| e.to_string())?,
-                        part_index: u32::try_from(row.part_index).map_err(|e| e.to_string())?,
+                        parser_version: u32::try_from(row.parser_version)?,
+                        part_index: u32::try_from(row.part_index)?,
                         previous_part: row.previous_part.map(sinex_model::MaterialId),
-                        manifest: serde_json::from_value(row.manifest)
-                            .map_err(|e| e.to_string())?,
+                        manifest: serde_json::from_value(row.manifest)?,
                     },
                 })
             })
@@ -1206,41 +1203,27 @@ impl Requests {
     /// answered, with the producer as the actor. Tombstoning is reserved to
     /// the operator, as on the API.
     async fn lifecycle(&self, producer: &str, request: Lifecycle) -> sinex_protocol::Reply {
-        use sinex_protocol::Reply;
         if request.act == sinex_model::lifecycle::Act::Tombstone && !request.compare {
-            return Reply::Refused {
-                reason: "tombstoning is reserved to the operator; a producer may compare it".into(),
-                not_built: false,
-            };
+            return sinex_protocol::Reply::failed(Error::refused(
+                "tombstoning is reserved to the operator; a producer may compare it",
+            ));
         }
-        let mut conn = match self.reads.acquire().await {
-            Ok(conn) => conn,
-            Err(e) => {
-                return Reply::Refused {
-                    reason: e.to_string(),
-                    not_built: false,
-                };
-            }
-        };
         let actor = format!("producer:{producer}");
-        match crate::lifecycle::run(
-            &mut conn,
-            &self.writer,
-            request.act,
-            &actor,
-            request.scope,
-            request.compare,
-        )
-        .await
-        {
-            Ok(crate::lifecycle::Answer::Done(result)) => Reply::Ok { result },
-            Ok(crate::lifecycle::Answer::Refused(reason)) | Err(reason) => Reply::Refused {
-                reason,
-                not_built: false,
-            },
-            Ok(crate::lifecycle::Answer::StoppedEarly(reason, result)) => {
-                Reply::StoppedEarly { reason, result }
-            }
+        let answer = async {
+            let mut conn = self.reads.acquire().await?;
+            crate::lifecycle::run(
+                &mut conn,
+                &self.writer,
+                request.act,
+                &actor,
+                request.scope,
+                request.compare,
+            )
+            .await
+        };
+        match answer.await {
+            Ok(answer) => answer.reply(),
+            Err(error) => sinex_protocol::Reply::failed(error),
         }
     }
 
@@ -1271,7 +1254,9 @@ impl Requests {
                 Ok(hello) => ResponseBody::Welcome(
                     self.connect(&producer, &hello)
                         .await
-                        .unwrap_or_else(|reason| ProducerWelcome::Refused { reason }),
+                        .unwrap_or_else(|error| ProducerWelcome::Refused {
+                            reason: error.to_string(),
+                        }),
                 ),
                 Err(error) => ResponseBody::Welcome(ProducerWelcome::Refused {
                     reason: error.to_string(),
@@ -1314,7 +1299,9 @@ impl Requests {
             match serde_json::from_slice::<RecordedQuery>(payload) {
                 Ok(query) => match self.recorded(&producer, &query).await {
                     Ok(page) => ResponseBody::Recorded(page),
-                    Err(error) => ResponseBody::Error { refusal: error },
+                    Err(error) => ResponseBody::Error {
+                        refusal: error.to_string(),
+                    },
                 },
                 Err(error) => ResponseBody::Error {
                     refusal: error.to_string(),
@@ -1329,7 +1316,9 @@ impl Requests {
                         .then(|| materials.last().expect("nonempty page").number);
                         ResponseBody::Materials(sinex_protocol::MaterialsPage { materials, next })
                     }
-                    Err(error) => ResponseBody::Error { refusal: error },
+                    Err(error) => ResponseBody::Error {
+                        refusal: error.to_string(),
+                    },
                 },
                 Err(error) => ResponseBody::Error {
                     refusal: error.to_string(),
@@ -1347,7 +1336,11 @@ impl Requests {
                 Ok(sinex_protocol::ReplayQuery::Materials { query }) => {
                     let family = match authority::write(&self.read_grants, &producer) {
                         Ok(write) => write.family.clone(),
-                        Err(error) => return Some(ResponseBody::Error { refusal: error }),
+                        Err(error) => {
+                            return Some(ResponseBody::Error {
+                                refusal: error.to_string(),
+                            });
+                        }
                     };
                     let mut conn = match self.reads.acquire().await {
                         Ok(conn) => conn,
@@ -1390,7 +1383,7 @@ pub(crate) async fn run(
     requests: Requests,
     mut stop: watch::Receiver<bool>,
     ready: tokio::sync::oneshot::Sender<()>,
-) -> Result<(), String> {
+) -> Result<()> {
     ingest.public_context = Some(requests.public_context.clone());
     ingest.transport_client = Some(client.clone());
     let stopped = async move {
@@ -1407,16 +1400,16 @@ pub(crate) async fn run(
     }
 }
 
-async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<(), String> {
+async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<()> {
     let js = crate::publisher::context(client.clone());
     let consumer = ensure_stream(&js, &ingest.subjects).await?;
     let mut frames = consumer
         .messages()
         .await
-        .map_err(|e| format!("ingress messages: {e}"))?;
+        .map_err(|e| Error::from(e).within("ingress messages"))?;
     loop {
         let Some(message) = frames.next().await else {
-            return Err("the ingress stream ended".into());
+            return Err(Error::internal("the ingress stream ended"));
         };
         let message = match message {
             Ok(message) => message,
@@ -1426,10 +1419,10 @@ async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<(), S
                 frames = consumer
                     .messages()
                     .await
-                    .map_err(|e| format!("ingress messages: {e}"))?;
+                    .map_err(|e| Error::from(e).within("ingress messages"))?;
                 continue;
             }
-            Err(error) => return Err(format!("ingress: {error}")),
+            Err(error) => return Err(Error::internal(format!("ingress: {error}"))),
         };
         let Some(producer) = ingest
             .subjects
@@ -1454,7 +1447,10 @@ async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<(), S
                             .into(),
                     )
                     .await;
-                message.ack().await.map_err(|e| format!("ack: {e}"))?;
+                message
+                    .ack()
+                    .await
+                    .map_err(|e| Error::nats(format!("ack: {e}")))?;
             }
             Err(error) => {
                 eprintln!("sinexd: ingress frame from {producer} delayed: {error}");
@@ -1471,14 +1467,14 @@ async fn serve(
     client: async_nats::Client,
     requests: Requests,
     ready: tokio::sync::oneshot::Sender<()>,
-) -> Result<(), String> {
+) -> Result<()> {
     let subscribe = |subject: String| {
         let client = client.clone();
         async move {
             client
                 .subscribe(subject.clone())
                 .await
-                .map_err(|e| format!("{subject} subscription: {e}"))
+                .map_err(|e| Error::internal(format!("{subject} subscription: {e}")))
         }
     };
     let mut incoming = futures::stream::select_all([
@@ -1492,12 +1488,12 @@ async fn serve(
         subscribe(requests.subjects.fetch_event_all()).await?,
         subscribe(requests.subjects.fetch_material_all()).await?,
     ]);
-    client.flush().await.map_err(|e| e.to_string())?;
+    client.flush().await?;
     // The API socket becomes available only after the broker has acknowledged
     // every producer request subscription on this connection.
     ready
         .send(())
-        .map_err(|_| "producer request startup receiver closed".to_owned())?;
+        .map_err(|_| Error::internal("producer request startup receiver closed"))?;
     let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(REQUESTS_AT_ONCE));
     let mut running = tokio::task::JoinSet::new();
     loop {
@@ -1506,7 +1502,7 @@ async fn serve(
             Some(_) = running.join_next() => continue,
         };
         let Some(request) = request else {
-            return Err("a producer request subscription ended".into());
+            return Err(Error::internal("a producer request subscription ended"));
         };
         let Some(reply) = request.reply.clone() else {
             continue;
@@ -1519,11 +1515,7 @@ async fn serve(
             continue;
         }
 
-        let slot = slots
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| e.to_string())?;
+        let slot = slots.clone().acquire_owned().await?;
         let (client, requests) = (client.clone(), requests.clone());
         running.spawn(async move {
             let _ = sinex_transport::replies::respond_json(

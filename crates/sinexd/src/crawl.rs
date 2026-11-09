@@ -3,6 +3,7 @@
 //! opt-in: nothing is fetched without one.
 use crate::stage::Totals;
 use crate::writer::WriterHandle;
+use crate::{Error, Result};
 use sinex_source_core::{Binding, Settings};
 use sinex_sources::sources;
 use sinex_store::Blobs;
@@ -22,13 +23,11 @@ const VISITED: &[(&str, &str)] = &[
 ];
 
 /// URLs from live browser records, deduplicated, each kind in commit order.
-async fn history_urls(read_conn: &mut PgConnection) -> Result<Vec<String>, String> {
+async fn history_urls(read_conn: &mut PgConnection) -> Result<Vec<String>> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for (event_type, field) in VISITED {
-        let rows = payloads::live_all(read_conn, event_type, RecordStates::Present)
-            .await
-            .map_err(|e| e.to_string())?;
+        let rows = payloads::live_all(read_conn, event_type, RecordStates::Present).await?;
         for payload in rows {
             if let Some(url) = payload.get(*field).and_then(serde_json::Value::as_str)
                 && seen.insert(url.to_owned())
@@ -51,15 +50,18 @@ pub(crate) async fn run(
     urls: Vec<String>,
     limit: Option<usize>,
     pause: Duration,
-) -> Result<Totals, String> {
+) -> Result<Totals> {
     if allow.is_empty() {
-        return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
+        return Err(Error::bad_request(
+            "nothing is crawled without an allow list (--allow DOMAIN)",
+        ));
     }
-    let _crawl = CRAWL_LOCK.try_lock().map_err(|_| "a crawl is running")?;
+    let _crawl = CRAWL_LOCK
+        .try_lock()
+        .map_err(|_| Error::conflict("a crawl is running"))?;
     let fetched: BTreeSet<String> =
         payloads::live_all(read_conn, "page.fetched", RecordStates::Any)
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
             .into_iter()
             .filter_map(|p| {
                 p.get("url")
@@ -73,13 +75,14 @@ pub(crate) async fn run(
         urls
     };
     let todo = select_urls(wanted, &fetched, &allow, limit);
-    let format = sources::format("page-crawl").ok_or("page-crawl format is not registered")?;
+    let format = sources::format("page-crawl")
+        .ok_or_else(|| Error::not_configured("page-crawl format is not registered"))?;
     let mut settings = Settings::new(host);
     settings.options = serde_json::json!({"allow":allow, "pause":pause.as_secs(), "limit":limit});
     let spec = (format.specs)()
         .into_iter()
         .next()
-        .ok_or("crawl format has no source")?;
+        .ok_or_else(|| Error::not_configured("crawl format has no source"))?;
     let reader =
         sinex_sources::sources::page_crawl::Crawl::new(todo, allow, pause, host.to_owned());
     let binding = Binding::of(spec, std::path::Path::new("page-crawl"), settings);

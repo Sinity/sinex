@@ -145,7 +145,7 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
             &socket,
             json!({"method":"signal","action":"add","name":"unconfigured","rule":invalid.to_string()})
         )["outcome"],
-        "refused"
+        "failed"
     );
     for (name, deliver) in [("file", "value"), ("controlled", "action")] {
         ok(

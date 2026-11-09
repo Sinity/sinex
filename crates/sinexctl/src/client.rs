@@ -1,4 +1,5 @@
 //! Calling the daemon's API over its Unix socket or localhost.
+use command_surface::{Failure, FailureKind};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::{Request as HttpRequest, StatusCode};
@@ -15,7 +16,7 @@ pub(crate) enum Endpoint {
 
 impl Endpoint {
     /// `unix:/path`, a bare path, or `http://127.0.0.1:7171`.
-    pub(crate) fn parse(s: &str) -> Result<Endpoint, String> {
+    pub(crate) fn parse(s: &str) -> Result<Endpoint, Failure> {
         if let Some(rest) = s.strip_prefix("http://") {
             return Ok(Endpoint::Tcp(rest.trim_end_matches('/').to_string()));
         }
@@ -23,8 +24,11 @@ impl Endpoint {
         if path.starts_with('/') {
             Ok(Endpoint::Unix(PathBuf::from(path)))
         } else {
-            Err(format!(
-                "`{s}` is not an endpoint: use unix:/path/to/socket or http://127.0.0.1:PORT"
+            Err(Failure::new(
+                FailureKind::BadRequest,
+                format!(
+                    "`{s}` is not an endpoint: use unix:/path/to/socket or http://127.0.0.1:PORT"
+                ),
             ))
         }
     }
@@ -42,6 +46,40 @@ pub(crate) enum ClientError {
     /// The daemon is not running or not reachable.
     Unreachable(String),
     Protocol(String),
+    /// The daemon refused the call with a typed failure.
+    Failed(Failure),
+}
+
+impl ClientError {
+    /// The failure this is, in the shared table: a daemon that cannot be
+    /// reached is not running, and an answer this build cannot read comes
+    /// from a daemon built from other sources.
+    pub(crate) fn failure(self, operation: &str) -> Failure {
+        match self {
+            ClientError::Unreachable(m) => Failure::new(
+                FailureKind::NotRunning,
+                format!("the daemon is not reachable: {m}"),
+            )
+            .with_code("daemon_unreachable")
+            .with_hint(
+                "start sinexd (systemctl start sinexd, or `sinexd run`) or name its --endpoint",
+            ),
+            ClientError::Protocol(m) => protocol_mismatch(operation, m),
+            ClientError::Failed(failure) => failure,
+        }
+    }
+}
+
+/// An answer whose shape this build does not read.
+pub(crate) fn protocol_mismatch(operation: &str, error: impl std::fmt::Display) -> Failure {
+    Failure::new(
+        FailureKind::NotRunning,
+        format!(
+            "the daemon answered {operation} in a shape this build does not read ({error}); \
+             it speaks another protocol version, so restart it"
+        ),
+    )
+    .with_code("daemon_protocol_mismatch")
 }
 
 impl std::fmt::Display for ClientError {
@@ -49,6 +87,7 @@ impl std::fmt::Display for ClientError {
         match self {
             ClientError::Unreachable(m) => write!(f, "the daemon is not reachable: {m}"),
             ClientError::Protocol(m) => write!(f, "{m}"),
+            ClientError::Failed(failure) => write!(f, "{failure}"),
         }
     }
 }
@@ -147,10 +186,12 @@ impl Client {
                 .to_bytes();
             let reply: Reply = serde_json::from_slice(&bytes)
                 .map_err(|e| ClientError::Protocol(format!("{status}: {e}")))?;
-            return Err(ClientError::Protocol(match reply {
-                Reply::Refused { reason, .. } | Reply::StoppedEarly { reason, .. } => reason,
-                Reply::Ok { .. } => status.to_string(),
-            }));
+            return Err(match reply {
+                Reply::Failed { failure } | Reply::StoppedEarly { failure, .. } => {
+                    ClientError::Failed(failure)
+                }
+                Reply::Ok { .. } => ClientError::Protocol(status.to_string()),
+            });
         }
         let mut buffer = String::new();
         while let Some(frame) = body.frame().await {

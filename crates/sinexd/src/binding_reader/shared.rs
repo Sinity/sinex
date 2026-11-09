@@ -2,6 +2,8 @@
 //! the file is stored once (sealed when the bindings' class is), read forward
 //! once, and each binding's acquisitions are admitted as the pass reaches them.
 use super::{BindingReader, Reading};
+use crate::{Error, Result};
+use command_surface::Failure;
 mod acquisition;
 use crate::material_access::Access;
 use crate::stage::Totals;
@@ -66,12 +68,12 @@ pub(super) async fn read_shared(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
-    runs: &[Result<RunId, String>],
+    runs: &[Result<RunId, Failure>],
     readers: &mut [BindingReader],
     pass: &SharedFileRead,
     mut stop: watch::Receiver<bool>,
     access: Access<'_>,
-) -> Result<Vec<Result<Totals, String>>, String> {
+) -> Result<Vec<Result<Totals, Failure>>> {
     let started = std::time::Instant::now();
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
     let material =
@@ -83,7 +85,7 @@ pub(super) async fn read_shared(
         .map(|stored| (stored.blob.clone(), stored.length));
     let mut routes = Vec::new();
     let mut slots = Vec::new();
-    let mut totals: Vec<Result<Totals, String>> = pass
+    let mut totals: Vec<Result<Totals, Failure>> = pass
         .indices
         .iter()
         .map(|&index| Ok(Totals::committed(readers[index].committed.clone())))
@@ -92,14 +94,13 @@ pub(super) async fn read_shared(
         let route = async {
             let b = &mut readers[index];
             let cursor = positions::load(conn, &b.binding.name)
-                .await
-                .map_err(|e| e.to_string())?
+                .await?
                 .map(|(cursor, _)| cursor)
                 .unwrap_or(Value::Null);
             let Reading::Shared(shared) = &b.reading else {
                 unreachable!("only bindings read in a shared pass are grouped")
             };
-            Ok::<_, String>(shared.route(cursor, pass.class))
+            Ok::<_, Error>(shared.route(cursor, pass.class))
         }
         .await;
         match route {
@@ -107,7 +108,7 @@ pub(super) async fn read_shared(
                 routes.push(route);
                 slots.push(slot);
             }
-            Err(error) => totals[slot] = Err(error),
+            Err(error) => totals[slot] = Err(error.failure()),
         }
     }
     if routes.is_empty() {
@@ -147,19 +148,24 @@ pub(super) async fn read_shared(
         let (blob, length) = match stored_copy {
             Some(captured) => captured,
             None => {
-                let input = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+                let input = std::fs::File::open(&path)?;
                 let input = InterruptibleReader {
                     input,
                     stop: Arc::clone(&cancelled),
                 };
                 let blob = worker_material.store_reader(input)?;
-                let after = drivers::file_facts(&path).map_err(|e| e.to_string())?;
+                let after = drivers::file_facts(&path)?;
                 if !same_file(&facts, &after) {
-                    return Err(
-                        "file changed during capture; retry from an unchanged revision".into(),
-                    );
+                    return Err(Error::conflict(
+                        "file changed during capture; retry from an unchanged revision",
+                    ));
                 }
-                (blob, facts.size.ok_or("file size unavailable")?)
+                (
+                    blob,
+                    facts
+                        .size
+                        .ok_or_else(|| Error::internal("file size unavailable"))?,
+                )
             }
         };
         let verify_stop = Arc::clone(&cancelled);
@@ -204,7 +210,7 @@ pub(super) async fn read_shared(
             },
         )
         .map(|work| (work, captured))
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
     });
     loop {
         let next = tokio::select! {
@@ -218,7 +224,7 @@ pub(super) async fn read_shared(
         let index = pass.indices[slot];
         let b = &mut readers[index];
         let result = async {
-            let mut acquired = delivery.acquired.map_err(|e| e.to_string())?;
+            let mut acquired = delivery.acquired?;
             if let (Some(native), Some(material)) =
                 (acquisition_material, acquired.material.as_mut())
             {
@@ -229,8 +235,7 @@ pub(super) async fn read_shared(
             }
             material.check()?;
             let (cursor, carry) = positions::load(conn, &b.binding.name)
-                .await
-                .map_err(|e| e.to_string())?
+                .await?
                 .unwrap_or((Value::Null, Value::Null));
             drivers::note_previous_through(&cursor, &mut acquired);
             let carry = material
@@ -247,7 +252,10 @@ pub(super) async fn read_shared(
                 material: material.clone(),
                 check: Arc::new(move || {
                     if *checked_stop.borrow() {
-                        Err("capture cancelled; admission stopped".into())
+                        Err(Error::new(
+                            command_surface::FailureKind::Cancelled,
+                            "capture cancelled; admission stopped",
+                        ))
                     } else {
                         Ok(())
                     }
@@ -273,12 +281,12 @@ pub(super) async fn read_shared(
         .await;
         let keep = result.is_ok();
         if let Err(e) = result {
-            totals[slot] = Err(e);
+            totals[slot] = Err(e.failure());
         }
         let _ = delivery.ack.send(keep);
     }
     drop(receive);
-    let result = worker.await.map_err(|e| e.to_string())?;
+    let result = worker.await?;
     if let Ok((work, captured)) = &result
         && let Some(total) = totals.iter_mut().find_map(|t| t.as_mut().ok())
     {
@@ -287,9 +295,10 @@ pub(super) async fn read_shared(
     if let Err(e) = result {
         // A stopped route has its own error; a traversal-wide error affects every
         // route still running, without claiming completed source progress.
+        let failure = e.failure();
         for total in &mut totals {
             if total.is_ok() {
-                *total = Err(e.clone());
+                *total = Err(failure.clone());
             }
         }
     }

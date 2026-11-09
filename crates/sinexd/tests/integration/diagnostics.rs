@@ -47,8 +47,12 @@ fn status_refuses_an_unavailable_database() {
         ])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    // A URL that is not a database URL is a value to fix (exit 2); the
+    // failure is on standard output for `sinexctl`, the message on standard
+    // error.
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let reported: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reported["error"]["kind"], "bad_value", "{reported}");
     assert!(!output.stderr.is_empty());
 }
 

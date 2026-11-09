@@ -70,6 +70,7 @@ authored = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = 
 canonical-json = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 query-language = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 git-identity = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
+command-surface = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master", default-features = false }
 signals = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 ranking = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }
 signal-delivery = { git = "https://github.com/Sinity/polylogue-sinex-common", branch = "master" }

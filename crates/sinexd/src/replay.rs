@@ -15,6 +15,7 @@
 //! `--compare` runs exactly the same transactions and rolls each back after
 //! reading what it would change.
 use crate::writer::{ReplaySequence, WriterHandle};
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_model::{
     ArchiveRequest, Batch, BatchKind, MaterialId, OperationId, RecordOutcome, ReplayScope, RunId,
@@ -29,15 +30,18 @@ use sqlx::PgConnection;
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
-pub(crate) fn build_identity() -> Result<Value, String> {
-    static BUILD: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+pub(crate) fn build_identity() -> Result<Value> {
+    static BUILD: std::sync::OnceLock<Result<String, command_surface::Failure>> =
+        std::sync::OnceLock::new();
     let build = BUILD
         .get_or_init(|| {
-            let mut executable =
-                std::fs::File::open("/proc/self/exe").map_err(|e| e.to_string())?;
-            let mut hash = blake3::Hasher::new();
-            std::io::copy(&mut executable, &mut hash).map_err(|e| e.to_string())?;
-            Ok(hash.finalize().to_hex().to_string())
+            let read = || -> Result<String> {
+                let mut executable = std::fs::File::open("/proc/self/exe")?;
+                let mut hash = blake3::Hasher::new();
+                std::io::copy(&mut executable, &mut hash)?;
+                Ok(hash.finalize().to_hex().to_string())
+            };
+            read().map_err(Error::failure)
         })
         .clone()?;
     let mut declarations: Vec<_> = sinex_model::event_types::declarations()
@@ -71,8 +75,8 @@ impl Scope {
         })
     }
 
-    fn from_json(v: &Value) -> Result<Self, String> {
-        let bad = |what: &str| format!("stored replay scope: bad {what}");
+    fn from_json(v: &Value) -> Result<Self> {
+        let bad = |what: &str| Error::internal(format!("stored replay scope: bad {what}"));
         Ok(Self {
             materials: serde_json::from_value(v["materials"].clone())
                 .map_err(|_| bad("materials"))?,
@@ -169,16 +173,14 @@ pub(crate) async fn run(
     blobs: &Blobs,
     writer: &WriterHandle,
     o: Options,
-) -> Result<Report, String> {
+) -> Result<Report> {
     let (operation, scope, done, prior_scope) = match o.resume {
         Some(op) => {
             let stored = replay::scope_of(read_conn, op)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("no replay operation {op}"))?;
+                .await?
+                .ok_or_else(|| Error::bad_request(format!("no replay operation {op}")))?;
             let done: BTreeSet<Uuid> = replay::sequences_done(read_conn, op)
-                .await
-                .map_err(|e| e.to_string())?
+                .await?
                 .into_iter()
                 .collect();
             (op, Scope::from_json(&stored)?, done, Some(stored))
@@ -187,7 +189,7 @@ pub(crate) async fn run(
     };
     let in_scope: BTreeSet<Uuid> = match &prior_scope {
         Some(saved) => serde_json::from_value(saved["selected_materials"].clone())
-            .map_err(|_| "stored replay material selection is invalid")?,
+            .map_err(|_| Error::bad_request("stored replay material selection is invalid"))?,
         None => replay::select(
             read_conn,
             &scope.materials,
@@ -196,25 +198,20 @@ pub(crate) async fn run(
             scope.from.map(|t| t.0),
             scope.until.map(|t| t.0),
         )
-        .await
-        .map_err(|e| e.to_string())?
+        .await?
         .into_iter()
         .collect(),
     };
     let in_scope_list: Vec<Uuid> = in_scope.iter().copied().collect();
-    let inputs = replay::inputs_of(read_conn, &in_scope_list)
-        .await
-        .map_err(|e| e.to_string())?;
-    let stored = replay::materials_of(read_conn, &inputs, &in_scope_list)
-        .await
-        .map_err(|e| e.to_string())?;
+    let inputs = replay::inputs_of(read_conn, &in_scope_list).await?;
+    let stored = replay::materials_of(read_conn, &inputs, &in_scope_list).await?;
     // An archived material is not replayed until it is restored, and a
     // tombstoned one never is.
     if let Some(m) = stored
         .iter()
         .find(|m| in_scope.contains(&m.id) && m.status != "live")
     {
-        return Err(format!(
+        return Err(Error::bad_request(format!(
             "material {} is {}; {}",
             m.id,
             m.status,
@@ -223,14 +220,14 @@ pub(crate) async fn run(
             } else {
                 "it is never read again"
             }
-        ));
+        )));
     }
     // A material stored with no parser has nothing to read it with.
     if let Some(m) = stored
         .iter()
         .find(|m| in_scope.contains(&m.id) && m.parser.is_none())
     {
-        return Err(m.parsed_with().unwrap_err());
+        return Err(Error::refused(m.parsed_with().unwrap_err()));
     }
     // A tombstoned part's bytes may be gone; the parts after it read on
     // from a fresh carry.
@@ -258,8 +255,7 @@ pub(crate) async fn run(
     if !o.compare && prior_scope.is_none() {
         writer
             .record_replay(operation, o.actor.clone(), saved_scope.clone(), vec![])
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
     }
     let mut report = Report {
         operation,
@@ -276,7 +272,9 @@ pub(crate) async fn run(
             continue;
         }
         if saved_scope["identity"] != build_identity()? {
-            return Err("replay_build_changed: running build or declarations differ".into());
+            return Err(Error::conflict(
+                "replay_build_changed: running build or declarations differ",
+            ));
         }
         let sequence: Vec<Stored> = sequence[..=last].iter().map(|m| (*m).clone()).collect();
         let parsers = match sources_of(read_conn, &sequence).await {
@@ -285,7 +283,7 @@ pub(crate) async fn run(
                 let refusals: Vec<_> = sequence.iter().filter(|m| in_scope.contains(&m.id)).map(|m| {
                     json!({"material":m.id, "parser":m.parser, "parser_version":m.parser_version,
                         "reason": if m.binding.as_deref().is_some_and(|b| b.starts_with("ingress:")) { "producer_required" } else { "parser_unavailable" },
-                        "detail":reason})
+                        "detail":reason.to_string()})
                 }).collect();
                 if !o.compare {
                     writer
@@ -295,8 +293,7 @@ pub(crate) async fn run(
                             saved_scope.clone(),
                             refusals.clone(),
                         )
-                        .await
-                        .map_err(|e| e.to_string())?;
+                        .await?;
                 }
                 report.refused.extend(refusals);
                 continue;
@@ -346,9 +343,9 @@ pub(crate) async fn run(
                 batches,
             })
             .await;
-        let read = reading.await.map_err(|e| e.to_string())?;
-        let (outcomes, diff) =
-            replayed.map_err(|e| format!("sequence from material {root}: {e}"))?;
+        let read = reading.await?;
+        let (outcomes, diff) = replayed
+            .map_err(|e| Error::bad_request(format!("sequence from material {root}: {e}")))?;
         report.materials += read.materials;
         report.events_read += read.events_read;
         report.failures += read.failures;
@@ -373,30 +370,29 @@ struct NativeReplaySource {
 async fn sources_of(
     read_conn: &mut sqlx::PgConnection,
     sequence: &[Stored],
-) -> Result<Vec<NativeReplaySource>, String> {
+) -> Result<Vec<NativeReplaySource>> {
     if sequence.iter().any(|m| {
         m.binding
             .as_deref()
             .is_some_and(|b| b.starts_with("ingress:"))
     }) {
-        return Err("producer_required".into());
+        return Err(Error::bad_request("producer_required"));
     }
     let mut out = Vec::with_capacity(sequence.len());
     let mut bound: HashMap<String, sinex_source_core::Binding> = HashMap::new();
     for m in sequence {
         let stored_binding = match &m.binding {
             Some(name) if !bound.contains_key(name) => {
-                let found = bindings::load(read_conn, name)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let found = bindings::load(read_conn, name).await?;
                 if let Some(s) = found {
                     let b = sinex_source_core::Binding {
                         name: s.binding,
                         source: s.source,
-                        parser: m.parsed_with()?.0.to_owned(),
+                        parser: m.parsed_with().map_err(Error::refused)?.0.to_owned(),
                         input: s.input.into(),
-                        settings: serde_json::from_value(s.settings)
-                            .map_err(|e| format!("binding {name}: settings: {e}"))?,
+                        settings: serde_json::from_value(s.settings).map_err(|e| {
+                            Error::bad_request(format!("binding {name}: settings: {e}"))
+                        })?,
                     };
                     bound.insert(name.clone(), b);
                 }
@@ -409,17 +405,20 @@ async fn sources_of(
         let host = stored_binding
             .as_ref()
             .map(|binding| binding.settings.host.clone());
-        let (parser, _) = m.parsed_with()?;
+        let (parser, _) = m.parsed_with().map_err(Error::refused)?;
         let binding = match stored_binding {
             Some(b) => sinex_source_core::Binding {
                 parser: parser.to_owned(),
                 ..b
             },
             None => sources::binding_for_parser(parser, m.host.as_deref().unwrap_or_default())
-                .ok_or_else(|| format!("material {}: no source has parser {parser}", m.id))?,
+                .ok_or_else(|| {
+                    Error::bad_request(format!("material {}: no source has parser {parser}", m.id))
+                })?,
         };
         out.push(NativeReplaySource {
-            source: sources::source_for(&binding).map_err(|e| format!("material {}: {e}", m.id))?,
+            source: sources::source_for(&binding)
+                .map_err(|e| Error::bad_request(format!("material {}: {e}", m.id)))?,
             host,
         });
     }
@@ -478,7 +477,7 @@ fn read_sequence(
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
-    out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
+    out: &tokio::sync::mpsc::Sender<Result<Batch>>,
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
     unlock: Option<&crate::material_access::sealing::Unlock>,
 ) -> Read {
@@ -500,17 +499,17 @@ fn read_sequence_into(
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
-    out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
+    out: &tokio::sync::mpsc::Sender<Result<Batch>>,
     report: &mut Read,
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
     unlock: Option<&crate::material_access::sealing::Unlock>,
-) -> Result<(), String> {
+) -> Result<()> {
     let send = |batch: Batch| {
         if let Some(unlock) = unlock {
             unlock.check()?;
         }
         out.blocking_send(Ok(batch))
-            .map_err(|_| "the writer stopped reading the sequence".to_owned())
+            .map_err(|_| Error::internal("the writer stopped reading the sequence"))
     };
     let whole = scope.event_types.is_none() && scope.from.is_none() && scope.until.is_none();
     let narrowing = ReplayScope {
@@ -556,13 +555,14 @@ fn read_sequence_into(
             input: m.input.map(sinex_model::InputId),
             blob: m.blob.clone(),
             length: u64::try_from(m.length)
-                .map_err(|_| format!("material {}: negative length", m.id))?,
+                .map_err(|_| Error::bad_request(format!("material {}: negative length", m.id)))?,
             part_index: u32::try_from(m.part_index)
-                .map_err(|_| format!("material {}: negative part", m.id))?,
+                .map_err(|_| Error::bad_request(format!("material {}: negative part", m.id)))?,
             previous_part: m.previous.map(MaterialId),
-            parser: m.parsed_with()?.0.to_owned(),
-            parser_version: u32::try_from(m.parsed_with()?.1)
-                .map_err(|_| format!("material {}: negative parser version", m.id))?,
+            parser: m.parsed_with().map_err(Error::refused)?.0.to_owned(),
+            parser_version: u32::try_from(m.parsed_with().map_err(Error::refused)?.1).map_err(
+                |_| Error::bad_request(format!("material {}: negative parser version", m.id)),
+            )?,
             manifest: m.manifest.clone(),
         };
         let sender = out.clone();
@@ -573,7 +573,9 @@ fn read_sequence_into(
             unlock,
             std::sync::Arc::new(move || {
                 if sender.is_closed() {
-                    Err("the writer stopped reading the sequence".to_owned())
+                    Err(Error::bad_request(
+                        "the writer stopped reading the sequence",
+                    ))
                 } else {
                     Ok(())
                 }
@@ -606,13 +608,13 @@ fn read_sequence_into(
                 },
                 manifest: &m.manifest,
             })
-            .map_err(|e| format!("material {}: {e}", m.id))?;
+            .map_err(|e| Error::bad_request(format!("material {}: {e}", m.id)))?;
         let scoped = in_scope.contains(&m.id);
         if scoped {
             report.materials += 1;
         }
         for chunk in chunks {
-            let chunk = chunk.map_err(|e| format!("material {}: {e}", m.id))?;
+            let chunk = chunk.map_err(|e| Error::bad_request(format!("material {}: {e}", m.id)))?;
             carry = chunk.carry.clone();
             if !scoped {
                 continue;

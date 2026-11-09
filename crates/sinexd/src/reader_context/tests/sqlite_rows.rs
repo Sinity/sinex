@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 use sinex_model::{BatchKind, RunId};
 use sinex_source_core::binding;
 use sinex_sources::sources::atuin;

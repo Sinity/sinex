@@ -69,19 +69,53 @@ function are common
 
 ## Failures
 
-One `Failure { kind, message, details, position }`, mapped once to an exit code and an
-HTTP status by the shared table in `command-surface`. Sinex uses the shared kinds and
-adds one:
+Every failure is the shared `command_surface::Failure` (kind, message, product
+code, position and caret in the input, hint, suggestion, candidates,
+retryable), mapped once to an exit code and an HTTP status by the shared table
+in `command-surface`. Sinex uses the shared kinds as they are; `stopped_early`
+is the shared kind for an operation that did not finish.
 
-| Kind | Raised when | Exit |
-|---|---|---|
-| `stopped_early` | an archive, restore, replay, recompute, stage or tombstone operation did not finish | 5 (degraded); never reported as ok |
+- **On the wire** a reply is `{"outcome": "ok", "result": …}`,
+  `{"outcome": "failed", "failure": {…}}`, or `{"outcome": "stopped_early",
+  "failure": {…}, "result": …}` when an archive, restore, replay, recompute,
+  stage or tombstone moved some batches and then stopped; `result` names what
+  moved and `resume OPERATION` continues it ([lifecycle](lifecycle.md)). A
+  stopped operation is never reported as ok.
+- **One conversion.** Each layer of the daemon keeps its own typed error and
+  converts into the daemon's error with `?`; the method boundary turns that
+  into the failure. A query refusal is placed in the query text there, with
+  its span, caret, suggestion and candidates.
+- **Database errors** are classified by one table in `sinex-store`:
 
-- MCP returns typed failures, never a success with empty rows, for a refusal, an
-  unknown capability or a timeout.
-- A refusal after the first committed batch of a lifecycle operation ends
-  `stopped_early` naming what moved; `resume OPERATION` continues it
-  ([lifecycle](lifecycle.md)).
+  | Database error | Kind | Retryable | Code |
+  |---|---|---|---|
+  | no row | `not_found` | no | |
+  | the read pool has no free connection in time | `timeout` | yes | `read_pool_busy` |
+  | pool closed, connection lost, TLS, server shutting down (`08…`, `57P…`) | `not_running` | yes | `database_unavailable` |
+  | unique violation (`23505`) | `conflict` | no | the constraint |
+  | foreign key, not null, check (`23503`, `23502`, `23514`) | `bad_value` | no | the constraint |
+  | statement timeout (`57014`) | `timeout` | yes | `statement_timeout` |
+  | serialization failure, deadlock (`40001`, `40P01`) | `conflict` | yes | the SQLSTATE |
+  | insufficient privilege (`42501`): the reader role may not do it | `refused` | no | the SQLSTATE |
+  | a connection URL this build cannot use | `bad_value` | no | |
+  | any other | `io` | no | the SQLSTATE |
+
+- **HTTP** answers each failure with its kind's status; a kind with no status
+  in the table (`not_running`, `cancelled`) answers 503. A missing or unknown
+  token is answered 401 before any operation runs, with a `refused` failure.
+- **`sinexctl`** exits with the failure's code. A read that succeeded and
+  matched nothing exits 1; Sinex has no other empty outcome. The CLI's own
+  failures use the same table: a missing token file is `not_configured`, an
+  endpoint or argument it cannot use `bad_request`, a daemon it cannot reach
+  `not_running` (`daemon_unreachable`), and an answer it cannot decode
+  `not_running` (`daemon_protocol_mismatch`: the daemon was built from other
+  sources). Failed offline diagnostics are `io`. With `--json` a failure is
+  `{"error": {…}}` on standard output and nothing on standard error; without
+  it, standard error carries the message, the caret, the hint, a runnable
+  correction and the candidates. `sinexd` exits with the same codes.
+- **MCP** answers a failure as a tool error (`isError`) whose text is the
+  message with its caret and correction, and whose structured content is
+  `{"error": failure}`; never a success with empty rows.
 
 ## Callers
 

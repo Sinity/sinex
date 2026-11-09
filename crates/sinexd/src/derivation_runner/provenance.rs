@@ -1,5 +1,6 @@
 //! Producer versions and read positions stamped on analysis outputs.
 use super::*;
+use crate::Result;
 
 pub(super) async fn stamp(
     conn: &mut PgConnection,
@@ -7,14 +8,12 @@ pub(super) async fn stamp(
     key: &Value,
     position: i64,
     computed: &mut sinex_derivations::Computed,
-) -> Result<(), String> {
+) -> Result<()> {
     if !matches!(derivation.name(), "analysis.products" | "context.packs") {
         return Ok(());
     }
     let mut versions_by_parents = BTreeMap::<Vec<sinex_model::EventId>, Value>::new();
-    let prior = derivations::outputs(conn, derivation.name(), key)
-        .await
-        .map_err(|error| error.to_string())?;
+    let prior = derivations::outputs(conn, derivation.name(), key).await?;
     let prior: BTreeMap<_, _> = prior
         .iter()
         .map(|event| (record_key(event), event))
@@ -24,9 +23,7 @@ pub(super) async fn stamp(
         let versions = if let Some(versions) = versions_by_parents.get(&parents) {
             versions.clone()
         } else {
-            let versions = derivations::producer_versions(conn, &parents)
-                .await
-                .map_err(|error| error.to_string())?;
+            let versions = derivations::producer_versions(conn, &parents).await?;
             versions_by_parents.insert(parents, versions.clone());
             versions
         };

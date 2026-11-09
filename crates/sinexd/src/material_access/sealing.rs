@@ -1,6 +1,7 @@
 //! How drivers store a material's bytes: plainly, or, for a sealed source,
 //! encrypted under a fresh data key per material. Every reading path (staging,
 //! the daemon's source tasks, replay) stores through one of these.
+use crate::{Error, Result};
 mod unlock;
 use serde_json::Value;
 use sinex_model::{MaterialId, RecordOutcome};
@@ -12,15 +13,15 @@ pub(crate) use unlock::{Unlock, read_limits};
 /// The class key's public half, from the file `$SINEX_CLASS_KEY_FILE` (an age
 /// recipient, `age1…`). Sealed sources need it to capture; the daemon never
 /// holds the secret half.
-pub(crate) fn class_key() -> Result<Option<sinex_sealing::Recipient>, String> {
+pub(crate) fn class_key() -> Result<Option<sinex_sealing::Recipient>> {
     let Some(path) = std::env::var_os("SINEX_CLASS_KEY_FILE") else {
         return Ok(None);
     };
     let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("{}: {e}", std::path::Path::new(&path).display()))?;
+        .map_err(|e| Error::internal(format!("{}: {e}", std::path::Path::new(&path).display())))?;
     sinex_sealing::parse_recipient(&text)
         .map(Some)
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
 }
 
 /// Drivers of a sealed source store a material's bytes through this: each
@@ -53,11 +54,11 @@ impl SealingSink {
         }
     }
 
-    pub(crate) fn key(&self, blob: &str) -> Result<sinex_sealing::DataKey, String> {
+    pub(crate) fn key(&self, blob: &str) -> Result<sinex_sealing::DataKey> {
         Ok(self.sealing_key(blob)?.data)
     }
 
-    fn sealing_key(&self, blob: &str) -> Result<SealingKey, String> {
+    fn sealing_key(&self, blob: &str) -> Result<SealingKey> {
         let state = self.state.lock().expect("sealing state");
         state
             .unadmitted
@@ -70,13 +71,12 @@ impl SealingSink {
                     .filter(|(_, name, _)| name == blob)
                     .map(|(_, _, key)| key.clone())
             })
-            .ok_or_else(|| "sealed data key is unavailable; explicit unlock is required".into())
+            .ok_or_else(|| {
+                Error::refused("sealed data key is unavailable; explicit unlock is required")
+            })
     }
 
-    pub(crate) fn open_carry(
-        &self,
-        value: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    pub(crate) fn open_carry(&self, value: &serde_json::Value) -> Result<serde_json::Value> {
         let Some(reference) = sinex_sealing::key_ref(value) else {
             return Ok(value.clone());
         };
@@ -92,17 +92,13 @@ impl SealingSink {
                     .values()
                     .find(|key| key.data.key_ref == reference)
             })
-            .ok_or("sealed parser carry needs explicit operator unlock")?;
-        sinex_sealing::unseal_payload(value, &key.data.key).map_err(|e| e.to_string())
+            .ok_or_else(|| Error::refused("sealed parser carry needs explicit operator unlock"))?;
+        sinex_sealing::unseal_payload(value, &key.data.key).map_err(Error::from)
     }
 
     /// Hold `key` for the material stored as `blob`, wrapped for the class.
-    pub(crate) fn restore_key(
-        &self,
-        blob: String,
-        key: sinex_sealing::DataKey,
-    ) -> Result<(), String> {
-        let wrapped = sinex_sealing::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
+    pub(crate) fn restore_key(&self, blob: String, key: sinex_sealing::DataKey) -> Result<()> {
+        let wrapped = sinex_sealing::wrap(&key, &self.recipient)?;
         self.state
             .lock()
             .expect("sealing state")
@@ -116,33 +112,31 @@ impl SealingSink {
         material: MaterialId,
         blob: String,
         key: sinex_sealing::DataKey,
-    ) -> Result<(), String> {
-        let wrapped = sinex_sealing::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
+    ) -> Result<()> {
+        let wrapped = sinex_sealing::wrap(&key, &self.recipient)?;
         self.state.lock().expect("sealing state").current =
             Some((material, blob, SealingKey { data: key, wrapped }));
         Ok(())
     }
 
-    pub(crate) fn put_reader(
-        &self,
-        reader: impl std::io::Read + std::io::Seek,
-    ) -> Result<String, String> {
-        let key = sinex_sealing::new_key().map_err(|e| e.to_string())?;
-        let name = self
-            .blobs
-            .put_sealed_reader(reader, &key)
-            .map_err(|e| e.to_string())?;
+    pub(crate) fn put_reader(&self, reader: impl std::io::Read + std::io::Seek) -> Result<String> {
+        let key = sinex_sealing::new_key()?;
+        let name = self.blobs.put_sealed_reader(reader, &key)?;
         self.restore_key(name.clone(), key)?;
         Ok(name)
     }
 
     /// Seal events and carry with their material's data key. The wrapped key travels
     /// with source progress so its row and the material commit atomically.
-    pub(crate) fn seal(&self, batches: &mut [sinex_model::Batch]) -> Result<(), String> {
+    pub(crate) fn seal(&self, batches: &mut [sinex_model::Batch]) -> Result<()> {
         for batch in batches {
             let material = match &batch.kind {
                 sinex_model::BatchKind::Source(p) => p.material.clone(),
-                _ => return Err("source sealing only accepts source progress".into()),
+                _ => {
+                    return Err(Error::internal(
+                        "source sealing only accepts source progress",
+                    ));
+                }
             };
             let checkpoint = material.is_none() && batch.records.is_empty();
             if let Some(material) = material {
@@ -171,9 +165,9 @@ impl SealingSink {
                 {
                     continue;
                 }
-                return Err(
-                    "sealed source state needs its data key; explicit unlock is required".into(),
-                );
+                return Err(Error::refused(
+                    "sealed source state needs its data key; explicit unlock is required",
+                ));
             };
             let key = &sealing_key.data;
             for record in &mut batch.records {
@@ -184,15 +178,17 @@ impl SealingSink {
                                 .location()
                                 .is_none_or(|(location, _)| location.material != material)
                             {
-                                return Err(
-                                    "sealed batch cites a different material than its key".into()
-                                );
+                                return Err(Error::internal(
+                                    "sealed batch cites a different material than its key",
+                                ));
                             }
                         }
                     }
                     sinex_model::RecordOutcome::Failure { location, .. } => {
                         if location.material != material {
-                            return Err("sealed failure cites a different material".into());
+                            return Err(Error::internal(
+                                "sealed failure cites a different material",
+                            ));
                         }
                     }
                 }
@@ -205,8 +201,7 @@ impl SealingSink {
                 // An empty carry says nothing; sealing it would make a later
                 // material of a stateless parser need this material's key.
                 if !already_sealed && !progress.carry.is_null() {
-                    progress.carry = sinex_sealing::seal_value(&progress.carry, key)
-                        .map_err(|e| e.to_string())?;
+                    progress.carry = sinex_sealing::seal_value(&progress.carry, key)?;
                 }
             }
         }
@@ -215,13 +210,15 @@ impl SealingSink {
 }
 
 impl MaterialSink for SealingSink {
-    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
-        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        self.put_reader(file)
+    fn put_file(&self, path: &std::path::Path) -> std::result::Result<String, String> {
+        let file =
+            std::fs::File::open(path).map_err(|error| Error::file(path, error).to_string())?;
+        self.put_reader(file).map_err(|error| error.to_string())
     }
 
-    fn put(&self, bytes: &[u8]) -> Result<String, String> {
+    fn put(&self, bytes: &[u8]) -> std::result::Result<String, String> {
         self.put_reader(std::io::Cursor::new(bytes))
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -234,18 +231,19 @@ pub(crate) async fn open_carry(
     carry: &serde_json::Value,
     sealing: &crate::material_access::sealing::SealingSink,
     unlock: Option<&crate::material_access::sealing::Unlock>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value> {
     if let Ok(value) = sealing.open_carry(carry) {
         return Ok(value);
     }
-    let reference = sinex_sealing::key_ref(carry).ok_or("invalid sealed parser carry")?;
-    let unlock = unlock.ok_or("sealed parser carry requires explicit operator unlock")?;
+    let reference = sinex_sealing::key_ref(carry)
+        .ok_or_else(|| Error::internal("invalid sealed parser carry"))?;
+    let unlock = unlock
+        .ok_or_else(|| Error::refused("sealed parser carry requires explicit operator unlock"))?;
     let material = sinex_store::sealed::material_of_key(conn, reference, binding)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("sealed parser carry has no key of this binding")?;
+        .await?
+        .ok_or_else(|| Error::internal("sealed parser carry has no key of this binding"))?;
     let key = unlock.data_key(conn, material).await?;
-    let value = sinex_sealing::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
+    let value = sinex_sealing::unseal_payload(carry, &key.key)?;
     unlock.check()?;
     Ok(value)
 }
@@ -253,19 +251,18 @@ pub(crate) async fn open_carry(
 pub(crate) fn seal_records(
     records: &mut [sinex_model::RecordOutcome],
     key: Option<&sinex_sealing::DataKey>,
-) -> Result<(), String> {
+) -> Result<()> {
     if let Some(key) = key {
         for record in records {
             match record {
                 RecordOutcome::Events { events, .. } => {
                     for event in events {
-                        sinex_sealing::seal_event(event, key).map_err(|e| e.to_string())?;
+                        sinex_sealing::seal_event(event, key)?;
                     }
                 }
                 RecordOutcome::Failure { reason, .. } => {
-                    *reason = sinex_sealing::seal_value(&Value::String(reason.clone()), key)
-                        .map_err(|e| e.to_string())?
-                        .to_string()
+                    *reason =
+                        sinex_sealing::seal_value(&Value::String(reason.clone()), key)?.to_string()
                 }
             }
         }
@@ -278,12 +275,14 @@ pub(crate) async fn replay_keys(
     blobs: &Blobs,
     materials: Vec<(uuid::Uuid, String)>,
     unlock: Option<&Unlock>,
-) -> Result<std::collections::HashMap<uuid::Uuid, sinex_sealing::DataKey>, String> {
+) -> Result<std::collections::HashMap<uuid::Uuid, sinex_sealing::DataKey>> {
     let mut keys = std::collections::HashMap::new();
     for (material, blob) in materials {
-        if blobs.is_sealed(&blob).map_err(|e| e.to_string())? {
+        if blobs.is_sealed(&blob)? {
             let unlock = unlock.ok_or_else(|| {
-                format!("material {material}: sealed replay needs an operator unlock and --sealed")
+                Error::refused(format!(
+                    "material {material}: sealed replay needs an operator unlock and --sealed"
+                ))
             })?;
             keys.insert(material, unlock.data_key(conn, MaterialId(material)).await?);
         }

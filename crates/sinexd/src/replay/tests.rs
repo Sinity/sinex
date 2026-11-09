@@ -351,7 +351,10 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_sequence(
     )
     .await
     .unwrap_err();
-    assert!(error.contains("record range exceeds material"), "{error}");
+    assert!(
+        error.to_string().contains("record range exceeds material"),
+        "{error}"
+    );
     assert_eq!(live_ids(&mut f.ctx.read_conn).await, before);
     assert_eq!(
         live_commands(&mut f.ctx.read_conn).await,
@@ -443,7 +446,7 @@ async fn an_unfinished_replay_refuses_changed_builds_before_archiving(
     )
     .await
     .unwrap_err();
-    assert!(error.contains("replay_build_changed"));
+    assert!(error.to_string().contains("replay_build_changed"));
     assert_eq!(live_ids(&mut f.ctx.read_conn).await, before);
 }
 

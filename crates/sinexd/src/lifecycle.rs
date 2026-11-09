@@ -2,7 +2,8 @@
 //! and undo, their comparisons, and resuming one that stopped early. Each
 //! batch is one writer job, so live admission runs between batches; the batch
 //! size follows how long the previous batch held the writer.
-use crate::writer::{WriteError, WriterHandle};
+use crate::Result;
+use crate::writer::WriterHandle;
 use serde_json::{Value, json};
 use sinex_model::lifecycle::{Act, Scope};
 use sinex_model::{DbCheck, OperationId};
@@ -26,6 +27,24 @@ pub(crate) enum Answer {
     StoppedEarly(String, Value),
 }
 
+impl Answer {
+    /// The reply every surface gives: ok, refused (kind `refused`, nothing
+    /// moved), or stopped early with what moved.
+    pub(crate) fn reply(self) -> sinex_protocol::Reply {
+        use command_surface::{Failure, FailureKind};
+        match self {
+            Self::Done(result) => sinex_protocol::Reply::Ok { result },
+            Self::Refused(reason) => {
+                sinex_protocol::Reply::failed(Failure::new(FailureKind::Refused, reason))
+            }
+            Self::StoppedEarly(reason, result) => sinex_protocol::Reply::StoppedEarly {
+                failure: sinex_protocol::stopped_early(Failure::new(FailureKind::Refused, reason)),
+                result,
+            },
+        }
+    }
+}
+
 /// Start `act` over `scope`, or with `compare` report what it would move.
 pub(crate) async fn run(
     read: &mut PgConnection,
@@ -34,14 +53,11 @@ pub(crate) async fn run(
     actor: &str,
     scope: Scope,
     compare: bool,
-) -> Result<Answer, String> {
-    let op = lifecycle::begin(read, act, actor, scope)
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<Answer> {
+    let op = lifecycle::begin(read, act, actor, scope).await?;
     if compare {
-        let Comparison { counts, refusals } = lifecycle::compare(read, &op, FIRST_ROOTS * 16)
-            .await
-            .map_err(|e| e.to_string())?;
+        let Comparison { counts, refusals } =
+            lifecycle::compare(read, &op, FIRST_ROOTS * 16).await?;
         return Ok(Answer::Done(json!({
             "compare_only": true,
             "act": act.as_db(),
@@ -59,26 +75,17 @@ pub(crate) async fn resume(
     read: &mut PgConnection,
     writer: &WriterHandle,
     operation: OperationId,
-) -> Result<Answer, String> {
-    let (op, progress) = lifecycle::stored(read, operation)
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<Answer> {
+    let (op, progress) = lifecycle::stored(read, operation).await?;
     drive(writer, &op, progress).await
 }
 
-async fn drive(
-    writer: &WriterHandle,
-    op: &Operation,
-    mut progress: Progress,
-) -> Result<Answer, String> {
+async fn drive(writer: &WriterHandle, op: &Operation, mut progress: Progress) -> Result<Answer> {
     let mut roots = FIRST_ROOTS;
     let mut total = Counts::default();
     loop {
         let started = Instant::now();
-        let step = writer
-            .lifecycle_step(op, progress, roots)
-            .await
-            .map_err(|e: WriteError| e.to_string())?;
+        let step = writer.lifecycle_step(op, progress, roots).await?;
         match step {
             Step::Moved {
                 progress: saved,
@@ -102,10 +109,7 @@ async fn drive(
                 if progress.batches == 0 {
                     return Ok(Answer::Refused(refusal_line(op, &refusals)));
                 }
-                writer
-                    .lifecycle_stopped(op.id, refusals.clone())
-                    .await
-                    .map_err(|e| e.to_string())?;
+                writer.lifecycle_stopped(op.id, refusals.clone()).await?;
                 return Ok(Answer::StoppedEarly(
                     format!(
                         "{}; operation {} stopped early after {} batches; `resume {}` continues it once the cause is cleared",

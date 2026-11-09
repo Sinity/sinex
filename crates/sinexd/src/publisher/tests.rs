@@ -691,6 +691,7 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         publish_pending(&mut conn, &js, &subjects)
             .await
             .unwrap_err()
+            .to_string()
             .starts_with("commit_history_position_unknown:")
     );
     let wire = read_wire_all(&js, &subjects).await;

@@ -2,26 +2,27 @@
 //! with what an option needs to know about it. The module reads the generated
 //! `nix/catalog.json`, so adding a source to the registry adds its option; a
 //! test keeps the file current.
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_derivations::AnyPerEvent;
 use sqlx::{Connection, PgConnection};
 
 /// Install only the build's trusted native catalog while the owner holds the
 /// writer claim. Request payloads cannot register their own source authority.
-pub(crate) async fn install_native_sources(conn: &mut PgConnection) -> Result<(), String> {
+pub(crate) async fn install_native_sources(conn: &mut PgConnection) -> Result<()> {
     let mut tx = conn
         .begin()
         .await
-        .map_err(|error| format!("starting source catalog install: {error}"))?;
+        .map_err(|error| Error::from(error).within("starting source catalog install"))?;
     sinex_store::registry::write_sources(&mut tx, &registry_sources())
         .await
-        .map_err(|error| format!("writing the source registry: {error}"))?;
+        .map_err(|error| Error::from(error).within("writing the source registry"))?;
     sinex_store::source_declarations::register(&mut tx, &source_declarations())
         .await
-        .map_err(|error| format!("registering native sources: {error}"))?;
+        .map_err(|error| Error::from(error).within("registering native sources"))?;
     tx.commit()
         .await
-        .map_err(|error| format!("committing source catalog: {error}"))
+        .map_err(|error| Error::from(error).within("committing source catalog"))
 }
 
 /// Every per-event derivation the build has, whatever the configuration.

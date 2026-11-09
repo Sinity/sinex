@@ -11,6 +11,7 @@
 //! retrieve its admitted answer and selected coverage instead of computing.
 use super::Settings;
 use super::panel::Panel;
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_analysis::Eligibility;
 use sinex_analysis::finding::{self, Caveat, Finding, Template};
@@ -32,11 +33,15 @@ pub(crate) enum Recipe {
 impl Recipe {
     pub(crate) const ALL: [Recipe; 3] = [Recipe::Correlations, Recipe::Trends, Recipe::Deviations];
 
-    pub(crate) fn parse(name: &str) -> Result<Self, String> {
+    pub(crate) fn parse(name: &str) -> Result<Self> {
         Self::ALL
             .into_iter()
             .find(|r| r.id() == name)
-            .ok_or_else(|| format!("no recipe {name}; recipes: correlations, trends, deviations"))
+            .ok_or_else(|| {
+                Error::internal(format!(
+                    "no recipe {name}; recipes: correlations, trends, deviations"
+                ))
+            })
     }
 
     pub(crate) fn version(self) -> u32 {
@@ -94,7 +99,7 @@ pub(crate) async fn run(
     from: jiff::civil::Date,
     to: jiff::civil::Date,
     eligibility: Eligibility,
-) -> Result<RecipeRun, String> {
+) -> Result<RecipeRun> {
     let question = super::access::question(
         conn,
         ctx,
@@ -109,24 +114,24 @@ pub(crate) async fn run(
     .await?;
     let payload = super::access::find(conn, "recipe.answer", &question.request)
         .await?
-        .ok_or("analysis answer is not materialized; submit its canonical request first")?;
+        .ok_or_else(|| {
+            Error::not_built(
+                "analysis answer is not materialized; submit its canonical request first",
+            )
+        })?;
     Ok(RecipeRun {
         definition: json!({"recipe_version":payload["recipe_version"],"method_versions":payload["method_versions"],"parameters":payload["parameters"],"day_setting":payload["day_setting"],"coverage_hash":payload["coverage_hash"]}),
         citation: payload["_citation"].as_str().map(str::to_owned),
         producer_versions: payload.get("producer_versions").cloned(),
         tables: payload["tables"].clone(),
-        findings: serde_json::from_value(payload["findings"].clone()).map_err(|e| e.to_string())?,
+        findings: serde_json::from_value(payload["findings"].clone())?,
         as_of: payload["read_as"]
             .as_i64()
-            .ok_or("stored answer has no selected read context")?,
+            .ok_or_else(|| Error::internal("stored answer has no selected read context"))?,
     })
 }
 
-pub(super) fn evaluate(
-    p: &Panel,
-    recipe: Recipe,
-    eligibility: Eligibility,
-) -> Result<RecipeRun, String> {
+pub(super) fn evaluate(p: &Panel, recipe: Recipe, eligibility: Eligibility) -> Result<RecipeRun> {
     let input = input(p, eligibility);
     let names: Vec<&str> = tracked().iter().map(|m| m.name).collect();
     let (tables, findings) = match recipe {
@@ -162,14 +167,11 @@ fn run_method(
     id: &str,
     params: Value,
     input: &MethodInput,
-) -> Result<Result<methods::MethodResult, methods::NotEstimable>, String> {
-    methods::run(id, &params, input).map_err(|e| e.to_string())
+) -> Result<Result<methods::MethodResult, methods::NotEstimable>> {
+    methods::run(id, &params, input).map_err(Error::from)
 }
 
-pub(super) fn correlations(
-    input: &MethodInput,
-    family: &[(&str, &str, i32)],
-) -> Result<Outputs, String> {
+pub(super) fn correlations(input: &MethodInput, family: &[(&str, &str, i32)]) -> Result<Outputs> {
     let results: Vec<_> = family
         .iter()
         .map(|(x, y, lag)| {
@@ -205,7 +207,7 @@ pub(super) fn correlations(
     ))
 }
 
-fn trends(input: &MethodInput, metrics: &[&str]) -> Result<Outputs, String> {
+fn trends(input: &MethodInput, metrics: &[&str]) -> Result<Outputs> {
     let mut rows = Vec::new();
     let mut findings = Vec::new();
     for m in metrics {
@@ -249,7 +251,7 @@ fn trends(input: &MethodInput, metrics: &[&str]) -> Result<Outputs, String> {
     Ok((json!({"metrics": rows}), findings))
 }
 
-pub(super) fn deviations(input: &MethodInput, metrics: &[&str]) -> Result<Outputs, String> {
+pub(super) fn deviations(input: &MethodInput, metrics: &[&str]) -> Result<Outputs> {
     let mut rows = Vec::new();
     let mut findings = Vec::new();
     for m in metrics {

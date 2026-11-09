@@ -8,6 +8,7 @@
 //! One page is read for all consumers, from the lowest position among them;
 //! each consumer gets the part of the page after its own position.
 //! Per-event derivations are run by the derivation runner (`derive.rs`).
+use crate::{Error, Result};
 use futures::future::BoxFuture;
 use sinex_store::commit_log::{self, Committed};
 use sqlx::{Connection, PgConnection};
@@ -29,7 +30,7 @@ pub(crate) trait Consumer: Send + Sync {
     fn wants(&self, event_type: &str) -> bool;
 
     /// The saved position: the last commit position already handled.
-    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>>;
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64>>;
 
     /// Handle `events` (those it wants, in commit order) and durably record
     /// `up_to` as the new position together with the effect.
@@ -38,7 +39,7 @@ pub(crate) trait Consumer: Send + Sync {
         events: &'a [Committed],
         up_to: i64,
         conn: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>>;
+    ) -> BoxFuture<'a, Result<()>>;
 }
 
 /// Run the reader until `stop` is set. `commits` changes whenever the writer
@@ -49,7 +50,7 @@ pub(crate) async fn run(
     mut commits: watch::Receiver<u64>,
     completed: watch::Sender<()>,
     mut stop: watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<()> {
     if consumers.is_empty() {
         let _ = stop.wait_for(|s| *s).await;
         return Ok(());
@@ -66,9 +67,7 @@ pub(crate) async fn run(
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
         let read_started = std::time::Instant::now();
-        let page = commit_log::after(&mut conn, from, PAGE, sinex_store::PAGE_BYTES)
-            .await
-            .map_err(|e| e.to_string())?;
+        let page = commit_log::after(&mut conn, from, PAGE, sinex_store::PAGE_BYTES).await?;
         let Some(up_to) = page.up_to else {
             tokio::select! {
                 _ = commits.changed() => {}
@@ -137,7 +136,7 @@ pub(crate) trait ReadModel: Send + Sync {
     fn name(&self) -> &'static str;
     fn wants(&self, event_type: &str) -> bool;
     /// Initialize from retained events before following a possibly pruned log.
-    fn initialize<'a>(&'a self, _: &'a mut PgConnection) -> BoxFuture<'a, Result<(), String>> {
+    fn initialize<'a>(&'a self, _: &'a mut PgConnection) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { Ok(()) })
     }
     /// Apply `events` inside the open transaction `tx`.
@@ -145,14 +144,14 @@ pub(crate) trait ReadModel: Send + Sync {
         &'a self,
         events: &'a [Committed],
         tx: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>>;
+    ) -> BoxFuture<'a, Result<()>>;
     /// The saved position, by default in `core.consumer_positions`.
-    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64>> {
         Box::pin(async move {
             commit_log::consumer_position(conn, self.name())
                 .await
                 .map(|(seq, _)| seq)
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         })
     }
     /// Save the position inside the transaction that applied up to it.
@@ -160,11 +159,11 @@ pub(crate) trait ReadModel: Send + Sync {
         &'a self,
         tx: &'a mut PgConnection,
         up_to: i64,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             commit_log::set_consumer_position(tx, self.name(), up_to, 0)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         })
     }
 }
@@ -191,19 +190,19 @@ impl ReadModel for SearchText {
         &'a self,
         events: &'a [Committed],
         tx: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             sinex_store::read_models::apply_search_text(tx, events)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         })
     }
 
-    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64>> {
         Box::pin(async move {
             sinex_store::read_models::search_position(conn)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         })
     }
 
@@ -211,11 +210,11 @@ impl ReadModel for SearchText {
         &'a self,
         tx: &'a mut PgConnection,
         up_to: i64,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             sinex_store::read_models::set_search_position(tx, up_to)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         })
     }
 }
@@ -229,22 +228,22 @@ impl ReadModel for EmbeddingVectors {
     fn wants(&self, kind: &str) -> bool {
         kind == "text.embedding"
     }
-    fn initialize<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<(), String>> {
+    fn initialize<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             sinex_store::vectors::initialize(conn)
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(Error::from)
         })
     }
     fn apply<'a>(
         &'a self,
         events: &'a [Committed],
         tx: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             sinex_store::vectors::apply(tx, events)
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(Error::from)
         })
     }
 }
@@ -262,7 +261,7 @@ impl Consumer for ReadModelRunner {
         self.0.wants(event_type)
     }
 
-    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64>> {
         Box::pin(async move {
             self.0.initialize(conn).await?;
             self.0.position(conn).await
@@ -274,12 +273,12 @@ impl Consumer for ReadModelRunner {
         events: &'a [Committed],
         up_to: i64,
         conn: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
+            let mut tx = conn.begin().await?;
             self.0.apply(events, &mut tx).await?;
             self.0.save_position(&mut tx, up_to).await?;
-            tx.commit().await.map_err(|e| e.to_string())
+            tx.commit().await.map_err(Error::from)
         })
     }
 }

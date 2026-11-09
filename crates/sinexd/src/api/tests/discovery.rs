@@ -36,10 +36,11 @@ async fn discovery_lists_implemented_commands_and_decisions_require_write_access
         let (status, _) = call(&w, Some(READ), value.clone()).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, body) = call(&w, Some(AGENT), value).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["outcome"], "refused");
-        assert_ne!(body["not_built"], true);
-        assert!(!body["reason"].as_str().unwrap().is_empty());
+        // Decisions cite guarded records, which this agent token is not granted.
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["outcome"], "failed");
+        assert_eq!(body["failure"]["kind"], "refused", "{body}");
+        assert!(!body["failure"]["message"].as_str().unwrap().is_empty());
     }
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&w.reads)

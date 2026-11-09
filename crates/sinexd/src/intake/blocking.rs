@@ -1,5 +1,6 @@
 //! Owned synchronous work, with a shared worker budget and two batches per submission.
 use crate::writer::Priority;
+use crate::{Error, Result};
 use sinex_model::Batch;
 use std::sync::{
     Arc, LazyLock,
@@ -17,24 +18,14 @@ struct WorkPermit {
     _bulk: Option<OwnedSemaphorePermit>,
 }
 
-async fn capacity(priority: Priority) -> Result<WorkPermit, String> {
+async fn capacity(priority: Priority) -> Result<WorkPermit> {
     // Bulk acquisitions can wait on many commits. Keep a worker available for live requests.
     let bulk = if priority == Priority::Bulk {
-        Some(
-            BULK_WORKERS
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| e.to_string())?,
-        )
+        Some(BULK_WORKERS.clone().acquire_owned().await?)
     } else {
         None
     };
-    let worker = WORKERS
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|e| e.to_string())?;
+    let worker = WORKERS.clone().acquire_owned().await?;
     Ok(WorkPermit {
         _worker: worker,
         _bulk: bulk,
@@ -44,14 +35,14 @@ async fn capacity(priority: Priority) -> Result<WorkPermit, String> {
 pub(crate) async fn run<T: Send + 'static>(
     priority: Priority,
     work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, String> {
+) -> Result<T> {
     let permit = capacity(priority).await?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         work()
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(Error::from)
 }
 
 pub(super) struct Parsed {
@@ -86,7 +77,7 @@ impl Drop for BatchPermit {
 }
 
 pub(super) struct BatchSender {
-    send: mpsc::Sender<Result<Parsed, String>>,
+    send: mpsc::Sender<Result<Parsed>>,
     permits: Arc<Semaphore>,
     runtime: tokio::runtime::Handle,
 }
@@ -110,7 +101,7 @@ impl BatchSender {
 }
 
 pub(super) struct Batches {
-    receive: mpsc::Receiver<Result<Parsed, String>>,
+    receive: mpsc::Receiver<Result<Parsed>>,
     permits: Arc<Semaphore>,
     worker: Option<tokio::task::JoinHandle<()>>,
     cancelled: Arc<AtomicBool>,
@@ -119,8 +110,8 @@ pub(super) struct Batches {
 impl Batches {
     pub(super) async fn start(
         priority: Priority,
-        work: impl FnOnce(BatchSender) -> Result<(), String> + Send + 'static,
-    ) -> Result<Self, String> {
+        work: impl FnOnce(BatchSender) -> Result<()> + Send + 'static,
+    ) -> Result<Self> {
         let budget = capacity(priority).await?;
         let (send, receive) = mpsc::channel(1);
         let permits = Arc::new(Semaphore::new(2));
@@ -147,18 +138,21 @@ impl Batches {
         let cancelled = self.cancelled.clone();
         Arc::new(move || {
             if cancelled.load(Ordering::Acquire) {
-                Err("submission cancelled".into())
+                Err(Error::new(
+                    command_surface::FailureKind::Cancelled,
+                    "submission cancelled",
+                ))
             } else {
                 Ok(())
             }
         })
     }
 
-    pub(super) async fn next(&mut self) -> Option<Result<Parsed, String>> {
+    pub(super) async fn next(&mut self) -> Option<Result<Parsed>> {
         self.receive.recv().await
     }
 
-    pub(super) async fn finish(mut self) -> Result<(), String> {
+    pub(super) async fn finish(mut self) -> Result<()> {
         self.permits.close();
         self.receive.close();
         // Drop queued batches before joining work that may be waiting for a permit.
@@ -167,7 +161,7 @@ impl Batches {
             .take()
             .expect("blocking worker")
             .await
-            .map_err(|e| e.to_string())
+            .map_err(Error::from)
     }
 }
 

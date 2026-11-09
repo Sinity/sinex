@@ -1,4 +1,5 @@
 use super::*;
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sinex_model::query::cursor::{OrderPosition, compare_positions};
 use sqlx::Connection;
@@ -18,14 +19,12 @@ impl Api {
         page: Option<u64>,
         cursor: Option<String>,
         fields: bool,
-    ) -> Reply {
-        match self
-            .kind_fields_page(caller, kind, page, cursor, fields)
-            .await
-        {
-            Ok(result) => Reply::Ok { result },
-            Err(reason) => refused(reason),
-        }
+    ) -> Result<Reply> {
+        Ok(Reply::Ok {
+            result: self
+                .kind_fields_page(caller, kind, page, cursor, fields)
+                .await?,
+        })
     }
 
     async fn kind_fields_page(
@@ -35,31 +34,27 @@ impl Api {
         page: Option<u64>,
         cursor: Option<String>,
         fields: bool,
-    ) -> Result<Value, String> {
-        let size = usize::try_from(page.unwrap_or(50)).map_err(|_| "page size is out of range")?;
+    ) -> Result<Value> {
+        let size = usize::try_from(page.unwrap_or(50))
+            .map_err(|_| Error::bad_request("page size is out of range"))?;
         if size == 0 {
-            return Err("page size must be positive".into());
+            return Err(Error::bad_request("page size must be positive"));
         }
-        let mut conn = self.acquire(caller).await.map_err(|e| e.to_string())?;
-        let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
-        sinex_store::query::read_one_snapshot(&mut tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        let mut conn = self.acquire(caller).await?;
+        let mut tx = conn.begin().await?;
+        sinex_store::query::read_one_snapshot(&mut tx).await?;
         let ctx = self.context();
-        let seal = sinex_store::query::continuation::seal_key(&mut tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        let seal = sinex_store::query::continuation::seal_key(&mut tx).await?;
         let question = sinex_store::query::continuation::identity(
             "declarations",
             &json!([kind, fields]),
             &caller.grants,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         let prior = cursor
             .as_deref()
             .map(|raw| {
                 sinex_store::query::continuation::open(&seal, raw, question, &ctx)
-                    .map_err(|e| e.to_string())
+                    .map_err(Error::from)
             })
             .transpose()?;
         let saved: Option<Continuation> = prior
@@ -70,33 +65,31 @@ impl Api {
                         .context
                         .versions
                         .get("sinex.declarations")
-                        .ok_or("invalid declaration cursor")?,
+                        .ok_or_else(|| Error::bad_request("invalid declaration cursor"))?,
                 )
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
             })
             .transpose()?;
         let declarations = match &saved {
             Some(saved) => {
                 if saved.kind != kind || saved.fields != fields {
-                    return Err("declaration cursor belongs to another request".into());
+                    return Err(Error::bad_request(
+                        "declaration cursor belongs to another request",
+                    ));
                 }
                 let refs: Vec<_> = saved.declarations.iter().map(|d| d.0.clone()).collect();
-                let found = sinex_schema::kinds::load(&mut tx, &refs)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let found = sinex_schema::kinds::load(&mut tx, &refs).await?;
                 if saved
                     .declarations
                     .iter()
                     .any(|(r, h)| found.get(r).is_none_or(|d| d.definition_hash() != *h))
                 {
-                    return Err("declaration snapshot is unavailable".into());
+                    return Err(Error::bad_request("declaration snapshot is unavailable"));
                 }
                 found
             }
             None => {
-                let mut found = sinex_schema::kinds::all(&mut tx)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let mut found = sinex_schema::kinds::all(&mut tx).await?;
                 if let Some(name) = &kind {
                     found.retain(|r, _| &r.name == name);
                 }
@@ -116,16 +109,18 @@ impl Api {
                 rows.push(json!({"declaration":declaration,"hash":declaration.definition_hash()}));
             }
         }
-        let identity = |row: &Value| -> Result<String, String> {
+        let identity = |row: &Value| -> Result<String> {
             let reference = if fields {
                 &row["kind"]
             } else {
                 &row["declaration"]["kind"]
             };
-            let name = reference["name"].as_str().ok_or("missing kind name")?;
+            let name = reference["name"]
+                .as_str()
+                .ok_or_else(|| Error::bad_request("missing kind name"))?;
             let version = reference["version"]
                 .as_i64()
-                .ok_or("missing kind version")?;
+                .ok_or_else(|| Error::bad_request("missing kind version"))?;
             Ok(format!(
                 "{name}@{version:020}/{}",
                 if fields {
@@ -151,7 +146,7 @@ impl Api {
             };
             if let Some(prior) = &prior
                 && !compare_positions(&here, &prior.after, &[])
-                    .map_err(|e| e.to_string())?
+                    .map_err(sinex_model::query::QueryError::from)?
                     .is_gt()
             {
                 continue;
@@ -172,25 +167,22 @@ impl Api {
                     .map(|d| (d.kind.clone(), d.definition_hash()))
                     .collect(),
             };
-            Some(
-                sinex_store::query::continuation::encode(
-                    &seal,
-                    question,
-                    &ctx,
-                    std::collections::BTreeMap::new(),
-                    std::collections::BTreeMap::from([(
-                        "sinex.declarations".into(),
-                        serde_json::to_string(&metadata).map_err(|e| e.to_string())?,
-                    )]),
-                    last.ok_or("declaration page did not advance")?,
-                )
-                .map_err(|e| e.to_string())?,
-            )
+            Some(sinex_store::query::continuation::encode(
+                &seal,
+                question,
+                &ctx,
+                std::collections::BTreeMap::new(),
+                std::collections::BTreeMap::from([(
+                    "sinex.declarations".into(),
+                    serde_json::to_string(&metadata)?,
+                )]),
+                last.ok_or_else(|| Error::bad_request("declaration page did not advance"))?,
+            )?)
         } else {
             None
         };
         let result = json!({if fields {"fields"}else{"kinds"}:chosen,"total":total,"cursor":next});
-        tx.commit().await.map_err(|e| e.to_string())?;
+        tx.commit().await?;
         Ok(result)
     }
 }

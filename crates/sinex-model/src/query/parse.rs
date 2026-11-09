@@ -19,7 +19,7 @@ fn shared_bound(
     input: syntax::Query,
     ctx: &Context,
 ) -> Result<query_language::bind::BoundQuery, QueryError> {
-    query_language::bind::bind(&input, &super::syntax::catalog(ctx)).map_err(super::syntax::error)
+    query_language::bind::bind(&input, &super::syntax::catalog(ctx)).map_err(QueryError::from)
 }
 pub(super) fn bind_syntax(input: syntax::Query, ctx: &Context) -> Result<Query, QueryError> {
     let mut q = lower(shared_bound(input, ctx)?, ctx, false)?;
@@ -163,7 +163,7 @@ impl Binder<'_> {
     fn instant(&self, value: &syntax::Value, at: usize) -> Result<Timestamp, QueryError> {
         Ok(
             query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
-                .map_err(super::syntax::error)?
+                .map_err(QueryError::from)?
                 .value
                 .start(),
         )
@@ -559,7 +559,7 @@ impl Binder<'_> {
                                 self.scalar(value, at)?,
                                 &self.ctx.clock()?,
                             )
-                            .map_err(super::syntax::error)?
+                            .map_err(QueryError::from)?
                             .value;
                             if let Some(range) = resolved.range() {
                                 Expr::Within {
@@ -633,7 +633,7 @@ impl Binder<'_> {
                     let lhs = Operand::Field(self.resolve(field, scope, at)?);
                     let resolved =
                         query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
-                            .map_err(super::syntax::error)?;
+                            .map_err(QueryError::from)?;
                     let until = matches!(c.kind, C::Until { .. });
                     let bound = if until {
                         resolved.value.until_bound()
@@ -677,7 +677,7 @@ impl Binder<'_> {
                     self.time_field(field, scope, at)?;
                     let r =
                         query_language::time::resolve(self.scalar(value, at)?, &self.ctx.clock()?)
-                            .map_err(super::syntax::error)?
+                            .map_err(QueryError::from)?
                             .value
                             .range()
                             .ok_or_else(|| QueryError::at(at, "expected a time range"))?;
@@ -706,7 +706,7 @@ impl Binder<'_> {
                             self.scalar(value, at)?,
                             &self.ctx.clock()?,
                         )
-                        .map_err(super::syntax::error)?
+                        .map_err(QueryError::from)?
                         .value;
                         match mode.as_str() {
                             "at" => (resolved.start(), None),

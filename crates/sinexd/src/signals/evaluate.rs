@@ -1,6 +1,7 @@
 //! Sinex's rules read through the ordinary query engine and feed the shared
 //! evaluator; the evaluator alone decides what fires.
 use super::*;
+use crate::Result;
 use sinex_model::event_types::signal::RuleWritten;
 use sinex_store::signals::Checkpoint;
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,14 +16,10 @@ pub(super) async fn evaluate(
     seq: i64,
     read: sinex_store::ReadMark,
     calendar: &::signals::DayCalendar,
-) -> Result<(), String> {
+) -> Result<()> {
     let now = millis(at)?;
-    sinex_store::query::set_grants(conn, "guarded")
-        .await
-        .map_err(error)?;
-    let records = sinex_store::signals::rule_rows(conn, RuleWritten::EVENT_TYPE, seq)
-        .await
-        .map_err(error)?;
+    sinex_store::query::set_grants(conn, "guarded").await?;
+    let records = sinex_store::signals::rule_rows(conn, RuleWritten::EVENT_TYPE, seq).await?;
     let mut active = BTreeMap::new();
     for (id, payload) in records {
         if payload.get("withheld").is_some() {
@@ -66,10 +63,7 @@ pub(super) async fn evaluate(
                 {
                     state.evaluator.withdraw(&prior.active.version);
                 }
-                state
-                    .evaluator
-                    .replace_rule(rule.clone(), now, calendar)
-                    .map_err(error)?;
+                state.evaluator.replace_rule(rule.clone(), now, calendar)?;
                 state.rows.remove(&key);
                 state.inputs.remove(&key);
                 state.rules.insert(
@@ -106,9 +100,7 @@ pub(super) async fn evaluate(
                 readable = false;
             }
         }
-        sinex_store::query::set_grants(conn, &granted.join(","))
-            .await
-            .map_err(error)?;
+        sinex_store::query::set_grants(conn, &granted.join(",")).await?;
         // An unreadable or failing query leaves the rule incomplete: it never
         // fires and never reports a change until it reads completely again.
         let answer = if readable {
@@ -194,16 +186,13 @@ pub(super) async fn evaluate(
                     .collect(),
             );
         }
-        state
-            .evaluator
-            .observe(::signals::Evaluation {
-                rule: rule.version,
-                at: now,
-                complete,
-                rows,
-                value,
-            })
-            .map_err(error)?;
+        state.evaluator.observe(::signals::Evaluation {
+            rule: rule.version,
+            at: now,
+            complete,
+            rows,
+            value,
+        })?;
     }
     Ok(())
 }

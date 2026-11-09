@@ -1,5 +1,6 @@
 //! Write authority comes from transport configuration, independently of read grants.
 use super::*;
+use crate::{Error, Result};
 use serde::Deserialize;
 use sinex_model::Class;
 
@@ -35,24 +36,28 @@ pub(crate) fn matches(prefixes: &[String], name: &str) -> bool {
 pub(crate) fn write<'a>(
     grants: &'a fetch::ProducerGrants,
     producer: &str,
-) -> Result<&'a WriteGrant, String> {
+) -> Result<&'a WriteGrant> {
     grants
         .get(producer)
         .and_then(|grant| grant.write.as_ref())
-        .ok_or_else(|| "producer has no configured write family".into())
+        .ok_or_else(|| Error::refused("producer has no configured write family"))
 }
 pub(crate) fn event<'a>(
     grants: &'a fetch::ProducerGrants,
     producer: &str,
     kind: &str,
     class: Class,
-) -> Result<&'a WriteGrant, String> {
+) -> Result<&'a WriteGrant> {
     let grant = write(grants, producer)?;
     if kind.starts_with("signal.") {
-        return Err("host signal records require the typed signal ingress capability".into());
+        return Err(Error::internal(
+            "host signal records require the typed signal ingress capability",
+        ));
     }
     if !matches(&grant.kind_prefixes, kind) || !grant.classes.contains(&class) {
-        return Err("producer write kind or class is not authorized".into());
+        return Err(Error::refused(
+            "producer write kind or class is not authorized",
+        ));
     }
     if grants.iter().any(|(identity, other)| {
         identity != producer
@@ -60,11 +65,13 @@ pub(crate) fn event<'a>(
                 other.family == grant.family && matches(&other.canonical_prefixes, kind)
             })
     }) {
-        return Err("kind requires the configured canonical publisher".into());
+        return Err(Error::refused(
+            "kind requires the configured canonical publisher",
+        ));
     }
     Ok(grant)
 }
-pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
+pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<()> {
     let mut publishers = std::collections::BTreeMap::new();
     let mut catalogs = std::collections::BTreeMap::new();
     for (identity, grant) in grants {
@@ -73,20 +80,24 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
                 .insert((&catalog.name, catalog.version), catalog.fingerprint())
                 .is_some_and(|known| known != catalog.fingerprint())
             {
-                return Err("conflicting indexed catalog under one name and version".into());
+                return Err(Error::internal(
+                    "conflicting indexed catalog under one name and version",
+                ));
             }
             let mut definitions = std::collections::BTreeMap::new();
             if catalog.name.is_empty() || catalog.version == 0 || catalog.kinds.is_empty() {
-                return Err(format!("invalid indexed projection catalog for {identity}"));
+                return Err(Error::internal(format!(
+                    "invalid indexed projection catalog for {identity}"
+                )));
             }
             for kind in &catalog.kinds {
                 if definitions
                     .insert(&kind.kind, kind.definition_hash())
                     .is_some()
                 {
-                    return Err(format!(
+                    return Err(Error::internal(format!(
                         "duplicate kind version in indexed projection catalog for {identity}"
-                    ));
+                    )));
                 }
             }
         }
@@ -97,40 +108,46 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
             || write.kind_prefixes.is_empty()
             || write.classes.is_empty()
         {
-            return Err(format!("invalid write family capability for {identity}"));
+            return Err(Error::internal(format!(
+                "invalid write family capability for {identity}"
+            )));
         }
         if write.forward_signals && write.family == "sinex" {
-            return Err(format!(
+            return Err(Error::internal(format!(
                 "signal forwarding cannot use the sinex family, this host's own product, for {identity}"
-            ));
+            )));
         }
         if write.forward_signals && write.canonical_prefixes.is_empty() {
-            return Err(format!(
+            return Err(Error::internal(format!(
                 "signal forwarding requires the canonical family namespace for {identity}"
-            ));
+            )));
         }
         if write
             .host
             .as_ref()
             .is_some_and(|host| host.is_empty() || host.contains('\0'))
         {
-            return Err(format!("invalid attested host for {identity}"));
+            return Err(Error::internal(format!(
+                "invalid attested host for {identity}"
+            )));
         }
         for declaration in &write.source_declarations {
             if declaration.family != write.family
                 || !matches(&write.source_prefixes, &declaration.source.name)
                 || declaration.kinds.is_empty()
             {
-                return Err(format!(
+                return Err(Error::internal(format!(
                     "source declaration is outside configured authority for {identity}"
-                ));
+                )));
             }
             for kind in &declaration.kinds {
                 if !matches(&write.kind_prefixes, &kind.kind.name)
                     || !matches!(kind.declaring_producer.as_str(), "sinex")
                         && kind.declaring_producer != write.family
                 {
-                    return Err(format!("source emits an unauthorized kind for {identity}"));
+                    return Err(Error::internal(format!(
+                        "source emits an unauthorized kind for {identity}"
+                    )));
                 }
             }
         }
@@ -138,9 +155,9 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
             if kind.declaring_producer != write.family
                 || !matches(&write.kind_prefixes, &kind.kind.name)
             {
-                return Err(format!(
+                return Err(Error::internal(format!(
                     "canonical declaration is outside configured authority for {identity}"
-                ));
+                )));
             }
         }
         for prefix in write
@@ -161,7 +178,9 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
                         })
                 })
             {
-                return Err(format!("invalid write kind prefix for {identity}"));
+                return Err(Error::internal(format!(
+                    "invalid write kind prefix for {identity}"
+                )));
             }
         }
         if write.canonical_prefixes.iter().any(|prefix| {
@@ -170,17 +189,17 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<(), String> {
                 prefix.trim_end_matches('*').trim_end_matches('.'),
             )
         }) {
-            return Err(format!(
+            return Err(Error::internal(format!(
                 "canonical prefix is outside write capability for {identity}"
-            ));
+            )));
         }
         if !write.canonical_prefixes.is_empty()
             && publishers.insert(&write.family, identity).is_some()
         {
-            return Err(format!(
+            return Err(Error::internal(format!(
                 "family {} has more than one canonical publisher",
                 write.family
-            ));
+            )));
         }
     }
     Ok(())
@@ -197,7 +216,7 @@ pub(crate) async fn native_declaration(
     producer: &str,
     source: &sinex_model::SourceRef,
 ) -> Result<sinex_model::SourceDeclaration, Check> {
-    let write = write(grants, producer).map_err(Check::Configuration)?;
+    let write = write(grants, producer).map_err(|error| Check::Configuration(error.to_string()))?;
     if !matches(&write.source_prefixes, &source.name) {
         return Err(Check::Configuration(
             "native source is outside the configured credential capability".into(),

@@ -1,4 +1,5 @@
 use super::*;
+use crate::Error;
 use sinex_model::{
     BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation, RecordOutcome,
     RunId, Timestamp, event_types::CommandImported,
@@ -218,7 +219,7 @@ async fn queued_checks_reject_a_revoked_unlock_and_roll_back_before_commit(
                 if checked.fetch_add(1, Ordering::SeqCst) == 0 {
                     Ok(())
                 } else {
-                    Err("capture canceled before commit".into())
+                    Err(Error::internal("capture canceled before commit"))
                 }
             }),
         )
@@ -475,7 +476,7 @@ async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase
         .await
         .unwrap_err();
     assert!(matches!(
-        admission_error(timeout.into()),
+        WriteError::from(sinex_store::Error::from(timeout)),
         WriteError::Unavailable(_)
     ));
     sqlx::query("SET statement_timeout = 0")
@@ -487,7 +488,7 @@ async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase
         .await
         .unwrap_err();
     assert!(matches!(
-        admission_error(invalid.into()),
+        WriteError::from(sinex_store::Error::from(invalid)),
         WriteError::Refused(_)
     ));
     let outcome = admit_checked(
@@ -523,7 +524,10 @@ async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
         );
         let error = sqlx::query(&query).execute(&mut conn).await.unwrap_err();
         assert_eq!(
-            matches!(admission_error(error.into()), WriteError::Unavailable(_)),
+            matches!(
+                WriteError::from(sinex_store::Error::from(error)),
+                WriteError::Unavailable(_)
+            ),
             temporary,
             "{code}"
         );
@@ -535,7 +539,7 @@ async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
         sqlx::Error::WorkerCrashed,
     ] {
         assert!(matches!(
-            admission_error(error.into()),
+            WriteError::from(sinex_store::Error::from(error)),
             WriteError::Unavailable(_)
         ));
     }
@@ -561,7 +565,7 @@ async fn schema_is_validated_after_waiting_for_the_writer_claim(db: devkit::pg::
         .unwrap();
     tx.commit().await.unwrap();
     let error = waiting.await.unwrap().unwrap_err();
-    assert!(error.contains("schema version"));
+    assert!(error.to_string().contains("schema version"));
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM privacy.settings")
             .fetch_one(&mut upgrade)
@@ -713,11 +717,11 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
 #[test]
 fn a_moved_signal_checkpoint_is_a_stale_write() {
     assert!(matches!(
-        admission_error(sinex_store::Error::StaleCheckpoint),
+        WriteError::from(sinex_store::Error::StaleCheckpoint),
         WriteError::Stale(_)
     ));
     assert!(matches!(
-        admission_error(sinex_store::Error::Invalid(
+        WriteError::from(sinex_store::Error::Invalid(
             "signal checkpoint changed".into()
         )),
         WriteError::Refused(_)

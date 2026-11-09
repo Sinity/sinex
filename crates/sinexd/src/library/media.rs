@@ -1,6 +1,7 @@
 //! Handing items to players and making previews: a verified local copy of the
 //! exact bytes, or the stored bytes written out to the cache.
-use super::{Library, R, e};
+use super::{Library, R};
+use crate::Error;
 use serde_json::{Value, json};
 use sinex_library::{items, reads, render};
 use sinex_model::Timestamp;
@@ -18,16 +19,14 @@ impl Library<'_> {
         content: &str,
         media_type: &str,
     ) -> R<(PathBuf, bool)> {
-        for a in reads::copies_of(conn, content).await.map_err(e)? {
+        for a in reads::copies_of(conn, content).await? {
             if a.vanished_at.is_some() {
                 continue;
             }
             let p = PathBuf::from(&a.path);
             let size = a.size;
             let c = content.to_owned();
-            let ok = tokio::task::spawn_blocking(move || render::verified(&p, size, &c))
-                .await
-                .map_err(e)?;
+            let ok = tokio::task::spawn_blocking(move || render::verified(&p, size, &c)).await?;
             if ok {
                 return Ok((PathBuf::from(&a.path), true));
             }
@@ -39,26 +38,25 @@ impl Library<'_> {
             if render::verified(&target, std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0), &content) {
                 return Ok((target, false));
             }
-            if !blobs.contains(&content).map_err(e)? {
-                return Err(format!(
+            if !blobs.contains(&content)? {
+                return Err(Error::bad_request(format!(
                     "no verified copy of {content} on disk, and its bytes are not stored (indexed by reference)"
-                ));
+                )));
             }
             if let Some(dir) = target.parent() {
-                std::fs::create_dir_all(dir).map_err(e)?;
+                std::fs::create_dir_all(dir)?;
             }
             // Plain media streams to the cache; delta-encoded content is
             // decoded whole first.
             let tmp = target.with_extension("partial");
-            let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp).map_err(e)?);
-            blobs.copy_to(&content, &mut file).map_err(e)?;
-            std::io::Write::flush(&mut file).map_err(e)?;
+            let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+            blobs.copy_to(&content, &mut file)?;
+            std::io::Write::flush(&mut file)?;
             drop(file);
-            std::fs::rename(&tmp, &target).map_err(e)?;
+            std::fs::rename(&tmp, &target)?;
             Ok((target, false))
         })
-        .await
-        .map_err(e)?
+        .await?
     }
 
     /// Where to open an item: the target is fixed now, so a later change to
@@ -73,11 +71,10 @@ impl Library<'_> {
         let (content, media_type, rendition_id, revision) = match rendition {
             Some(id) => {
                 let r = reads::renditions(conn, item)
-                    .await
-                    .map_err(e)?
+                    .await?
                     .into_iter()
                     .find(|r| r.rendition == id)
-                    .ok_or_else(|| format!("{item} has no rendition {id}"))?;
+                    .ok_or_else(|| Error::bad_request(format!("{item} has no rendition {id}")))?;
                 (r.content, r.media_type, Some(r.rendition), r.revision)
             }
             None => (
@@ -108,33 +105,38 @@ impl Library<'_> {
     ) -> R<Value> {
         let it = self.item_or(conn, item).await?;
         if !render::previewable(&it.media_type) {
-            return Err(format!("{} has no still preview ({})", item, it.media_type));
+            return Err(Error::bad_request(format!(
+                "{} has no still preview ({})",
+                item, it.media_type
+            )));
         }
-        let renditions = reads::renditions(conn, item).await.map_err(e)?;
+        let renditions = reads::renditions(conn, item).await?;
         let original = renditions
             .iter()
             .find(|r| r.role == RenditionRole::Original && r.revision == it.revision)
-            .ok_or_else(|| format!("{item} has no original rendition of {}", it.revision))?;
+            .ok_or_else(|| {
+                Error::bad_request(format!(
+                    "{item} has no original rendition of {}",
+                    it.revision
+                ))
+            })?;
         let (input, _) = self.local_copy(conn, &it.content, &it.media_type).await?;
         let blobs = self.blobs.clone();
         let out = std::env::temp_dir().join(format!("sinex-preview-{}.webp", items::new_id()));
         let o = out.clone();
         let (stored, w, h) = tokio::task::spawn_blocking(
             move || -> R<(sinex_model::OwnedBlob, Option<u32>, Option<u32>)> {
-                render::make_preview(&input, &o)?;
-                let d = library_source::digest(&o).map_err(e)?;
+                render::make_preview(&input, &o).map_err(Error::internal)?;
+                let d = library_source::digest(&o)?;
                 let (w, h, _) = library_source::dimensions(&d.head, &d.media_type);
-                let file = std::fs::File::open(&o).map_err(e)?;
-                let size = file.metadata().map_err(e)?.len();
-                let blob = blobs
-                    .put_seekable(std::io::BufReader::new(file))
-                    .map_err(e)?;
+                let file = std::fs::File::open(&o)?;
+                let size = file.metadata()?.len();
+                let blob = blobs.put_seekable(std::io::BufReader::new(file))?;
                 let _ = std::fs::remove_file(&o);
                 Ok((sinex_model::OwnedBlob { blob, size }, w, h))
             },
         )
-        .await
-        .map_err(e)??;
+        .await??;
         let content = stored.blob.clone();
         let r = Rendition {
             rendition: items::new_id(),

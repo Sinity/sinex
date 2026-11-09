@@ -1,26 +1,23 @@
 //! Forecast command adapters. Reads share ordinary event visibility.
 use super::*;
+use crate::{Error, Result};
 use sinex_model::Timestamp;
 use sinex_model::event_types::forecast::{ForecastRecord, Issued, Resolved};
 use sqlx::{Connection, PgConnection};
 use std::collections::BTreeMap;
 
-fn error(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
-
-async fn visible(conn: &mut PgConnection, reference: &str) -> Result<Value, String> {
-    let reference = query::parse_reference(reference).map_err(error)?;
-    let event = sinex_store::query::show(conn, &reference)
-        .await
-        .map_err(error)?;
+async fn visible(conn: &mut PgConnection, reference: &str) -> Result<Value> {
+    let reference = query::parse_reference(reference)?;
+    let event = sinex_store::query::show(conn, &reference).await?;
     if event["state"] != "live"
         || (!event["payload"].is_object() || event["payload"].get("withheld").is_some())
     {
-        return Err("reference needs an available live event".into());
+        return Err(Error::bad_request(
+            "reference needs an available live event",
+        ));
     }
     if event["class"] == "sealed" {
-        return Err("forecasts cannot cite sealed evidence".into());
+        return Err(Error::refused("forecasts cannot cite sealed evidence"));
     }
     Ok(event)
 }
@@ -29,31 +26,35 @@ async fn references(
     conn: &mut PgConnection,
     refs: &[String],
     cutoff: Option<Timestamp>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>> {
     let mut ids = Vec::new();
     for reference in refs {
         let event = visible(conn, reference).await?;
         if let Some(cutoff) = cutoff {
-            let written: Timestamp =
-                serde_json::from_value(event["written"].clone()).map_err(error)?;
+            let written: Timestamp = serde_json::from_value(event["written"].clone())?;
             if written > cutoff {
-                return Err("information was recorded after the declared cutoff".into());
+                return Err(Error::bad_request(
+                    "information was recorded after the declared cutoff",
+                ));
             }
         }
-        ids.push(event["id"].as_str().ok_or("event has no ID")?.to_owned());
+        ids.push(
+            event["id"]
+                .as_str()
+                .ok_or_else(|| Error::bad_request("event has no ID"))?
+                .to_owned(),
+        );
     }
     ids.sort();
     ids.dedup();
     Ok(ids)
 }
 
-async fn available_evidence(conn: &mut PgConnection, refs: &[String]) -> Result<bool, String> {
+async fn available_evidence(conn: &mut PgConnection, refs: &[String]) -> Result<bool> {
     for reference in refs {
         let id = uuid::Uuid::parse_str(reference)
-            .map_err(|_| "resolution has an invalid evidence ID")?;
-        let row = sinex_store::live::class_and_payload(conn, id)
-            .await
-            .map_err(error)?;
+            .map_err(|_| Error::bad_request("resolution has an invalid evidence ID"))?;
+        let row = sinex_store::live::class_and_payload(conn, id).await?;
         if !row.is_some_and(|(class, payload)| {
             class != "sealed"
                 && payload.is_some_and(|p| p.is_object() && p.get("withheld").is_none())
@@ -65,23 +66,19 @@ async fn available_evidence(conn: &mut PgConnection, refs: &[String]) -> Result<
 }
 
 impl Api {
-    pub(super) async fn forecast(
-        &self,
-        request: Request,
-        caller: &Caller,
-    ) -> Result<Value, String> {
-        let mut conn = self.acquire(caller).await.map_err(error)?;
-        let mut tx = conn.begin().await.map_err(error)?;
-        sinex_store::query::read_one_snapshot(&mut tx)
-            .await
-            .map_err(error)?;
+    pub(super) async fn forecast(&self, request: Request, caller: &Caller) -> Result<Value> {
+        let mut conn = self.acquire(caller).await?;
+        let mut tx = conn.begin().await?;
+        sinex_store::query::read_one_snapshot(&mut tx).await?;
         if matches!(request, Request::ForecastReport) {
             let answer = report(&mut tx).await?;
-            tx.commit().await.map_err(error)?;
+            tx.commit().await?;
             return Ok(answer);
         }
         if !caller.grants.split(',').any(|g| g == "guarded") {
-            return Err("forecast authoring requires the guarded grant".into());
+            return Err(Error::bad_request(
+                "forecast authoring requires the guarded grant",
+            ));
         }
         let now = Timestamp::now();
         let (record, forecast) = match request {
@@ -95,22 +92,24 @@ impl Api {
             } => {
                 let p: f64 = probability
                     .parse()
-                    .map_err(|_| "probability must be a number")?;
+                    .map_err(|_| Error::bad_request("probability must be a number"))?;
                 if !p.is_finite() || !(0.0..=1.0).contains(&p) {
-                    return Err("probability must be finite and between 0 and 1".into());
+                    return Err(Error::bad_request(
+                        "probability must be finite and between 0 and 1",
+                    ));
                 }
                 if target.trim().is_empty() || criteria.trim().is_empty() {
-                    return Err("target and criteria must be nonempty".into());
+                    return Err(Error::bad_request("target and criteria must be nonempty"));
                 }
                 let horizon = timestamp(&horizon)?;
                 let cutoff = timestamp(&cutoff)?;
                 if horizon <= now || cutoff > now {
-                    return Err("horizon must be future and cutoff must not be future".into());
+                    return Err(Error::bad_request(
+                        "horizon must be future and cutoff must not be future",
+                    ));
                 }
                 let information = references(&mut tx, &information, Some(cutoff)).await?;
-                let position = sinex_store::query::current_seq(&mut tx)
-                    .await
-                    .map_err(error)?;
+                let position = sinex_store::query::current_seq(&mut tx).await?;
                 let id = uuid::Uuid::now_v7().to_string();
                 (
                     ForecastRecord::Issued(Issued {
@@ -136,35 +135,38 @@ impl Api {
             } => {
                 let event = visible(&mut tx, &forecast).await?;
                 if event["event_type"] != "forecast.issued" {
-                    return Err("forecast must cite a forecast.issued event".into());
+                    return Err(Error::bad_request(
+                        "forecast must cite a forecast.issued event",
+                    ));
                 }
-                let issued: Issued =
-                    serde_json::from_value(event["payload"].clone()).map_err(error)?;
+                let issued: Issued = serde_json::from_value(event["payload"].clone())?;
                 let outcome = match outcome.as_str() {
                     "true" => Some(true),
                     "false" => Some(false),
                     "unknown" => None,
-                    _ => return Err("outcome must be true, false or unknown".into()),
+                    _ => return Err(Error::bad_request("outcome must be true, false or unknown")),
                 };
                 let outcome_at = at.as_deref().map(timestamp).transpose()?;
                 if outcome_at.is_some_and(|at| at < issued.at || at > now) {
-                    return Err("outcome time must be between issuance and recording".into());
+                    return Err(Error::bad_request(
+                        "outcome time must be between issuance and recording",
+                    ));
                 }
                 if evidence.is_empty() {
-                    return Err("resolution needs evidence".into());
+                    return Err(Error::bad_request("resolution needs evidence"));
                 }
                 let evidence = references(&mut tx, &evidence, None).await?;
                 if outcome.is_some() {
                     let resolutions =
-                        sinex_store::live::of_types(&mut tx, &["forecast.resolved".into()])
-                            .await
-                            .map_err(error)?;
+                        sinex_store::live::of_types(&mut tx, &["forecast.resolved".into()]).await?;
                     if resolutions.iter().any(|r| {
                         r.payload.as_ref().is_some_and(|p| {
                             p["forecast"] == issued.forecast.as_str() && p["outcome"].is_boolean()
                         })
                     }) {
-                        return Err("forecast already has a visible known resolution".into());
+                        return Err(Error::conflict(
+                            "forecast already has a visible known resolution",
+                        ));
                     }
                 }
                 let id = issued.forecast;
@@ -182,11 +184,11 @@ impl Api {
             }
             _ => unreachable!("forecast commands only"),
         };
-        tx.commit().await.map_err(error)?;
+        tx.commit().await?;
         let writer = self
             .writer
             .as_ref()
-            .ok_or("forecast writes require sinexd run")?;
+            .ok_or_else(|| Error::bad_request("forecast writes require sinexd run"))?;
         let binding = format!("forecast.request:{}@{}", caller.actor, self.host);
         let acquired = sinex_sources::sources::forecast::request_material(
             record,
@@ -205,12 +207,14 @@ impl Api {
         )
         .await?;
         if done.outcome.admitted != 1 || done.outcome.failures != 0 {
-            return Err(format!(
+            return Err(Error::bad_request(format!(
                 "the forecast was not admitted as one event (admitted {}, failures {})",
                 done.outcome.admitted, done.outcome.failures
-            ));
+            )));
         }
-        let material = done.material.ok_or("forecast admission has no material")?;
+        let material = done
+            .material
+            .ok_or_else(|| Error::bad_request("forecast admission has no material"))?;
         let id = sinex_store::live::at(
             &mut conn,
             sinex_model::RecordLocation {
@@ -219,23 +223,23 @@ impl Api {
             },
             0,
         )
-        .await
-        .map_err(error)?;
-        let id = id.ok_or("forecast event was withdrawn before its response")?;
+        .await?;
+        let id = id.ok_or_else(|| {
+            Error::bad_request("forecast event was withdrawn before its response")
+        })?;
         Ok(
             json!({"forecast":forecast, "event":id, "citation":format!("sinex:ev/{id}"), "material":material}),
         )
     }
 }
 
-async fn report(conn: &mut PgConnection) -> Result<Value, String> {
-    let position = sinex_store::query::current_seq(conn).await.map_err(error)?;
+async fn report(conn: &mut PgConnection) -> Result<Value> {
+    let position = sinex_store::query::current_seq(conn).await?;
     let rows = sinex_store::live::of_types(
         conn,
         &["forecast.issued".into(), "forecast.resolved".into()],
     )
-    .await
-    .map_err(error)?;
+    .await?;
     let mut issued = BTreeMap::new();
     let mut resolutions: BTreeMap<String, Vec<(String, Resolved)>> = BTreeMap::new();
     let mut withheld = 0;
@@ -251,15 +255,17 @@ async fn report(conn: &mut PgConnection) -> Result<Value, String> {
             continue;
         };
         if kind == "forecast.issued" {
-            let value: Issued = serde_json::from_value(payload).map_err(error)?;
+            let value: Issued = serde_json::from_value(payload)?;
             if issued
                 .insert(value.forecast.clone(), (id.to_string(), value))
                 .is_some()
             {
-                return Err("multiple visible issuances share a forecast identity".into());
+                return Err(Error::bad_request(
+                    "multiple visible issuances share a forecast identity",
+                ));
             }
         } else {
-            let value: Resolved = serde_json::from_value(payload).map_err(error)?;
+            let value: Resolved = serde_json::from_value(payload)?;
             resolutions
                 .entry(value.forecast.clone())
                 .or_default()
@@ -278,10 +284,12 @@ async fn report(conn: &mut PgConnection) -> Result<Value, String> {
                     .outcome_at
                     .is_some_and(|t| t < issue.at || t > resolution.at)
             {
-                return Err("resolution time precedes issuance or follows recording".into());
+                return Err(Error::bad_request(
+                    "resolution time precedes issuance or follows recording",
+                ));
             }
             if resolution.evidence.is_empty() {
-                return Err("resolution has no evidence".into());
+                return Err(Error::bad_request("resolution has no evidence"));
             }
             if !available_evidence(conn, &resolution.evidence).await? {
                 unavailable_evidence += 1;
@@ -293,10 +301,9 @@ async fn report(conn: &mut PgConnection) -> Result<Value, String> {
             }
         }
         if outcomes.len() > 1 {
-            return Err(
-                "multiple visible known resolutions; hide an incorrect resolution before scoring"
-                    .into(),
-            );
+            return Err(Error::conflict(
+                "multiple visible known resolutions; hide an incorrect resolution before scoring",
+            ));
         }
         pairs.push(sinex_analysis::forecast::Pair {
             forecast,
@@ -304,7 +311,7 @@ async fn report(conn: &mut PgConnection) -> Result<Value, String> {
             outcome: outcomes.pop(),
         });
     }
-    let report = sinex_analysis::forecast::score(pairs)?;
+    let report = sinex_analysis::forecast::score(pairs).map_err(Error::bad_value)?;
     Ok(
         json!({"report":report,"commit_seq":position,"inputs":inputs,"withheld_events":withheld,"unavailable_evidence":unavailable_evidence}),
     )

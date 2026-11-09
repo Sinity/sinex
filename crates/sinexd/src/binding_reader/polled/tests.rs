@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 
 struct SlowReader {
     entered: Option<tokio::sync::oneshot::Sender<()>>,
@@ -30,5 +31,11 @@ async fn synchronous_poll_does_not_stop_other_runtime_tasks() {
         release.send(()).unwrap();
     };
     let (result, ()) = tokio::join!(reader.acquire(Value::Null), unrelated);
-    assert!(result.err().unwrap().contains("synthetic poll finished"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("synthetic poll finished")
+    );
 }

@@ -1,5 +1,6 @@
 //! Fixed WorkSnapshot admitted-input contract and stateless replay certificates.
 use super::*;
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sinex_protocol::{
     CoverageProof, CoverageRequest, CoverageStatus, InputReference, InputReplayReply,
@@ -45,9 +46,35 @@ impl From<sinex_store::read_coverage::AuthorityError> for Failure {
         }
     }
 }
-impl From<Failure> for String {
+/// Any other error leaves the basis unverified, with its message.
+impl From<crate::Error> for Failure {
+    fn from(error: crate::Error) -> Self {
+        Self::Unverified(error.to_string())
+    }
+}
+impl From<sinex_store::Error> for Failure {
+    fn from(error: sinex_store::Error) -> Self {
+        Self::Unverified(error.to_string())
+    }
+}
+impl From<sqlx::Error> for Failure {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Unverified(error.to_string())
+    }
+}
+impl From<serde_json::Error> for Failure {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Unverified(error.to_string())
+    }
+}
+impl From<std::num::TryFromIntError> for Failure {
+    fn from(error: std::num::TryFromIntError) -> Self {
+        Self::Unverified(error.to_string())
+    }
+}
+impl From<Failure> for crate::Error {
     fn from(error: Failure) -> Self {
-        error.to_string()
+        Self::internal(error.to_string())
     }
 }
 
@@ -82,12 +109,14 @@ fn contract(
     grants: &fetch::ProducerGrants,
     producer: &str,
     subjects: &Subjects,
-) -> Result<Contract, String> {
-    let grant = grants.get(producer).ok_or("coverage_read_grants_missing")?;
+) -> Result<Contract> {
+    let grant = grants
+        .get(producer)
+        .ok_or_else(|| Error::internal("coverage_read_grants_missing"))?;
     let artifact = grant
         .indexed_catalog
         .as_ref()
-        .ok_or("projection_catalog_not_installed")?;
+        .ok_or_else(|| Error::internal("projection_catalog_not_installed"))?;
     let (_, scope) = grant.consumer_scope(producer, subjects);
     let write = grant.write.as_ref();
     let mut raw = Vec::new();
@@ -181,12 +210,8 @@ async fn authorize_raw(
     read_coverage::input_contract(conn, claims)
         .await
         .map_err(Failure::from)?;
-    for (kind, class) in read_coverage::required_classes(conn, claims)
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        let class: sinex_model::Class =
-            serde_json::from_value(Value::String(class)).map_err(|error| error.to_string())?;
+    for (kind, class) in read_coverage::required_classes(conn, claims).await? {
+        let class: sinex_model::Class = serde_json::from_value(Value::String(class))?;
         if !grant.allows(&kind, class) || class == sinex_model::Class::Sealed {
             return Err(Failure::Invalidated(
                 "coverage_required_class_unavailable".into(),
@@ -195,13 +220,10 @@ async fn authorize_raw(
     }
     Ok(())
 }
-async fn instance(client: &async_nats::Client, subjects: &Subjects) -> Result<String, String> {
+async fn instance(client: &async_nats::Client, subjects: &Subjects) -> Result<String> {
     let js = crate::publisher::context(client.clone());
     crate::publisher::ensure_stream(&js, subjects).await?;
-    let stream = js
-        .get_stream(subjects.confirmed_stream())
-        .await
-        .map_err(|error| error.to_string())?;
+    let stream = js.get_stream(subjects.confirmed_stream()).await?;
     Ok(crate::publisher::stream_instance(&stream))
 }
 fn same(
@@ -257,7 +279,7 @@ impl Requests {
                 indexed: indexed_kinds,
                 classes,
             } = contract(&self.read_grants, producer, &self.subjects)
-                .map_err(Failure::Invalidated)?;
+                .map_err(|error| Failure::Invalidated(error.to_string()))?;
             let grant = self
                 .read_grants
                 .get(producer)
@@ -266,16 +288,10 @@ impl Requests {
                 return Err(Failure::Invalidated("public_context_not_authorized".into()));
             }
             let native = instance(&self.client, &self.subjects).await?;
-            let mut conn = self
-                .reads
-                .acquire()
-                .await
-                .map_err(|error| error.to_string())?;
+            let mut conn = self.reads.acquire().await?;
             use sqlx::Connection;
-            let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
-            sinex_store::query::read_one_snapshot(&mut tx)
-                .await
-                .map_err(|error| error.to_string())?;
+            let mut tx = conn.begin().await?;
+            sinex_store::query::read_one_snapshot(&mut tx).await?;
             let context = self
                 .public_context
                 .snapshot(
@@ -291,11 +307,11 @@ impl Requests {
                 ..
             } = context
             else {
-                return Err("coverage_owner_policy_unavailable".into());
+                return Err(Failure::Unverified(
+                    "coverage_owner_policy_unavailable".into(),
+                ));
             };
-            let key = sinex_store::owner_protocol::key(&mut tx)
-                .await
-                .map_err(|error| error.to_string())?;
+            let key = sinex_store::owner_protocol::key(&mut tx).await?;
             let mut cursor = if let Some(cursor) = cursor {
                 let cursor: Cursor = sinex_store::owner_protocol::open(&key, CURSOR_DOMAIN, cursor)
                     .map_err(|_| Failure::Invalidated("coverage_replay_cursor_invalid".into()))?;
@@ -330,9 +346,7 @@ impl Requests {
                         host: self.public_context.host.clone(),
                         settings_identity,
                         owner_revision,
-                        position: sinex_store::query::current_seq(&mut tx)
-                            .await
-                            .map_err(|error| error.to_string())?,
+                        position: sinex_store::query::current_seq(&mut tx).await?,
                         kinds,
                         indexed_kinds,
                         classes,
@@ -344,9 +358,8 @@ impl Requests {
             };
             read_coverage::current(&mut tx, &cursor.claims).await?;
             read_coverage::projection_contract(&mut tx, &cursor.claims).await?;
-            let mut rows = read_coverage::inputs(&mut tx, &cursor.claims, cursor.after, PAGE + 1)
-                .await
-                .map_err(|error| error.to_string())?;
+            let mut rows =
+                read_coverage::inputs(&mut tx, &cursor.claims, cursor.after, PAGE + 1).await?;
             let more = rows.len() > PAGE as usize;
             if more {
                 rows.pop();
@@ -361,7 +374,7 @@ impl Requests {
                 cursor.after = Some((row.commit_seq, row.id));
                 let kind = sinex_model::KindRef {
                     name: row.event_type,
-                    version: u64::try_from(row.kind_version).map_err(|error| error.to_string())?,
+                    version: u64::try_from(row.kind_version)?,
                 };
                 let kind_definition_hash = cursor
                     .claims
@@ -389,8 +402,7 @@ impl Requests {
                         Failure::Invalidated("coverage_native_source_unknown".into())
                     })?;
                     let declaration = sinex_store::source_declarations::load(&mut tx, source)
-                        .await
-                        .map_err(|error| error.to_string())?
+                        .await?
                         .ok_or_else(|| {
                             Failure::Invalidated("coverage_native_source_unknown".into())
                         })?;
@@ -426,14 +438,11 @@ impl Requests {
             }
             let continuation = if more {
                 ReplayContinuation::Next {
-                    cursor: sinex_store::owner_protocol::sign(&key, CURSOR_DOMAIN, &cursor)
-                        .map_err(|error| error.to_string())?,
+                    cursor: sinex_store::owner_protocol::sign(&key, CURSOR_DOMAIN, &cursor)?,
                 }
             } else {
                 let projection = sinex_protocol::FullProjectionComplete {
-                    stamp: read_coverage::sign(&mut tx, &cursor.claims)
-                        .await
-                        .map_err(|error| error.to_string())?,
+                    stamp: read_coverage::sign(&mut tx, &cursor.claims).await?,
                     position: cursor.claims.position,
                     scope: cursor.claims.scope.clone(),
                     catalog: cursor.claims.catalog.clone(),
@@ -444,9 +453,7 @@ impl Requests {
                         raw.purpose = "basis".into();
                         CoverageStatus::Complete {
                             proof: CoverageProof {
-                                stamp: read_coverage::sign(&mut tx, &raw)
-                                    .await
-                                    .map_err(|error| error.to_string())?,
+                                stamp: read_coverage::sign(&mut tx, &raw).await?,
                                 position: raw.position,
                                 scope: raw.scope,
                             },
@@ -495,7 +502,9 @@ impl Requests {
                 ..
             } = context
             else {
-                return Err("coverage_owner_policy_unavailable".into());
+                return Err(Failure::Unverified(
+                    "coverage_owner_policy_unavailable".into(),
+                ));
             };
             let basis = request.basis.as_ref().ok_or_else(|| {
                 Failure::Invalidated("coverage_completed_replay_basis_required".into())
@@ -515,7 +524,7 @@ impl Requests {
                 catalog,
                 ..
             } = contract(&self.read_grants, producer, &self.subjects)
-                .map_err(Failure::Invalidated)?;
+                .map_err(|error| Failure::Invalidated(error.to_string()))?;
             let native = instance(&self.client, &self.subjects).await?;
             if claims.replay_root.is_none()
                 || claims.purpose != "basis"
@@ -546,7 +555,7 @@ impl Requests {
                     &self.subjects,
                     self.read_grants
                         .get(producer)
-                        .ok_or("coverage_read_grants_missing")?,
+                        .ok_or_else(|| Error::internal("coverage_read_grants_missing"))?,
                     &claims,
                     completion,
                     request.completed_position,
@@ -561,12 +570,10 @@ impl Requests {
                 &claims,
                 self.read_grants
                     .get(producer)
-                    .ok_or("coverage_read_grants_missing")?,
+                    .ok_or_else(|| Error::internal("coverage_read_grants_missing"))?,
             )
             .await?;
-            let stamp = read_coverage::sign(conn, &claims)
-                .await
-                .map_err(|error| error.to_string())?;
+            let stamp = read_coverage::sign(conn, &claims).await?;
             Ok(CoverageProof {
                 stamp,
                 position: claims.position,
@@ -628,8 +635,8 @@ impl Ingest {
                 .public_context
                 .as_ref()
                 .ok_or_else(|| Check::Configuration("owner public policy is unavailable".into()))?;
-            let Contract { scope, catalog, .. } =
-                contract(&self.grants, producer, &self.subjects).map_err(Check::Configuration)?;
+            let Contract { scope, catalog, .. } = contract(&self.grants, producer, &self.subjects)
+                .map_err(|error| Check::Configuration(error.to_string()))?;
             if proof.scope != scope {
                 return Err(Check::Configuration(
                     "coverage scope differs from current credential grants".into(),
@@ -642,7 +649,7 @@ impl Ingest {
                 &self.subjects,
             )
             .await
-            .map_err(Check::Unavailable)?;
+            .map_err(|error| Check::Unavailable(error.to_string()))?;
             Ok(sinex_model::OwnerCoverage {
                 stamp: proof.stamp.clone(),
                 position: proof.position,
@@ -668,15 +675,9 @@ impl Requests {
         cache: &str,
         after: i64,
         proof: &sinex_protocol::FullProjectionComplete,
-    ) -> Result<(), String> {
-        let mut conn = self
-            .reads
-            .acquire()
-            .await
-            .map_err(|error| error.to_string())?;
-        let claims = read_coverage::open(&mut conn, &proof.stamp)
-            .await
-            .map_err(|error| error.to_string())?;
+    ) -> Result<()> {
+        let mut conn = self.reads.acquire().await?;
+        let claims = read_coverage::open(&mut conn, &proof.stamp).await?;
         let Contract {
             family,
             scope,
@@ -688,7 +689,7 @@ impl Requests {
             .public_context
             .settings_identity
             .as_ref()
-            .ok_or("coverage_owner_settings_unavailable")?;
+            .ok_or_else(|| Error::internal("coverage_owner_settings_unavailable"))?;
         if claims.purpose != "projection"
             || claims.replay_root.is_none()
             || proof.position != claims.position
@@ -707,18 +708,16 @@ impl Requests {
                 &self.public_context.host,
             )
         {
-            return Err("coverage_replay_basis_changed".into());
+            return Err(Error::conflict("coverage_replay_basis_changed"));
         }
         // A native resume after the certificate may include later ordinary
         // lifecycle changes. Its retained replay basis is still valid.
         let mut current = claims;
         current.position = after;
-        read_coverage::current(&mut conn, &current)
-            .await
-            .map_err(|error| error.to_string())?;
+        read_coverage::current(&mut conn, &current).await?;
         read_coverage::projection_contract(&mut conn, &current)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(Error::from)
     }
 }
 
@@ -728,17 +727,11 @@ impl Requests {
         producer: &str,
         request: &sinex_protocol::PublicContextRequest,
     ) -> sinex_protocol::PublicContext {
-        let result: Result<_, String> = async {
+        let result: Result<_> = async {
             use sqlx::Connection;
-            let mut conn = self
-                .reads
-                .acquire()
-                .await
-                .map_err(|error| error.to_string())?;
-            let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
-            sinex_store::query::read_one_snapshot(&mut tx)
-                .await
-                .map_err(|error| error.to_string())?;
+            let mut conn = self.reads.acquire().await?;
+            let mut tx = conn.begin().await?;
+            sinex_store::query::read_one_snapshot(&mut tx).await?;
             let mut context = self
                 .public_context
                 .snapshot(&mut tx, producer, request, Timestamp::now())
@@ -752,10 +745,12 @@ impl Requests {
             self.public_context
                 .sign_snapshot(&mut tx, producer, &mut context)
                 .await?;
-            tx.commit().await.map_err(|error| error.to_string())?;
+            tx.commit().await?;
             Ok(context)
         }
         .await;
-        result.unwrap_or_else(|reason| sinex_protocol::PublicContext::Unavailable { reason })
+        result.unwrap_or_else(|reason| sinex_protocol::PublicContext::Unavailable {
+            reason: reason.to_string(),
+        })
     }
 }

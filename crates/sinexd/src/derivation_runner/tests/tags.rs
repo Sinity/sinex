@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 use sinex_derivations::PerEvent;
 use sinex_derivations::tags::TagApplier;
 fn tags() -> TagApplier {

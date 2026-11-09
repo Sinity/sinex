@@ -14,7 +14,8 @@ fn doctor_reports_an_unavailable_database_without_the_daemon() {
         .arg(directory.path().join("missing"))
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    // Failed checks are a broken part of the installation: kind io, exit 4.
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("{error}: {output:?}"));
     assert_eq!(report["ok"], false);
@@ -40,7 +41,7 @@ fn doctor_reports_a_sibling_daemon_failure_with_empty_stderr() {
         .arg(directory.path())
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(4));
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(error.contains("diagnostics doctor failed"), "{error}");
     assert!(error.contains('7'), "{error}");

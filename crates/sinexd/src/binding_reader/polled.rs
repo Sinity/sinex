@@ -1,4 +1,5 @@
 //! A polled reader keeps its state when its owned blocking poll returns.
+use crate::{Error, Result};
 use serde_json::Value;
 use sinex_source_core::{Reader, StoredMaterial, drivers};
 use std::sync::{Arc, Mutex};
@@ -10,14 +11,14 @@ impl PolledReader {
         Self(Arc::new(Mutex::new(reader)))
     }
 
-    pub(crate) async fn acquire(&self, cursor: Value) -> Result<drivers::Acquired, String> {
+    pub(crate) async fn acquire(&self, cursor: Value) -> Result<drivers::Acquired> {
         let reader = self.0.clone();
         crate::intake::blocking::run(crate::writer::Priority::Bulk, move || {
             reader
                 .lock()
-                .map_err(|e| e.to_string())?
+                .map_err(|_| Error::internal("the reader stopped in a panic"))?
                 .poll(&cursor)
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         })
         .await?
     }

@@ -167,7 +167,7 @@ pub async fn stored(conn: &mut PgConnection, id: OperationId) -> Result<(Operati
     )
     .fetch_optional(&mut *conn)
     .await?
-    .ok_or_else(|| Error::Invalid(format!("no operation {}", id.0)))?;
+    .ok_or_else(|| Error::NotFound(format!("no operation {}", id.0)))?;
     let act = [Act::Archive, Act::Restore, Act::Tombstone, Act::Undo]
         .into_iter()
         .find(|act| act.as_db() == row.kind)

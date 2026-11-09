@@ -71,10 +71,13 @@ fn status_errors_keep_the_local_capture_report() {
             }
         }
         reader.read_exact(&mut vec![0; length]).unwrap();
-        let reply = serde_json::to_vec(&sinex_protocol::Reply::Refused {
-            reason: "synthetic database stall".into(),
-            not_built: false,
-        })
+        let reply = serde_json::to_vec(&sinex_protocol::Reply::failed(
+            command_surface::Failure::new(
+                command_surface::FailureKind::NotRunning,
+                "synthetic database stall",
+            )
+            .with_code("database_unavailable"),
+        ))
         .unwrap();
         let stream = reader.get_mut();
         write!(stream, "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reply.len()).unwrap();
@@ -93,13 +96,14 @@ fn status_errors_keep_the_local_capture_report() {
         .unwrap();
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(6),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let status: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(status["local_capture"], report);
     assert_eq!(status["daemon"]["unavailable"], "synthetic database stall");
+    assert_eq!(status["daemon"]["error"]["kind"], "not_running");
     server.join().unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_sinexctl"))
@@ -111,15 +115,17 @@ fn status_errors_keep_the_local_capture_report() {
         .arg(&state)
         .output()
         .unwrap();
+    // A database URL that is not one is a value to fix: exit 2, kind bad_value.
     assert_eq!(
         output.status.code(),
-        Some(1),
+        Some(2),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let status: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(status["local_capture"], report);
     assert!(status["daemon"]["unavailable"].is_string());
+    assert_eq!(status["daemon"]["error"]["kind"], "bad_value", "{status}");
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -140,7 +146,7 @@ fn status_uses_the_module_capture_state_path() {
         .env("SINEX_CAPTURE_STATE", &state)
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2));
     let status: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(status["local_capture"], report);
     std::fs::remove_dir_all(dir).unwrap();
@@ -157,7 +163,7 @@ fn a_missing_native_state_path_is_reported_as_unavailable() {
         .env("SINEX_CAPTURE_STATE", &state)
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2));
     let status: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(status["local_capture"]["unavailable"].is_string());
     assert_eq!(

@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 use sinex_source_core::{DrainInput, Drainer, Limits, Parser, RecordContext, RecordError};
 use std::io::{Read, Seek, SeekFrom};
 

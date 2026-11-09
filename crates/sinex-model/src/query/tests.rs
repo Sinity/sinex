@@ -10,7 +10,7 @@ fn ctx() -> Context {
 }
 
 fn q(text: &str) -> Query {
-    bind(text, &ctx()).unwrap_or_else(|e| panic!("{text}: {}", e.render(text)))
+    bind(text, &ctx()).unwrap_or_else(|e| panic!("{text}: {e:?}"))
 }
 
 fn native_q(text: &str) -> Query {
@@ -82,18 +82,26 @@ fn quoted_phrases_and_prefixes() {
 #[devkit::test]
 fn a_command_word_is_never_a_search() {
     let e = err("related sinex:ev/0190");
-    assert!(e.not_built, "{e}");
+    assert_eq!(e.kind, QueryErrorKind::NotBuilt, "{e}");
     // Quoted, it is a search for the word.
     assert!(matches!(q(r#""related""#).filter, Some(Expr::Words(_))));
 }
 
 #[devkit::test]
 fn a_misspelled_table_is_refused_with_a_suggestion() {
+    // The correction travels as the error's runnable suggestion.
     let e = err("comands where since:7d");
-    assert!(e.message.contains("commands"), "{e}");
+    assert!(
+        e.suggestion().is_some_and(|s| s.contains("commands")),
+        "{e:?}"
+    );
     let e = err("comands");
-    assert!(e.not_built, "{e}");
-    assert!(e.message.contains("try `commands`"), "{e}");
+    assert_eq!(
+        e.kind,
+        QueryErrorKind::Language(query_language::ErrorKind::NotAQuery),
+        "{e}"
+    );
+    assert_eq!(e.suggestion(), Some("commands"), "{e}");
     assert_eq!(q("commands").source.alias().unwrap().name, "commands");
     assert!(matches!(q(r#""comands""#).filter, Some(Expr::Words(_))));
     assert!(matches!(
@@ -264,7 +272,15 @@ fn a_bare_duration_with_an_ordering_is_refused() {
         e.message.contains("a bare duration is not a time instant"),
         "{e}"
     );
-    assert!(e.message.contains("when in last 7d"), "{e}");
+    assert_eq!(
+        e.kind,
+        QueryErrorKind::Language(query_language::ErrorKind::BadValue)
+    );
+    assert!(
+        e.suggestion()
+            .is_some_and(|s| s.contains("when in last 7d")),
+        "{e:?}"
+    );
 }
 
 #[devkit::test]
@@ -529,13 +545,15 @@ fn reads_back_as_a_sentence() {
 }
 
 #[devkit::test]
-fn errors_render_with_a_caret() {
+fn an_unknown_field_fails_as_unknown_field_with_a_caret_under_it() {
     let text = "commands where exit_cod = 0";
-    let e = err(text);
-    let rendered = e.render(text);
+    let failure = err(text).failure(text);
+    assert_eq!(failure.kind, command_surface::FailureKind::UnknownField);
+    assert_eq!(failure.position.map(|span| span.offset), Some(15));
+    let caret = failure.caret().unwrap();
     assert!(
-        rendered.ends_with(&format!("{}^", " ".repeat(15))),
-        "{rendered}"
+        caret.ends_with(&format!("\n{}^^^^^^^^", " ".repeat(15))),
+        "{caret}"
     );
 }
 

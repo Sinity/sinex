@@ -3,6 +3,7 @@
 //! source's counts) and spools one line per part. The `sinex.telemetry`
 //! binding reads the spool like any live capture. Samples use ordinary event
 //! admission, visibility, replay and the commit log.
+use crate::Result;
 use sinex_model::Timestamp;
 use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
 use sinex_sources::sources::telemetry::Sample;
@@ -72,10 +73,10 @@ pub(crate) async fn run(
     connection: (PgConnection, String),
     spool: PathBuf,
     mut stop: watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<()> {
     let (mut conn, database) = connection;
     let mut writer = SpoolWriter::open(&spool, Rotation::default())
-        .map_err(|e| format!("{}: {e}", spool.display()))?;
+        .map_err(|e| crate::Error::file(&spool, e))?;
     loop {
         if let Err(error) = sample_reconnecting(&mut conn, &database, &mut writer).await {
             eprintln!("sinexd: telemetry: {error}");

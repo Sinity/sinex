@@ -151,7 +151,7 @@ async fn duplicate_decisions_are_authored_records_citing_both_records(
         json!({"method":"withdraw-decision","a":row,"b":line}),
     )
     .await;
-    assert_eq!(again["outcome"], "refused", "{again}");
+    assert_eq!(again["outcome"], "failed", "{again}");
 }
 
 #[devkit::test]
@@ -164,9 +164,12 @@ async fn decisions_outside_a_family_or_across_scopes_are_refused(db: devkit::pg:
         ("same", &row, &line, "scopes"),
     ] {
         let (_, answer) = call(&w, Some(OPERATOR), json!({"method":method,"a":a,"b":b})).await;
-        assert_eq!(answer["outcome"], "refused", "{answer}");
+        assert_eq!(answer["outcome"], "failed", "{answer}");
         assert!(
-            answer["reason"].as_str().unwrap().contains(reason),
+            answer["failure"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(reason),
             "{answer}"
         );
     }
@@ -190,9 +193,9 @@ async fn decisions_outside_a_family_or_across_scopes_are_refused(db: devkit::pg:
         json!({"method":"same","a":row,"b":format!("sinex:ev/{other}")}),
     )
     .await;
-    assert_eq!(answer["outcome"], "refused", "{answer}");
+    assert_eq!(answer["outcome"], "failed", "{answer}");
     assert!(
-        answer["reason"]
+        answer["failure"]["message"]
             .as_str()
             .unwrap()
             .contains("no fusion family"),

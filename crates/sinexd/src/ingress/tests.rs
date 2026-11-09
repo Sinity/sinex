@@ -1287,7 +1287,7 @@ async fn a_producer_archives_through_a_lifecycle_request(db: devkit::pg::TestDat
         )
         .await;
     assert!(
-        matches!(&tombstone, Reply::Refused { reason, .. } if reason.contains("reserved to the operator")),
+        matches!(&tombstone, Reply::Failed { failure } if failure.kind == command_surface::FailureKind::Refused && failure.message.contains("reserved to the operator")),
         "{tombstone:?}"
     );
 

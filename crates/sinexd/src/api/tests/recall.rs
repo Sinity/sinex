@@ -237,9 +237,9 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg
             json!({"method":"recall","around":around,"cwd":path}),
         )
         .await;
-        assert_eq!(body["outcome"], "refused");
+        assert_eq!(body["outcome"], "failed");
         assert!(
-            body["reason"]
+            body["failure"]["message"]
                 .as_str()
                 .unwrap()
                 .contains("only to recall last")
@@ -262,7 +262,7 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg
         json!({"method":"recall","around":"last","cwd":"relative"}),
     )
     .await;
-    assert_eq!(relative["outcome"], "refused");
+    assert_eq!(relative["outcome"], "failed");
 }
 
 #[devkit::test]
@@ -330,8 +330,13 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
     )
     .await;
     let (_, hidden) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
-    assert_eq!(hidden["outcome"], "refused", "{hidden}");
-    assert!(hidden["reason"].as_str().unwrap().contains("unavailable"));
+    assert_eq!(hidden["outcome"], "failed", "{hidden}");
+    assert!(
+        hidden["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unavailable")
+    );
     assert!(!hidden.to_string().contains("/src/private"));
     let (_, visible) = call(
         &w,
@@ -434,7 +439,7 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
         json!({"method":"context","since":"2026-09-14T00:00:01Z","page":1,"cursor":cursor}),
     )
     .await;
-    assert_eq!(refused["outcome"], "refused", "{refused}");
+    assert_eq!(refused["outcome"], "failed", "{refused}");
     let (_, same) = call(
         &w,
         Some(READ),
@@ -448,7 +453,7 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
         json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1,"cursor":cursor}),
     )
     .await;
-    assert_eq!(changed_grants["outcome"], "refused", "{changed_grants}");
+    assert_eq!(changed_grants["outcome"], "failed", "{changed_grants}");
 }
 
 /// Read every page of a context request and check that its rows are exactly
@@ -626,7 +631,7 @@ async fn a_stored_recall_cursor_keeps_the_callers_grants(db: devkit::pg::TestDat
         json!({"method":"recall","around":"last","page":1,"cursor":cursor}),
     )
     .await;
-    assert_eq!(other["outcome"], "refused", "{other}");
+    assert_eq!(other["outcome"], "failed", "{other}");
     assert!(!other.to_string().contains("synthetic-private"));
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use command_surface::{Failure, FailureKind};
 use serde_json::{Map, Value, json};
 
 fn sample(kind: ArgKind) -> Value {
@@ -55,20 +56,36 @@ fn requests_have_stable_wire_names() {
 
 #[devkit::test]
 fn missing_and_unknown_arguments_are_refused() {
-    assert!(
-        Request::from_args("show", Map::new())
-            .unwrap_err()
-            .contains("reference")
-    );
+    let missing = Request::from_args("show", Map::new()).unwrap_err();
+    assert_eq!(missing.kind, FailureKind::BadRequest);
+    assert!(missing.message.contains("reference"), "{missing:?}");
     let mut extra = Map::new();
     extra.insert("query".into(), json!("tide"));
     extra.insert("bogus".into(), json!(1));
-    assert!(Request::from_args("query", extra).is_err());
-    assert!(
-        Request::from_args("nope", Map::new())
-            .unwrap_err()
-            .contains("commands:")
+    let unknown = Request::from_args("query", extra).unwrap_err();
+    assert_eq!(unknown.kind, FailureKind::BadRequest);
+    let nope = Request::from_args("nope", Map::new()).unwrap_err();
+    assert_eq!(nope.kind, FailureKind::BadRequest);
+    assert!(nope.candidates().iter().any(|name| name == "query"));
+}
+
+#[devkit::test]
+fn a_failure_reply_carries_the_shared_failure_on_the_wire() {
+    let reply = Reply::failed(
+        Failure::new(FailureKind::UnknownField, "no field `exit_cod`").with_code("unknown_field"),
     );
+    let wire = serde_json::to_value(&reply).unwrap();
+    assert_eq!(wire["outcome"], "failed");
+    assert_eq!(wire["failure"]["kind"], "unknown_field");
+    assert_eq!(serde_json::from_value::<Reply>(wire).unwrap(), reply);
+    let stopped = Reply::StoppedEarly {
+        failure: stopped_early(Failure::new(FailureKind::Conflict, "a material is held")),
+        result: json!({"moved": 1}),
+    };
+    let wire = serde_json::to_value(&stopped).unwrap();
+    assert_eq!(wire["failure"]["kind"], "stopped_early");
+    assert_eq!(wire["failure"]["code"], "conflict");
+    assert_eq!(serde_json::from_value::<Reply>(wire).unwrap(), stopped);
 }
 
 #[devkit::test]

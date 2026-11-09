@@ -139,7 +139,10 @@ async fn undo_with_a_later_dependent_record_is_refused_and_changes_nothing(
         )
         .await
         .unwrap_err();
-    assert!(refused.contains(&written(&second, 0)), "{refused}");
+    assert!(
+        refused.to_string().contains(&written(&second, 0)),
+        "{refused}"
+    );
     assert_eq!(
         view(&mut w, &a).await["properties"]["medium"]["value"],
         "two"
@@ -175,7 +178,7 @@ async fn two_replacements_from_one_revision_give_one_success_and_one_conflict(
             .curate_as("operator", json!([late.clone()]))
             .await
             .unwrap_err();
-        assert!(refused.contains(&current), "{late}: {refused}");
+        assert!(refused.to_string().contains(&current), "{late}: {refused}");
     }
     assert_eq!(
         view(&mut w, &a).await["properties"]["medium"]["value"],
@@ -393,7 +396,9 @@ async fn a_plan_is_not_admitted_after_curation_changed_under_it(db: devkit::pg::
         .await
         .unwrap_err();
     assert!(
-        refused.contains("changed while this request was planned"),
+        refused
+            .to_string()
+            .contains("changed while this request was planned"),
         "{refused}"
     );
     let applied = view(&mut w, &a).await["tags"][0]["applied_by"]
@@ -450,7 +455,7 @@ async fn a_stale_base_or_withdrawal_expectation_is_refused_inside_admission(
             .store_planned(&mut w.conn, stale, "operator", at, "curate")
             .await
             .unwrap_err();
-        assert!(refused.contains("is not current"), "{refused}");
+        assert!(refused.to_string().contains("is not current"), "{refused}");
     }
     assert_eq!(
         view(&mut w, &a).await["properties"]["medium"]["value"],
@@ -479,7 +484,10 @@ async fn expects_names_only_a_revision_of_the_callers_own_statement(db: devkit::
             )
             .await
             .unwrap_err();
-        assert!(refused.contains("is not a revision of your"), "{refused}");
+        assert!(
+            refused.to_string().contains("is not a revision of your"),
+            "{refused}"
+        );
     }
     let v = view(&mut w, &a).await;
     assert_eq!(v["properties"]["medium"]["value"], "one");

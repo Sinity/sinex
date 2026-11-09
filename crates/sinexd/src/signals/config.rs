@@ -1,4 +1,5 @@
 //! Deployment-owned outlets and host attention settings.
+use crate::{Error, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -64,15 +65,19 @@ impl Config {
             deep_work_deferral: ::signals::DeepWorkDeferral::default(),
         }
     }
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.outlet_timeout_ms == 0 {
-            return Err("signals.outlet_timeout_ms must be positive".into());
+            return Err(Error::bad_request(
+                "signals.outlet_timeout_ms must be positive",
+            ));
         }
         if self
             .quiet_hours
             .is_some_and(|hours| hours.from >= 1440 || hours.to >= 1440)
         {
-            return Err("signal quiet hours must be civil minutes".into());
+            return Err(Error::bad_request(
+                "signal quiet hours must be civil minutes",
+            ));
         }
         for command in self.actions.values().chain(
             self.notifications
@@ -80,18 +85,22 @@ impl Config {
                 .flat_map(|notifications| notifications.away_command.iter()),
         ) {
             if !command.program.is_absolute() {
-                return Err("signal command programs must be absolute paths".into());
+                return Err(Error::bad_request(
+                    "signal command programs must be absolute paths",
+                ));
             }
         }
         for target in self.values.values() {
             match target {
                 ValueTarget::File { path } if !path.is_absolute() => {
-                    return Err("signal value files must be absolute paths".into());
+                    return Err(Error::bad_request(
+                        "signal value files must be absolute paths",
+                    ));
                 }
                 ValueTarget::Loopback { url } => {
-                    let uri: axum::http::Uri = url
-                        .parse()
-                        .map_err(|error| format!("signal value URL: {error}"))?;
+                    let uri: axum::http::Uri = url.parse().map_err(|error| {
+                        Error::bad_request(format!("signal value URL: {error}"))
+                    })?;
                     if !matches!(uri.scheme_str(), Some("http" | "https"))
                         || uri
                             .authority()
@@ -105,9 +114,9 @@ impl Config {
                             })
                             .is_none_or(|address| !address.is_loopback())
                     {
-                        return Err(
-                            "signal value URLs must use an explicit loopback HTTP address".into(),
-                        );
+                        return Err(Error::bad_value(
+                            "signal value URLs must use an explicit loopback HTTP address",
+                        ));
                     }
                 }
                 _ => {}
@@ -119,7 +128,7 @@ impl Config {
                 .map(|(name, command)| (name.as_str(), command.program.as_path())),
             AGENT_LAUNCHERS,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(Error::bad_value)?;
         Ok(())
     }
 }

@@ -41,7 +41,7 @@ async fn forecast_public_workflow_withdraws_archived_and_tombstoned_inputs(
     assert!((report["report"]["brier"].as_f64().unwrap() - 0.04).abs() < 1e-12);
     assert_eq!(report["report"]["calibration"][8]["outcome_frequency"], 1.0);
     let (_,duplicate)=call(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"false","evidence":[evidence_id]})).await;
-    assert_eq!(duplicate["outcome"], "refused");
+    assert_eq!(duplicate["outcome"], "failed");
     let resolution = resolved["result"]["citation"].as_str().unwrap();
     let (_, archived) = call(
         &w,
@@ -84,10 +84,10 @@ async fn forecast_public_commands_refuse_invalid_inputs_and_ungranted_authors(
     let w = world(db).await;
     for p in ["NaN", "inf", "-0.1", "1.01"] {
         let (_,body)=call(&w,Some(OPERATOR),json!({"method":"forecast-issue","target":"synthetic","probability":p,"criteria":"evidence","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
-        assert_eq!(body["outcome"], "refused", "{body}");
+        assert_eq!(body["outcome"], "failed", "{body}");
     }
     let (_,body)=call(&w,Some(AGENT),json!({"method":"forecast-issue","target":"synthetic","probability":"0.5","criteria":"evidence","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
-    assert_eq!(body["outcome"], "refused", "{body}");
+    assert_eq!(body["outcome"], "failed", "{body}");
 }
 
 #[devkit::test]
@@ -129,7 +129,7 @@ async fn forecast_commands_preserve_temporal_and_evidence_boundaries(db: devkit:
             .unwrap()
             .extend(change.as_object().unwrap().clone());
         let (_, body) = call(&w, Some(OPERATOR), request).await;
-        assert_eq!(body["outcome"], "refused", "{body}");
+        assert_eq!(body["outcome"], "failed", "{body}");
     }
     let issued = issue(&w, "0.8").await;
     for change in [
@@ -145,7 +145,7 @@ async fn forecast_commands_preserve_temporal_and_evidence_boundaries(db: devkit:
             .unwrap()
             .extend(change.as_object().unwrap().clone());
         let (_, body) = call(&w, Some(OPERATOR), request).await;
-        assert_eq!(body["outcome"], "refused", "{body}");
+        assert_eq!(body["outcome"], "failed", "{body}");
     }
     assert_eq!(score(&w, OPERATOR).await["report"]["unresolved"], 1);
 }
@@ -189,9 +189,9 @@ async fn forecast_report_refuses_conflicting_visible_resolution_records(
     }
     admit_events(&w, events).await;
     let (_, body) = call(&w, Some(OPERATOR), json!({"method":"forecast-report"})).await;
-    assert_eq!(body["outcome"], "refused", "{body}");
+    assert_eq!(body["outcome"], "failed", "{body}");
     assert!(
-        body["reason"]
+        body["failure"]["message"]
             .as_str()
             .unwrap()
             .contains("multiple visible known resolutions")

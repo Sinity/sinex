@@ -2,9 +2,10 @@
 //! rows of that read. An ordinary interactive recall stores nothing; its pages
 //! are the query cursor's pages at the same position.
 use super::*;
+use crate::Result;
 
 impl Api {
-    pub(super) async fn recall(&self, caller: &Caller, text: &str, page: Page) -> Reply {
+    pub(super) async fn recall(&self, caller: &Caller, text: &str, page: Page) -> Result<Reply> {
         self.recall_in(caller, text, page, self.context()).await
     }
 
@@ -16,10 +17,10 @@ impl Api {
         text: &str,
         page: Page,
         ctx: Context,
-    ) -> Reply {
+    ) -> Result<Reply> {
         match self.recall_answer(caller, text, page, ctx).await {
-            Ok(answer) => data(answer),
-            Err(error) => refused(error),
+            Ok(answer) => Ok(data(answer)),
+            Err(error) => Err(error.in_query(text)),
         }
     }
 
@@ -29,17 +30,11 @@ impl Api {
         text: &str,
         page: Page,
         mut ctx: Context,
-    ) -> Result<Value, String> {
-        let mut conn = self
-            .acquire(caller)
-            .await
-            .map_err(|error| error.to_string())?;
+    ) -> Result<Value> {
+        let mut conn = self.acquire(caller).await?;
         let text = text.trim();
         ctx.catalog = Some(query::QueryCatalog::new(
-            sinex_schema::kinds::all(&mut conn)
-                .await
-                .map_err(|e| e.to_string())?
-                .into_values(),
+            sinex_schema::kinds::all(&mut conn).await?.into_values(),
         ));
         if reads_history(&mut conn, text, &ctx).await? {
             return self
@@ -49,20 +44,17 @@ impl Api {
         let read = if query::saved::reference_name(text).is_some() {
             sinex_store::query::run(&mut conn, text, None, &ctx, &page).await
         } else {
-            let operation = query::native::parse(text, &ctx).map_err(|error| error.to_string())?;
+            let operation = query::native::parse(text, &ctx)?;
             sinex_store::query::run_operation(&mut conn, text, &operation, &ctx, &page).await
-        }
-        .map_err(|error| error.to_string())?;
-        let mut answer = serde_json::to_value(&read).map_err(|error| error.to_string())?;
+        }?;
+        let mut answer = serde_json::to_value(&read)?;
         let parents: Vec<sinex_model::EventId> = read
             .rows
             .iter()
             .filter_map(|row| row["id"].as_str()?.parse::<uuid::Uuid>().ok())
             .map(sinex_model::EventId)
             .collect();
-        let versions = sinex_store::derivations::producer_versions(&mut conn, &parents)
-            .await
-            .map_err(|error| error.to_string())?;
+        let versions = sinex_store::derivations::producer_versions(&mut conn, &parents).await?;
         let presentation = sinex_analysis::presentation::compile(
             sinex_analysis::presentation::Context {
                 citation: None,
@@ -91,15 +83,10 @@ impl Api {
         text: &str,
         ctx: &Context,
         page: &Page,
-    ) -> Result<Value, String> {
-        let selected = sinex_store::query::selected_page(conn, text, ctx, page)
-            .await
-            .map_err(|error| error.to_string())?;
-        let versions = sinex_store::derivations::producer_versions(conn, &selected.parents)
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut answer =
-            serde_json::to_value(&selected.answer).map_err(|error| error.to_string())?;
+    ) -> Result<Value> {
+        let selected = sinex_store::query::selected_page(conn, text, ctx, page).await?;
+        let versions = sinex_store::derivations::producer_versions(conn, &selected.parents).await?;
+        let mut answer = serde_json::to_value(&selected.answer)?;
         let sections = crate::analysis::recall::sections(&answer, &selected.parents);
         let day_setting = format!(
             "{} {}",
@@ -109,8 +96,7 @@ impl Api {
             serde_json::to_vec(&json!([
                 selected.answer.resolved.zone,
                 selected.answer.resolved.day_start
-            ]))
-            .map_err(|error| error.to_string())?
+            ]))?
             .as_slice(),
         )
         .to_hex()
@@ -145,18 +131,12 @@ impl Api {
 
 /// Whether the question names an earlier read position (`as of`), which is
 /// answered as a labelled historical preview.
-async fn reads_history(
-    conn: &mut sqlx::PgConnection,
-    text: &str,
-    ctx: &Context,
-) -> Result<bool, String> {
+async fn reads_history(conn: &mut sqlx::PgConnection, text: &str, ctx: &Context) -> Result<bool> {
     let bound = if let Some(name) = query::saved::reference_name(text) {
         let definitions = queries::definitions(conn, &name).await?;
-        query::saved::bind_saved(text, ctx, &definitions).map_err(|error| error.to_string())?
+        query::saved::bind_saved(text, ctx, &definitions)?
     } else {
-        query::native::parse(text, ctx)
-            .and_then(|operation| operation.bind(ctx))
-            .map_err(|error| error.to_string())?
+        query::native::parse(text, ctx).and_then(|operation| operation.bind(ctx))?
     };
     Ok(bound
         .stages
@@ -169,15 +149,12 @@ pub(super) async fn context_for_page(
     conn: &mut sqlx::PgConnection,
     ctx: &Context,
     page: &Page,
-) -> Result<Context, String> {
+) -> Result<Context> {
     let Some(raw) = &page.cursor else {
         return Ok(ctx.clone());
     };
-    let seal = sinex_store::query::continuation::seal_key(conn)
-        .await
-        .map_err(|e| e.to_string())?;
-    let authenticated =
-        sinex_store::query::continuation::authenticate(&seal, raw).map_err(|e| e.to_string())?;
+    let seal = sinex_store::query::continuation::seal_key(conn).await?;
+    let authenticated = sinex_store::query::continuation::authenticate(&seal, raw)?;
     Ok(Context::new(
         authenticated.context().clock.now,
         ctx.zone.clone(),

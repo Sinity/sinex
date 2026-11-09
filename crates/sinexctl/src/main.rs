@@ -2,9 +2,12 @@
 //! `sinex-protocol`, calling the daemon's API. A small offline mode diagnoses a
 //! stopped daemon without writing anything.
 //!
-//! Exit codes: 0 done; 2 refused; 3 asks for something not built yet; 5 an
-//! operation stopped early (it moved some batches and can be resumed); 6 the
-//! daemon is not reachable; 1 anything else.
+//! Exit codes come from the shared failure table in `command-surface`: 0
+//! done, 1 a read that matched nothing, and for a failure its kind's code (2
+//! a request to fix, 3 refused, 4 not found, a conflict or a broken part, 5
+//! stopped early, 6 the daemon or a part it needs not running, 7 timed out).
+//! With `--json` a failure prints `{"error": …}` on standard output and
+//! nothing on standard error.
 mod client;
 mod mcp;
 mod output;
@@ -12,16 +15,15 @@ mod output;
 mod diagnostics;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use client::{Client, ClientError, Endpoint};
-use serde_json::{Map, Value};
+use client::{Client, Endpoint};
+use command_surface::{Failure, FailureKind};
+use serde_json::{Map, Value, json};
 use sinex_protocol::{COMMANDS, Reply, Request};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const REFUSED: u8 = 2;
-const NOT_BUILT: u8 = 3;
-const STOPPED_EARLY: u8 = 5;
-const UNREACHABLE: u8 = 6;
+/// The exit code of a read that succeeded and matched nothing.
+const EMPTY: u8 = 1;
 
 fn default_socket() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
@@ -115,7 +117,7 @@ fn arguments(spec: &sinex_protocol::Command, m: &ArgMatches) -> Map<String, Valu
     sinex_protocol::cli::arguments(spec, m)
 }
 
-fn client(m: &ArgMatches) -> Result<Client, String> {
+fn client(m: &ArgMatches) -> Result<Client, Failure> {
     let endpoint = match m
         .get_one::<String>("endpoint")
         .cloned()
@@ -129,15 +131,66 @@ fn client(m: &ArgMatches) -> Result<Client, String> {
         .map(PathBuf::from)
         .unwrap_or_else(default_token_file);
     let token = std::fs::read_to_string(&path)
-        .map_err(|e| format!("token file {}: {e}", path.display()))?
+        .map_err(|e| {
+            Failure::new(
+                FailureKind::NotConfigured,
+                format!("token file {}: {e}", path.display()),
+            )
+            .with_hint(
+                "sinexd writes read.token, agent.token and operator.token in its token directory; \
+                 put one at this path or name it with --token-file",
+            )
+        })?
         .trim()
         .to_string();
     Ok(Client { endpoint, token })
 }
 
-fn fail(code: u8, message: impl std::fmt::Display) -> ExitCode {
-    eprintln!("sinexctl: {message}");
-    ExitCode::from(code)
+/// A failure as the terminal shows it: the message, the input line with a
+/// caret, then the hint, a runnable correction and the candidates.
+fn describe(failure: &Failure) -> String {
+    let mut text = failure.message.clone();
+    if let Some(caret) = failure.caret() {
+        text.push('\n');
+        text.push_str(caret);
+    }
+    if let Some(hint) = &failure.hint {
+        text.push_str(&format!("\nhint: {hint}"));
+    }
+    match failure.suggestion() {
+        Some(command_surface::Suggestion::Query(query)) => {
+            text.push_str(&format!("\ntry: {query}"));
+        }
+        Some(command_surface::Suggestion::Request(request)) => {
+            text.push_str(&format!(
+                "\ntry: {}",
+                serde_json::to_string(request).expect("requests serialize")
+            ));
+        }
+        None => {}
+    }
+    if !failure.candidates().is_empty() {
+        text.push_str(&format!(
+            "\ncandidates: {}",
+            failure.candidates().join(", ")
+        ));
+    }
+    text
+}
+
+/// Report `failure` and exit with its kind's code.
+fn fail(failure: &Failure, json: bool) -> ExitCode {
+    if json {
+        print_json(&json!({ "error": failure }));
+    } else {
+        eprintln!("sinexctl: {}", describe(failure));
+    }
+    ExitCode::from(failure.kind.exit_code())
+}
+
+/// A local failure of the CLI itself: an argument or file it cannot use.
+fn local(kind: FailureKind, message: impl Into<String>) -> Failure {
+    Failure::new(kind, message)
 }
 
 /// `library-open`: ask the daemon where the item's bytes are, hand that file to
@@ -145,16 +198,16 @@ fn fail(code: u8, message: impl std::fmt::Display) -> ExitCode {
 async fn open_and_record(client: &Client, request: &Request, item: &str) -> ExitCode {
     let target = match client.call(request).await {
         Ok((_, Reply::Ok { result })) => result,
-        Ok((_, Reply::Refused { reason, .. } | Reply::StoppedEarly { reason, .. })) => {
-            return fail(REFUSED, reason);
+        Ok((_, Reply::Failed { failure } | Reply::StoppedEarly { failure, .. })) => {
+            return fail(&failure, false);
         }
-        Err(ClientError::Unreachable(m)) => {
-            return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
-        }
-        Err(e) => return fail(1, e),
+        Err(e) => return fail(&e.failure("library-open"), false),
     };
     let (Some(path), Some(player)) = (target["path"].as_str(), target["player"].as_str()) else {
-        return fail(1, "the daemon's answer named no file or player");
+        return fail(
+            &client::protocol_mismatch("library-open", "the answer named no file or player"),
+            false,
+        );
     };
     eprintln!("opening {path} with {player}");
     let started = std::time::Instant::now();
@@ -166,8 +219,20 @@ async fn open_and_record(client: &Client, request: &Request, item: &str) -> Exit
     let seconds = started.elapsed().as_secs_f64();
     match status {
         Ok(s) if s.success() => {}
-        Ok(s) => return fail(1, format!("{player} exited with {s}")),
-        Err(e) => return fail(1, format!("{player}: {e}")),
+        Ok(s) => {
+            return fail(
+                &local(FailureKind::Io, format!("{player} exited with {s}")),
+                false,
+            );
+        }
+        Err(e) => {
+            let kind = if e.kind() == std::io::ErrorKind::NotFound {
+                FailureKind::NotConfigured
+            } else {
+                FailureKind::Io
+            };
+            return fail(&local(kind, format!("{player}: {e}")), false);
+        }
     }
     // `xdg-open` returns at once; only a player that ran in the foreground
     // tells how long the item was open.
@@ -177,14 +242,13 @@ async fn open_and_record(client: &Client, request: &Request, item: &str) -> Exit
         seconds: seconds.map(|s| format!("{s:.1}")),
         player: Some(player.to_owned()),
     };
-    match client.call(&viewed).await {
-        Ok((_, Reply::Ok { .. })) => ExitCode::SUCCESS,
-        Ok((_, Reply::Refused { reason, .. } | Reply::StoppedEarly { reason, .. })) => fail(
-            REFUSED,
-            format!("opened, but the view was not recorded: {reason}"),
-        ),
-        Err(e) => fail(1, format!("opened, but the view was not recorded: {e}")),
-    }
+    let mut failure = match client.call(&viewed).await {
+        Ok((_, Reply::Ok { .. })) => return ExitCode::SUCCESS,
+        Ok((_, Reply::Failed { failure } | Reply::StoppedEarly { failure, .. })) => failure,
+        Err(e) => e.failure("library-viewed"),
+    };
+    failure.message = format!("opened, but the view was not recorded: {}", failure.message);
+    fail(&failure, false)
 }
 
 fn print_json(v: &Value) {
@@ -198,11 +262,23 @@ fn rendered_text(result: &Value) -> Option<&str> {
     result["text"].as_str()
 }
 
-fn status_error(code: u8, reason: impl std::fmt::Display, state: Option<&str>) -> ExitCode {
-    let mut status = serde_json::json!({"daemon": {"unavailable": reason.to_string()}});
+/// Status when the daemon cannot answer it: why, with the local capture
+/// report, which stays readable without the daemon.
+fn status_error(failure: &Failure, state: Option<&str>) -> ExitCode {
+    let mut status = json!({"daemon": {"unavailable": failure.message, "error": failure}});
     capture_health::attach(&mut status, state);
     print_json(&status);
-    ExitCode::from(code)
+    ExitCode::from(failure.kind.exit_code())
+}
+
+/// A diagnostics report: the checks it found failing are a broken part of the
+/// installation (`io`); a report that could not be made says why.
+fn report_exit(report: &Value) -> ExitCode {
+    if report["ok"] == Value::Bool(true) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(FailureKind::Io.exit_code())
+    }
 }
 
 #[tokio::main]
@@ -231,7 +307,7 @@ async fn main() -> ExitCode {
             let store = sub.get_one::<PathBuf>("store").expect("required");
             let report = match diagnostics::run("doctor", database, Some(store)).await {
                 Ok(report) => report,
-                Err(error) => return fail(1, error),
+                Err(failure) => return fail(&failure, json),
             };
             if json {
                 print_json(&report);
@@ -249,33 +325,34 @@ async fn main() -> ExitCode {
                     );
                 }
             }
-            return if report["ok"] == Value::Bool(true) {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            };
+            return report_exit(&report);
         }
         "store" => {
             let Some(("verify", v)) = sub.subcommand() else {
-                return fail(1, "store takes a subcommand: verify --offline");
+                return fail(
+                    &local(
+                        FailureKind::BadRequest,
+                        "store takes a subcommand: verify --offline",
+                    ),
+                    json,
+                );
             };
             let database = v.get_one::<String>("database").expect("required");
             let store = v.get_one::<PathBuf>("store").expect("required");
             return match diagnostics::run("verify-store", database, Some(store)).await {
                 Ok(report) => {
                     print_json(&report);
-                    if report["ok"] == Value::Bool(true) {
-                        ExitCode::SUCCESS
-                    } else {
-                        ExitCode::from(1)
-                    }
+                    report_exit(&report)
                 }
-                Err(e) => fail(1, e),
+                Err(failure) => fail(&failure, json),
             };
         }
         "status" if offline => {
             let Some(database) = sub.get_one::<String>("database") else {
-                return fail(1, "status --offline needs --database");
+                return fail(
+                    &local(FailureKind::BadRequest, "status --offline needs --database"),
+                    json,
+                );
             };
             return match diagnostics::run("status", database, None).await {
                 Ok(mut v) => {
@@ -283,20 +360,20 @@ async fn main() -> ExitCode {
                     print_json(&v);
                     ExitCode::SUCCESS
                 }
-                Err(e) => status_error(1, e, capture_state),
+                Err(failure) => status_error(&failure, capture_state),
             };
         }
         _ => {}
     }
     let client = match client(&matches) {
         Ok(c) => c,
-        Err(e) if name == "status" => return status_error(1, e, capture_state),
-        Err(e) => return fail(1, e),
+        Err(failure) if name == "status" => return status_error(&failure, capture_state),
+        Err(failure) => return fail(&failure, json),
     };
     if name == "mcp" {
         return match mcp::serve(client).await {
             Ok(()) => ExitCode::SUCCESS,
-            Err(e) => fail(1, e),
+            Err(e) => fail(&local(FailureKind::Io, e), false),
         };
     }
     let spec = sinex_protocol::command(&name).expect("subcommands come from the table");
@@ -310,7 +387,14 @@ async fn main() -> ExitCode {
             Ok(text) => {
                 args.insert("identity".into(), Value::String(text));
             }
-            Err(e) => return fail(1, format!("{path}: {e}")),
+            Err(e) => {
+                let kind = match e.kind() {
+                    std::io::ErrorKind::NotFound => FailureKind::NotFound,
+                    std::io::ErrorKind::PermissionDenied => FailureKind::Refused,
+                    _ => FailureKind::Io,
+                };
+                return fail(&local(kind, format!("{path}: {e}")), json);
+            }
         }
     }
     // The daemon reads staged paths as given, so they go as absolute paths.
@@ -321,7 +405,9 @@ async fn main() -> ExitCode {
             if let Value::String(text) = given {
                 match std::path::absolute(&*text) {
                     Ok(path) => *text = path.display().to_string(),
-                    Err(e) => return fail(1, format!("{text}: {e}")),
+                    Err(e) => {
+                        return fail(&local(FailureKind::BadValue, format!("{text}: {e}")), json);
+                    }
                 }
             }
         }
@@ -361,15 +447,12 @@ async fn main() -> ExitCode {
             .await;
         return match result {
             Ok(()) => ExitCode::SUCCESS,
-            Err(ClientError::Unreachable(m)) => {
-                fail(UNREACHABLE, format!("the daemon is not reachable: {m}"))
-            }
-            Err(e) => fail(REFUSED, e),
+            Err(e) => fail(&e.failure("follow"), json),
         };
     }
     let request = match Request::from_args(&name, args.clone()) {
         Ok(r) => r,
-        Err(e) => return fail(1, e),
+        Err(failure) => return fail(&failure, json),
     };
     if let Request::LibraryOpen { item, .. } = &request
         && !json
@@ -382,40 +465,30 @@ async fn main() -> ExitCode {
     loop {
         let reply = match client.call(&request).await {
             Ok((_, reply)) => reply,
-            Err(ClientError::Unreachable(m)) => {
-                if name == "status" {
-                    return status_error(UNREACHABLE, m, capture_state);
-                }
-                return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
-            }
-            Err(e) if name == "status" => return status_error(1, e, capture_state),
-            Err(e) => return fail(1, e),
+            Err(e) if name == "status" => return status_error(&e.failure(&name), capture_state),
+            Err(e) => return fail(&e.failure(&name), json),
         };
         let mut result = match reply {
             Reply::Ok { result } => result,
-            Reply::Refused { reason, not_built } if name == "status" => {
-                return status_error(
-                    if not_built { NOT_BUILT } else { REFUSED },
-                    reason,
-                    capture_state,
-                );
+            Reply::Failed { failure } if name == "status" => {
+                return status_error(&failure, capture_state);
             }
-            Reply::Refused {
-                reason,
-                not_built: true,
-            } => return fail(NOT_BUILT, format!("not built yet: {reason}")),
-            Reply::Refused { reason, .. } => return fail(REFUSED, reason),
-            Reply::StoppedEarly { reason, result } => {
-                if !json && name == "stage" {
+            Reply::Failed { failure } => return fail(&failure, json),
+            Reply::StoppedEarly { failure, result } => {
+                if json {
+                    print_json(&json!({ "error": failure, "result": result }));
+                    return ExitCode::from(failure.kind.exit_code());
+                }
+                if name == "stage" {
                     let report = match serde_json::from_value(result) {
                         Ok(report) => report,
-                        Err(e) => return fail(REFUSED, format!("invalid stage report: {e}")),
+                        Err(e) => return fail(&client::protocol_mismatch(&name, e), json),
                     };
                     print!("{}", sinex_protocol::stage_report::render(&report));
                 } else {
                     print_json(&result);
                 }
-                return fail(STOPPED_EARLY, reason);
+                return fail(&failure, json);
             }
         };
         if name == "status" {
@@ -447,7 +520,7 @@ async fn main() -> ExitCode {
                 );
                 println!("{} rows", collected.len());
             }
-            return ExitCode::SUCCESS;
+            return answered(collected.is_empty());
         }
         let paged = result["page"].is_object() && result["rows"].is_array();
         if !paged {
@@ -456,14 +529,14 @@ async fn main() -> ExitCode {
             } else if matches!(name.as_str(), "stage" | "stage-show") {
                 let report = match serde_json::from_value(result) {
                     Ok(report) => report,
-                    Err(e) => return fail(REFUSED, format!("invalid stage report: {e}")),
+                    Err(e) => return fail(&client::protocol_mismatch(&name, e), json),
                 };
                 print!("{}", sinex_protocol::stage_report::render(&report));
             } else if name == "stage-list" {
                 let reports: sinex_protocol::stage_report::Reports =
                     match serde_json::from_value(result) {
                         Ok(reports) => reports,
-                        Err(e) => return fail(REFUSED, format!("invalid stage list: {e}")),
+                        Err(e) => return fail(&client::protocol_mismatch(&name, e), json),
                     };
                 for report in &reports.stages {
                     print!("{}", sinex_protocol::stage_report::render(report));
@@ -483,7 +556,10 @@ async fn main() -> ExitCode {
             collected.extend(result["rows"].as_array().cloned().unwrap_or_default());
             if let Some(c) = cursor {
                 let Some(query) = result["query"].as_str() else {
-                    return fail(REFUSED, "paged answer has no query text");
+                    return fail(
+                        &client::protocol_mismatch(&name, "a paged answer has no query text"),
+                        json,
+                    );
                 };
                 request = Request::Query {
                     query: query.into(),
@@ -492,6 +568,7 @@ async fn main() -> ExitCode {
                 };
                 continue;
             }
+            let empty = collected.is_empty();
             let mut whole = result.clone();
             whole["rows"] = Value::Array(collected);
             if json {
@@ -500,7 +577,7 @@ async fn main() -> ExitCode {
                 let local = output::Local::new(whole["resolved"]["zone"].as_str());
                 print!("{}", output::answer(&whole, &local, None));
             }
-            return ExitCode::SUCCESS;
+            return answered(empty);
         }
         if json {
             print_json(&result);
@@ -515,7 +592,18 @@ async fn main() -> ExitCode {
             );
             print!("{}", output::answer(&result, &local, Some(&hint)));
         }
-        return ExitCode::SUCCESS;
+        let empty = cursor.is_none() && result["rows"].as_array().is_some_and(Vec::is_empty);
+        return answered(empty);
+    }
+}
+
+/// A read's exit: 0 when it found rows, 1 when it succeeded and matched
+/// nothing, so `sinexctl query … || handle` branches on an empty answer.
+fn answered(empty: bool) -> ExitCode {
+    if empty {
+        ExitCode::from(EMPTY)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 

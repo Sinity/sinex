@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 use sinex_model::{BatchKind, MaterialRef};
 use sinex_source_core::Limits;
 use sinex_sources::sources::notes;
@@ -83,7 +84,7 @@ async fn turn(
     ctx: &mut ReaderContext,
     readers: &mut [BindingReader],
     access: Access<'_>,
-) -> Result<(), String> {
+) -> Result<()> {
     let sink = Sink(ctx.blobs.clone());
     let (_stop, stop) = watch::channel(false);
     for (_, result) in read(
@@ -380,7 +381,12 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
         &mut |_, _| {},
     )
     .await;
-    assert!(result[0].1.as_ref().is_err_and(|e| e.contains("cancelled")));
+    assert!(
+        result[0]
+            .1
+            .as_ref()
+            .is_err_and(|e| e.to_string().contains("cancelled"))
+    );
     assert_eq!(
         positions::load(&mut ctx.read_conn, &binding.name)
             .await

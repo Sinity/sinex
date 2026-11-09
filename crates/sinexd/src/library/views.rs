@@ -1,6 +1,7 @@
 //! Reading the library as the operator sees it: an item with its shown
 //! values and curation history, a collection in order, a ranking.
-use super::{R, e};
+use super::R;
+use crate::Error;
 use serde_json::{Value, json};
 use sinex_library::curation::Snapshot;
 use sinex_library::plan::{Scale, entry_position};
@@ -12,19 +13,17 @@ use std::collections::{BTreeMap, BTreeSet};
 /// One item, as the operator reads it.
 pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
     let it = reads::item(conn, item)
-        .await
-        .map_err(e)?
-        .ok_or_else(|| format!("no library item {item}"))?;
-    let revisions = reads::revisions(conn, item).await.map_err(e)?;
-    let renditions = reads::renditions(conn, item).await.map_err(e)?;
-    let views = reads::views(conn, item).await.map_err(e)?;
-    let copies = reads::copies_at(conn, &it.copies).await.map_err(e)?;
+        .await?
+        .ok_or_else(|| Error::bad_request(format!("no library item {item}")))?;
+    let revisions = reads::revisions(conn, item).await?;
+    let renditions = reads::renditions(conn, item).await?;
+    let views = reads::views(conn, item).await?;
+    let copies = reads::copies_at(conn, &it.copies).await?;
 
     let mut snapshot = Snapshot::new();
     snapshot
         .load_where(conn, &["target", "item"], &[item.to_owned()])
-        .await
-        .map_err(e)?;
+        .await?;
     let mut current_entries = Vec::new();
     let mut history = Vec::new();
     let about: Vec<Curation> = snapshot
@@ -34,7 +33,7 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
         .cloned()
         .collect();
     for record in &about {
-        let state = snapshot.state(&record.root).map_err(e)?;
+        let state = snapshot.state(&record.root)?;
         let revision = state
             .revisions
             .iter()
@@ -60,8 +59,7 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
     }
     history.reverse();
     let current: Vec<Curation> = snapshot
-        .current()
-        .map_err(e)?
+        .current()?
         .into_iter()
         .filter(|record| record.target.as_ref().is_some_and(|t| t.item == item))
         .collect();
@@ -71,9 +69,7 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
     };
     // Tags and properties are the projection's rows; ratings and notes are
     // each author's own and are listed from the current records.
-    let shown_rows = sinex_store::library_shown::of_item(conn, item)
-        .await
-        .map_err(e)?;
+    let shown_rows = sinex_store::library_shown::of_item(conn, item).await?;
     let mut targets: BTreeMap<String, (Vec<Value>, serde_json::Map<String, Value>)> =
         BTreeMap::new();
     for row in shown_rows {
@@ -169,11 +165,11 @@ async fn entries_with_names(
         .iter()
         .filter_map(|entry| entry.key.clone())
         .collect();
-    snapshot.load_roots(conn, roots).await.map_err(e)?;
+    snapshot.load_roots(conn, roots).await?;
     let mut out = Vec::new();
     for entry in entries {
         let collection = entry.key.clone().unwrap_or_default();
-        let heads = snapshot.heads(&collection).map_err(e)?;
+        let heads = snapshot.heads(&collection)?;
         let names: Vec<Option<String>> = heads
             .iter()
             .filter_map(|head| snapshot.record(head))
@@ -195,17 +191,14 @@ async fn collection_named(
     snapshot: &mut Snapshot,
     name: &str,
 ) -> R<String> {
-    let holders = snapshot
-        .named(conn, CurationKind::Collection, name)
-        .await
-        .map_err(e)?;
+    let holders = snapshot.named(conn, CurationKind::Collection, name).await?;
     match holders.len() {
-        0 => Err(format!("no collection named {name}")),
+        0 => Err(Error::bad_request(format!("no collection named {name}"))),
         1 => Ok(holders.into_keys().next().expect("one")),
-        _ => Err(format!(
+        _ => Err(Error::bad_request(format!(
             "several collections are named {name}: {}",
             holders.into_keys().collect::<Vec<_>>().join(", ")
-        )),
+        ))),
     }
 }
 
@@ -217,11 +210,9 @@ async fn entries(
 ) -> R<Vec<Curation>> {
     snapshot
         .load_where(conn, &["key"], &[collection.to_owned()])
-        .await
-        .map_err(e)?;
+        .await?;
     let mut out: Vec<(authored::SortKey, Curation)> = snapshot
-        .current()
-        .map_err(e)?
+        .current()?
         .into_iter()
         .filter(|r| r.kind == CurationKind::Entry && r.key.as_deref() == Some(collection))
         .filter_map(|r| {
@@ -243,13 +234,9 @@ pub(crate) async fn collection_view(conn: &mut PgConnection, name: Option<&str>)
     let mut snapshot = Snapshot::new();
     match name {
         None => {
-            snapshot
-                .load_kind(conn, CurationKind::Collection)
-                .await
-                .map_err(e)?;
+            snapshot.load_kind(conn, CurationKind::Collection).await?;
             let collections: Vec<Curation> = snapshot
-                .current()
-                .map_err(e)?
+                .current()?
                 .into_iter()
                 .filter(|r| r.kind == CurationKind::Collection)
                 .collect();
@@ -268,7 +255,7 @@ pub(crate) async fn collection_view(conn: &mut PgConnection, name: Option<&str>)
         Some(name) => {
             let root = collection_named(conn, &mut snapshot, name).await?;
             let entries = entries(conn, &mut snapshot, &root).await?;
-            let heads = snapshot.heads(&root).map_err(e)?;
+            let heads = snapshot.heads(&root)?;
             Ok(json!({
                 "name": name,
                 "collection": root,
@@ -302,12 +289,9 @@ pub(crate) async fn rank_view(
     rule: Option<&str>,
 ) -> R<Value> {
     let mut snapshot = Snapshot::new();
-    let holders = snapshot
-        .named(conn, CurationKind::Scale, scale)
-        .await
-        .map_err(e)?;
+    let holders = snapshot.named(conn, CurationKind::Scale, scale).await?;
     let definition = match holders.len() {
-        0 => return Err(format!("no scale `{scale}`")),
+        0 => return Err(Error::bad_request(format!("no scale `{scale}`"))),
         1 => {
             let heads = holders.into_values().next().expect("one");
             heads
@@ -316,13 +300,16 @@ pub(crate) async fn rank_view(
                 .and_then(|record| record.value.as_ref())
                 .and_then(|value| Scale::from_value(scale, value))
         }
-        _ => return Err(format!("several scales are named `{scale}`")),
+        _ => {
+            return Err(Error::bad_request(format!(
+                "several scales are named `{scale}`"
+            )));
+        }
     };
     snapshot
         .load_where(conn, &["key"], &[scale.to_owned()])
-        .await
-        .map_err(e)?;
-    let current = snapshot.current().map_err(e)?;
+        .await?;
+    let current = snapshot.current()?;
     let judgments = rank::judgments(&current, scale);
     let mut candidates: BTreeSet<String> = BTreeSet::new();
     if let Some(name) = collection {
@@ -345,8 +332,8 @@ pub(crate) async fn rank_view(
         judges: set.clone(),
         ..ranking::FitOptions::default()
     };
-    let fit = ranking::fit(&items, &judgments, &options).map_err(e)?;
-    let k = usize::try_from(k.unwrap_or(2)).map_err(e)?;
+    let fit = ranking::fit(&items, &judgments, &options)?;
+    let k = usize::try_from(k.unwrap_or(2))?;
     let rule = match rule.unwrap_or("information") {
         "information" => ranking::SelectionRule::Information,
         "random" => ranking::SelectionRule::Random {
@@ -354,13 +341,13 @@ pub(crate) async fn rank_view(
         },
         "uncompared-first" => ranking::SelectionRule::UncomparedFirst,
         other => {
-            return Err(format!(
+            return Err(Error::bad_request(format!(
                 "no selection rule `{other}`; rules: information, random, uncompared-first"
-            ));
+            )));
         }
     };
     let next = if items.len() >= k {
-        let proposal = ranking::next_set(&fit, &items, k, rule).map_err(e)?;
+        let proposal = ranking::next_set(&fit, &items, k, rule)?;
         json!({
             "rule": format!("{:?}", proposal.rule),
             "items": proposal.seats.iter().map(|seat| json!({

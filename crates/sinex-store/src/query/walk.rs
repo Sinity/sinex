@@ -19,7 +19,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
             let found = sqlx::query_scalar!(r#"SELECT id AS "id!" FROM core.visible_events WHERE id = $1 UNION SELECT event_id FROM core.event_tombstones WHERE event_id = $1"#, id)
                 .fetch_optional(&mut *conn)
                 .await?;
-            found.ok_or_else(|| Error::Invalid(format!("no event {id}")))
+            found.ok_or_else(|| Error::NotFound(format!("no event {id}")))
         }
         Reference::Record {
             material,
@@ -61,7 +61,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                     )
                     .fetch_all(&mut *conn)
                     .await?;
-                    Err(Error::Invalid(if archived.is_empty() {
+                    Err(Error::NotFound(if archived.is_empty() {
                         "no reading of this record exists".to_string()
                     } else {
                         let ids: Vec<String> = archived.iter().map(Uuid::to_string).collect();

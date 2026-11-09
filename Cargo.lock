@@ -746,6 +746,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "command-surface"
+version = "0.1.0"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#af5056ebfdc593e3bbd40738721f7d134e600d5b"
+dependencies = [
+ "http",
+ "jiff",
+ "query-language",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4556,6 +4569,7 @@ dependencies = [
  "blake3",
  "canonical-json",
  "caseless",
+ "command-surface",
  "devkit",
  "jiff",
  "query-language",
@@ -4580,6 +4594,7 @@ dependencies = [
  "blake3",
  "canonical-json",
  "clap",
+ "command-surface",
  "devkit",
  "query-language",
  "schemars",
@@ -4720,6 +4735,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "blake3",
+ "command-surface",
  "devkit",
  "futures",
  "getrandom 0.3.4",
@@ -4767,6 +4783,7 @@ name = "sinexctl"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "command-surface",
  "devkit",
  "http-body-util",
  "hyper",
@@ -4792,6 +4809,7 @@ dependencies = [
  "blake3",
  "canonical-json",
  "clap",
+ "command-surface",
  "devkit",
  "flate2",
  "futures",

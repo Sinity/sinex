@@ -49,6 +49,7 @@ fn rejects_unknown_names_input_formats_and_removed_source_settings() {
     assert!(
         plan(&config(json!({"sources":{"no.such":{}}})), "h")
             .unwrap_err()
+            .to_string()
             .contains("no.such")
     );
     assert!(
@@ -57,6 +58,7 @@ fn rejects_unknown_names_input_formats_and_removed_source_settings() {
             "h"
         )
         .unwrap_err()
+        .to_string()
         .contains("no-such-format")
     );
     // Where a source reads is found by discovery, never configured per source.

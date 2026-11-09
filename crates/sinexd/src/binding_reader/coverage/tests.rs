@@ -24,7 +24,11 @@ fn source_read_outcomes_distinguish_empty_partial_and_failed_reads() {
     assert_eq!(partial.state, CoverageState::Partial);
     assert_eq!(partial.events, 3);
     assert_eq!(partial.failures, 2);
-    let failed = outcome(&binding(), at, &Err("input unavailable".into()));
+    let failed = outcome(
+        &binding(),
+        at,
+        &Err(crate::Error::internal("input unavailable")),
+    );
     assert_eq!(failed.state, CoverageState::Missing);
     assert_eq!(failed.reason.as_deref(), Some("input unavailable"));
 }
@@ -247,7 +251,7 @@ async fn invalid_saved_binding_settings_do_not_publish_open_coverage(db: devkit:
     )
     .await
     .unwrap_err();
-    assert!(error.contains("invalid settings"));
+    assert!(error.to_string().contains("invalid settings"));
     let records = sinex_store::live::of_types(&mut context.read_conn, &["source.coverage".into()])
         .await
         .unwrap();

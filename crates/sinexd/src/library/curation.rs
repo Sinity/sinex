@@ -3,7 +3,8 @@
 //! one snapshot of the live records (`sinex_library::plan`), stored as the
 //! request's material, and admitted only if no curation record changed since
 //! that snapshot.
-use super::{Library, R, Stored, VIA_API, e};
+use super::{Library, R, Stored, VIA_API};
+use crate::Error;
 use serde_json::{Value, json};
 use sinex_library::plan::{self, Caller, Draft, Key, Outcome, Planned};
 use sinex_library::{import, items, reads};
@@ -29,7 +30,9 @@ impl Library<'_> {
         actor: &str,
     ) -> R<Value> {
         if acts.is_empty() {
-            return Err("a curation request needs at least one write".into());
+            return Err(Error::bad_request(
+                "a curation request needs at least one write",
+            ));
         }
         let caller = Caller {
             author: actor.to_owned(),
@@ -37,10 +40,7 @@ impl Library<'_> {
         };
         let _planning = self.writer.lock_curation().await;
         let at = Timestamp::now();
-        match plan::plan(conn, request, acts, &caller, at)
-            .await
-            .map_err(e)?
-        {
+        match plan::plan(conn, request, acts, &caller, at).await? {
             Outcome::Repeat(records) => Ok(json!({
                 "request": records[0].request,
                 "repeat": true,
@@ -114,7 +114,9 @@ impl Library<'_> {
         actor: &str,
     ) -> R<Value> {
         if seconds.is_some_and(|s| !s.is_finite() || s < 0.0) {
-            return Err("a view's duration is a finite number of seconds, zero or more".into());
+            return Err(Error::bad_request(
+                "a view's duration is a finite number of seconds, zero or more",
+            ));
         }
         let it = self.item_or(conn, item).await?;
         let now = Timestamp::now();
@@ -160,8 +162,7 @@ impl Library<'_> {
         path: &Path,
         actor: &str,
     ) -> R<Value> {
-        let root =
-            std::fs::canonicalize(path).map_err(|err| format!("{}: {err}", path.display()))?;
+        let root = std::fs::canonicalize(path).map_err(|err| Error::file(path, err))?;
         let found =
             tokio::task::spawn_blocking(move || -> Vec<(PathBuf, String, Vec<import::Sidecar>)> {
                 let mut out = Vec::new();
@@ -187,12 +188,11 @@ impl Library<'_> {
                 }
                 out
             })
-            .await
-            .map_err(e)?;
+            .await?;
         let (mut matched, mut unmatched) = (0, 0);
         let mut drafts = Vec::new();
         for (file, content, sidecars) in found {
-            let items = reads::items_with(conn, &content).await.map_err(e)?;
+            let items = reads::items_with(conn, &content).await?;
             if items.is_empty() {
                 unmatched += 1;
                 continue;
@@ -241,9 +241,7 @@ impl Library<'_> {
             let rest = remaining.split_off(remaining.len().min(IMPORT_REQUEST_RECORDS));
             let _planning = self.writer.lock_curation().await;
             let at = Timestamp::now();
-            let planned = plan::plan_drafts(conn, remaining, &caller, at)
-                .await
-                .map_err(e)?;
+            let planned = plan::plan_drafts(conn, remaining, &caller, at).await?;
             written += planned.records.len();
             already += planned
                 .placed

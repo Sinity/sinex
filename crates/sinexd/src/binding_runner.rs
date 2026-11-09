@@ -4,6 +4,7 @@
 use crate::binding_reader::{self, BindingReader};
 use crate::material_access::Sink;
 use crate::writer::WriterHandle;
+use crate::{Error, Result};
 use sinex_source_core::{Binding, InputFormat, Settings};
 use sinex_sources::sources;
 use sinex_store::Blobs;
@@ -65,10 +66,10 @@ pub(crate) struct Config {
     pub staging_roots: Vec<std::path::PathBuf>,
 }
 impl Config {
-    pub(crate) fn load(path: &std::path::Path) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    pub(crate) fn load(path: &std::path::Path) -> Result<Self> {
+        let bytes = std::fs::read(path).map_err(|error| Error::file(path, error))?;
         let config: Self = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+            .map_err(|error| Error::from(error).within(path.display()))?;
         if let Some(signals) = &config.signals {
             signals.validate()?;
         }
@@ -110,11 +111,8 @@ impl Config {
 }
 use sinex_sources::discovery::{self, Availability, Cause};
 
-pub(crate) fn plan(
-    config: &Config,
-    host: &str,
-) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
-    let inputs = discovery::discover(&config.context(host))?;
+pub(crate) fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputFormat, Binding)>> {
+    let inputs = discovery::discover(&config.context(host)).map_err(Error::bad_value)?;
     Ok(discovery::reconcile(
         inputs
             .into_iter()
@@ -138,27 +136,24 @@ pub(crate) async fn backup_bindings(
     conn: &mut PgConnection,
     config: &Config,
     host: &str,
-) -> Result<Vec<Binding>, String> {
+) -> Result<Vec<Binding>> {
     use sinex_source_core::registry::{Origin, Shape};
     let specs = sources::specs();
     let mut bindings = plan(config, host)?
         .into_iter()
         .map(|(_, binding)| binding)
         .collect::<Vec<_>>();
-    for row in sinex_store::bindings::all(conn)
-        .await
-        .map_err(|e| e.to_string())?
-    {
+    for row in sinex_store::bindings::all(conn).await? {
         let settings: Settings = serde_json::from_value(row.settings)
-            .map_err(|e| format!("saved binding {}: {e}", row.binding))?;
+            .map_err(|e| Error::internal(format!("saved binding {}: {e}", row.binding)))?;
         if settings.host != host {
             continue;
         }
         if !specs.iter().any(|spec| spec.name == row.source) {
-            return Err(format!(
+            return Err(Error::internal(format!(
                 "saved native binding {} has unknown source {}",
                 row.binding, row.source
-            ));
+            )));
         }
         for spec in specs.iter().filter(|spec| spec.name == row.source) {
             bindings.push(Binding {
@@ -183,20 +178,12 @@ pub(crate) async fn backup_bindings(
 
 /// A saved name belongs to the source and input, independent of which current
 /// parser discovers it. Reconciliation compares only the proposed parser.
-async fn saved(
-    conn: &mut PgConnection,
-    database: &str,
-    host: &str,
-) -> Result<Vec<Binding>, String> {
+async fn saved(conn: &mut PgConnection, database: &str, host: &str) -> Result<Vec<Binding>> {
     let rows = match sinex_store::bindings::all(conn).await {
         Ok(rows) => rows,
         Err(_) => {
-            *conn = PgConnection::connect(database)
-                .await
-                .map_err(|error| error.to_string())?;
-            sinex_store::bindings::all(conn)
-                .await
-                .map_err(|error| error.to_string())?
+            *conn = PgConnection::connect(database).await?;
+            sinex_store::bindings::all(conn).await?
         }
     };
     let mut out = Vec::new();
@@ -393,9 +380,9 @@ pub(crate) async fn run(
     interval: Duration,
     failures: ReadFailures,
     mut stop: watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<()> {
     let (mut read_conn, database) = connection;
-    discovery::validate(&config.context(""))?;
+    discovery::validate(&config.context("")).map_err(Error::bad_value)?;
     let sink = Sink(blobs.clone());
     let mut rounds = binding_reader::Rounds::resume(&mut read_conn, &host).await?;
     let mut bindings = Bindings {
@@ -436,7 +423,7 @@ pub(crate) async fn run(
                 note(
                     &failures,
                     binding,
-                    result.as_ref().err().map(String::as_str),
+                    result.as_ref().err().map(ToString::to_string).as_deref(),
                 );
                 match result {
                     Err(error) => {

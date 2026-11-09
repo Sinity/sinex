@@ -163,17 +163,5 @@ pub fn parse(text: &str, ctx: &Context) -> Result<query_language::ast::Query, Qu
             format!("`{first}` is a Sinex operation, not a relation query"),
         ));
     }
-    query_language::parse::parse(text, &catalog).map_err(error)
-}
-pub fn error(e: query_language::Error) -> QueryError {
-    let not_built = e.kind == query_language::ErrorKind::NotAQuery;
-    let mut message = e.message;
-    if let Some(suggestion) = e.suggestion {
-        message.push_str(&format!("; try `{suggestion}`"));
-    }
-    QueryError {
-        message,
-        at: Some(e.position),
-        not_built,
-    }
+    query_language::parse::parse(text, &catalog).map_err(QueryError::from)
 }

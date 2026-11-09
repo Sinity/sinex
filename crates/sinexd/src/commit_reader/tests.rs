@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 use crate::writer::{self, Priority, WriterHandle};
 use serde_json::json;
 use sinex_model::lifecycle::{Act, Scope};
@@ -60,15 +61,14 @@ impl ReadModel for Counter {
         &'a self,
         events: &'a [Committed],
         tx: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             for e in events {
                 sqlx::query("INSERT INTO test_counter (seq, command) VALUES ($1, $2)")
                     .bind(e.commit_seq)
                     .bind(e.payload["command"].as_str())
                     .execute(&mut *tx)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    .await?;
             }
             Ok(())
         })
@@ -239,15 +239,13 @@ impl ReadModel for FailingSearch {
         &'a self,
         events: &'a [Committed],
         tx: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            sinex_store::read_models::apply_search_text(tx, events)
-                .await
-                .map_err(|e| e.to_string())?;
-            Err("stopped before saving position".into())
+            sinex_store::read_models::apply_search_text(tx, events).await?;
+            Err(crate::Error::internal("stopped before saving position"))
         })
     }
-    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
+    fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64>> {
         SearchText.position(conn)
     }
 }
@@ -317,8 +315,8 @@ impl ReadModel for BatchSizes {
         &'a self,
         events: &'a [Committed],
         _: &'a mut PgConnection,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move { self.0.send(events.len()).map_err(|e| e.to_string()) })
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move { self.0.send(events.len()).map_err(Error::from) })
     }
 }
 

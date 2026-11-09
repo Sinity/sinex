@@ -1,4 +1,6 @@
 use super::*;
+use crate::Result;
+use crate::writer::WriteError;
 use sinex_model::Timestamp;
 use sinex_model::event_types::forecast::{ForecastRecord, Issued};
 use sinex_sources::sources::forecast;
@@ -78,7 +80,7 @@ async fn request_refuses_all_records_when_one_does_not_parse(db: devkit::pg::Tes
     .await
     .err()
     .unwrap();
-    assert!(error.contains("failed to read back"), "{error}");
+    assert!(error.to_string().contains("failed to read back"), "{error}");
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut ctx.read_conn)
         .await
@@ -161,7 +163,7 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
         material: materials(ctx.blobs.clone()),
         check: Arc::new(move || {
             if checked_stop.load(Ordering::SeqCst) {
-                Err("capture stopped".into())
+                Err(Error::internal("capture stopped"))
             } else {
                 Ok(())
             }
@@ -183,7 +185,7 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
                 writer
                     .submit_checked(Priority::Bulk, batch, check)
                     .await
-                    .map_err(SubmitError::from)
+                    .map_err(crate::Error::from)
             }
         },
     )
@@ -338,7 +340,7 @@ async fn overlap(fail_first: bool) {
                             .unwrap();
                         assert_eq!(parsed.load(Ordering::SeqCst), 2);
                         if fail_first {
-                            return Err("first commit failed".into());
+                            return Err(Error::internal("first commit failed"));
                         }
                     }
                     check()?;
@@ -428,15 +430,14 @@ async fn synchronous_storage_does_not_stop_other_runtime_tasks() {
             Value::Null,
             &sink,
             Limits::default(),
-        )
-        .map_err(|e| e.to_string())?;
-        let permit = send.permit().ok_or("submission cancelled")?;
-        let batch = prepared
-            .batches()
-            .map_err(|e| e.to_string())?
-            .next()
-            .unwrap()
-            .map_err(|e| e.to_string())?;
+        )?;
+        let permit = send.permit().ok_or_else(|| {
+            Error::new(
+                command_surface::FailureKind::Cancelled,
+                "submission cancelled",
+            )
+        })?;
+        let batch = prepared.batches()?.next().unwrap()?;
         send.send(blocking::Parsed {
             batch,
             elapsed: started.elapsed(),
@@ -523,7 +524,7 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
                             ));
                             queued.notify_one();
                         }
-                        answer.await.map_err(SubmitError::from)
+                        answer.await.map_err(crate::Error::from)
                     }
                 },
             )
@@ -609,33 +610,44 @@ async fn an_unavailable_request_finalizes_its_observed_source_run(db: devkit::pg
     .await
     .err()
     .unwrap();
-    assert!(error.contains("synthetic unavailable bytes"), "{error}");
+    assert!(
+        error.to_string().contains("synthetic unavailable bytes"),
+        "{error}"
+    );
     request_run(&mut ctx.read_conn, 0).await;
     ctx.close().await.unwrap();
 }
 
 #[test]
-fn a_stale_write_stays_stale_through_submission() {
+fn a_stale_write_stays_stale_and_retryable_through_the_daemon_error() {
     // Whatever the words, the variant decides.
     for what in ["signal checkpoint changed", "inputs moved", ""] {
-        assert!(matches!(
-            SubmitError::from(WriteError::Stale(what)),
-            SubmitError::Stale(_)
-        ));
+        let error = crate::Error::from(WriteError::Stale(what));
+        assert!(matches!(error, crate::Error::Write(WriteError::Stale(_))));
+        let failure = error.failure();
+        assert_eq!(failure.kind, command_surface::FailureKind::Conflict);
+        assert!(failure.retryable);
     }
 }
 
 #[test]
-fn other_write_failures_are_failed_submissions() {
-    for error in [
-        WriteError::Refused("signal checkpoint changed; evaluate again".into()),
-        WriteError::Unavailable("database unavailable".into()),
-        WriteError::Stopped,
+fn other_write_failures_are_not_stale() {
+    for (error, kind) in [
+        (
+            WriteError::Refused("signal checkpoint changed; evaluate again".into()),
+            command_surface::FailureKind::BadValue,
+        ),
+        (
+            WriteError::Unavailable("database unavailable".into()),
+            command_surface::FailureKind::NotRunning,
+        ),
+        (
+            WriteError::Stopped,
+            command_surface::FailureKind::NotRunning,
+        ),
     ] {
-        assert!(matches!(SubmitError::from(error), SubmitError::Failed(_)));
+        let error = crate::Error::from(error);
+        assert!(!matches!(error, crate::Error::Write(WriteError::Stale(_))));
+        assert_eq!(error.failure().kind, kind);
     }
-    assert!(matches!(
-        SubmitError::from("signal checkpoint changed".to_owned()),
-        SubmitError::Failed(_)
-    ));
 }

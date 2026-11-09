@@ -1,6 +1,8 @@
 //! Operations that change what is stored: the lifecycle (archive, restore,
 //! tombstone, undo, resume), replay, recomputing a derivation, and the crawl.
 use super::*;
+use crate::writer::WriterHandle;
+use crate::{Error, Result};
 use sinex_model::lifecycle::{Act, Scope};
 
 /// A lifecycle request's scope options, as the command table names them.
@@ -14,8 +16,8 @@ pub(super) struct ScopeArgs {
     pub operation: Option<String>,
 }
 
-fn uuid(what: &str, text: &str) -> Result<uuid::Uuid, String> {
-    uuid::Uuid::parse_str(text).map_err(|e| format!("{what} {text}: {e}"))
+fn uuid(what: &str, text: &str) -> Result<uuid::Uuid> {
+    uuid::Uuid::parse_str(text).map_err(|e| Error::bad_value(format!("{what} {text}: {e}")))
 }
 
 impl Api {
@@ -24,43 +26,34 @@ impl Api {
         &self,
         caller: &Caller,
         act: Act,
-        scope: Result<Scope, Reply>,
+        scope: Scope,
         compare: bool,
-    ) -> Reply {
-        let scope = match scope {
-            Ok(scope) => scope,
-            Err(reply) => return reply,
-        };
-        let Some(writer) = &self.writer else {
-            return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
-        answer(crate::lifecycle::run(&mut conn, writer, act, caller.actor, scope, compare).await)
+    ) -> Result<Reply> {
+        let writer = self.writer()?;
+        let mut conn = self.acquire(caller).await?;
+        Ok(
+            crate::lifecycle::run(&mut conn, writer, act, caller.actor, scope, compare)
+                .await?
+                .reply(),
+        )
+    }
+
+    /// The writer, which only `sinexd run` holds.
+    pub(super) fn writer(&self) -> Result<&WriterHandle> {
+        self.writer.as_ref().ok_or_else(|| {
+            Error::not_configured("this daemon has no writer; writes go through `sinexd run`")
+        })
     }
 
     /// Continue an operation from its saved position: a lifecycle operation
     /// or a replay.
-    pub(super) async fn resume(&self, caller: &Caller, operation: &str) -> Reply {
-        let operation = match uuid("operation", operation) {
-            Ok(id) => OperationId(id),
-            Err(e) => return refused(e),
-        };
-        let Some(writer) = &self.writer else {
-            return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
-        let kind = match sinex_store::lifecycle::operation_kind(&mut conn, operation).await {
-            Ok(kind) => kind,
-            Err(e) => return refused(e.to_string()),
-        };
+    pub(super) async fn resume(&self, caller: &Caller, operation: &str) -> Result<Reply> {
+        let operation = OperationId(uuid("operation", operation)?);
+        let writer = self.writer()?;
+        let mut conn = self.acquire(caller).await?;
+        let kind = sinex_store::lifecycle::operation_kind(&mut conn, operation).await?;
         match kind.as_deref() {
-            None => refused(format!("no operation {}", operation.0)),
+            None => Err(Error::not_found(format!("no operation {}", operation.0))),
             Some(sinex_store::stages::KIND) => {
                 drop(conn);
                 self.resume_stage(caller, operation).await
@@ -81,18 +74,16 @@ impl Api {
                 )
                 .await
             }
-            Some(_) => answer(crate::lifecycle::resume(&mut conn, writer, operation).await),
+            Some(_) => Ok(crate::lifecycle::resume(&mut conn, writer, operation)
+                .await?
+                .reply()),
         }
     }
 
     /// The one scope a lifecycle request names: an event reference, the
     /// event rows of a query, materials, a run, a source and time range, or
     /// an earlier operation. None or several is an error, never everything.
-    pub(super) async fn lifecycle_scope(
-        &self,
-        caller: &Caller,
-        args: ScopeArgs,
-    ) -> Result<Scope, Reply> {
+    pub(super) async fn lifecycle_scope(&self, caller: &Caller, args: ScopeArgs) -> Result<Scope> {
         let given = [
             args.target.is_some(),
             !args.material.is_empty(),
@@ -104,60 +95,42 @@ impl Api {
         .filter(|g| *g)
         .count();
         if given != 1 {
-            return Err(refused(
+            return Err(Error::bad_request(
                 "name exactly one scope: a reference or query, --material, --run, --source or --operation",
             ));
         }
         if args.source.is_none() && (args.after.is_some() || args.before.is_some()) {
-            return Err(refused("--after and --before narrow --source"));
+            return Err(Error::bad_request("--after and --before narrow --source"));
         }
         if !args.material.is_empty() {
             return args
                 .material
                 .iter()
                 .map(|m| uuid("material", m).map(sinex_model::MaterialId))
-                .collect::<Result<_, _>>()
-                .map(|materials| Scope::Materials { materials })
-                .map_err(refused);
+                .collect::<Result<_>>()
+                .map(|materials| Scope::Materials { materials });
         }
         if let Some(run) = &args.run {
-            return uuid("run", run)
-                .map(|run| Scope::Run { run: RunId(run) })
-                .map_err(refused);
+            return Ok(Scope::Run {
+                run: RunId(uuid("run", run)?),
+            });
         }
         if let Some(operation) = &args.operation {
-            return uuid("operation", operation)
-                .map(|operation| Scope::Operation {
-                    operation: OperationId(operation),
-                })
-                .map_err(refused);
+            return Ok(Scope::Operation {
+                operation: OperationId(uuid("operation", operation)?),
+            });
         }
         if let Some(source) = args.source {
             return Ok(Scope::Source {
                 source,
-                after: args
-                    .after
-                    .as_deref()
-                    .map(timestamp)
-                    .transpose()
-                    .map_err(refused)?,
-                before: args
-                    .before
-                    .as_deref()
-                    .map(timestamp)
-                    .transpose()
-                    .map_err(refused)?,
+                after: args.after.as_deref().map(timestamp).transpose()?,
+                before: args.before.as_deref().map(timestamp).transpose()?,
             });
         }
         let target = args.target.expect("one scope was given");
-        let mut conn = self
-            .acquire(caller)
-            .await
-            .map_err(|e| refused(e.to_string()))?;
+        let mut conn = self.acquire(caller).await?;
         if let Ok(reference) = query::parse_reference(&target) {
-            let id = sinex_store::query::resolve(&mut conn, &reference)
-                .await
-                .map_err(|e| refused(e.to_string()))?;
+            let id = sinex_store::query::resolve(&mut conn, &reference).await?;
             return Ok(Scope::Events {
                 events: vec![EventId(id)],
                 query: None,
@@ -171,11 +144,11 @@ impl Api {
             let answer = match sinex_store::query::run(&mut conn, &target, None, &ctx, &page).await
             {
                 Ok(answer) => answer,
-                Err(sinex_store::Error::Query(error)) => return Err(query_refusal(&target, error)),
-                Err(e) => return Err(refused(e.to_string())),
+                Err(sinex_store::Error::Query(error)) => return Err(error.failure(&target).into()),
+                Err(e) => return Err(e.into()),
             };
             if !matches!(answer.table.as_str(), "events" | "archive") {
-                return Err(refused(format!(
+                return Err(Error::bad_request(format!(
                     "the query selects {} rows; a lifecycle scope takes event rows",
                     answer.table
                 )));
@@ -184,8 +157,8 @@ impl Api {
                 let id = row
                     .get("id")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| refused("the query's rows carry no event id"))?;
-                events.push(EventId(uuid("event", id).map_err(refused)?));
+                    .ok_or_else(|| Error::bad_request("the query's rows carry no event id"))?;
+                events.push(EventId(uuid("event", id)?));
             }
             match answer.page.cursor {
                 Some(cursor) => page.cursor = Some(cursor),
@@ -206,36 +179,27 @@ impl Api {
         mut o: crate::replay::Options,
         all: bool,
         sealed: bool,
-    ) -> Reply {
+    ) -> Result<Reply> {
         if sealed {
             if caller.actor != "operator" || !caller.grants.split(',').any(|g| g == "sealed") {
-                return refused(
+                return Err(Error::refused(
                     "sealed replay requires the operator's current unlock and explicit --sealed grant",
-                );
+                ));
             }
             let unlock = self.unlock.lock().await;
-            let Some(session) = unlock.as_ref() else {
-                return refused("sealed replay needs an operator unlock");
-            };
-            if let Err(error) = session.unlock.check() {
-                return refused(error);
-            }
+            let session = unlock
+                .as_ref()
+                .ok_or_else(|| Error::refused("sealed replay needs an operator unlock"))?;
+            session.unlock.check()?;
             o.unlock = Some(session.unlock.clone());
         }
-        let Some(writer) = &self.writer else {
-            return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
+        let writer = self.writer()?;
+        let mut conn = self.acquire(caller).await?;
         let compare = o.compare;
-        match crate::replay::run(&mut conn, &self.blobs, writer, o).await {
-            Ok(report) => Reply::Ok {
-                result: report.to_json(compare, all),
-            },
-            Err(e) => refused(e),
-        }
+        let report = crate::replay::run(&mut conn, &self.blobs, writer, o).await?;
+        Ok(Reply::Ok {
+            result: report.to_json(compare, all),
+        })
     }
 
     pub(super) async fn recompute(
@@ -246,15 +210,10 @@ impl Api {
         switch: Option<i64>,
         range: Option<(sinex_model::Timestamp, sinex_model::Timestamp)>,
         examples: usize,
-    ) -> Reply {
-        let Some(writer) = &self.writer else {
-            return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
-        let conn = match self.acquire(caller).await {
-            Ok(c) => c.detach(),
-            Err(e) => return refused(e.to_string()),
-        };
-        let mut driver = match crate::derivation_runner::DerivationRunner::for_one(
+    ) -> Result<Reply> {
+        let writer = self.writer()?;
+        let conn = self.acquire(caller).await?.detach();
+        let mut driver = crate::derivation_runner::DerivationRunner::for_one(
             conn,
             writer.clone(),
             derivation,
@@ -262,14 +221,13 @@ impl Api {
             &self.derivations,
             sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
         )
-        .await
-        {
-            Ok(d) => d.with_blobs(self.blobs.clone()),
-            Err(e) => return refused(e),
-        };
+        .await?
+        .with_blobs(self.blobs.clone());
         let result = if let Some(comparison) = switch {
             if compare || range.is_some() {
-                Err("switch requires a comparison ID and no compare or range options".to_owned())
+                Err(Error::bad_request(
+                    "switch requires a comparison ID and no compare or range options",
+                ))
             } else {
                 driver.switch(derivation, comparison, caller.actor).await
                     .map(|count| json!({"derivation": derivation, "comparison": comparison, "keys_marked": count}))
@@ -286,10 +244,9 @@ impl Api {
                 .map(|n| json!({ "derivation": derivation, "keys_marked": n }))
         };
         let ended = driver.end_runs().await;
-        match (result, ended) {
-            (Ok(result), Ok(())) => Reply::Ok { result },
-            (Err(e), _) | (_, Err(e)) => refused(e),
-        }
+        let result = result?;
+        ended?;
+        Ok(Reply::Ok { result })
     }
 
     pub(super) async fn crawl(
@@ -299,15 +256,10 @@ impl Api {
         urls: Vec<String>,
         limit: Option<u64>,
         pause: u64,
-    ) -> Reply {
-        let Some(writer) = &self.writer else {
-            return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
-        match crate::crawl::run(
+    ) -> Result<Reply> {
+        let writer = self.writer()?;
+        let mut conn = self.acquire(caller).await?;
+        let totals = crate::crawl::run(
             &mut conn,
             &self.blobs,
             writer,
@@ -317,24 +269,10 @@ impl Api {
             limit.map(|l| usize::try_from(l).unwrap_or(usize::MAX)),
             std::time::Duration::from_secs(pause),
         )
-        .await
-        {
-            Ok(totals) => Reply::Ok {
-                result: json!({ "crawl": totals.to_json() }),
-            },
-            Err(e) => refused(e),
-        }
-    }
-}
-
-fn answer(result: Result<crate::lifecycle::Answer, String>) -> Reply {
-    match result {
-        Ok(crate::lifecycle::Answer::Done(result)) => Reply::Ok { result },
-        Ok(crate::lifecycle::Answer::Refused(reason)) => refused(reason),
-        Ok(crate::lifecycle::Answer::StoppedEarly(reason, result)) => {
-            Reply::StoppedEarly { reason, result }
-        }
-        Err(e) => refused(e),
+        .await?;
+        Ok(Reply::Ok {
+            result: json!({ "crawl": totals.to_json() }),
+        })
     }
 }
 
@@ -350,13 +288,12 @@ impl Api {
         export_date: Option<String>,
         follow: bool,
         batch_events: Option<u64>,
-    ) -> Reply {
-        let items = match crate::stage::items(paths, parsers) {
-            Ok(items) => items,
-            Err(e) => return refused(e),
-        };
+    ) -> Result<Reply> {
+        let items = crate::stage::items(paths, parsers)?;
         if batch_events == Some(0) {
-            return refused("--batch-events needs at least one reading per batch");
+            return Err(Error::bad_request(
+                "--batch-events needs at least one reading per batch",
+            ));
         }
         let request = crate::stage::Request {
             items,
@@ -372,27 +309,21 @@ impl Api {
 
     /// Read a stage that did not end again, from its recorded plan, its
     /// saved progress and its bindings' cursors, and answer when it ends.
-    async fn resume_stage(&self, caller: &Caller, operation: OperationId) -> Reply {
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
-        let stored = match sinex_store::stages::show(&mut conn, operation).await {
-            Ok(Some(stored)) => stored,
-            Ok(None) => return refused(format!("no stage operation {}", operation.0)),
-            Err(e) => return refused(e.to_string()),
-        };
+    async fn resume_stage(&self, caller: &Caller, operation: OperationId) -> Result<Reply> {
+        let mut conn = self.acquire(caller).await?;
+        let stored = sinex_store::stages::show(&mut conn, operation)
+            .await?
+            .ok_or_else(|| Error::not_found(format!("no stage operation {}", operation.0)))?;
         drop(conn);
         if stored.result == Some(sinex_model::lifecycle::OperationResult::Ok) {
-            return refused(format!("stage {} already ended ok", operation.0));
+            return Err(Error::conflict(format!(
+                "stage {} already ended ok",
+                operation.0
+            )));
         }
-        match crate::stage::Request::from_scope(&stored.scope) {
-            Ok(request) => {
-                self.start_stage(caller, operation, request, Some(stored.inventory), true)
-                    .await
-            }
-            Err(e) => refused(e),
-        }
+        let request = crate::stage::Request::from_scope(&stored.scope)?;
+        self.start_stage(caller, operation, request, Some(stored.inventory), true)
+            .await
     }
 
     /// Plan, claim the bindings, and read in a task of its own; `saved` is
@@ -404,10 +335,8 @@ impl Api {
         request: crate::stage::Request,
         saved: Option<sinex_model::stage::SavedProgress>,
         follow: bool,
-    ) -> Reply {
-        let Some(writer) = self.writer.clone() else {
-            return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
+    ) -> Result<Reply> {
+        let writer = self.writer()?.clone();
         let planned = request.clone();
         let config = self.source_config.clone();
         let host = self.host.clone();
@@ -420,18 +349,10 @@ impl Api {
             }
             let plan = planned.plan()?;
             crate::stage::not_continuous(&plan, &crate::binding_runner::plan(&config, &host)?)?;
-            Ok::<_, String>(plan)
+            Ok::<_, Error>(plan)
         })
-        .await;
-        let plan = match plan {
-            Ok(Ok(plan)) => plan,
-            Ok(Err(e)) => return refused(e),
-            Err(e) => return refused(e.to_string()),
-        };
-        let claim = match crate::stage::Claim::take(&self.running_stages, &plan) {
-            Ok(claim) => claim,
-            Err(e) => return refused(e),
-        };
+        .await??;
+        let claim = crate::stage::Claim::take(&self.running_stages, &plan)?;
         let unlock = if caller.actor == "operator" {
             self.unlock
                 .lock()
@@ -449,7 +370,7 @@ impl Api {
         let (begun, started) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
             let _claim = claim;
-            let mut conn = reads.acquire().await.map_err(|e| e.to_string())?;
+            let mut conn = reads.acquire().await?;
             let mut staging = crate::stage::Staging {
                 read_conn: &mut conn,
                 blobs: &blobs,
@@ -470,43 +391,38 @@ impl Api {
             }
         });
         if !follow && let Ok(started) = started.await {
-            return Reply::Ok {
+            return Ok(Reply::Ok {
                 result: serde_json::to_value(started).expect("stage report serializes"),
-            };
+            });
         }
-        match task.await {
-            Ok(Ok(outcome)) if outcome.failures.is_empty() => Reply::Ok {
-                result: serde_json::to_value(outcome).expect("stage report serializes"),
-            },
-            Ok(Ok(outcome)) => Reply::StoppedEarly {
-                reason: format!(
-                    "stage {} stopped early; `resume {}` reads it again once the cause is cleared: {}",
-                    outcome.operation.0,
-                    outcome.operation.0,
-                    outcome.failures.join("; ")
-                ),
-                result: serde_json::to_value(outcome).expect("stage report serializes"),
-            },
-            Ok(Err(e)) => refused(e),
-            Err(e) => refused(e.to_string()),
+        let outcome = task.await??;
+        let result = serde_json::to_value(&outcome).expect("stage report serializes");
+        if outcome.failures.is_empty() {
+            return Ok(Reply::Ok { result });
         }
+        let reason = format!(
+            "stage {} stopped early; `resume {}` reads it again once the cause is cleared: {}",
+            outcome.operation.0,
+            outcome.operation.0,
+            outcome.failures.join("; ")
+        );
+        Ok(Reply::StoppedEarly {
+            failure: sinex_protocol::stopped_early(command_surface::Failure::new(
+                command_surface::FailureKind::Io,
+                reason,
+            )),
+            result,
+        })
     }
 
-    pub(super) async fn stage_show(&self, caller: &Caller, operation: &str) -> Reply {
-        let operation = match uuid("operation", operation) {
-            Ok(id) => OperationId(id),
-            Err(e) => return refused(e),
-        };
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
-        match sinex_store::stages::show(&mut conn, operation).await {
-            Ok(Some(stage)) => Reply::Ok {
-                result: json!(stage),
-            },
-            Ok(None) => refused(format!("no stage operation {}", operation.0)),
-            Err(e) => refused(e.to_string()),
-        }
+    pub(super) async fn stage_show(&self, caller: &Caller, operation: &str) -> Result<Reply> {
+        let operation = OperationId(uuid("operation", operation)?);
+        let mut conn = self.acquire(caller).await?;
+        let stage = sinex_store::stages::show(&mut conn, operation)
+            .await?
+            .ok_or_else(|| Error::not_found(format!("no stage operation {}", operation.0)))?;
+        Ok(Reply::Ok {
+            result: json!(stage),
+        })
     }
 }

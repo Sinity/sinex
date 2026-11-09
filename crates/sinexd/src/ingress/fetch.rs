@@ -1,5 +1,6 @@
 //! Producer reads use operator grants attached to the authenticated NATS identity.
 use super::*;
+use crate::{Error, Result};
 use serde::{Deserialize, de::DeserializeOwned};
 use sinex_model::Class;
 use sinex_protocol::{
@@ -93,16 +94,16 @@ impl Grants {
                 .any(|right| self.kind(right.trim_end_matches('*').trim_end_matches('.')))
     }
 }
-pub(crate) fn load(path: Option<&std::path::Path>) -> Result<ProducerGrants, String> {
+pub(crate) fn load(path: Option<&std::path::Path>) -> Result<ProducerGrants> {
     let Some(path) = path else {
         return Ok(BTreeMap::new());
     };
-    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let grants: ProducerGrants =
-        serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|error| Error::file(path, error))?;
+    let grants: ProducerGrants = serde_json::from_slice(&bytes)
+        .map_err(|error| Error::from(error).within(path.display()))?;
     for (producer, grant) in &grants {
         if !sinex_protocol::nats::valid_producer(producer) {
-            return Err("invalid producer in read grants".into());
+            return Err(Error::internal("invalid producer in read grants"));
         }
         for prefix in &grant.kind_prefixes {
             let prefix = prefix.trim_end_matches('*').trim_end_matches('.');
@@ -114,7 +115,9 @@ pub(crate) fn load(path: Option<&std::path::Path>) -> Result<ProducerGrants, Str
                         })
                 })
             {
-                return Err(format!("invalid kind prefix in grants for {producer}"));
+                return Err(Error::internal(format!(
+                    "invalid kind prefix in grants for {producer}"
+                )));
             }
         }
     }
@@ -221,7 +224,7 @@ impl Requests {
         let view = sinex_store::query::show(&mut conn, &sinex_model::query::Reference::Event(id.0))
             .await
             .map_err(|error| match error {
-                sinex_store::Error::Invalid(_) => missing(),
+                sinex_store::Error::Invalid(_) | sinex_store::Error::NotFound(_) => missing(),
                 other => unavailable(other),
             })?;
         let event_type: String = field(&view, "event_type")?;

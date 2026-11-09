@@ -359,7 +359,7 @@ fn a_pdf_reader_that_does_not_finish_in_time_is_stopped() {
         reader.to_str().unwrap(),
     )
     .unwrap_err();
-    assert!(error.contains("did not finish"), "{error}");
+    assert!(error.to_string().contains("did not finish"), "{error}");
 }
 
 #[devkit::test]

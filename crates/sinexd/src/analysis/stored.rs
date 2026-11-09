@@ -5,6 +5,7 @@ use super::{
     panel::Panel,
     recipes::{self, Recipe},
 };
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_analysis::Eligibility;
 use sinex_analysis::coverage::Coverage;
@@ -138,7 +139,7 @@ impl Keyed for StoredProducts {
             Err(error) => Computed {
                 error: Some(sinex_model::BuildError::Payload(
                     "analysis.request".into(),
-                    error,
+                    error.to_string(),
                 )),
                 ..Default::default()
             },
@@ -159,12 +160,12 @@ fn visible(event: &Event, request: &AnalysisRequest) -> bool {
         sinex_model::Class::Sealed => false,
     }
 }
-fn settings(request: &AnalysisRequest) -> Result<Settings, String> {
+fn settings(request: &AnalysisRequest) -> Result<Settings> {
     let start = request
         .day_start
         .parse()
-        .map_err(|e| format!("day start: {e}"))?;
-    let zone = jiff::tz::TimeZone::get(&request.zone).map_err(|e| e.to_string())?;
+        .map_err(|e| Error::from(e).within("day start"))?;
+    let zone = jiff::tz::TimeZone::get(&request.zone)?;
     let time_settings = TimeSettings::from_parts(zone, start);
     Ok(Settings {
         label: time_settings.label(),
@@ -204,8 +205,8 @@ fn panel(
     inputs: &[&Event],
     from: jiff::civil::Date,
     to: jiff::civil::Date,
-) -> Result<Panel, String> {
-    let units = panel::days(&settings.time_settings, from, to).map_err(|e| e.to_string())?;
+) -> Result<Panel> {
+    let units = panel::days(&settings.time_settings, from, to)?;
     let bounds: std::collections::BTreeMap<_, _> = units
         .iter()
         .map(|unit| {
@@ -213,18 +214,12 @@ fn panel(
             Ok((
                 unit.label.clone(),
                 (
-                    settings
-                        .time_settings
-                        .day_start(day)
-                        .map_err(|error| error.to_string())?,
-                    settings
-                        .time_settings
-                        .day_end(day)
-                        .map_err(|error| error.to_string())?,
+                    settings.time_settings.day_start(day)?,
+                    settings.time_settings.day_end(day)?,
                 ),
             ))
         })
-        .collect::<Result<_, String>>()?;
+        .collect::<Result<_>>()?;
     let figures: Vec<_> = inputs
         .iter()
         .filter(|e| e.event_type == "metric.figure" && e.payload["grain"] == "day")
@@ -303,9 +298,8 @@ fn panel(
         as_of: 0,
     })
 }
-fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, String> {
-    let request: AnalysisRequest =
-        serde_json::from_value(key.clone()).map_err(|e| e.to_string())?;
+fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
+    let request: AnalysisRequest = serde_json::from_value(key.clone())?;
     let Some(request_event) = inputs
         .iter()
         .find(|e| e.event_type == "analysis.request" && e.payload["request"] == request.request)
@@ -316,8 +310,7 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, Strin
     let from = super::parse_day(&request.from)?;
     let to = super::parse_day(&request.to)?;
     let requested_days: std::collections::BTreeSet<_> =
-        panel::days(&settings.time_settings, from, to)
-            .map_err(|error| error.to_string())?
+        panel::days(&settings.time_settings, from, to)?
             .into_iter()
             .map(|day| day.label)
             .collect();
@@ -444,10 +437,7 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>, Strin
     }
     if request.operation == "brief" {
         let today = panel(&request, &settings, &selected, to, to)?;
-        let day_end = settings
-            .time_settings
-            .day_end(to)
-            .map_err(|e| e.to_string())?;
+        let day_end = settings.time_settings.day_end(to)?;
         let mut sections = super::brief::sections(&today, &p, &settings, to, env.now < day_end)?;
         for finding in sections
             .iter_mut()

@@ -1,11 +1,8 @@
 //! Authored signal revisions are ordinary request material.
 use super::*;
+use crate::{Error, Result};
 use sinex_model::event_types::signal::{RuleWritten, SignalRecord};
 use sinex_model::{Class, Timestamp};
-
-fn error(error: impl std::fmt::Display) -> String {
-    error.to_string()
-}
 
 impl Api {
     pub(super) async fn signal(
@@ -15,9 +12,9 @@ impl Api {
         name: Option<String>,
         rule: Option<String>,
         page: Page,
-    ) -> Result<Value, String> {
+    ) -> Result<Value> {
         if action == "list" {
-            let mut conn = self.acquire(caller).await.map_err(error)?;
+            let mut conn = self.acquire(caller).await?;
             let answer = sinex_store::query::run(
                 &mut conn,
                 "events where event_type = \"signal.rule\"",
@@ -25,54 +22,47 @@ impl Api {
                 &self.context(),
                 &page,
             )
-            .await
-            .map_err(error)?;
-            return serde_json::to_value(answer).map_err(error);
+            .await?;
+            return serde_json::to_value(answer).map_err(Error::from);
         }
         if page.cursor.is_some() || page.size.is_some() {
-            return Err("signal mutation does not take a page or cursor".into());
+            return Err(Error::bad_request(
+                "signal mutation does not take a page or cursor",
+            ));
         }
         let configuration = self
             .source_config
             .signals
             .as_ref()
-            .ok_or("signals are not configured")?;
+            .ok_or_else(|| Error::not_configured("signals are not configured"))?;
         let writer = self
             .writer
             .as_ref()
-            .ok_or("signal authoring requires sinexd run")?;
+            .ok_or_else(|| Error::not_configured("signal authoring requires sinexd run"))?;
         let _serial = writer.lock_signals().await;
-        let mut conn = self.acquire(caller).await.map_err(error)?;
+        let mut conn = self.acquire(caller).await?;
         let submitted = rule
             .as_deref()
             .map(serde_json::from_str::<::signals::Rule>)
-            .transpose()
-            .map_err(error)?;
+            .transpose()?;
         let name = name
             .or_else(|| submitted.as_ref().map(|rule| rule.name.clone()))
-            .ok_or("signal mutation requires a name")?;
+            .ok_or_else(|| Error::bad_request("signal mutation requires a name"))?;
         let prior = sinex_store::query::live_payload(&mut conn, "signal.rule", "name", &name)
-            .await
-            .map_err(error)?
-            .map(|(_, payload)| serde_json::from_value::<RuleWritten>(payload).map_err(error))
+            .await?
+            .map(|(_, payload)| serde_json::from_value::<RuleWritten>(payload).map_err(Error::from))
             .transpose()?;
         let mut active = match (action, submitted) {
             ("add", Some(rule)) => {
                 if name != rule.name {
-                    return Err("signal name differs from rule.name".into());
+                    return Err(Error::bad_request("signal name differs from rule.name"));
                 }
                 rule.validate(&configuration.configuration())
-                    .map_err(error)?;
-                sinex_store::query::initialize_calendar(&mut conn)
-                    .await
-                    .map_err(error)?;
+                    .map_err(Error::bad_value)?;
+                sinex_store::query::initialize_calendar(&mut conn).await?;
                 let start = self.context();
-                let seq = sinex_store::query::current_seq(&mut conn)
-                    .await
-                    .map_err(error)?;
-                let answer = crate::signals::query(&mut conn, &rule.query, &start, seq)
-                    .await
-                    .map_err(error)?;
+                let seq = sinex_store::query::current_seq(&mut conn).await?;
+                let answer = crate::signals::query(&mut conn, &rule.query, &start, seq).await?;
                 ::signals::ActiveRule {
                     version: ::signals::RuleVersion {
                         product: "sinex".into(),
@@ -86,7 +76,7 @@ impl Api {
                                 .version
                                 .revision
                                 .checked_add(1)
-                                .ok_or("signal revision exceeds u64")
+                                .ok_or_else(|| Error::bad_request("signal revision exceeds u64"))
                         })?,
                     },
                     rule,
@@ -103,24 +93,32 @@ impl Api {
             ("enable" | "disable" | "remove", None) => {
                 let mut active = prior
                     .as_ref()
-                    .ok_or("no visible authored signal with this name")?
+                    .ok_or_else(|| Error::not_found("no visible authored signal with this name"))?
                     .active
                     .clone();
                 active.version.revision = active
                     .version
                     .revision
                     .checked_add(1)
-                    .ok_or("signal revision exceeds u64")?;
+                    .ok_or_else(|| Error::bad_request("signal revision exceeds u64"))?;
                 active.rule.enabled = action == "enable";
                 active
             }
             ("add", None) => {
-                return Err("signal add requires --rule with the complete rule JSON".into());
+                return Err(Error::bad_request(
+                    "signal add requires --rule with the complete rule JSON",
+                ));
             }
             ("enable" | "disable" | "remove", Some(_)) => {
-                return Err("signal state changes do not accept a replacement rule".into());
+                return Err(Error::bad_request(
+                    "signal state changes do not accept a replacement rule",
+                ));
             }
-            _ => return Err("signal action must be add, list, enable, disable or remove".into()),
+            _ => {
+                return Err(Error::bad_request(
+                    "signal action must be add, list, enable, disable or remove",
+                ));
+            }
         };
         // Authorship is the current authenticated act, including a new disabled revision.
         active.author = if caller.actor == "operator" {
@@ -136,8 +134,7 @@ impl Api {
                 .split(',')
                 .filter(|grant| !grant.is_empty())
                 .map(|grant| serde_json::from_value(json!(grant)))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(error)?,
+                .collect::<Result<Vec<_>, _>>()?,
         );
         let record = SignalRecord::Rule(Box::new(RuleWritten {
             name,
@@ -163,13 +160,13 @@ impl Api {
         )
         .await?;
         if done.outcome.admitted != 1 || done.outcome.failures != 0 {
-            return Err("signal revision was not admitted".into());
+            return Err(Error::bad_request("signal revision was not admitted"));
         }
         let event = done
             .outcome
             .admitted_ids
             .first()
-            .ok_or("signal revision has no committed reading")?;
+            .ok_or_else(|| Error::bad_request("signal revision has no committed reading"))?;
         Ok(json!({"citation":format!("sinex:ev/{event}"),"event":event,"material":done.material}))
     }
 }

@@ -1,4 +1,5 @@
 //! Store and open material bytes for capture, requests and replay.
+use crate::{Error, Result};
 mod material;
 pub(crate) mod sealing;
 pub(crate) use material::{MaterialOnDemand, open, open_checked};
@@ -23,16 +24,17 @@ pub(crate) struct Access<'a> {
 pub(crate) struct Sink(pub Blobs);
 
 impl MaterialSink for Sink {
-    fn put(&self, bytes: &[u8]) -> Result<String, String> {
-        self.0.put(bytes).map_err(|e| e.to_string())
+    fn put(&self, bytes: &[u8]) -> std::result::Result<String, String> {
+        self.0.put(bytes).map_err(|error| error.to_string())
     }
 
     /// An export archive is streamed into the store, never kept in memory.
-    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
-        let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    fn put_file(&self, path: &std::path::Path) -> std::result::Result<String, String> {
+        let file =
+            std::fs::File::open(path).map_err(|error| Error::file(path, error).to_string())?;
         self.0
             .put_seekable(std::io::BufReader::new(file))
-            .map_err(|e| e.to_string())
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -44,13 +46,17 @@ pub(crate) struct MaterialAccess {
     unlock: Option<Unlock>,
 }
 impl MaterialAccess {
-    pub(crate) fn new(blobs: Blobs, class: Class, access: Access<'_>) -> Result<Self, String> {
+    pub(crate) fn new(blobs: Blobs, class: Class, access: Access<'_>) -> Result<Self> {
         let sealing = if class == Class::Sealed {
             let recipient = match access.recipient {
                 Some(recipient) => Some(recipient.clone()),
                 None => class_key()?,
             }
-            .ok_or("its class is sealed, but no class key is configured (SINEX_CLASS_KEY_FILE)")?;
+            .ok_or_else(|| {
+                Error::not_configured(
+                    "its class is sealed, but no class key is configured (SINEX_CLASS_KEY_FILE)",
+                )
+            })?;
             Some(Arc::new(SealingSink::new(blobs.clone(), recipient)))
         } else {
             None
@@ -62,7 +68,7 @@ impl MaterialAccess {
             unlock: access.unlock.cloned(),
         })
     }
-    pub(crate) fn archive(blobs: Blobs, class: Class, access: Access<'_>) -> Result<Self, String> {
+    pub(crate) fn archive(blobs: Blobs, class: Class, access: Access<'_>) -> Result<Self> {
         let recipient = if class == Class::Sealed {
             let configured = if access.recipient.is_none() {
                 class_key()?
@@ -75,7 +81,9 @@ impl MaterialAccess {
                     .cloned()
                     .or(configured)
                     .or_else(|| access.unlock.map(Unlock::recipient))
-                    .ok_or("sealed capture requires the class key's public recipient")?,
+                    .ok_or_else(|| {
+                        Error::internal("sealed capture requires the class key's public recipient")
+                    })?,
             )
         } else {
             None
@@ -93,15 +101,14 @@ impl MaterialAccess {
         &self,
         conn: &mut PgConnection,
         stored: Option<&sinex_source_core::shared_pass::StoredFile>,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         if let (Some(stored), Some(sealing)) = (stored, &self.sealing) {
-            let unlock = self
-                .unlock
-                .as_ref()
-                .ok_or("continuing a sealed file needs an operator unlock")?;
+            let unlock = self.unlock.as_ref().ok_or_else(|| {
+                Error::refused("continuing a sealed file needs an operator unlock")
+            })?;
             let material = stored
                 .material
-                .ok_or("a sealed stored copy names no material")?;
+                .ok_or_else(|| Error::internal("a sealed stored copy names no material"))?;
             let key = unlock.data_key(conn, material).await?;
             sealing.restore_key(stored.blob.clone(), key)?;
         }
@@ -110,10 +117,10 @@ impl MaterialAccess {
     pub(crate) fn store_reader(
         &self,
         reader: impl std::io::Read + std::io::Seek,
-    ) -> Result<String, String> {
+    ) -> Result<String> {
         match &self.sealing {
             Some(sealing) => sealing.put_reader(reader),
-            None => self.plain.0.put_seekable(reader).map_err(|e| e.to_string()),
+            None => self.plain.0.put_seekable(reader).map_err(Error::from),
         }
     }
     pub(crate) fn archive_input<C>(
@@ -121,7 +128,7 @@ impl MaterialAccess {
         blob: &str,
         length: u64,
         mut check: C,
-    ) -> Result<sinex_source_core::shared_pass::Input, String>
+    ) -> Result<sinex_source_core::shared_pass::Input>
     where
         C: FnMut() -> std::io::Result<()> + Send + 'static,
     {
@@ -129,21 +136,19 @@ impl MaterialAccess {
         match &self.sealing {
             Some(sealing) => {
                 let key = sealing.key(blob)?;
-                Ok(Input::Seekable(Box::new(
-                    self.plain
-                        .0
-                        .read_sealed(blob, Some(length), &key, read_limits(length)?, move || {
-                            check().map_err(Into::into)
-                        })
-                        .map_err(|e| e.to_string())?,
-                )))
+                Ok(Input::Seekable(Box::new(self.plain.0.read_sealed(
+                    blob,
+                    Some(length),
+                    &key,
+                    read_limits(length)?,
+                    move || check().map_err(Into::into),
+                )?)))
             }
-            None => Ok(Input::Sequential(Box::new(
-                self.plain
-                    .0
-                    .read_plain(blob, Some(length), move || check().map_err(Into::into))
-                    .map_err(|e| e.to_string())?,
-            ))),
+            None => Ok(Input::Sequential(Box::new(self.plain.0.read_plain(
+                blob,
+                Some(length),
+                move || check().map_err(Into::into),
+            )?))),
         }
     }
     pub(crate) fn sink(&self) -> &dyn drivers::MaterialSink {
@@ -152,7 +157,7 @@ impl MaterialAccess {
             None => &self.plain,
         }
     }
-    pub(crate) fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<()> {
         self.unlock.as_ref().map_or(Ok(()), Unlock::check)
     }
     pub(crate) fn admission_check(
@@ -170,7 +175,7 @@ impl MaterialAccess {
         conn: &mut PgConnection,
         source: &dyn Source,
         acquired: &mut drivers::Acquired,
-    ) -> Result<Option<MaterialId>, String> {
+    ) -> Result<Option<MaterialId>> {
         let stored = reopen_stored(
             conn,
             &self.plain.0,
@@ -186,7 +191,7 @@ impl MaterialAccess {
         &self,
         batch: &mut Batch,
         stored: Option<MaterialId>,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         for record in &mut batch.records {
             if let sinex_model::RecordOutcome::Events { events, .. } = record {
                 for event in events {
@@ -211,7 +216,7 @@ impl MaterialAccess {
         binding: &str,
         carry: serde_json::Value,
         acquired: &drivers::Acquired,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value> {
         self.check()?;
         if let (Some(sealing), Some(material)) = (&self.sealing, &acquired.material)
             && let Some(drivers::StoredBytes::Blob {
@@ -219,16 +224,16 @@ impl MaterialAccess {
                 records: Some(_),
                 ..
             }) = &material.stored
-            && self.plain.0.is_sealed(name).map_err(|e| e.to_string())?
+            && self.plain.0.is_sealed(name)?
         {
             let unlock = self
                 .unlock
                 .as_ref()
-                .ok_or("stored sealed material needs an operator unlock")?;
+                .ok_or_else(|| Error::refused("stored sealed material needs an operator unlock"))?;
             let key = unlock.data_key(conn, material.id).await?;
             sealing.restore_key(name.clone(), key)?;
         }
-        if acquired.starts_over().map_err(|e| e.to_string())? {
+        if acquired.starts_over()? {
             return Ok(Value::Null);
         }
         match (&self.sealing, acquired.material.is_some()) {
@@ -250,13 +255,11 @@ pub(crate) async fn reopen_stored(
     acquired: &mut drivers::Acquired,
     sealing: Option<&crate::material_access::sealing::SealingSink>,
     unlock: Option<&crate::material_access::sealing::Unlock>,
-) -> Result<bool, String> {
+) -> Result<bool> {
     let Some(material) = &mut acquired.material else {
         return Ok(false);
     };
-    let registered = sinex_store::material_bytes::registered(conn, &[material.id.0])
-        .await
-        .map_err(|e| e.to_string())?;
+    let registered = sinex_store::material_bytes::registered(conn, &[material.id.0]).await?;
     if registered.is_empty() {
         return Ok(false);
     }
@@ -264,7 +267,9 @@ pub(crate) async fn reopen_stored(
     if opened.reference.parser != source.spec().parser
         || opened.reference.parser_version != source.spec().parser_version
     {
-        return Err("a stored material was read by another parser version".into());
+        return Err(Error::internal(
+            "a stored material was read by another parser version",
+        ));
     }
     if let (Some(sealing), Some(key)) = (sealing, &opened.key) {
         sealing.restore_current(material.id, opened.reference.blob.clone(), key.clone())?;

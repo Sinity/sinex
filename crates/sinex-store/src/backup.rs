@@ -78,7 +78,7 @@ pub async fn release(
     )
     .fetch_optional(&mut *tx)
     .await?
-    .ok_or_else(|| Error::Invalid(format!("no backup hold {id}")))?;
+    .ok_or_else(|| Error::NotFound(format!("no backup hold {id}")))?;
     if released.is_none() {
         let position = crate::commit_log::allocate_position(&mut tx).await?;
         let scope = serde_json::json!({"hold":id});
