@@ -10,7 +10,7 @@
 //! (recorded when it is planned) reads it. In the repeated hour when summer
 //! time ends, a line takes the later of its two instants unless that is after
 //! the sample that read it.
-use super::fields::{FieldReader, from_unix_secs_f64};
+use super::fields::{FieldReader, unix_seconds};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sinex_model::event_types::router::{
@@ -67,7 +67,7 @@ struct CaptureRecord {
     schema: String,
     schema_version: i64,
     lane: String,
-    ts: f64,
+    ts: serde_json::Number,
     host: String,
     seq: i64,
     payload: Value,
@@ -113,7 +113,7 @@ impl Parser for RouterParser {
             )));
         }
         let sample = Sample {
-            sampled_at: from_unix_secs_f64(captured.ts, "ts")?,
+            sampled_at: unix_seconds(&captured.ts.to_string(), "ts")?,
             host: captured.host,
             seq: captured.seq,
         };

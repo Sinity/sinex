@@ -120,18 +120,13 @@ impl FieldReader {
         }
     }
 
-    /// Seconds since the Unix epoch, whole or fractional.
+    /// Seconds since the Unix epoch, whole or fractional, as a JSON number or
+    /// text. The written decimal is read exactly, so nanosecond digits survive.
     pub(crate) fn unix_time(&mut self, name: &str) -> Result<Option<Timestamp>, RecordError> {
         match self.take(name) {
             None => Ok(None),
-            Some(Value::Number(n)) => n
-                .as_f64()
-                .map(|secs| from_unix_secs_f64(secs, name))
-                .transpose(),
-            Some(Value::String(s)) => match s.trim().parse::<f64>() {
-                Ok(secs) => from_unix_secs_f64(secs, name).map(Some),
-                Err(_) => Err(RecordError::new(format!("{name} is not a time: {s:?}"))),
-            },
+            Some(Value::Number(n)) => unix_seconds(&n.to_string(), name).map(Some),
+            Some(Value::String(s)) => unix_seconds(s.trim(), name).map(Some),
             Some(other) => Err(RecordError::new(format!("{name} is not a time: {other}"))),
         }
     }
@@ -193,14 +188,17 @@ impl FieldReader {
     }
 }
 
-pub(crate) fn from_unix_secs_f64(secs: f64, name: &str) -> Result<Timestamp, RecordError> {
-    // A float of seconds holds about microseconds at today's epoch; whole
-    // seconds plus rounded microseconds avoid inventing nanoseconds.
-    if !secs.is_finite() {
-        return Err(RecordError::new(format!("{name} is not a time: {secs}")));
-    }
-    let whole = secs.floor();
-    let micros = ((secs - whole) * 1e6).round() as i128;
-    Timestamp::from_unix_ns(whole as i128 * 1_000_000_000 + micros * 1_000)
-        .map_err(|_| RecordError::new(format!("{name} {secs} is out of range")))
+/// Decimal seconds since the Unix epoch (`1731000000.123456789`, `1.7e9`),
+/// rounded to the nanosecond. A JSON number Sinex parsed as a float is read
+/// from its shortest spelling, which keeps the digits the source wrote.
+pub(crate) fn unix_seconds(text: &str, name: &str) -> Result<Timestamp, RecordError> {
+    let nanos = query_language::number::Decimal::parse(text)
+        .ok_or_else(|| RecordError::new(format!("{name} is not a time: {text:?}")))?
+        .scaled_i128(9)
+        .ok_or_else(|| RecordError::new(format!("{name} {text} is out of range")))?;
+    Timestamp::from_unix_ns(nanos)
+        .map_err(|_| RecordError::new(format!("{name} {text} is out of range")))
 }
+
+#[cfg(test)]
+mod tests;
