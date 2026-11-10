@@ -302,7 +302,10 @@ impl Harness {
     async fn send(&self, producer: &str, frame: &Ingress) -> Acknowledgment {
         let mut spooled = Vec::new();
         match frame {
-            Ingress::Material { material, .. } => spooled.push(material.blob.clone()),
+            Ingress::Material { material, .. } => {
+                spooled.push(material.blob.clone());
+                spooled.extend(material.chunks.iter().map(|chunk| chunk.blob.clone()));
+            }
             Ingress::LargeFrame { blob, .. } => {
                 spooled.push(blob.clone());
                 if let Ok(bytes) = std::fs::read(self.fixture_path(blob))
@@ -459,6 +462,7 @@ impl Harness {
                     },
                     blob,
                     length: bytes.len() as u64,
+                    chunks: Vec::new(),
                     parser: sinex_sources::sources::zsh::SPEC.parser.into(),
                     parser_version: sinex_sources::sources::zsh::SPEC.parser_version,
                     part_index: 0,
@@ -644,6 +648,7 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
             },
             blob,
             length: file.len() as u64,
+            chunks: Vec::new(),
             parser: "polylogue-claude-code".into(),
             parser_version: 40,
             part_index: 0,
@@ -1416,6 +1421,7 @@ async fn storage_faults_stay_unavailable_and_invalid_bytes_are_refused(
         },
         blob: blob.clone(),
         length: bytes.len() as u64,
+        chunks: Vec::new(),
         parser: "synthetic".into(),
         parser_version: 1,
         part_index: 0,
@@ -2124,3 +2130,118 @@ mod coverage;
 mod recorded_continuations;
 
 mod acl_diagnostics;
+
+/// A file rewritten whole and captured again after a change in one place:
+/// the producer offers its bytes as content-defined chunks, sending only the
+/// chunks Sinex does not hold. Sinex stores just those, acknowledges the
+/// chunks' extents in order, and the extents read back as exactly the bytes.
+#[devkit::test]
+async fn a_rewrite_sent_as_chunks_stores_only_the_changed_chunks(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
+    let mut x = 5u64;
+    let first: Vec<u8> = (0..(1 << 20))
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            b'a' + (x % 26) as u8
+        })
+        .collect();
+    let mut second = first.clone();
+    second[700 << 10] = b'!';
+    let chunker = hashed_blobs::Chunker::plain(hashed_blobs::ChunkSizes::default());
+    let chunks_of =
+        |bytes: &[u8]| -> Vec<Vec<u8>> { chunker.chunks(bytes).map(Result::unwrap).collect() };
+    let mut sent = std::collections::BTreeSet::new();
+    let mut frame_for = |frame: &str, bytes: &[u8]| {
+        let chunks = chunks_of(bytes);
+        let (_, mut material) = h.material_frame(frame, b"");
+        let Ingress::Material {
+            material: inner, ..
+        } = &mut material
+        else {
+            unreachable!()
+        };
+        inner.blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+        inner.length = bytes.len() as u64;
+        inner.chunks = chunks
+            .iter()
+            .map(|chunk| sinex_protocol::MaterialChunk {
+                blob: format!("blake3:{}", blake3::hash(chunk).to_hex()),
+                length: chunk.len() as u64,
+            })
+            .collect();
+        // Only chunks not sent before are placed in the frame directory.
+        let mut new = 0;
+        for chunk in &chunks {
+            if sent.insert(chunk.clone()) {
+                h.fixture_blob(chunk);
+                new += 1;
+            } else {
+                let _ = std::fs::remove_file(
+                    h.fixture_path(&format!("blake3:{}", blake3::hash(chunk).to_hex())),
+                );
+            }
+        }
+        let _ = std::fs::remove_file(h.fixture_path(&inner.blob));
+        (material, chunks.len(), new)
+    };
+    let (frame, total, new) = frame_for("rewrite-1", &first);
+    assert_eq!(total, new);
+    let ack = h.send("kitty", &frame).await;
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    let stored = h.count("SELECT count(*) FROM core.blob_extents").await;
+
+    let (frame, total, new) = frame_for("rewrite-2", &second);
+    assert!(matches!(new, 1 | 2), "{new} of {total} chunks changed");
+    let ack = h.send("kitty", &frame).await;
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.blob_extents").await,
+        stored + new as i64
+    );
+    let extents: Vec<hashed_blobs::Extent> = extents(&ack)
+        .iter()
+        .map(|descriptor| hashed_blobs::Extent::decode(descriptor).unwrap())
+        .collect();
+    assert_eq!(extents.len(), total);
+    let read = hashed_blobs::Reader::new(&h.store_dir)
+        .read(&extents, None)
+        .unwrap();
+    assert_eq!(read, second);
+    assert_eq!(
+        h.blobs
+            .read(&format!("blake3:{}", blake3::hash(&first).to_hex()))
+            .unwrap(),
+        first
+    );
+}
+
+/// A chunk list that does not hash to the material's name stores nothing.
+#[devkit::test]
+async fn chunks_that_are_not_the_material_are_refused(db: devkit::pg::TestDatabase) {
+    let h = Harness::start(db).await;
+    let bytes = vec![b'z'; 100 << 10];
+    let (_, mut frame) = h.material_frame("chunked-wrong", &bytes);
+    let Ingress::Material { material, .. } = &mut frame else {
+        unreachable!()
+    };
+    let _ = std::fs::remove_file(h.fixture_path(&material.blob));
+    let wrong = h.fixture_blob(b"other bytes");
+    material.chunks = vec![sinex_protocol::MaterialChunk {
+        blob: wrong,
+        length: 11,
+    }];
+    let ack = h.send("kitty", &frame).await;
+    assert!(
+        matches!(
+            &ack.result,
+            sinex_protocol::FrameResult::Refused {
+                kind: FrameRefusal::Bytes,
+                ..
+            }
+        ),
+        "{ack:?}"
+    );
+    assert_eq!(h.count("SELECT count(*) FROM core.blob_chunks").await, 0);
+}

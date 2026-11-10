@@ -965,7 +965,7 @@ fn acknowledgment(s: StoredFrame) -> Result<Acknowledgment, String> {
     let result = match outcome.result {
         StoredResult::Admitted { counts, .. } => FrameResult::Admitted {
             material: s.material_id.map(sinex_model::MaterialId),
-            material_extents: s.material_extent.into_iter().collect(),
+            material_extents: s.material_extents.unwrap_or_default(),
             admitted,
             counts,
             commit_seq: s.commit_seq,
@@ -1175,7 +1175,7 @@ impl Requests {
                         .map_err(|error| error.to_string())?,
                 };
                 Ok(ProducerMaterial {
-                    extents: vec![row.extent],
+                    extents: row.extents,
                     number: row.number,
                     frame: row.frame,
                     material: MaterialFrame {
@@ -1188,6 +1188,7 @@ impl Requests {
                         },
                         blob: row.blob,
                         length: u64::try_from(row.length).map_err(|e| e.to_string())?,
+                        chunks: Vec::new(),
                         parser: row.parser,
                         parser_version: u32::try_from(row.parser_version)
                             .map_err(|e| e.to_string())?,

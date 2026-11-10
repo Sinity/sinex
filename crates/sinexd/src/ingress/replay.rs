@@ -73,7 +73,7 @@ pub(super) async fn select(
                     .0,
             )
             .map_err(|error| Check::Unavailable(error.to_string()))?,
-            extents: vec![descriptors[id].1.clone()],
+            extents: descriptors[id].1.clone(),
         });
     }
     let mut selections = Vec::new();

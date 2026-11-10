@@ -100,7 +100,9 @@ impl Ingest {
     }
 
     /// Store a material's bytes from the frame directory of `frame`, unless the
-    /// content store already holds them.
+    /// content store already holds them. A chunked material's chunks are
+    /// stored the same way, each unless already held, and its chunk list is
+    /// recorded once the chunks read back as the material's bytes.
     pub(super) async fn store_material(
         &mut self,
         producer: &str,
@@ -123,6 +125,43 @@ impl Ingest {
             material.blob.clone(),
             material.length,
         );
+        if !material.chunks.is_empty() {
+            let chunks = material.chunks.clone();
+            return tokio::task::spawn_blocking(move || {
+                // Chunks already held are not stored again; the frame
+                // directory supplies the others.
+                let mut parts = Vec::with_capacity(chunks.len());
+                for chunk in chunks {
+                    let held = blobs
+                        .contains(&chunk.blob)
+                        .map_err(|e| Check::Unavailable(e.to_string()))?;
+                    let prepared = if held {
+                        None
+                    } else {
+                        Some(
+                            frame_bytes::prepared(
+                                &root,
+                                &producer,
+                                &frame,
+                                &chunk.blob,
+                                chunk.length,
+                            )
+                            .map_err(check_bytes)?,
+                        )
+                    };
+                    parts.push((chunk.blob, prepared));
+                }
+                blobs
+                    .put_chunks(&blob, length, parts)
+                    .map(drop)
+                    .map_err(|e| match e {
+                        sinex_store::Error::Invalid(reason) => Check::Bytes(reason),
+                        other => Check::Unavailable(other.to_string()),
+                    })
+            })
+            .await
+            .map_err(|e| Check::Unavailable(e.to_string()))?;
+        }
         tokio::task::spawn_blocking(move || {
             let prepared = frame_bytes::prepared(&root, &producer, &frame, &blob, length)
                 .map_err(check_bytes)?;

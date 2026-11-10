@@ -5,6 +5,7 @@ use sqlx::Connection;
 /// Groups covered by one database transaction. Acknowledgment follows its commit.
 pub struct Commit {
     groups: Vec<Arc<SyncedGroup>>,
+    chunk_lists: Vec<Hash>,
 }
 impl Blobs {
     /// Load read authority without opening a writer or changing segment files.
@@ -17,8 +18,19 @@ impl Blobs {
             "SELECT committed_end FROM core.blob_segments WHERE segment=$1",
             SEGMENT
         )
-        .fetch_optional(conn)
+        .fetch_optional(&mut *conn)
         .await?;
+        let chunk_rows =
+            sqlx::query!("SELECT blob, chunk FROM core.blob_chunks ORDER BY blob, ordinal")
+                .fetch_all(&mut *conn)
+                .await?;
+        let mut chunk_lists: BTreeMap<Hash, Vec<Hash>> = BTreeMap::new();
+        for row in chunk_rows {
+            chunk_lists
+                .entry(parse(&row.blob)?)
+                .or_default()
+                .push(parse(&row.chunk)?);
+        }
         let mut state = self.state()?;
         if state.writer.is_some() || !state.groups.is_empty() || !state.prepared.is_empty() {
             return Err(crate::Error::Invalid(
@@ -44,6 +56,8 @@ impl Blobs {
             }
         }
         state.extents = extents;
+        state.chunk_lists = chunk_lists;
+        state.unrecorded_chunk_lists.clear();
         state.initialized = true;
         state.committed_end = committed_end;
         Ok(())
@@ -107,6 +121,28 @@ impl Blobs {
                 .map_err(|_| crate::Error::Invalid("segment end exceeds i64".into()))?;
             sqlx::query!("INSERT INTO core.blob_segments(segment,committed_end) VALUES($1,$2) ON CONFLICT(segment) DO UPDATE SET committed_end=greatest(core.blob_segments.committed_end,EXCLUDED.committed_end)",SEGMENT,end).execute(&mut *conn).await?;
         }
+        // A chunk list is recorded once its chunks' extents are committed:
+        // they were appended by now, or already held.
+        let chunk_lists: Vec<(Hash, Vec<Hash>)> = {
+            let state = self.state()?;
+            state
+                .unrecorded_chunk_lists
+                .iter()
+                .filter_map(|blob| Some((*blob, state.chunk_lists.get(blob)?.clone())))
+                .collect()
+        };
+        for (blob, chunks) in &chunk_lists {
+            let chunks: Vec<String> = chunks.iter().map(Hash::to_string).collect();
+            sqlx::query!(
+                "INSERT INTO core.blob_chunks (blob, ordinal, chunk)
+                 SELECT $1, (n - 1)::integer, chunk FROM unnest($2::text[]) WITH ORDINALITY AS c(chunk, n)
+                 ON CONFLICT DO NOTHING",
+                blob.to_string(),
+                &chunks
+            )
+            .execute(&mut *conn)
+            .await?;
+        }
         let deleting: bool =
             sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM core.blob_extents x JOIN core.blobs b ON b.hash=x.hash WHERE x.deleting IS DISTINCT FROM (b.status='deleting')) AS \"changed!\"")
                 .fetch_one(&mut *conn)
@@ -114,10 +150,16 @@ impl Blobs {
         if deleting {
             sqlx::query!("UPDATE core.blob_extents x SET deleting=(b.status='deleting') FROM core.blobs b WHERE b.hash=x.hash AND x.deleting IS DISTINCT FROM (b.status='deleting')").execute(conn).await?;
         }
-        Ok(Commit { groups })
+        Ok(Commit {
+            groups,
+            chunk_lists: chunk_lists.into_iter().map(|(blob, _)| blob).collect(),
+        })
     }
     pub fn acknowledge(&self, commit: Commit) -> Result<()> {
         let mut state = self.state()?;
+        for blob in &commit.chunk_lists {
+            state.unrecorded_chunk_lists.remove(blob);
+        }
         for group in commit.groups {
             state
                 .writer
@@ -154,7 +196,9 @@ pub async fn delete_unreferenced_extents(
         receipt
     };
     blobs.acknowledge(receipt)?;
-    let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash)").fetch_all(&mut *conn).await?;
+    // Chunk lists of bytes no row cites go with them.
+    sqlx::query!("DELETE FROM core.blob_chunks c WHERE NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=c.blob AND b.status<>'removed')").execute(&mut *conn).await?;
+    let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash) AND NOT EXISTS(SELECT 1 FROM core.blob_chunks c WHERE c.chunk=x.hash)").fetch_all(&mut *conn).await?;
     if !names.is_empty() {
         sqlx::query!(
             "UPDATE core.blob_extents SET deleting=true WHERE hash=ANY($1)",
@@ -172,7 +216,7 @@ pub async fn finish_deleting_extents(
     blobs: &Blobs,
 ) -> Result<Vec<String>> {
     let mut found = Vec::new();
-    let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE x.deleting AND NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash) ORDER BY x.hash").fetch_all(&mut *conn).await?;
+    let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE x.deleting AND NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash) AND NOT EXISTS(SELECT 1 FROM core.blob_chunks c WHERE c.chunk=x.hash) ORDER BY x.hash").fetch_all(&mut *conn).await?;
     for name in names {
         if !blobs.delete(conn, &name).await? {
             continue;

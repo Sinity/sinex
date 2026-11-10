@@ -1,7 +1,7 @@
 //! The product's committed hash index over append-only framed segments.
 use crate::Result;
 use hashed_blobs::{Extent, Hash, Kind, Preparation, Prepared, SegmentWriter, SyncedGroup};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -32,6 +32,10 @@ struct State {
     writer: Option<SegmentWriter>,
     prepared: BTreeMap<Hash, Prepared>,
     extents: BTreeMap<Hash, Extent>,
+    /// Blobs stored as content-defined chunks: their chunk names in order.
+    chunk_lists: BTreeMap<Hash, Vec<Hash>>,
+    /// Chunk lists the next extent commit records.
+    unrecorded_chunk_lists: BTreeSet<Hash>,
     groups: Vec<Arc<SyncedGroup>>,
     committed_end: u64,
     initialized: bool,
@@ -75,6 +79,9 @@ impl Blobs {
     fn prepare(&self, prepared: Prepared) -> Result<String> {
         let hash = prepared.hash();
         let mut state = self.state()?;
+        if state.chunk_lists.contains_key(&hash) {
+            return Ok(hash.to_string());
+        }
         let known = state
             .extents
             .get(&hash)
@@ -119,6 +126,60 @@ impl Blobs {
         self.prepare(self.preparation()?.sealed(reader, 3, key)?)
     }
 
+    /// Record `name` as the concatenation of `chunks`, each either held
+    /// already or supplied prepared. The chunks are read through once, so the
+    /// list is recorded only when they hash to `name` and add up to `length`;
+    /// prepared chunks are appended with the next group, held ones are not
+    /// stored again.
+    pub fn put_chunks(
+        &self,
+        name: &str,
+        length: u64,
+        chunks: Vec<(String, Option<Prepared>)>,
+    ) -> Result<String> {
+        let hash = parse(name)?;
+        if chunks.is_empty() {
+            return Err(crate::Error::Invalid(format!(
+                "chunked blob {name} names no chunks"
+            )));
+        }
+        let mut whole = blake3::Hasher::new();
+        let mut total = 0u64;
+        let mut order = Vec::with_capacity(chunks.len());
+        for (chunk, prepared) in &chunks {
+            let chunk_hash = parse(chunk)?;
+            let mut reader = match prepared {
+                Some(prepared) => {
+                    if prepared.hash() != chunk_hash || prepared.kind() != &Kind::Plain {
+                        return Err(crate::Error::Invalid(format!(
+                            "prepared chunk is not the plain bytes {chunk}"
+                        )));
+                    }
+                    prepared.reader(None, hashed_blobs::ReadLimits::default())?
+                }
+                None => self.read_plain(chunk, None, || Ok(()))?,
+            };
+            total += std::io::copy(&mut reader, &mut whole)?;
+            order.push(chunk_hash);
+        }
+        if Hash(*whole.finalize().as_bytes()) != hash || total != length {
+            return Err(crate::Error::Invalid(format!(
+                "the chunks of {name} are {total} bytes that are not {name}"
+            )));
+        }
+        for (_, prepared) in chunks {
+            if let Some(prepared) = prepared {
+                self.prepare(prepared)?;
+            }
+        }
+        let mut state = self.state()?;
+        if !state.chunk_lists.contains_key(&hash) && !state.extents.contains_key(&hash) {
+            state.chunk_lists.insert(hash, order);
+            state.unrecorded_chunk_lists.insert(hash);
+        }
+        Ok(hash.to_string())
+    }
+
     /// Append all prepared blobs in one group and wait for its dedicated sync thread.
     pub fn sync_pending(&self) -> Result<()> {
         let mut state = self.state()?;
@@ -155,37 +216,50 @@ impl Blobs {
         groups.push(Arc::new(group));
         Ok(())
     }
-    fn extent(&self, name: &str) -> Result<Extent> {
+    /// The extents that read back as `name`: its own, or its chunks' in order.
+    fn extents(&self, name: &str) -> Result<Vec<Extent>> {
         let hash = parse(name)?;
-        if let Some(extent) = self.state()?.extents.get(&hash).cloned() {
-            return Ok(extent);
+        if let Some(extents) = self.state()?.held_extents(&hash) {
+            return Ok(extents);
         }
         self.sync_pending()?;
-        self.state()?.extents.get(&hash).cloned().ok_or_else(|| {
+        self.state()?.held_extents(&hash).ok_or_else(|| {
             crate::Error::Invalid(format!("blob {name} has no committed or pending extent"))
         })
     }
-    /// Encoded descriptors are the portable read authority carried in producer acknowledgments.
+    /// Encoded descriptors are the portable read authority carried in producer
+    /// acknowledgments: one per extent, in reading order.
     pub fn descriptors(&self, name: &str) -> Result<Vec<Vec<u8>>> {
-        Ok(vec![self.extent(name)?.encode()])
+        Ok(self.extents(name)?.iter().map(Extent::encode).collect())
     }
     pub fn contains(&self, name: &str) -> Result<bool> {
         let hash = parse(name)?;
         let state = self.state()?;
-        if state.prepared.contains_key(&hash) {
-            return Ok(true);
-        }
-        let Some(extent) = state.extents.get(&hash) else {
-            return Ok(false);
+        let parts = match state.chunk_lists.get(&hash) {
+            Some(chunks) => chunks.as_slice(),
+            None => std::slice::from_ref(&hash),
         };
-        match std::fs::metadata(self.root().join(&extent.segment)) {
-            Ok(metadata) => Ok(metadata.len() >= extent.end()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error.into()),
+        for part in parts {
+            if state.prepared.contains_key(part) {
+                continue;
+            }
+            let Some(extent) = state.extents.get(part) else {
+                return Ok(false);
+            };
+            match std::fs::metadata(self.root().join(&extent.segment)) {
+                Ok(metadata) if metadata.len() >= extent.end() => {}
+                Ok(_) => return Ok(false),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error.into()),
+            }
         }
+        Ok(true)
     }
     pub fn is_sealed(&self, name: &str) -> Result<bool> {
-        Ok(matches!(self.extent(name)?.kind, Kind::Sealed { .. }))
+        Ok(self
+            .extents(name)?
+            .iter()
+            .any(|extent| matches!(extent.kind, Kind::Sealed { .. })))
     }
     fn reader(
         &self,
@@ -195,27 +269,26 @@ impl Blobs {
         limits: Option<SealedReadLimits>,
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<hashed_blobs::BlobReader> {
-        let extent = self.extent(name)?;
-        if expected_len.is_some_and(|length| length != extent.decoded_len) {
+        let extents = self.extents(name)?;
+        let decoded_len: u64 = extents.iter().map(|extent| extent.decoded_len).sum();
+        if expected_len.is_some_and(|length| length != decoded_len) {
             return Err(crate::Error::Invalid(format!(
                 "blob {name} has a different decoded length"
             )));
         }
         let limits = limits.unwrap_or(SealedReadLimits {
             frame_bytes: BLOB_FRAME_BYTES,
-            index_bytes: usize::try_from(
-                extent.decoded_len.div_ceil(BLOB_FRAME_BYTES as u64).max(1),
-            )
-            .ok()
-            .and_then(|frames| frames.checked_mul(128))
-            .and_then(|bytes| bytes.checked_add(65536))
-            .ok_or_else(|| {
-                crate::Error::Invalid("blob index budget exceeds address space".into())
-            })?,
+            index_bytes: usize::try_from(decoded_len.div_ceil(BLOB_FRAME_BYTES as u64).max(1))
+                .ok()
+                .and_then(|frames| frames.checked_mul(128))
+                .and_then(|bytes| bytes.checked_add(65536))
+                .ok_or_else(|| {
+                    crate::Error::Invalid("blob index budget exceeds address space".into())
+                })?,
         });
         Ok(
             hashed_blobs::Reader::new(self.root()).open_checked_with_limits(
-                &[extent],
+                &extents,
                 key,
                 hashed_blobs::ReadLimits {
                     frame_bytes: limits.frame_bytes,
@@ -253,14 +326,14 @@ impl Blobs {
     }
     pub fn read_range(&self, name: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
         Ok(hashed_blobs::Reader::new(self.root()).read_range(
-            &[self.extent(name)?],
+            &self.extents(name)?,
             offset,
             len,
             None,
         )?)
     }
     pub fn read(&self, name: &str) -> Result<Vec<u8>> {
-        Ok(hashed_blobs::Reader::new(self.root()).read(&[self.extent(name)?], None)?)
+        Ok(hashed_blobs::Reader::new(self.root()).read(&self.extents(name)?, None)?)
     }
     pub fn copy_to(&self, name: &str, out: &mut impl std::io::Write) -> Result<u64> {
         self.copy_to_checked(name, out, || Ok(()))
@@ -278,6 +351,17 @@ impl Blobs {
     }
     /// The caller has already committed the deleting marker. Recovery repeats this punch.
     pub async fn delete(&self, conn: &mut sqlx::PgConnection, name: &str) -> Result<bool> {
+        let hash = parse(name)?;
+        let chunked = self.state()?.chunk_lists.contains_key(&hash)
+            || sqlx::query_scalar!(
+                r#"SELECT EXISTS(SELECT 1 FROM core.blob_chunks WHERE blob=$1) AS "chunked!""#,
+                name
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+        if chunked {
+            return self.delete_chunked(conn, name).await;
+        }
         let descriptor = sqlx::query_scalar!(
             "SELECT descriptor FROM core.blob_extents WHERE hash=$1",
             name
@@ -291,6 +375,89 @@ impl Blobs {
             }
         }
         self.punch(name, extent.as_ref())?;
+        Ok(true)
+    }
+    /// Remove a chunked blob: punch the chunks no held blob shares (neither
+    /// held as a blob of their own nor listed by another blob that is not
+    /// removed) and forget its chunk list. Shared chunks stay.
+    async fn delete_chunked(&self, conn: &mut sqlx::PgConnection, name: &str) -> Result<bool> {
+        let hash = parse(name)?;
+        let unshared: Vec<String> = sqlx::query_scalar!(
+            r#"SELECT DISTINCT c.chunk AS "chunk!" FROM core.blob_chunks c WHERE c.blob=$1
+               AND NOT EXISTS (SELECT 1 FROM core.blobs b WHERE b.hash=c.chunk AND b.status<>'removed')
+               AND NOT EXISTS (SELECT 1 FROM core.blob_chunks o JOIN core.blobs b ON b.hash=o.blob
+                               WHERE o.chunk=c.chunk AND o.blob<>c.blob AND b.status<>'removed')
+               ORDER BY 1"#,
+            name
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        // Lists not yet recorded belong to bytes admitted after this check.
+        let unrecorded: BTreeSet<Hash> = {
+            let state = self.state()?;
+            state
+                .unrecorded_chunk_lists
+                .iter()
+                .filter(|blob| **blob != hash)
+                .filter_map(|blob| state.chunk_lists.get(blob))
+                .flatten()
+                .copied()
+                .collect()
+        };
+        let mut removed = Vec::new();
+        for chunk in unshared {
+            if unrecorded.contains(&parse(&chunk)?) {
+                continue;
+            }
+            let descriptor = sqlx::query_scalar!(
+                "SELECT descriptor FROM core.blob_extents WHERE hash=$1",
+                chunk
+            )
+            .fetch_optional(&mut *conn)
+            .await?;
+            let Some(descriptor) = descriptor else {
+                continue;
+            };
+            let extent = Extent::decode(&descriptor)?;
+            if crate::backup::covers(conn, &extent.segment, extent.offset).await? {
+                return Ok(false);
+            }
+            removed.push((chunk, extent));
+        }
+        self.sync_pending()?;
+        {
+            let mut state = self.state()?;
+            if !removed.is_empty() {
+                if state.writer.is_none() {
+                    state.writer = Some(SegmentWriter::open(
+                        self.root(),
+                        SEGMENT,
+                        state.committed_end,
+                        &[],
+                        self.0.mode,
+                    )?);
+                }
+                let extents: Vec<Extent> =
+                    removed.iter().map(|(_, extent)| extent.clone()).collect();
+                state
+                    .writer
+                    .as_mut()
+                    .expect("writer opened")
+                    .punch(&extents)?;
+                for (_, extent) in &removed {
+                    state.extents.remove(&extent.hash);
+                }
+            }
+            state.chunk_lists.remove(&hash);
+            state.unrecorded_chunk_lists.remove(&hash);
+        }
+        let names: Vec<String> = removed.into_iter().map(|(chunk, _)| chunk).collect();
+        sqlx::query!("DELETE FROM core.blob_extents WHERE hash=ANY($1)", &names)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query!("DELETE FROM core.blob_chunks WHERE blob=$1", name)
+            .execute(&mut *conn)
+            .await?;
         Ok(true)
     }
     fn punch(&self, name: &str, recorded: Option<&Extent>) -> Result<()> {
@@ -321,17 +488,20 @@ impl Blobs {
         Ok(())
     }
     pub fn stored_size(&self, name: &str) -> Result<u64> {
-        Ok(self.extent(name)?.len)
+        Ok(self.extents(name)?.iter().map(|extent| extent.len).sum())
     }
     pub fn verify(&self, name: &str) -> Result<Verified> {
         if !self.contains(name)? {
             return Ok(Verified::Missing);
         }
-        let extent = self.extent(name)?;
-        let mismatches = hashed_blobs::Reader::new(self.root()).scan(&[extent.clone()]);
+        let extents = self.extents(name)?;
+        let mismatches = hashed_blobs::Reader::new(self.root()).scan(&extents);
         Ok(if let Some(mismatch) = mismatches.first() {
             Verified::Corrupt(mismatch.error.clone())
-        } else if matches!(extent.kind, Kind::Sealed { .. }) {
+        } else if extents
+            .iter()
+            .any(|extent| matches!(extent.kind, Kind::Sealed { .. }))
+        {
             Verified::CiphertextIntact
         } else {
             Verified::Intact
@@ -343,9 +513,24 @@ impl Blobs {
             .extents
             .keys()
             .chain(state.prepared.keys())
+            .chain(state.chunk_lists.keys())
             .map(|hash| Ok(hash.to_string()))
             .collect();
         Ok(names.into_iter())
+    }
+}
+
+impl State {
+    /// The extents of `hash` if every one is appended: its own, or its chunks'.
+    fn held_extents(&self, hash: &Hash) -> Option<Vec<Extent>> {
+        if let Some(extent) = self.extents.get(hash) {
+            return Some(vec![extent.clone()]);
+        }
+        self.chunk_lists
+            .get(hash)?
+            .iter()
+            .map(|chunk| self.extents.get(chunk).cloned())
+            .collect()
     }
 }
 

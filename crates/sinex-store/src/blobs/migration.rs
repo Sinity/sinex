@@ -67,7 +67,7 @@ impl Blobs {
         Ok(())
     }
     pub(super) async fn require_converted(&self, conn: &mut sqlx::PgConnection) -> Result<()> {
-        let missing=sqlx::query_scalar!("SELECT b.hash FROM core.blobs b WHERE b.status='present' AND NOT EXISTS(SELECT 1 FROM core.blob_extents x WHERE x.hash=b.hash) ORDER BY b.hash LIMIT 1").fetch_optional(conn).await?;
+        let missing=sqlx::query_scalar!("SELECT b.hash FROM core.blobs b WHERE b.status='present' AND core.blob_descriptors(b.hash) IS NULL ORDER BY b.hash LIMIT 1").fetch_optional(conn).await?;
         if let Some(name) = missing {
             return Err(crate::Error::Invalid(format!(
                 "blob {name} requires a qualified predecessor export and byte-store conversion before the segment writer can start"

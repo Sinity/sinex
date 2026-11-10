@@ -51,10 +51,22 @@ impl Description {
         description
     }
 
+    /// The description just before blobs could be stored as chunks.
+    pub(crate) fn before_blob_chunks() -> Self {
+        let mut description = Self::current();
+        description
+            .tables
+            .retain(|statement| crate::blob_chunks::before(statement));
+        description
+            .after_tables
+            .retain(|statement| crate::blob_chunks::before(statement));
+        description
+    }
+
     /// The description just before the search reader's position moved to
     /// its own table.
     pub(crate) fn before_search_position() -> Self {
-        let mut description = Self::current();
+        let mut description = Self::before_blob_chunks();
         description
             .tables
             .retain(|statement| !statement.starts_with("CREATE TABLE core.search_position"));
