@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 git-identity.workspace = true
+query-language.workspace = true
 stacker.workspace = true
 signals.workspace = true
 sinex-source-core.workspace = true

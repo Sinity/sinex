@@ -1,4 +1,5 @@
 //! Explicit transcript imports. Relative offsets are never receipt timestamps.
+use query_language::number::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::imported_text::TranscriptCue;
@@ -24,7 +25,6 @@ impl Options {
     }
 }
 
-mod decimal;
 pub(super) mod discovery;
 pub mod framing;
 
@@ -190,11 +190,10 @@ impl TranscriptParser {
                     })
                     .transpose()?;
                 let offset_ns = if self.format == Format::Whisper {
-                    payload.start_seconds.as_deref().and_then(|text| {
-                        scaled_offset(text, 9, false)
-                            .ok()
-                            .and_then(|ns| i128::try_from(ns).ok())
-                    })
+                    payload
+                        .start_seconds
+                        .as_deref()
+                        .and_then(|text| offset(text).ok()?.exact_scaled_i128(9))
                 } else {
                     payload.start_ms.map(|ms| i128::from(ms) * 1_000_000)
                 };
@@ -259,7 +258,7 @@ impl TranscriptParser {
             }
         }
         if let (Some(start), Some(end)) = (&payload.start_seconds, &payload.end_seconds)
-            && decimal::compare(start, end).is_gt()
+            && offset(start)? > offset(end)?
         {
             return Err(RecordError::new("cue ends before it starts"));
         }
@@ -320,72 +319,27 @@ fn raw_offset(value: Option<&str>, seconds: bool) -> Result<Option<u64>, RecordE
         Some(text) => decimal_ms(text, 0).map(Some),
     }
 }
-/// Whisper seconds round to the nearest millisecond without floating point arithmetic.
-/// Explicit millisecond fields must be integral.
+/// Whisper seconds round to the nearest millisecond without floating point
+/// arithmetic (`places` 3). Explicit millisecond fields (`places` 0) must be
+/// integral.
 pub fn decimal_ms(text: &str, places: u32) -> Result<u64, RecordError> {
-    u64::try_from(scaled_offset(text, places, true)?)
-        .map_err(|_| RecordError::new("offset exceeds u64 milliseconds"))
-}
-fn scaled_offset(text: &str, places: u32, round: bool) -> Result<u128, RecordError> {
-    let invalid = || RecordError::new("offset cannot be represented at the requested precision");
-    if text.starts_with('-') {
-        return Err(invalid());
-    }
-    let (mantissa, exponent) = match text.find(['e', 'E']) {
-        Some(i) => (
-            &text[..i],
-            text[i + 1..].parse::<i64>().map_err(|_| invalid())?,
-        ),
-        None => (text, 0),
-    };
-    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    if whole.is_empty()
-        || !whole
-            .bytes()
-            .chain(fraction.bytes())
-            .all(|b| b.is_ascii_digit())
-    {
-        return Err(invalid());
-    }
-    let digits = format!("{whole}{fraction}");
-    let digits = digits.trim_start_matches('0');
-    if digits.is_empty() {
-        return Ok(0);
-    }
-    let shift = exponent
-        .checked_add(i64::from(places))
-        .and_then(|n| n.checked_sub(fraction.len() as i64))
-        .ok_or_else(invalid)?;
-    let value = if shift < 0 {
-        let cut = usize::try_from(shift.unsigned_abs()).map_err(|_| invalid())?;
-        let split = digits.len().saturating_sub(cut);
-        let discarded = &digits[split..];
-        if (!round || places == 0) && !discarded.bytes().all(|b| b == b'0') {
-            return Err(invalid());
-        }
-        let whole = if split == 0 {
-            0
-        } else {
-            digits[..split].parse::<u128>().map_err(|_| invalid())?
-        };
-        let round_up =
-            round && places > 0 && cut <= digits.len() && discarded.as_bytes()[0] >= b'5';
-        whole
-            .checked_add(u128::from(round_up))
-            .ok_or_else(invalid)?
+    let value = offset(text)?;
+    let scaled = if places == 0 {
+        value.exact_scaled_i128(0)
     } else {
-        let shift = u32::try_from(shift).map_err(|_| invalid())?;
-        digits
-            .parse::<u128>()
-            .ok()
-            .and_then(|n| {
-                10u128
-                    .checked_pow(shift)
-                    .and_then(|scale| n.checked_mul(scale))
-            })
-            .ok_or_else(invalid)?
-    };
-    Ok(value)
+        value.scaled_i128(i64::from(places))
+    }
+    .ok_or_else(unrepresentable)?;
+    u64::try_from(scaled).map_err(|_| RecordError::new("offset exceeds u64 milliseconds"))
+}
+/// A nonnegative written offset, exactly as written.
+fn offset(text: &str) -> Result<Decimal, RecordError> {
+    Decimal::parse(text)
+        .filter(|value| !value.is_negative())
+        .ok_or_else(unrepresentable)
+}
+fn unrepresentable() -> RecordError {
+    RecordError::new("offset cannot be represented at the requested precision")
 }
 fn cue_time(text: &str, srt: bool) -> Result<u64, RecordError> {
     let parts: Vec<_> = text.split(':').collect();
