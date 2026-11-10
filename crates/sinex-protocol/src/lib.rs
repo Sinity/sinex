@@ -28,8 +28,8 @@ pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
     Acknowledgment, Archived, Confirmed, ConfirmedConsumer, ConfirmedConsumerReply, ConfirmedEvent,
     DeclarationHash, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
-    FetchRefusal, FetchRefusalKind, FrameResult, Ingress, Lifecycle, MaterialFrame, Materials,
-    MaterialsPage, PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello,
+    FetchRefusal, FetchRefusalKind, FrameResult, Ingress, Lifecycle, MaterialChunk, MaterialFrame,
+    Materials, MaterialsPage, PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello,
     ProducerMaterial, ProducerReplay, ProducerWelcome, ReceiptHint, RecordedContinuation,
     RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders, RecordedMaterialBinding,
     RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery,

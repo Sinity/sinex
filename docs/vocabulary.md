@@ -57,7 +57,8 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 ## Materials and records
 
 - **material**: stored, immutable, source-shaped bytes that events cite: a file revision, a part of a growing file, a capture segment, an export, a set of database rows ([materials](materials.md)).
-- **part**: one closed chunk of a growing input; an input's parts form its **part sequence**.
+- **part**: one closed piece of a growing input; an input's parts form its **part sequence**.
+- **chunk**: one content-defined piece of a material's bytes; bytes an input rewrites whole may be stored as their chunks, each held once ([bytes before rows](materials.md#bytes-before-rows)). A transfer chunk frame is a piece of an encoding in transit, not a stored chunk.
 - **manifest**: what a material's bytes are and how to read them.
 - **directory capture**: a directory stored as one PAX tar material.
 - **record**: one datapoint inside a material (a line, a row, a file, a message).

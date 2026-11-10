@@ -1,3 +1,6 @@
+-- Undo the blob chunks upgrade.
+DROP FUNCTION core.blob_descriptors(text);
+DROP TABLE core.blob_chunks;
 -- Undo the later search position table.
 DROP TABLE core.search_position;
 -- Undo the later search refusals table.

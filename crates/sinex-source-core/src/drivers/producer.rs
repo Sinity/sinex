@@ -849,6 +849,7 @@ impl Producer {
                         input: progress.input.clone(),
                         blob: m.blob.clone(),
                         length: m.length,
+                        chunks: Vec::new(),
                         parser: m.parser.clone(),
                         parser_version: m.parser_version,
                         part_index: m.part_index,

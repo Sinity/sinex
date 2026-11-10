@@ -404,7 +404,7 @@ impl Requests {
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            let descriptor = sinex_store::producer_reads::extent(&mut conn, &material.blob)
+            let descriptors = sinex_store::producer_reads::descriptors(&mut conn, &material.blob)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -421,13 +421,14 @@ impl Requests {
                     input,
                     blob: material.blob,
                     length: material.length,
+                    chunks: Vec::new(),
                     parser: material.parser,
                     parser_version: material.parser_version,
                     part_index: material.part_index,
                     previous_part: material.previous_part,
                     manifest: material.manifest,
                 }),
-                extents: vec![descriptor],
+                extents: descriptors,
             })
         }
         .await;

@@ -455,6 +455,11 @@ pub struct MaterialFrame {
     /// `blake3:<hex>` of the bytes.
     pub blob: String,
     pub length: u64,
+    /// The bytes as content-defined chunks, in order, for an input its source
+    /// rewrites whole: Sinex stores only the chunks it does not hold, and the
+    /// chunks read back as exactly `blob`. Empty when the bytes are one blob.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chunks: Vec<MaterialChunk>,
     pub parser: String,
     pub parser_version: u32,
     #[serde(default)]
@@ -463,6 +468,14 @@ pub struct MaterialFrame {
     pub previous_part: Option<MaterialId>,
     /// What the bytes are and how to read them.
     pub manifest: sinex_model::Manifest,
+}
+
+/// One content-defined chunk of a material: `blake3:<hex>` of its bytes and
+/// their length.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MaterialChunk {
+    pub blob: String,
+    pub length: u64,
 }
 
 /// An event as a producer sends it: a registered event type and its payload,

@@ -338,7 +338,8 @@ pub async fn rewind_consumer_position(
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredFrame {
     pub number: i64,
-    pub material_extent: Option<Vec<u8>>,
+    /// The material's read authority, one descriptor per extent in order.
+    pub material_extents: Option<Vec<Vec<u8>>>,
     pub producer: String,
     pub frame: String,
     pub material_id: Option<Uuid>,
@@ -408,9 +409,8 @@ pub async fn frames(
 ) -> Result<Vec<StoredFrame>> {
     Ok(sqlx::query_as!(
         StoredFrame,
-        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome AS "outcome: Json<FrameOutcome>", f.refusal, f.commit_seq, x.descriptor AS "material_extent?"
+        r#"SELECT f.number, f.producer, f.frame, f.material_id, f.admitted, f.outcome AS "outcome: Json<FrameOutcome>", f.refusal, f.commit_seq, core.blob_descriptors(m.blob) AS "material_extents?"
            FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
-           LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
            WHERE f.producer = $1 AND f.frame = ANY($2)
            ORDER BY f.received_at, f.frame"#,
         producer,
@@ -429,9 +429,8 @@ pub async fn frames_page(
     after: i64,
 ) -> Result<(Vec<StoredFrame>, Option<i64>)> {
     const PAGE: i64 = 64;
-    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome AS "outcome: Json<FrameOutcome>",f.refusal,f.commit_seq,x.descriptor AS "material_extent?"
+    let rows=sqlx::query_as!(StoredFrame,r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome AS "outcome: Json<FrameOutcome>",f.refusal,f.commit_seq,core.blob_descriptors(m.blob) AS "material_extents?"
       FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
-      LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
       WHERE f.producer=$1 AND (f.frame=ANY($2) OR f.number=ANY($3)) AND f.number>$4 ORDER BY f.number LIMIT $5"#,producer,frames,numbers,after,PAGE).fetch_all(conn).await?;
     let next = (rows.len() == PAGE as usize).then(|| rows.last().expect("full page").number);
     Ok((rows, next))
@@ -457,7 +456,8 @@ pub async fn producer_material_registered(
 /// One material a producer registered, as its frame described it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProducerMaterial {
-    pub extent: Vec<u8>,
+    /// One descriptor per extent, in reading order.
+    pub extents: Vec<Vec<u8>>,
     pub number: i64,
     pub frame: String,
     pub material_id: Uuid,
@@ -486,12 +486,11 @@ pub async fn producer_materials(
         ProducerMaterial,
         r#"SELECT f.number AS "number!", f.frame, m.id AS material_id, i.kind, i.locator, i.host,
                   m.blob, m.length AS length, m.part_index, m.previous_part_id AS previous_part,
-                  m.parser AS "parser!", m.parser_version AS "parser_version!", m.manifest, x.descriptor AS extent
+                  m.parser AS "parser!", m.parser_version AS "parser_version!", m.manifest, core.blob_descriptors(m.blob) AS "extents!"
            FROM core.ingress_frames f
            JOIN raw.materials m ON m.id = f.material_id
            JOIN raw.inputs i ON i.id = m.input_id
-           JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
-           WHERE f.producer = $1 AND f.refusal IS NULL AND f.number > $2
+           WHERE core.blob_descriptors(m.blob) IS NOT NULL AND f.producer = $1 AND f.refusal IS NULL AND f.number > $2
              AND m.status <> 'tombstoned'
            ORDER BY f.number LIMIT $3"#,
         producer,
@@ -678,17 +677,16 @@ pub async fn recorded_material(
     frame: &str,
 ) -> Result<Option<RecordedMaterial>> {
     let row = sqlx::query!(r#"SELECT f.number,f.producer,f.frame,f.material_id,f.admitted,f.outcome AS "outcome: Json<FrameOutcome>",f.refusal,f.commit_seq,
-        x.descriptor AS "material_extent?",m.blob AS "blob?",m.length AS "length?",
+        core.blob_descriptors(m.blob) AS "material_extents?",m.blob AS "blob?",m.length AS "length?",
         f.source_name,f.source_version,f.source_fingerprint,f.family,f.write_kind_prefixes,f.producer_host,
-        (m.id IS NOT NULL AND x.descriptor IS NOT NULL AND m.status <> 'tombstoned') AS "available!"
+        (m.id IS NOT NULL AND core.blob_descriptors(m.blob) IS NOT NULL AND m.status <> 'tombstoned') AS "available!"
         FROM core.ingress_frames f LEFT JOIN raw.materials m ON m.id=f.material_id
-        LEFT JOIN core.blob_extents x ON x.hash=m.blob AND NOT x.deleting
         WHERE f.producer=$1 AND f.frame=$2"#,producer,frame)
         .fetch_optional(conn).await?;
     Ok(row.map(|row| RecordedMaterial {
         receipt: StoredFrame {
             number: row.number,
-            material_extent: row.material_extent,
+            material_extents: row.material_extents,
             producer: row.producer,
             frame: row.frame,
             material_id: row.material_id,

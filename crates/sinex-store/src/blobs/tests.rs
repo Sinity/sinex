@@ -108,6 +108,7 @@ fn checked_plain_copy_stops_after_its_consumer_cancels() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+mod chunks;
 mod group_readback;
 
 #[devkit::test]
