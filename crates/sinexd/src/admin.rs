@@ -387,3 +387,6 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,5 +1,6 @@
 //! Forward upgrades preserve every row. Named transformations take their order from this composed stack.
 mod output_ordinals;
+mod source_cursors;
 
 fn landed() -> Vec<Vec<String>> {
     vec![
@@ -85,6 +86,7 @@ pub(crate) const NAMED: &[&str] = &[
     "search_position",
     "frame_outcomes",
     "blob_chunks",
+    "append_file_stat_metadata",
 ];
 
 #[cfg(test)]
@@ -180,6 +182,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     ]);
     steps.push(crate::frame_outcomes::statements());
     steps.push(crate::blob_chunks::statements());
+    steps.push(source_cursors::statements());
     steps
 }
 
