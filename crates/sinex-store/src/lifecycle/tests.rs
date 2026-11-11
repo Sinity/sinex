@@ -1367,3 +1367,52 @@ async fn as_of_reads_exact(db: devkit::pg::TestDatabase) {
         assert_eq!(&read, live, "as of seq {position}");
     }
 }
+
+#[devkit::test]
+async fn deletion_marker_is_atomic_with_catalog_transition_and_material_readmission(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = context(&db).await;
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = crate::Blobs::open(dir.path()).unwrap();
+    let name = blobs.put(b"abc").unwrap();
+    material(&mut conn, &name).await;
+    crate::blobs::commit_pending_extents(&mut conn, &blobs)
+        .await
+        .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    bytes::mark_removing(&mut tx, &name).await.unwrap();
+    let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+        .bind(&name)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert!(marked, "marking does not wait for another extent commit");
+    tx.rollback().await.unwrap();
+    let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+        .bind(&name)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert!(!marked);
+    let mut tx = conn.begin().await.unwrap();
+    bytes::mark_removing(&mut tx, &name).await.unwrap();
+    tx.commit().await.unwrap();
+    // Admission restores an existing descriptor even when no new bytes were prepared.
+    let id = MaterialId::new();
+    admit(
+        &mut conn,
+        &stage(id, &name, reading("staged", 42, 42, id, 0)),
+    )
+    .await;
+    let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+        .bind(&name)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert!(!marked);
+    drop(blobs);
+    let reopened = crate::Blobs::open(dir.path()).unwrap();
+    reopened.recover(&mut conn).await.unwrap();
+    assert_eq!(reopened.read(&name).unwrap(), b"abc");
+}

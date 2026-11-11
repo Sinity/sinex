@@ -115,7 +115,7 @@ impl Blobs {
             for extent in &group.extents {
                 let name = extent.hash.to_string();
                 let descriptor = extent.encode();
-                sqlx::query!("INSERT INTO core.blob_extents(hash,descriptor,deleting) VALUES($1,$2,false) ON CONFLICT(hash) DO UPDATE SET descriptor=EXCLUDED.descriptor,deleting=false",name,descriptor).execute(&mut *conn).await?;
+                sqlx::query!("INSERT INTO core.blob_extents(hash,descriptor,deleting) VALUES($1,$2,COALESCE((SELECT status='deleting' FROM core.blobs WHERE hash=$1),false)) ON CONFLICT(hash) DO UPDATE SET descriptor=EXCLUDED.descriptor,deleting=EXCLUDED.deleting",name,descriptor).execute(&mut *conn).await?;
             }
             let end = i64::try_from(group.end)
                 .map_err(|_| crate::Error::Invalid("segment end exceeds i64".into()))?;
@@ -142,13 +142,6 @@ impl Blobs {
             )
             .execute(&mut *conn)
             .await?;
-        }
-        let deleting: bool =
-            sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM core.blob_extents x JOIN core.blobs b ON b.hash=x.hash WHERE x.deleting IS DISTINCT FROM (b.status='deleting')) AS \"changed!\"")
-                .fetch_one(&mut *conn)
-                .await?;
-        if deleting {
-            sqlx::query!("UPDATE core.blob_extents x SET deleting=(b.status='deleting') FROM core.blobs b WHERE b.hash=x.hash AND x.deleting IS DISTINCT FROM (b.status='deleting')").execute(conn).await?;
         }
         Ok(Commit {
             groups,

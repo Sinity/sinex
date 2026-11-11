@@ -341,14 +341,40 @@ async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(
         .execute(&mut conn)
         .await
         .unwrap();
-    commit_pending_extents(&mut conn, &blobs).await.unwrap();
-    assert_eq!(blobs.put(b"bytes kept after a failed punch").unwrap(), name);
-    let mut tx = conn.begin().await.unwrap();
-    sqlx::query("UPDATE core.blobs SET status='present' WHERE hash=$1")
+    sqlx::query("UPDATE core.blob_extents SET deleting=true WHERE hash=$1")
         .bind(&name)
-        .execute(&mut *tx)
+        .execute(&mut conn)
         .await
         .unwrap();
+    assert_eq!(blobs.put(b"bytes kept after a failed punch").unwrap(), name);
+    let mut tx = conn.begin().await.unwrap();
+    crate::stages::register_unparsed(
+        &mut tx,
+        &crate::stages::Unparsed {
+            id: sinex_model::MaterialId::new(),
+            binding: "synthetic".into(),
+            input: sinex_model::InputRef {
+                kind: "file".into(),
+                locator: "/synthetic".into(),
+                host: "test".into(),
+            },
+            observation: Default::default(),
+            blob: name.clone(),
+            length: 31,
+            manifest: Default::default(),
+        },
+    )
+    .await
+    .unwrap();
+    let deleting: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+        .bind(&name)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert!(
+        !deleting,
+        "registration clears the marker before extent commit"
+    );
     let receipt = blobs.commit_extents(&mut tx).await.unwrap();
     tx.commit().await.unwrap();
     blobs.acknowledge(receipt).unwrap();
@@ -372,4 +398,77 @@ fn an_empty_material_has_one_physical_extent_and_no_decoded_bytes() {
     assert_eq!(extent.decoded_len, 0);
     assert!(extent.len > 0);
     assert_eq!(blobs.read(&name).unwrap(), b"");
+}
+
+#[devkit::test]
+async fn extent_commit_does_not_visit_unrelated_catalog_or_extent_history(
+    db: devkit::pg::TestDatabase,
+) {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let name = blobs.put(b"existing bytes").unwrap();
+    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    // Unrelated rows need no segment bytes: this test never loads or reads them.
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) SELECT 'blake3:'||lpad(to_hex(n),64,'0'),1,'present' FROM generate_series(1,8192) n")
+        .execute(&mut conn).await.unwrap();
+    sqlx::query("INSERT INTO core.blob_extents(hash,descriptor,deleting) SELECT b.hash,x.descriptor,false FROM core.blobs b CROSS JOIN core.blob_extents x WHERE x.hash=$1")
+        .bind(&name).execute(&mut conn).await.unwrap();
+    sqlx::raw_sql("ANALYZE core.blobs; ANALYZE core.blob_extents;")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    blobs.put(b"one new extent").unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    let work = "SELECT COALESCE(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid IN ('core.blobs'::regclass,'core.blob_extents'::regclass)";
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        after - before <= 4,
+        "extent commit visited {} old tuples for one new extent",
+        after - before
+    );
+    tx.commit().await.unwrap();
+    blobs.acknowledge(receipt).unwrap();
+}
+
+#[devkit::test]
+async fn new_extents_inherit_only_their_own_catalog_deletion_marker(db: devkit::pg::TestDatabase) {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let deleting = blobs.put(b"deleted catalog").unwrap();
+    let uncatalogued = blobs.put(b"uncatalogued chunk").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,15,'deleting')")
+        .bind(&deleting)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    for (name, expected) in [(&deleting, true), (&uncatalogued, false)] {
+        let actual: bool =
+            sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+                .bind(name)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(actual, expected);
+    }
+    // Independently marked orphan extents stay marked when another group commits.
+    sqlx::query("UPDATE core.blob_extents SET deleting=true WHERE hash=$1")
+        .bind(&uncatalogued)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    blobs.put(b"unrelated new group").unwrap();
+    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+        .bind(&uncatalogued)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert!(marked);
 }

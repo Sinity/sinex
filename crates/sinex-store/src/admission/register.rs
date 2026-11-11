@@ -177,8 +177,12 @@ async fn material(
     let length =
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(
-        r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status IN ('deleting', 'removed')"#,
+        r#"WITH registered AS (
+             INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
+             ON CONFLICT (hash) DO UPDATE SET status = 'present'
+               WHERE core.blobs.status IN ('deleting', 'removed') RETURNING hash
+           ) UPDATE core.blob_extents SET deleting=false
+             WHERE hash IN (SELECT hash FROM registered) AND deleting"#,
         m.blob,
         length,
     )

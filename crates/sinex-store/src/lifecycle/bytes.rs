@@ -131,7 +131,10 @@ pub(super) async fn tombstone_events(
 
 pub(super) async fn mark_removing(conn: &mut PgConnection, blob: &str) -> Result<()> {
     sqlx::query!(
-        "UPDATE core.blobs SET status = 'deleting' WHERE hash = $1 AND status = 'present'",
+        "WITH marked AS (
+           UPDATE core.blobs SET status='deleting' WHERE hash=$1 AND status='present' RETURNING hash
+         ) UPDATE core.blob_extents SET deleting=true
+           WHERE hash IN (SELECT hash FROM marked) AND NOT deleting",
         blob
     )
     .execute(conn)
@@ -181,7 +184,10 @@ pub async fn remove_unreferenced(
         .await?;
         if status.as_deref() != Some("deleting") || !unreferenced(&mut tx, &name).await? {
             sqlx::query!(
-                "UPDATE core.blobs SET status = 'present' WHERE hash = $1 AND status = 'deleting'",
+                "WITH restored AS (
+                   UPDATE core.blobs SET status='present' WHERE hash=$1 AND status='deleting' RETURNING hash
+                 ) UPDATE core.blob_extents SET deleting=false
+                   WHERE hash IN (SELECT hash FROM restored) AND deleting",
                 name
             )
             .execute(&mut *tx)
