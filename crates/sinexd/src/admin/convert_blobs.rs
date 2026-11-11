@@ -53,23 +53,20 @@ async fn convert(
     let mut converted = 0u64;
     let mut bytes = 0u64;
     loop {
-        let rows = sqlx::query!(
-            "SELECT hash,size FROM core.blobs WHERE hash>$1 AND status='present' AND core.blob_descriptors(hash) IS NULL ORDER BY hash LIMIT $2",
-            after, GROUP_INPUTS as i64
-        ).fetch_all(&mut *conn).await?;
+        let rows =
+            sinex_store::blobs::migration::pending(conn, &after, GROUP_INPUTS as i64).await?;
         if rows.is_empty() {
             break;
         }
         let mut selected = Vec::new();
         let mut group_bytes = 0u64;
         for row in rows {
-            let length = u64::try_from(row.size)
-                .map_err(|_| Error::internal("negative stored blob size"))?;
+            let length = row.length;
             if !selected.is_empty() && group_bytes.saturating_add(length) > GROUP_BYTES {
                 break;
             }
             group_bytes += length;
-            selected.push((row.hash, length));
+            selected.push((row.name, length));
         }
         let mut command = Command::new(exporter);
         command

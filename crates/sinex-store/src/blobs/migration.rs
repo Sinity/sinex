@@ -25,6 +25,28 @@ pub fn prepare(
     }
     Ok(prepared)
 }
+/// A catalog entry still lacking its current segment descriptors.
+pub struct Pending {
+    pub name: String,
+    pub length: u64,
+}
+
+/// The next conversion page after a catalog name. Committed descriptors are
+/// skipped, so a fresh process resumes without a second progress store.
+pub async fn pending(
+    conn: &mut sqlx::PgConnection,
+    after: &str,
+    count: i64,
+) -> Result<Vec<Pending>> {
+    sqlx::query!(
+        "SELECT hash,size FROM core.blobs WHERE hash>$1 AND status='present' AND core.blob_descriptors(hash) IS NULL ORDER BY hash LIMIT $2",
+        after, count
+    ).fetch_all(conn).await?.into_iter().map(|row| {
+        Ok(Pending { name: row.hash, length: u64::try_from(row.size)
+            .map_err(|_| crate::Error::Invalid("negative stored blob size".into()))? })
+    }).collect()
+}
+
 impl Blobs {
     /// Install one verified export while preserving the existing material,
     /// event, key and cursor rows. The caller holds the one-writer claim and
