@@ -22,7 +22,10 @@ pub use parse::{bind, parse};
 mod reference;
 pub use read_as::read_as;
 pub use reference::{citation, parse_reference};
-pub use tables::{ALIASES, Alias, Field, FieldType, Table};
+pub use tables::{
+    ALIASES, Alias, ArchiveField, EventField, FailureField, Field, FieldId, FieldType, GapField,
+    MaterialField, OperationField, RunField, SourceField, Table,
+};
 pub use time::Context;
 pub use typed::{Completion, complete};
 

@@ -27,11 +27,11 @@ impl Compiler<'_> {
                 SqlFragment::text(Self::named(cols, field.name())),
                 Kind::Typed(field.field_type()),
             )),
-            (Cols::Base { table, alias, .. }, FieldRef::Field(field)) => {
+            (Cols::Base { alias, .. }, FieldRef::Field(field)) => {
                 let sql = alias
                     .filter(|a| a.field(field.name).is_some())
                     .and_then(|a| fields::alias_field(a.name, field.name))
-                    .or_else(|| fields::field(*table, field.name))
+                    .or_else(|| fields::field(field.id))
                     .ok_or_else(|| invalid(format!("no SQL for field {}", field.name)))?;
                 Ok((self.positioned(cols, &sql), Kind::Typed(field.ty)))
             }

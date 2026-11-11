@@ -2,17 +2,12 @@ use super::*;
 use sinex_model::query::{ALIASES, FieldType};
 
 #[devkit::test]
-fn every_field_in_the_model_has_sql() {
+fn main_times_and_promoted_fields_have_sql() {
     for table in Table::ALL {
-        for f in table.fields() {
-            assert!(
-                field(table, f.name).is_some(),
-                "{}.{}",
-                table.name(),
-                f.name
-            );
-        }
-        assert!(field(table, table.main_time()).is_some());
+        let main = table
+            .field(table.main_time())
+            .expect("main time is a field");
+        assert!(field(main.id).is_some(), "{}", table.name());
     }
     for alias in ALIASES {
         for f in alias.fields {

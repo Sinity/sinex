@@ -1,8 +1,8 @@
 //! Tables and their fields. Every table is one table of fields; the parser, the
 //! compiler, the read-back and every surface read the same table, so they
 //! cannot disagree. The SQL each field lowers to lives in `sinex-store::query`,
-//! keyed by table and field name, and a test there checks that every field here
-//! has one.
+//! matched exhaustively on its [`FieldId`], so a field without SQL fails the
+//! build.
 use crate::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,14 +27,21 @@ pub enum FieldType {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Field {
+    pub id: FieldId,
     pub name: &'static str,
     pub ty: FieldType,
     /// How the field reads in a sentence: "exit code", "when it happened".
     pub phrase: &'static str,
 }
 
+/// A field an alias promotes from the payload.
 const fn f(name: &'static str, ty: FieldType, phrase: &'static str) -> Field {
-    Field { name, ty, phrase }
+    Field {
+        id: FieldId::Promoted,
+        name,
+        ty,
+        phrase,
+    }
 }
 
 const ORIGINS: &[&str] = &["material", "derived"];
@@ -46,169 +53,159 @@ const TIME_SUSPECT: &[&str] = &["future", "epoch zero"];
 const DUPLICATE_STRATEGIES: &[&str] = &["identifier", "window", "fallback", "decision"];
 const PAIR_STATES: &[&str] = &["undecided", "same", "distinct"];
 
-macro_rules! event_fields {
-    ($($extra:expr),* $(,)?) => {
-        &[
-            f("id", FieldType::Id, "event ID"),
-            f("event_type", FieldType::Text, "event type"),
-            f("kind_version", FieldType::Integer, "kind version"),
-            f("validation", FieldType::Enum(crate::Validation::VALUES), "validation"),
-            f("source", FieldType::Text, "source"),
-            f("host", FieldType::Text, "host"),
-            f("when", FieldType::Time, "time it happened"),
-            f("time_quality", FieldType::Enum(TimeQuality::VALUES), "time quality"),
-            f("time_suspect", FieldType::Enum(TIME_SUSPECT), "why its time looks wrong"),
-            f("seen", FieldType::Time, "time Sinex read it"),
-            f("written", FieldType::Time, "time it was written"),
-            f("origin", FieldType::Enum(ORIGINS), "origin"),
-            f("material", FieldType::Id, "material"),
-            f("offset", FieldType::Integer, "byte offset"),
-            f("output", FieldType::Integer, "output number"),
-            f("parents", FieldType::IdList, "parent events"),
-            f("producer", FieldType::Text, "producer"),
-            f("producer_version", FieldType::Text, "producer version"),
-            f("run", FieldType::Id, "run"),
-            f("text", FieldType::Text, "text"),
-            f("key", FieldType::Text, "equivalence key"),
-            f("class", FieldType::Enum(Class::VALUES), "privacy class"),
-            f("state", FieldType::Enum(RecordState::VALUES), "record state"),
-            f("commit_seq", FieldType::Integer, "commit position"),
-            f("payload", FieldType::Json, "payload"),
-            $($extra,)*
-        ]
+/// Which declared field a field is. The store lowers fields by an exhaustive
+/// match on it, so a field declared without SQL fails the build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldId {
+    Event(EventField),
+    Archive(ArchiveField),
+    Material(MaterialField),
+    Run(RunField),
+    Source(SourceField),
+    Gap(GapField),
+    Operation(OperationField),
+    Failure(FailureField),
+    /// A payload field an alias promotes; the alias owns its SQL.
+    Promoted,
+}
+
+/// One table's own fields, each declared once: the identity enum and the
+/// table's field list, after the fields it inherits.
+macro_rules! table {
+    ($array:ident, $enum:ident, $id:ident, [$($inherited:expr,)*] {
+        $($variant:ident = ($name:expr, $ty:expr, $phrase:expr),)*
+    }) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum $enum {
+            $($variant,)*
+        }
+        const $array: &[Field] = &[
+            $($inherited,)*
+            $(Field { id: FieldId::$id($enum::$variant), name: $name, ty: $ty, phrase: $phrase },)*
+        ];
     };
 }
 
-const EVENTS: &[Field] = event_fields!();
-const ARCHIVE: &[Field] = event_fields!(
-    f("archived", FieldType::Time, "time it left the live set"),
-    f(
-        "reason",
-        FieldType::Enum(ArchiveReason::VALUES),
-        "archive reason"
-    ),
-    f("operation", FieldType::Id, "operation"),
-    f("replaced_by", FieldType::Id, "replacing event"),
-    f(
-        "archived_seq",
-        FieldType::Integer,
-        "commit position it left at"
-    ),
-);
-const MATERIALS: &[Field] = &[
-    f("id", FieldType::Id, "material ID"),
-    f("binding", FieldType::Text, "binding"),
-    f("parser", FieldType::Text, "parser"),
-    f("parser_version", FieldType::Integer, "parser version"),
-    f("hash", FieldType::Text, "content hash"),
-    f("size", FieldType::Integer, "size in bytes"),
-    f("stored", FieldType::Time, "time it was stored"),
-    f("origin_path", FieldType::Path, "path it was read from"),
-    f("host", FieldType::Text, "host"),
-    f("part", FieldType::Integer, "part number"),
-    f("previous_part", FieldType::Id, "previous part"),
-    f("events", FieldType::Integer, "live events"),
-    f("first", FieldType::Time, "earliest event time"),
-    f("last", FieldType::Time, "latest event time"),
-];
-const RUNS: &[Field] = &[
-    f("id", FieldType::Id, "run ID"),
-    f("producer", FieldType::Text, "producer"),
-    f("producer_version", FieldType::Text, "producer version"),
-    f("host", FieldType::Text, "host"),
-    f("started", FieldType::Time, "start"),
-    f("ended", FieldType::Time, "end"),
-    f("status", FieldType::Enum(RUN_STATUS), "status"),
-    f("events", FieldType::Integer, "events emitted"),
-    f("failed", FieldType::Integer, "records that failed"),
-];
-const SOURCES: &[Field] = &[
-    f(
-        "continuity",
-        FieldType::Enum(&["run_lifetimes", "unknown"]),
-        "continuity evidence",
-    ),
-    f(
-        "gaps",
-        FieldType::Integer,
-        "gaps between recorded live runs",
-    ),
-    f("drift", FieldType::Json, "recorded payload schema changes"),
-    f(
-        "record_failures",
-        FieldType::Integer,
-        "records that failed to parse",
-    ),
-    f("binding", FieldType::Text, "binding"),
-    f("source", FieldType::Text, "source"),
-    f(
-        "shapes",
-        FieldType::Text,
-        "input shapes of its declarations; empty when written only on request",
-    ),
-    f("version", FieldType::Integer, "version"),
-    f("event_types", FieldType::Text, "event types"),
-    f("purpose", FieldType::Text, "purpose"),
-    f(
-        "expectation",
-        FieldType::Enum(crate::source::Expectation::NAMES),
-        "when it should have something",
-    ),
-    f(
-        "silent_after",
-        FieldType::Integer,
-        "seconds without a record after which a continuous source is suspicious",
-    ),
-    f(
-        "every",
-        FieldType::Integer,
-        "seconds without a read after which a scheduled source is suspicious",
-    ),
-    f(
-        "expires_after",
-        FieldType::Integer,
-        "seconds the provider keeps its own records",
-    ),
-    f("events", FieldType::Integer, "live events"),
-    f("first", FieldType::Time, "oldest event time of any reading"),
-    f(
-        "last_event",
-        FieldType::Time,
-        "newest event time of any reading",
-    ),
-    f(
-        "last_seen",
-        FieldType::Time,
-        "time the newest reading was read",
-    ),
-    f(
-        "failed_24h",
-        FieldType::Integer,
-        "failures in the last 24 hours",
-    ),
-];
-const GAPS: &[Field] = &[
-    f("source", FieldType::Text, "source"),
-    f("run", FieldType::Id, "run after the gap"),
-    f("start", FieldType::Time, "previous recorded run end"),
-    f("end", FieldType::Time, "next recorded run start"),
-    f("reason", FieldType::Text, "reason"),
-];
-const OPERATIONS: &[Field] = &[
-    f("id", FieldType::Id, "operation ID"),
-    f("kind", FieldType::Text, "kind"),
-    f("actor", FieldType::Text, "actor"),
-    f("scope", FieldType::Text, "scope"),
-    f("started", FieldType::Time, "start"),
-];
-const FAILURES: &[Field] = &[
-    f("id", FieldType::Integer, "failure ID"),
-    f("when", FieldType::Time, "time it failed"),
-    f("source", FieldType::Text, "source"),
-    f("material", FieldType::Id, "material"),
-    f("offset", FieldType::Integer, "byte offset"),
-    f("reason", FieldType::Text, "reason"),
-];
+/// The fields every event table has, handed to `$then` as its own fields.
+macro_rules! event_fields {
+    ($then:ident!($($args:tt)*)) => {
+        $then!($($args)* {
+            Id = ("id", FieldType::Id, "event ID"),
+            EventType = ("event_type", FieldType::Text, "event type"),
+            KindVersion = ("kind_version", FieldType::Integer, "kind version"),
+            Validation = ("validation", FieldType::Enum(crate::Validation::VALUES), "validation"),
+            Source = ("source", FieldType::Text, "source"),
+            Host = ("host", FieldType::Text, "host"),
+            When = ("when", FieldType::Time, "time it happened"),
+            TimeQuality = ("time_quality", FieldType::Enum(TimeQuality::VALUES), "time quality"),
+            TimeSuspect = ("time_suspect", FieldType::Enum(TIME_SUSPECT), "why its time looks wrong"),
+            Seen = ("seen", FieldType::Time, "time Sinex read it"),
+            Written = ("written", FieldType::Time, "time it was written"),
+            Origin = ("origin", FieldType::Enum(ORIGINS), "origin"),
+            Material = ("material", FieldType::Id, "material"),
+            Offset = ("offset", FieldType::Integer, "byte offset"),
+            Output = ("output", FieldType::Integer, "output number"),
+            Parents = ("parents", FieldType::IdList, "parent events"),
+            Producer = ("producer", FieldType::Text, "producer"),
+            ProducerVersion = ("producer_version", FieldType::Text, "producer version"),
+            Run = ("run", FieldType::Id, "run"),
+            Text = ("text", FieldType::Text, "text"),
+            Key = ("key", FieldType::Text, "equivalence key"),
+            Class = ("class", FieldType::Enum(Class::VALUES), "privacy class"),
+            State = ("state", FieldType::Enum(RecordState::VALUES), "record state"),
+            CommitSeq = ("commit_seq", FieldType::Integer, "commit position"),
+            Payload = ("payload", FieldType::Json, "payload"),
+        });
+    };
+}
+
+/// The archive's rows are events: the event fields, then its own.
+macro_rules! archive_table {
+    ({ $($variant:ident = ($name:expr, $ty:expr, $phrase:expr),)* }) => {
+        table!(ARCHIVE, ArchiveField, Archive, [
+            $(Field { id: FieldId::Event(EventField::$variant), name: $name, ty: $ty, phrase: $phrase },)*
+        ] {
+            Archived = ("archived", FieldType::Time, "time it left the live set"),
+            Reason = ("reason", FieldType::Enum(ArchiveReason::VALUES), "archive reason"),
+            Operation = ("operation", FieldType::Id, "operation"),
+            ReplacedBy = ("replaced_by", FieldType::Id, "replacing event"),
+            ArchivedSeq = ("archived_seq", FieldType::Integer, "commit position it left at"),
+        });
+    };
+}
+
+event_fields!(table!(EVENTS, EventField, Event, []));
+event_fields!(archive_table!());
+table!(MATERIALS, MaterialField, Material, [] {
+    Id = ("id", FieldType::Id, "material ID"),
+    Binding = ("binding", FieldType::Text, "binding"),
+    Parser = ("parser", FieldType::Text, "parser"),
+    ParserVersion = ("parser_version", FieldType::Integer, "parser version"),
+    Hash = ("hash", FieldType::Text, "content hash"),
+    Size = ("size", FieldType::Integer, "size in bytes"),
+    Stored = ("stored", FieldType::Time, "time it was stored"),
+    OriginPath = ("origin_path", FieldType::Path, "path it was read from"),
+    Host = ("host", FieldType::Text, "host"),
+    Part = ("part", FieldType::Integer, "part number"),
+    PreviousPart = ("previous_part", FieldType::Id, "previous part"),
+    Events = ("events", FieldType::Integer, "live events"),
+    First = ("first", FieldType::Time, "earliest event time"),
+    Last = ("last", FieldType::Time, "latest event time"),
+});
+table!(RUNS, RunField, Run, [] {
+    Id = ("id", FieldType::Id, "run ID"),
+    Producer = ("producer", FieldType::Text, "producer"),
+    ProducerVersion = ("producer_version", FieldType::Text, "producer version"),
+    Host = ("host", FieldType::Text, "host"),
+    Started = ("started", FieldType::Time, "start"),
+    Ended = ("ended", FieldType::Time, "end"),
+    Status = ("status", FieldType::Enum(RUN_STATUS), "status"),
+    Events = ("events", FieldType::Integer, "events emitted"),
+    Failed = ("failed", FieldType::Integer, "records that failed"),
+});
+table!(SOURCES, SourceField, Source, [] {
+    Continuity = ("continuity", FieldType::Enum(&["run_lifetimes", "unknown"]), "continuity evidence"),
+    Gaps = ("gaps", FieldType::Integer, "gaps between recorded live runs"),
+    Drift = ("drift", FieldType::Json, "recorded payload schema changes"),
+    RecordFailures = ("record_failures", FieldType::Integer, "records that failed to parse"),
+    Binding = ("binding", FieldType::Text, "binding"),
+    Source = ("source", FieldType::Text, "source"),
+    Shapes = ("shapes", FieldType::Text, "input shapes of its declarations; empty when written only on request"),
+    Version = ("version", FieldType::Integer, "version"),
+    EventTypes = ("event_types", FieldType::Text, "event types"),
+    Purpose = ("purpose", FieldType::Text, "purpose"),
+    Expectation = ("expectation", FieldType::Enum(crate::source::Expectation::NAMES), "when it should have something"),
+    SilentAfter = ("silent_after", FieldType::Integer, "seconds without a record after which a continuous source is suspicious"),
+    Every = ("every", FieldType::Integer, "seconds without a read after which a scheduled source is suspicious"),
+    ExpiresAfter = ("expires_after", FieldType::Integer, "seconds the provider keeps its own records"),
+    Events = ("events", FieldType::Integer, "live events"),
+    First = ("first", FieldType::Time, "oldest event time of any reading"),
+    LastEvent = ("last_event", FieldType::Time, "newest event time of any reading"),
+    LastSeen = ("last_seen", FieldType::Time, "time the newest reading was read"),
+    Failed24h = ("failed_24h", FieldType::Integer, "failures in the last 24 hours"),
+});
+table!(GAPS, GapField, Gap, [] {
+    Source = ("source", FieldType::Text, "source"),
+    Run = ("run", FieldType::Id, "run after the gap"),
+    Start = ("start", FieldType::Time, "previous recorded run end"),
+    End = ("end", FieldType::Time, "next recorded run start"),
+    Reason = ("reason", FieldType::Text, "reason"),
+});
+table!(OPERATIONS, OperationField, Operation, [] {
+    Id = ("id", FieldType::Id, "operation ID"),
+    Kind = ("kind", FieldType::Text, "kind"),
+    Actor = ("actor", FieldType::Text, "actor"),
+    Scope = ("scope", FieldType::Text, "scope"),
+    Started = ("started", FieldType::Time, "start"),
+});
+table!(FAILURES, FailureField, Failure, [] {
+    Id = ("id", FieldType::Integer, "failure ID"),
+    When = ("when", FieldType::Time, "time it failed"),
+    Source = ("source", FieldType::Text, "source"),
+    Material = ("material", FieldType::Id, "material"),
+    Offset = ("offset", FieldType::Integer, "byte offset"),
+    Reason = ("reason", FieldType::Text, "reason"),
+});
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Table {
