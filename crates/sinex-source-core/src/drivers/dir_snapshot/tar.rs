@@ -291,7 +291,14 @@ struct Attribute {
 
 fn attributes(input: &File) -> std::io::Result<Vec<Attribute>> {
     use rustix::fs::{fgetxattr, flistxattr};
-    let mut names = vec![0; flistxattr(input, &mut [] as &mut [u8])?];
+    // A file system without extended attributes, or a sandbox that filters
+    // the calls, reports EOPNOTSUPP: the file has none to capture.
+    let size = match flistxattr(input, &mut [] as &mut [u8]) {
+        Ok(size) => size,
+        Err(rustix::io::Errno::OPNOTSUPP) => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut names = vec![0; size];
     let count = flistxattr(input, names.as_mut_slice())?;
     names.truncate(count);
     let mut attributes = Vec::new();
