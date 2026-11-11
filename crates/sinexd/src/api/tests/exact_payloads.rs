@@ -130,7 +130,15 @@ async fn no_rules_preserve_credential_shaped_request_errors(db: devkit::pg::Test
         let body: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["outcome"], "failed", "{body}");
         // The query refusal shows the submitted line, unmasked, under its caret.
-        assert_eq!(body["failure"]["kind"], "invalid_query", "{body}");
+        // A double quote opens a string left unterminated; a single quote is
+        // not a string delimiter, so that line parses and names a field
+        // `events` does not have.
+        let kind = if quote == '"' {
+            "invalid_query"
+        } else {
+            "unknown_field"
+        };
+        assert_eq!(body["failure"]["kind"], kind, "{body}");
         assert!(
             body["failure"]["caret"].as_str().unwrap().contains(&text),
             "{body}"
