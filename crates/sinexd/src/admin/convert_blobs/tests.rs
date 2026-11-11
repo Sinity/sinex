@@ -11,7 +11,7 @@ async fn external_exports_convert_once_and_wrong_bytes_never_get_descriptors(
     let exporter = root.path().join("exporter");
     std::fs::write(
         &exporter,
-        "#!/bin/sh\nset -eu\ntest \"$1\" = payloads\nroot=$2\nshift 2\nfor hash do cat \"$root/$hash\"; done\n",
+        "#!/bin/sh\nset -eu\ntest \"$1\" = payloads\necho called >> \"$2/calls\"\nroot=$2\nshift 2\nfor hash do cat \"$root/$hash\"; done\n",
     )
     .unwrap();
     std::fs::set_permissions(&exporter, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -38,8 +38,14 @@ async fn external_exports_convert_once_and_wrong_bytes_never_get_descriptors(
     run(&database, &store, &source, &exporter).await.unwrap();
     let segment = store.join("segments/current.hb");
     let once = std::fs::read(&segment).unwrap();
+    let calls = std::fs::read(source.join("calls")).unwrap();
     run(&database, &store, &source, &exporter).await.unwrap();
     assert_eq!(std::fs::read(&segment).unwrap(), once);
+    assert_eq!(
+        std::fs::read(source.join("calls")).unwrap(),
+        calls,
+        "already converted bytes are not exported again"
+    );
     assert_eq!(std::fs::read(source.join(name)).unwrap(), bytes);
 }
 
