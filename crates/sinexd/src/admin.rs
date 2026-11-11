@@ -1,6 +1,7 @@
 //! `sinexd admin`: administration that needs the database but not the running
 //! daemon, and any command of the command table run locally.
 use crate::{Error, Result};
+mod convert_blobs;
 use crate::{api, catalog, reader_context};
 use clap::Subcommand;
 use std::path::PathBuf;
@@ -34,6 +35,18 @@ pub(crate) enum Admin {
         prepare: bool,
         #[arg(long)]
         unprepare: bool,
+    },
+    /// Convert verified predecessor streams to segments, keeping catalog identities.
+    /// The exporter is a separately pinned executable: payload SOURCE HASH writes decoded bytes.
+    ConvertBlobs {
+        #[arg(long)]
+        database: String,
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        exporter: PathBuf,
     },
     /// As the database superuser: create the extensions and roles the schema
     /// needs, and give `owner` the roles. The owner then applies the schema.
@@ -149,6 +162,12 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
             kind_owners,
             ..
         } => schema(&database, kind_owners, true).await,
+        Admin::ConvertBlobs {
+            database,
+            store,
+            source,
+            exporter,
+        } => convert_blobs::run(&database, &store, &source, &exporter).await,
         Admin::PrepareDatabase { database, owner } => {
             use sqlx::Connection;
             let mut connection = sqlx::PgConnection::connect(&database).await?;

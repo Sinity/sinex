@@ -106,3 +106,62 @@ async fn converted_streams_keep_existing_material_and_key_rows(db: devkit::pg::T
     reader.read_to_end(&mut actual).unwrap();
     assert_eq!(actual, bytes);
 }
+
+#[devkit::test]
+async fn a_conversion_group_keeps_catalog_rows_and_resumes_after_reopen(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    assert!(crate::writer_lock::try_claim(&mut conn).await.unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let inputs = [b"first source".as_slice(), b"second source".as_slice()];
+    let mut prepared = Vec::new();
+    for bytes in inputs {
+        let hash = Hash::of(bytes).to_string();
+        sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
+            .bind(&hash)
+            .bind(bytes.len() as i64)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        prepared.push(
+            prepare(
+                &root.path().join("incoming"),
+                &hash,
+                bytes.len() as u64,
+                std::io::Cursor::new(bytes),
+                None,
+            )
+            .unwrap(),
+        );
+    }
+    let before: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT to_jsonb(b) FROM core.blobs b ORDER BY hash")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    blobs
+        .convert_prepared_group(&mut conn, prepared)
+        .await
+        .unwrap();
+    drop(blobs);
+    let blobs = Blobs::open(root.path()).unwrap();
+    blobs.recover(&mut conn).await.unwrap();
+    for bytes in inputs {
+        assert_eq!(blobs.read(&Hash::of(bytes).to_string()).unwrap(), bytes);
+    }
+    let after: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT to_jsonb(b) FROM core.blobs b ORDER BY hash")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
+    let missing: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.blobs WHERE core.blob_descriptors(hash) IS NULL",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(missing, 0);
+}
