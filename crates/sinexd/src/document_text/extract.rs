@@ -147,14 +147,14 @@ fn member_text(bytes: &[u8], name: &str, blocks: &[&str]) -> Result<String> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
     let mut file = archive
         .by_name(name)
-        .map_err(|e| Error::internal(format!("{name}: {e}")))?;
+        .map_err(|e| Error::from(e).within(name))?;
     let mut reader = MarkupText::new(blocks, &[]);
     let mut chunk = vec![0u8; 64 * 1024];
     let mut carry: Vec<u8> = Vec::new();
     loop {
         let read = file
             .read(&mut chunk)
-            .map_err(|e| Error::internal(format!("{name}: {e}")))?;
+            .map_err(|e| Error::from(e).within(name))?;
         if read == 0 {
             break;
         }

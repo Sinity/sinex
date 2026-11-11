@@ -17,8 +17,7 @@ pub(crate) fn class_key() -> Result<Option<sinex_sealing::Recipient>> {
     let Some(path) = std::env::var_os("SINEX_CLASS_KEY_FILE") else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| Error::internal(format!("{}: {e}", std::path::Path::new(&path).display())))?;
+    let text = std::fs::read_to_string(&path).map_err(|e| Error::file(&path, e))?;
     sinex_sealing::parse_recipient(&text)
         .map(Some)
         .map_err(Error::from)

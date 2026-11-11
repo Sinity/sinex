@@ -2,6 +2,7 @@
 //! keeping its type until the method boundary, where it becomes the one shared
 //! failure every surface reports ([`Failure`]).
 use command_surface::{Failure, FailureKind};
+use sinex_store::failure::io_kind;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
@@ -134,7 +135,7 @@ impl From<Error> for Failure {
             Error::Database(error) => sinex_store::failure::database_failure(&error),
             Error::Schema(error) => sinex_store::failure::schema_failure(error),
             Error::Write(error) => error.into(),
-            Error::Blob(_) => Failure::new(FailureKind::Io, message),
+            Error::Blob(error) => sinex_store::failure::blob_failure(&error),
             Error::Io(error) | Error::File { source: error, .. } => {
                 Failure::new(io_kind(error.kind()), message)
             }
@@ -281,17 +282,6 @@ impl From<sinex_model::BuildError> for Error {
 impl From<ranking::RankError> for Error {
     fn from(error: ranking::RankError) -> Self {
         Self::bad_value(error)
-    }
-}
-
-/// A file error's shared kind: a missing file is not found, a forbidden one
-/// refused, a slow one timed out; anything else is the disk's failure.
-fn io_kind(kind: std::io::ErrorKind) -> FailureKind {
-    match kind {
-        std::io::ErrorKind::NotFound => FailureKind::NotFound,
-        std::io::ErrorKind::PermissionDenied => FailureKind::Refused,
-        std::io::ErrorKind::TimedOut => FailureKind::Timeout,
-        _ => FailureKind::Io,
     }
 }
 

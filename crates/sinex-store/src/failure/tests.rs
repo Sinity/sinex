@@ -105,3 +105,13 @@ async fn every_sqlx_error_class_maps_to_its_kind(db: devkit::pg::TestDatabase) {
         (FailureKind::NotFound, false)
     );
 }
+
+#[test]
+fn blob_errors_keep_their_kind() {
+    let missing = hashed_blobs::Error::Io(std::io::Error::from(std::io::ErrorKind::NotFound));
+    assert_eq!(blob_failure(&missing).kind, FailureKind::NotFound);
+    let locked = hashed_blobs::Error::Locked(hashed_blobs::Hash([0; 32]));
+    assert_eq!(blob_failure(&locked).kind, FailureKind::Refused);
+    let unwrap = hashed_blobs::Error::Unwrap("wrong key".into());
+    assert_eq!(blob_failure(&unwrap).kind, FailureKind::Io);
+}

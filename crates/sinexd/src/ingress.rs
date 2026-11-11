@@ -1251,13 +1251,13 @@ impl Requests {
             ResponseBody::Context(response)
         } else if subject == self.subjects.connect(&producer) {
             match serde_json::from_slice::<ProducerHello>(payload) {
-                Ok(hello) => ResponseBody::Welcome(
-                    self.connect(&producer, &hello)
-                        .await
-                        .unwrap_or_else(|error| ProducerWelcome::Refused {
+                Ok(hello) => {
+                    ResponseBody::Welcome(self.connect(&producer, &hello).await.unwrap_or_else(
+                        |error| ProducerWelcome::Refused {
                             reason: error.to_string(),
-                        }),
-                ),
+                        },
+                    ))
+                }
                 Err(error) => ResponseBody::Welcome(ProducerWelcome::Refused {
                     reason: error.to_string(),
                 }),

@@ -189,7 +189,7 @@ pub(crate) async fn run(
     };
     let in_scope: BTreeSet<Uuid> = match &prior_scope {
         Some(saved) => serde_json::from_value(saved["selected_materials"].clone())
-            .map_err(|_| Error::bad_request("stored replay material selection is invalid"))?,
+            .map_err(|e| Error::internal(format!("stored replay material selection: {e}")))?,
         None => replay::select(
             read_conn,
             &scope.materials,
@@ -555,13 +555,13 @@ fn read_sequence_into(
             input: m.input.map(sinex_model::InputId),
             blob: m.blob.clone(),
             length: u64::try_from(m.length)
-                .map_err(|_| Error::bad_request(format!("material {}: negative length", m.id)))?,
+                .map_err(|_| Error::internal(format!("material {}: negative length", m.id)))?,
             part_index: u32::try_from(m.part_index)
-                .map_err(|_| Error::bad_request(format!("material {}: negative part", m.id)))?,
+                .map_err(|_| Error::internal(format!("material {}: negative part", m.id)))?,
             previous_part: m.previous.map(MaterialId),
             parser: m.parsed_with().map_err(Error::refused)?.0.to_owned(),
             parser_version: u32::try_from(m.parsed_with().map_err(Error::refused)?.1).map_err(
-                |_| Error::bad_request(format!("material {}: negative parser version", m.id)),
+                |_| Error::internal(format!("material {}: negative parser version", m.id)),
             )?,
             manifest: m.manifest.clone(),
         };
@@ -573,9 +573,7 @@ fn read_sequence_into(
             unlock,
             std::sync::Arc::new(move || {
                 if sender.is_closed() {
-                    Err(Error::bad_request(
-                        "the writer stopped reading the sequence",
-                    ))
+                    Err(Error::internal("the writer stopped reading the sequence"))
                 } else {
                     Ok(())
                 }
@@ -608,13 +606,13 @@ fn read_sequence_into(
                 },
                 manifest: &m.manifest,
             })
-            .map_err(|e| Error::bad_request(format!("material {}: {e}", m.id)))?;
+            .map_err(|e| Error::internal(format!("material {}: {e}", m.id)))?;
         let scoped = in_scope.contains(&m.id);
         if scoped {
             report.materials += 1;
         }
         for chunk in chunks {
-            let chunk = chunk.map_err(|e| Error::bad_request(format!("material {}: {e}", m.id)))?;
+            let chunk = chunk.map_err(|e| Error::internal(format!("material {}: {e}", m.id)))?;
             carry = chunk.carry.clone();
             if !scoped {
                 continue;

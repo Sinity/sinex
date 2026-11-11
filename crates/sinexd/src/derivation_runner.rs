@@ -716,7 +716,7 @@ impl DerivationRunner {
             .writer
             .submit(Priority::Derived, batch)
             .await
-            .map_err(|e| Error::internal(format!("{name}: {e}")))?;
+            .map_err(|e| Error::from(e).within(name))?;
         let c = self.counts.entry(name.to_owned()).or_default();
         c.inputs += events.len();
         c.failed += failed;
@@ -1314,7 +1314,7 @@ impl KeyComputation<'_> {
             .writer
             .submit(Priority::Derived, batch)
             .await
-            .map_err(|e| Error::internal(format!("{name}: {e}")))?;
+            .map_err(|e| Error::from(e).within(name))?;
         let c = &mut *self.counts;
         c.write += t.elapsed();
         c.keys += keys;

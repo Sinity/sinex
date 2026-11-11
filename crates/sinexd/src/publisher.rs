@@ -534,7 +534,7 @@ async fn publish(
     let body = serde_json::to_vec(message)?;
     js.publish_with_headers(subject, headers, body.into())
         .await
-        .map_err(|e| Error::internal(format!("publish {id}: {e}")))
+        .map_err(|e| Error::nats(format!("publish {id}: {e}")))
 }
 
 fn archived_message(n: &ArchiveChange) -> Result<Archived> {

@@ -58,7 +58,7 @@ impl From<Error> for Failure {
             Error::Query(error) => error.failure(""),
             Error::Database(error) => database_failure(&error),
             Error::Schema(error) => schema_failure(error),
-            Error::Blob(error) => Failure::new(FailureKind::Io, error.to_string()),
+            Error::Blob(error) => blob_failure(&error),
             Error::Invalid(message) => Failure::new(FailureKind::BadValue, message),
             Error::NotFound(message) => Failure::new(FailureKind::NotFound, message),
             Error::StaleCursor => Failure::new(FailureKind::StaleCursor, error.to_string()),
@@ -70,6 +70,29 @@ impl From<Error> for Failure {
             }
             Error::Unsealed(_) => Failure::new(FailureKind::Refused, error.to_string()),
         }
+    }
+}
+
+/// A blob store error: a missing file is not found and a sealed blob without
+/// its key is refused; damaged bytes are the disk's failure.
+pub fn blob_failure(error: &hashed_blobs::Error) -> Failure {
+    use hashed_blobs::Error as Blob;
+    let kind = match error {
+        Blob::Io(error) => io_kind(error.kind()),
+        Blob::Locked(_) | Blob::Refused(_) => FailureKind::Refused,
+        Blob::Corrupt { .. } | Blob::Unwrap(_) => FailureKind::Io,
+    };
+    Failure::new(kind, error.to_string())
+}
+
+/// A file error's shared kind: a missing file is not found, a forbidden one
+/// refused, a slow one timed out; anything else is the disk's failure.
+pub fn io_kind(kind: std::io::ErrorKind) -> FailureKind {
+    match kind {
+        std::io::ErrorKind::NotFound => FailureKind::NotFound,
+        std::io::ErrorKind::PermissionDenied => FailureKind::Refused,
+        std::io::ErrorKind::TimedOut => FailureKind::Timeout,
+        _ => FailureKind::Io,
     }
 }
 
