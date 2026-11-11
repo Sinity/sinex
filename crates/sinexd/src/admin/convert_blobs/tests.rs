@@ -42,3 +42,34 @@ async fn external_exports_convert_once_and_wrong_bytes_never_get_descriptors(
     assert_eq!(std::fs::read(&segment).unwrap(), once);
     assert_eq!(std::fs::read(source.join(name)).unwrap(), bytes);
 }
+
+#[devkit::test]
+async fn a_failed_exporter_with_correct_bytes_does_not_commit(db: devkit::pg::TestDatabase) {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("old");
+    std::fs::create_dir(&source).unwrap();
+    let bytes = b"synthetic export before failure";
+    let name = hashed_blobs::Hash::of(bytes).to_string();
+    std::fs::write(source.join(&name), bytes).unwrap();
+    let exporter = root.path().join("exporter");
+    std::fs::write(&exporter, "#!/bin/sh\ncat \"$2/$3\"\nexit 7\n").unwrap();
+    std::fs::set_permissions(&exporter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let database = db.url(None);
+    let mut conn = sqlx::PgConnection::connect(&database).await.unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
+        .bind(&name)
+        .bind(bytes.len() as i64)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let error = run(&database, &root.path().join("store"), &source, &exporter)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("exporter failed"), "{error}");
+    let missing: bool = sqlx::query_scalar("SELECT core.blob_descriptors($1) IS NULL")
+        .bind(&name)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert!(missing);
+}
