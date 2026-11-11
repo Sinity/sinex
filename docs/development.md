@@ -72,3 +72,11 @@ The synthetic matrix covers strict and inclusive ranges, chunk boundaries,
 empty ranges, equality and commuted operands. It never connects to a deployed
 database. A custom `services.sinex.database.package` must preserve these
 semantics.
+
+## Published package
+
+The `package` workflow builds `.#default` for every master commit and pushes
+its runtime closure to `sinity.cachix.org`. Sinnix deploys a revision only
+after fetching that package, so its switches never compile Sinex. To deploy a
+branch other than master, build its head first with
+`gh workflow run package --ref <branch>`.
