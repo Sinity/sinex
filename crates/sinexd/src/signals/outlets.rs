@@ -2,6 +2,7 @@
 //! shared deliverer, and value targets and action commands named in
 //! deployment configuration. Each attempt is recorded unknown before it runs.
 use super::*;
+use crate::{Error, Result};
 use ::signals::DeliveryOutcome;
 use ::signals::notifications::{Notice, NotificationConfig, RouteCommand};
 use config::{Command, ValueTarget};
@@ -14,23 +15,18 @@ use std::time::Duration;
 pub(super) async fn notifications(
     api: &Api,
     config: &Config,
-) -> Result<
-    (
-        mpsc::UnboundedSender<NotificationRequest>,
-        mpsc::UnboundedReceiver<NotificationUpdate>,
-        tokio::task::JoinHandle<Result<(), String>>,
-    ),
-    String,
-> {
-    let mut conn = api.reads.acquire().await.map_err(error)?;
+) -> Result<(
+    mpsc::UnboundedSender<NotificationRequest>,
+    mpsc::UnboundedReceiver<NotificationUpdate>,
+    tokio::task::JoinHandle<Result<()>>,
+)> {
+    let mut conn = api.reads.acquire().await?;
     let state = sinex_store::signals::load(&mut conn, &api.host)
-        .await
-        .map_err(error)?
+        .await?
         .map_or_else(Default::default, |saved| saved.checkpoint.notifications);
     let notifications = config.notifications.as_ref();
     let connection = match notifications.map(|notifications| &notifications.bus_address) {
-        Some(Some(address)) => zbus::connection::Builder::address(address.as_str())
-            .map_err(error)?
+        Some(Some(address)) => zbus::connection::Builder::address(address.as_str())?
             .build()
             .await
             .ok(),
@@ -52,7 +48,7 @@ pub(super) async fn notifications(
     let worker = tokio::spawn(async move {
         signal_delivery::run(deliverer, receive, updates)
             .await
-            .map_err(error)
+            .map_err(Error::from)
     });
     Ok((requests, changed, worker))
 }

@@ -1,8 +1,10 @@
 //! The MCP server: one tool per command of the table that is offered to agents,
 //! over stdio. Each call is sent to the daemon's API, which does all parsing,
-//! access checks; results start with the data notice, and refusals
-//! are tool errors, never empty results.
+//! access checks; results start with the data notice, and failures are tool
+//! errors carrying the shared failure (its kind, message and correction) as
+//! structured content, never empty results.
 use crate::client::Client;
+use command_surface::{Failure, FailureKind};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -68,6 +70,20 @@ pub(crate) fn tools() -> Vec<Tool> {
         .collect()
 }
 
+/// A failure as a tool error: the text a model reads, and the failure itself
+/// under `error`.
+fn failure_result(failure: &Failure, moved: Option<Value>) -> CallToolResult {
+    let mut content = vec![ContentBlock::text(crate::describe(failure))];
+    let mut structured = json!({ "error": failure });
+    if let Some(moved) = moved {
+        content.push(ContentBlock::text(moved.to_string()));
+        structured["result"] = moved;
+    }
+    let mut reply = CallToolResult::error(content);
+    reply.structured_content = Some(structured);
+    reply
+}
+
 fn success_result(result: Value) -> CallToolResult {
     let text = serde_json::to_string_pretty(&result).unwrap_or_default();
     let mut reply =
@@ -103,39 +119,28 @@ impl ServerHandler for Sinex {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let Some(name) = request.name.strip_prefix(PREFIX) else {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "no tool {}",
-                request.name
-            ))])
-            .into());
+        let offered = request
+            .name
+            .strip_prefix(PREFIX)
+            .filter(|name| COMMANDS.iter().any(|c| c.name == *name && c.mcp));
+        let Some(name) = offered else {
+            let tools: Vec<String> = tools().into_iter().map(|t| t.name.to_string()).collect();
+            let failure =
+                Failure::new(FailureKind::BadRequest, format!("no tool {}", request.name))
+                    .with_candidates(tools);
+            return Ok(failure_result(&failure, None).into());
         };
-        if !COMMANDS.iter().any(|c| c.name == name && c.mcp) {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "no tool {}",
-                request.name
-            ))])
-            .into());
-        }
         let call = match Request::from_args(name, request.arguments.unwrap_or_default()) {
             Ok(r) => r,
-            Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e)]).into()),
+            Err(failure) => return Ok(failure_result(&failure, None).into()),
         };
         Ok(match self.client.call(&call).await {
             Ok((_, Reply::Ok { result })) => success_result(result),
-            Ok((_, Reply::Refused { reason, not_built })) => {
-                let prefix = if not_built {
-                    "not built yet: "
-                } else {
-                    "refused: "
-                };
-                CallToolResult::error(vec![ContentBlock::text(format!("{prefix}{reason}"))])
+            Ok((_, Reply::Failed { failure })) => failure_result(&failure, None),
+            Ok((_, Reply::StoppedEarly { failure, result })) => {
+                failure_result(&failure, Some(result))
             }
-            Ok((_, Reply::StoppedEarly { reason, result })) => CallToolResult::error(vec![
-                ContentBlock::text(format!("stopped early: {reason}")),
-                ContentBlock::text(result.to_string()),
-            ]),
-            Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
+            Err(e) => failure_result(&e.failure(name), None),
         }
         .into())
     }

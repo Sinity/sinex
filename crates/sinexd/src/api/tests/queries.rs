@@ -12,7 +12,7 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
     )
     .await;
     let (_, denied) = call(&w, Some(READ), json!({"method":"mark","text":"synthetic"})).await;
-    assert_eq!(denied["outcome"], "refused");
+    assert_eq!(denied["outcome"], "failed");
     let (status, _) = call(&w, Some(AGENT), json!({"method":"mark","text":"synthetic"})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let mut citations = Vec::new();
@@ -103,7 +103,7 @@ async fn saved_queries_bind_parameters_and_replace_definitions_through_admission
         json!({"method":"query","query":"query:in-directory(directory=x)"}),
     )
     .await;
-    assert_eq!(answer["outcome"], "refused");
+    assert_eq!(answer["outcome"], "failed");
     let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where source = $source | count","parameter":["source:text"]})).await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
     let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
@@ -249,7 +249,7 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
     let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | sort by when desc | fields id","parameter":["directory:text"]})).await;
     assert_eq!(changed["outcome"], "ok", "{changed}");
     let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
-    assert_eq!(continued["outcome"], "refused", "{continued}");
+    assert_eq!(continued["outcome"], "failed", "{continued}");
 }
 
 #[devkit::test]
@@ -398,7 +398,7 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         json!({"method":"query", "query":"query:clash@missing"}),
     )
     .await;
-    assert_eq!(answer["outcome"], "refused", "{answer}");
+    assert_eq!(answer["outcome"], "failed", "{answer}");
     let (_, answer) = call(
         &w,
         Some(OPERATOR),
@@ -429,9 +429,9 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         json!({"method":"query","query":"query:clash"}),
     )
     .await;
-    assert_eq!(answer["outcome"], "refused");
+    assert_eq!(answer["outcome"], "failed");
     assert!(
-        answer["reason"]
+        answer["failure"]["message"]
             .as_str()
             .unwrap()
             .contains("several authors")
@@ -449,7 +449,7 @@ async fn saving_parameterized_questions_refuses_invalid_fields_and_stages(
         "events where source = $source | group by source | count | where missing > 0",
     ] {
         let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid", "query":query, "parameter":["source:text"]})).await;
-        assert_eq!(answer["outcome"], "refused", "{answer}");
+        assert_eq!(answer["outcome"], "failed", "{answer}");
     }
     let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(listed["result"]["queries"], json!([]));
@@ -461,7 +461,7 @@ async fn nested_saved_query_literals_are_validated_before_admission(db: devkit::
     let (_, saved) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"by-class", "query":"events where class = $class | count", "parameter":["class:text"]})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
     let (_, invalid) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid-literal", "query":"query:by-class(class=unknown)"})).await;
-    assert_eq!(invalid["outcome"], "refused", "{invalid}");
+    assert_eq!(invalid["outcome"], "failed", "{invalid}");
     let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(listed["result"]["queries"].as_array().unwrap().len(), 1);
 }

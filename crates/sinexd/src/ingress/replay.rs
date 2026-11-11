@@ -1,5 +1,6 @@
 //! Complete outside replacements use the same writer transaction as local replay.
 use super::*;
+use crate::{Error, Result};
 use sinex_model::{ArchiveRequest, KindDeclaration, KindRef, MaterialId, ReplayScope};
 use sinex_protocol::{ProducerReplay, ReplayMaterial, ReplayScopeQuery, ReplaySelection};
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,10 +55,14 @@ pub(super) async fn select(
         let mut seen = BTreeSet::new();
         while let Some(previous) = by_id[&root].1 {
             if !seen.insert(root) {
-                return Err("material part sequence contains a cycle".into());
+                return Err(Check::Refused(
+                    "material part sequence contains a cycle".into(),
+                ));
             }
             if !by_id.contains_key(&previous) {
-                return Err("part sequence includes another producer's material".into());
+                return Err(Check::Refused(
+                    "part sequence includes another producer's material".into(),
+                ));
             }
             root = previous;
         }
@@ -191,7 +196,9 @@ pub(crate) async fn check_scope(
         ));
     }
     if sequence.parser_build.trim().is_empty() || sequence.parser_version.trim().is_empty() {
-        return Err("replay needs the producer parser build and version".into());
+        return Err(Check::Refused(
+            "replay needs the producer parser build and version".into(),
+        ));
     }
     let query = ReplayScopeQuery {
         after: None,
@@ -211,7 +218,9 @@ pub(crate) async fn check_scope(
         );
     }
     if selected[0].expected_live_hash != sequence.expected_live_hash {
-        return Err("replay_live_changed: readings changed while parsing".into());
+        return Err(Check::Refused(
+            "replay_live_changed: readings changed while parsing".into(),
+        ));
     }
     let references: Vec<_> = sequence
         .declarations
@@ -231,7 +240,9 @@ pub(crate) async fn check_scope(
             .get(&supplied.kind)
             .is_some_and(|d| d.definition_hash() == supplied.hash)
         {
-            return Err("replay_build_changed: target declaration differs".into());
+            return Err(Check::Refused(
+                "replay_build_changed: target declaration differs".into(),
+            ));
         }
     }
     Ok(declarations)
@@ -244,18 +255,19 @@ pub(crate) async fn check(conn: &mut PgConnection, request: &CheckedReplay) -> R
         for event in &batch.events {
             let declaration = declarations
                 .get(&event.kind)
-                .ok_or("replacement uses an unpinned declaration")?;
+                .ok_or_else(|| Error::bad_request("replacement uses an unpinned declaration"))?;
             let payload = if declaration.normalization == sinex_model::kinds::Normalization::Rust {
                 let validator = sinex_model::event_types::find(&event.kind.name)
                     .filter(|k| (k.declaration)() == *declaration)
-                    .ok_or("validator_unavailable")?;
-                (validator.normalize)(&event.payload).map_err(|_| "invalid bundled replacement")?
+                    .ok_or_else(|| Error::bad_request("validator_unavailable"))?;
+                (validator.normalize)(&event.payload)
+                    .map_err(|_| Error::bad_request("invalid bundled replacement"))?
             } else {
                 event.payload.clone()
             };
             let evaluated = declaration
                 .evaluate(&payload, event.class)
-                .map_err(Check::Refused)?;
+                .map_err(|error| Check::Refused(error.to_string()))?;
             if sequence
                 .event_types
                 .as_ref()
@@ -267,16 +279,24 @@ pub(crate) async fn check(conn: &mut PgConnection, request: &CheckedReplay) -> R
                     .until
                     .is_some_and(|until| evaluated.ts_orig.at.is_none_or(|at| at >= until))
             {
-                return Err("replacement emits readings outside its scope".into());
+                return Err(Check::Refused(
+                    "replacement emits readings outside its scope".into(),
+                ));
             }
             let Some(location) = event.location else {
-                return Err("outside replay replaces material readings only".into());
+                return Err(Check::Refused(
+                    "outside replay replaces material readings only".into(),
+                ));
             };
             if !sequence.materials.iter().any(|m| m.id == location.material) {
-                return Err("replacement location is outside the sequence".into());
+                return Err(Check::Refused(
+                    "replacement location is outside the sequence".into(),
+                ));
             }
             if !event.parents.is_empty() {
-                return Err("a material reading cannot also name parents".into());
+                return Err(Check::Refused(
+                    "a material reading cannot also name parents".into(),
+                ));
             }
         }
         for failure in &batch.failures {
@@ -285,7 +305,9 @@ pub(crate) async fn check(conn: &mut PgConnection, request: &CheckedReplay) -> R
                 .iter()
                 .any(|m| m.id == failure.location.material)
             {
-                return Err("failure location is outside the sequence".into());
+                return Err(Check::Refused(
+                    "failure location is outside the sequence".into(),
+                ));
             }
         }
     }
@@ -317,7 +339,9 @@ pub(crate) async fn finish(
     .await
     .map_err(|e| Check::Unavailable(e.to_string()))?;
     if !in_scope {
-        return Err("replacement emits readings outside its scope".into());
+        return Err(Check::Refused(
+            "replacement emits readings outside its scope".into(),
+        ));
     }
     let last = outcomes
         .iter()
@@ -326,7 +350,7 @@ pub(crate) async fn finish(
     let declaration = sinex_store::source_declarations::load(conn, &request.sequence.source)
         .await
         .map_err(|error| Check::Unavailable(error.to_string()))?
-        .ok_or("replay source declaration disappeared")?;
+        .ok_or_else(|| Error::not_found("replay source declaration disappeared"))?;
     commit_log::record_replay_frame(
         conn,
         &request.producer,
@@ -355,11 +379,9 @@ impl Ingest {
         run: RunId,
         sequence: ProducerReplay,
         content_hash: String,
-    ) -> Result<Acknowledgment, String> {
-        self.native_declaration(producer, &sequence.source)
-            .await
-            .map_err(|error| error.to_string())?;
-        let write = authority::write(&self.grants, producer).map_err(|error| error.to_string())?;
+    ) -> Result<Acknowledgment> {
+        self.native_declaration(producer, &sequence.source).await?;
+        let write = authority::write(&self.grants, producer)?;
         let request = CheckedReplay {
             content_hash,
             host: write.host.clone(),
@@ -373,10 +395,11 @@ impl Ingest {
         match result {
             Ok(replay) => match self.writer.replay(replay).await {
                 Ok(_) => {}
-                Err(WriteError::Unavailable(error)) => return Err(error),
-                Err(WriteError::Stopped) => return Err("the writer stopped".into()),
+                Err(error @ (WriteError::Unavailable(_) | WriteError::Stopped)) => {
+                    return Err(error.into());
+                }
                 // Only signal steps compute from inputs that can move under them.
-                Err(error @ WriteError::Stale(_)) => return Err(error.to_string()),
+                Err(error @ WriteError::Stale(_)) => return Err(error.into()),
                 Err(WriteError::Refused(reason)) => {
                     self.writer
                         .submit(
@@ -392,13 +415,14 @@ impl Ingest {
                                 &request.content_hash,
                             ),
                         )
-                        .await
-                        .map_err(|e| e.to_string())?;
+                        .await?;
                 }
             },
             Err(error) => {
                 let (kind, reason) = match error {
-                    Check::Unavailable(error) => return Err(error),
+                    Check::Unavailable(error) => {
+                        return Err(Error::new(command_surface::FailureKind::NotRunning, error));
+                    }
                     Check::Refused(reason) => (sinex_model::FrameRefusal::Content, reason),
                     Check::Bytes(reason) => (sinex_model::FrameRefusal::Bytes, reason),
                     Check::Malformed(reason) => (sinex_model::FrameRefusal::Malformed, reason),
@@ -414,14 +438,13 @@ impl Ingest {
                             &request.content_hash,
                         ),
                     )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    .await?;
             }
         }
         let stored = self
             .stored(producer, frame)
             .await?
-            .ok_or("replay acknowledgment is missing")?;
+            .ok_or_else(|| Error::not_found("replay acknowledgment is missing"))?;
         self.discard(producer, frame);
         acknowledgment(stored)
     }
@@ -510,7 +533,8 @@ impl Ingest {
         let mut scope = serde_json::json!({"root":s.root,"materials":s.materials,"event_types":s.event_types,"from":s.from,"until":s.until,
             "declarations":s.declarations,"parser_build":s.parser_build,"parser_version":s.parser_version,
             "expected_live_hash":s.expected_live_hash,"content_hash":blake3::hash(&content).to_hex().to_string()});
-        scope["identity"] = crate::replay::build_identity().map_err(Check::Unavailable)?;
+        scope["identity"] = crate::replay::build_identity()
+            .map_err(|error| Check::Unavailable(error.to_string()))?;
         Ok(crate::writer::ReplaySequence {
             operation: s.operation,
             actor: request.producer.clone(),

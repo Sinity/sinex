@@ -14,6 +14,7 @@
 use crate::api::{self, Api};
 use crate::commit_reader::{self, Consumer, ReadModelRunner};
 use crate::dirty_keys::Registered;
+use crate::{Error, Result};
 use crate::{binding_runner, derivation_runner, ingress, publisher, telemetry, writer};
 use sinex_protocol::Subjects;
 use sinex_store::Blobs;
@@ -60,7 +61,7 @@ enum StopOutcome {
 }
 
 impl ShutdownSummary {
-    fn record(&mut self, done: Result<(&'static str, Result<(), String>), tokio::task::JoinError>) {
+    fn record(&mut self, done: Result<(&'static str, Result<()>), tokio::task::JoinError>) {
         self.joined += 1;
         let (name, outcome) = match done {
             Ok((name, Ok(()))) => {
@@ -117,36 +118,34 @@ pub(crate) struct ApiOptions {
     pub day_start: jiff::civil::Time,
 }
 
-async fn connect(url: &str) -> Result<PgConnection, String> {
+async fn connect(url: &str) -> Result<PgConnection> {
     PgConnection::connect(url)
         .await
-        .map_err(|e| format!("database: {e}"))
+        .map_err(|e| Error::from(e).within("database"))
 }
 
-pub(crate) async fn run(o: Options) -> Result<(), String> {
+pub(crate) async fn run(o: Options) -> Result<()> {
     let subjects = Subjects::new(o.subject_root.clone());
-    let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
-    let tokens =
-        api::Tokens::load(&o.api.tokens).map_err(|e| format!("{}: {e}", o.api.tokens.display()))?;
-    let client = sinex_source_core::nats::connect(&o.nats, o.nats_password_file.as_deref()).await?;
+    let blobs = Blobs::open(&o.store)?;
+    let tokens = api::Tokens::load(&o.api.tokens).map_err(|e| Error::file(&o.api.tokens, e))?;
+    let client = sinex_source_core::nats::connect(&o.nats, o.nats_password_file.as_deref())
+        .await
+        .map_err(Error::Nats)?;
     let js = publisher::context(client.clone());
 
     let (stop_tx, stop) = watch::channel(false);
     let (commits_tx, commits) = watch::channel(0u64);
     let (read_models_tx, read_models) = watch::channel(());
     let (handle, queues) = writer::channels();
-    let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
+    let mut tasks: JoinSet<(&'static str, Result<()>)> = JoinSet::new();
 
     let writer_conn = connect(&o.database).await?;
     let mut writer_conn = writer::claim(writer_conn).await?;
-    blobs
-        .recover(&mut writer_conn)
-        .await
-        .map_err(|error| error.to_string())?;
+    blobs.recover(&mut writer_conn).await?;
     // Finish removing bytes a tombstone freed before sources resume.
     let (removed, left) = sinex_store::lifecycle::remove_unreferenced(&mut writer_conn, &blobs)
         .await
-        .map_err(|e| format!("removing tombstoned bytes: {e}"))?;
+        .map_err(|e| Error::from(e).within("removing tombstoned bytes"))?;
     if !removed.is_empty() || !left.is_empty() {
         eprintln!(
             "sinexd: removed {} tombstoned byte ranges left by a stop; {} could not be removed",
@@ -157,11 +156,11 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     // No operation runs while the writer starts; a stopped one resumes later.
     sinex_store::lifecycle::release_held_keys(&mut writer_conn)
         .await
-        .map_err(|e| format!("releasing held keys: {e}"))?;
+        .map_err(|e| Error::from(e).within("releasing held keys"))?;
     // Remove committed extents whose admission left no catalog row.
     let without_rows = sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs)
         .await
-        .map_err(|e| format!("deleting extents without a row: {e}"))?;
+        .map_err(|e| Error::from(e).within("deleting extents without a row"))?;
     if !without_rows.is_empty() {
         eprintln!(
             "sinexd: deleted {} unreferenced byte extents",
@@ -176,7 +175,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     {
         sinex_store::source_declarations::register(&mut writer_conn, &grant.source_declarations)
             .await
-            .map_err(|error| format!("registering configured source catalog: {error}"))?;
+            .map_err(|error| {
+                Error::internal(format!("registering configured source catalog: {error}"))
+            })?;
     }
     // The configured derivations run in the runner, keyed and per-event
     // (screen text included).
@@ -188,7 +189,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let telemetry_spool = o.telemetry_spool.clone();
     // Discovery must see the configured spool before its first planning turn.
     std::fs::create_dir_all(&telemetry_spool)
-        .map_err(|error| format!("telemetry spool: {error}"))?;
+        .map_err(|error| Error::from(error).within("telemetry spool"))?;
     sources
         .discovery
         .inputs
@@ -198,7 +199,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let configuration = sources.derivation_configuration();
     // Fusion runs only the families with a written definition; an invalid
     // declaration refuses to start, naming the family and the reason.
-    sinex_derivations::fusion::declaration::check().map_err(|refused| refused.to_string())?;
+    sinex_derivations::fusion::declaration::check().map_err(Error::bad_value)?;
     let (keyed, per_event) = (
         crate::analysis::keyed_with(&configuration),
         derivation_runner::per_event_with(&configuration)?,
@@ -207,7 +208,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         !keyed.iter().any(|d| d.name() == name.as_str())
             && !per_event.iter().any(|d| d.name() == name.as_str())
     }) {
-        return Err(format!("derivation {name}: no such derivation"));
+        return Err(Error::not_found(format!(
+            "derivation {name}: no such derivation"
+        )));
     }
     let keyed: Vec<_> = keyed
         .into_iter()
@@ -301,7 +304,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         .max_connections(16)
         .connect(&o.database)
         .await
-        .map_err(|e| format!("read pool: {e}"))?;
+        .map_err(|e| Error::from(e).within("read pool"))?;
     let read_failures = crate::binding_runner::ReadFailures::default();
     let reader_api = Api {
         backup_producers: Some((
@@ -325,7 +328,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         day_start: o.api.day_start,
         derivations: configuration,
         agent_grants: api::agent_grants(&o.api.tokens)
-            .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
+            .map_err(|e| Error::file(&o.api.tokens, e))?,
         unlock: Default::default(),
         host: o.host.clone(),
         library_roots: if sources
@@ -352,12 +355,7 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
         },
     };
     let public_context = crate::public_context::Provider::new(
-        reader_api
-            .context()
-            .clock()
-            .map_err(|error| error.to_string())?
-            .day
-            .wire(),
+        reader_api.context().clock()?.day.wire(),
         o.host.clone(),
         reader_api.source_config.signals.as_ref(),
     )?;
@@ -386,7 +384,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
                 })
                 .await
             }
-            Err(_) => Err("producer request subscriptions did not become ready".into()),
+            Err(_) => Err(Error::internal(
+                "producer request subscriptions did not become ready",
+            )),
         };
         ("API", result)
     });
@@ -465,9 +465,9 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     let outcome = tokio::select! {
         _ = shutdown_signal() => Ok(()),
         Some(done) = tasks.join_next() => match done {
-            Ok((name, Ok(()))) => Err(format!("{name} stopped")),
-            Ok((name, Err(error))) => Err(format!("{name}: {error}")),
-            Err(error) => Err(format!("a task panicked: {error}")),
+            Ok((name, Ok(()))) => Err(Error::internal(format!("{name} stopped"))),
+            Ok((name, Err(error))) => Err(Error::internal(format!("{name}: {error}"))),
+            Err(error) => Err(Error::internal(format!("a task panicked: {error}"))),
         },
     };
     let _ = stop_tx.send(true);
@@ -500,13 +500,13 @@ pub(crate) async fn run(o: Options) -> Result<(), String> {
     outcome
 }
 
-async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<(), String> {
+async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<()> {
     let mut conn = writer::claim(connect(database).await?).await?;
     let result = sinex_store::blobs::commit_pending_extents(&mut conn, blobs)
         .await
-        .map_err(|e| e.to_string());
+        .map_err(Error::from);
     // Closing the session releases its writer claim even when cleanup fails.
-    let closed = conn.close().await.map_err(|e| e.to_string());
+    let closed = conn.close().await.map_err(Error::from);
     result.and(closed)
 }
 

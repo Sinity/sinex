@@ -53,7 +53,7 @@ pub(crate) async fn validate(
         "SELECT derivation,version,range_from IS NULL AND range_until IS NULL,context FROM derivation.comparisons WHERE id=$1")
         .bind(selected.comparison).fetch_optional(&mut *conn).await?;
     let Some((derivation, version, full, context)) = row else {
-        return Err(Error::Invalid("no such producer comparison".into()));
+        return Err(Error::NotFound("no such producer comparison".into()));
     };
     if derivation != name
         || version != selected.version

@@ -19,10 +19,15 @@ async fn a_public_cursor_cannot_skip_rows_in_a_different_question(db: devkit::pg
     let page = first(&w, READ, "events | sort by when").await;
     let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"events where beta", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
-        next["outcome"], "refused",
+        next["outcome"], "failed",
         "a different one-row answer was silently skipped: {next}"
     );
-    assert!(next["reason"].as_str().unwrap().contains("cursor"));
+    assert!(
+        next["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cursor")
+    );
 }
 
 #[devkit::test]
@@ -40,7 +45,7 @@ async fn a_public_cursor_does_not_transfer_the_operators_guarded_visibility(
     admit(&w, &["guarded alpha", "guarded beta"], 0).await;
     let page = first(&w, OPERATOR, "events | sort by when").await;
     let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"events | sort by when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
-    assert_eq!(next["outcome"], "refused", "{next}");
+    assert_eq!(next["outcome"], "failed", "{next}");
     assert!(!next.to_string().contains("guarded beta"));
     let (_, fresh) = call(
         &w,
@@ -114,10 +119,15 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
     }
     let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"commands | sort by when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
-        next["outcome"], "refused",
+        next["outcome"], "failed",
         "a permanent removal silently changed page positions: {next}"
     );
-    assert!(next["reason"].as_str().unwrap().contains("result changed"));
+    assert!(
+        next["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("result changed")
+    );
 }
 
 #[devkit::test]
@@ -147,8 +157,13 @@ async fn public_run_metadata_changes_invalidate_a_question_without_new_event_com
         .await
         .unwrap();
     let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":query, "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
-    assert_eq!(next["outcome"], "refused", "{next}");
-    assert!(next["reason"].as_str().unwrap().contains("result changed"));
+    assert_eq!(next["outcome"], "failed", "{next}");
+    assert!(
+        next["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("result changed")
+    );
 }
 
 #[devkit::test]
@@ -170,7 +185,7 @@ async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::Test
             json!({"method":"query", "query":"events | sort by when", "cursor":token}),
         )
         .await;
-        assert_eq!(answer["outcome"], "refused", "{answer}");
+        assert_eq!(answer["outcome"], "failed", "{answer}");
     }
     let (_, oversized) = call(
         &w,
@@ -178,5 +193,5 @@ async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::Test
         json!({"method":"query", "query":"events", "page":u64::MAX}),
     )
     .await;
-    assert_eq!(oversized["outcome"], "refused");
+    assert_eq!(oversized["outcome"], "failed");
 }

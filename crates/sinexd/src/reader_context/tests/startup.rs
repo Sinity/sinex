@@ -77,9 +77,9 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
         }
     };
     assert!(
-        error
-            .as_deref()
-            .is_some_and(|e| e.contains(&format!("schema version {}", sinex_schema::VERSION + 1))),
+        error.as_ref().is_some_and(|e| e
+            .to_string()
+            .contains(&format!("schema version {}", sinex_schema::VERSION + 1))),
         "ordinary startup must refuse another schema version: {error:?}"
     );
     assert_eq!(state(&mut conn).await, before);

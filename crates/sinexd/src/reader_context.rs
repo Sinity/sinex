@@ -3,6 +3,7 @@
 //! through `read_conn`, never the writer's connection.
 use crate::dirty_keys::Registered;
 use crate::writer::{self, WriterHandle};
+use crate::{Error, Result};
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
 use std::path::Path;
@@ -21,34 +22,19 @@ impl ReaderContext {
         database: &str,
         store: &Path,
         time_settings: sinex_model::time_settings::TimeSettings,
-    ) -> Result<Self, String> {
-        let mut read_conn = PgConnection::connect(database)
-            .await
-            .map_err(|e| e.to_string())?;
-        sinex_schema::require_current(&mut read_conn)
-            .await
-            .map_err(|e| e.to_string())?;
-        let blobs = Blobs::open(store).map_err(|e| e.to_string())?;
-        let writer_conn = PgConnection::connect(database)
-            .await
-            .map_err(|e| e.to_string())?;
+    ) -> Result<Self> {
+        let mut read_conn = PgConnection::connect(database).await?;
+        sinex_schema::require_current(&mut read_conn).await?;
+        let blobs = Blobs::open(store)?;
+        let writer_conn = PgConnection::connect(database).await?;
         let mut writer_conn = writer::claim(writer_conn).await?;
         crate::catalog::install_native_sources(&mut writer_conn).await?;
-        blobs
-            .recover(&mut writer_conn)
-            .await
-            .map_err(|error| error.to_string())?;
+        blobs.recover(&mut writer_conn).await?;
         // As at daemon start: finish removing tombstoned bytes, and no
         // operation holds keys while the writer starts.
-        sinex_store::lifecycle::remove_unreferenced(&mut writer_conn, &blobs)
-            .await
-            .map_err(|e| e.to_string())?;
-        sinex_store::lifecycle::release_held_keys(&mut writer_conn)
-            .await
-            .map_err(|e| e.to_string())?;
-        sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs)
-            .await
-            .map_err(|e| e.to_string())?;
+        sinex_store::lifecycle::remove_unreferenced(&mut writer_conn, &blobs).await?;
+        sinex_store::lifecycle::release_held_keys(&mut writer_conn).await?;
+        sinex_store::blobs::delete_unreferenced_extents(&mut writer_conn, &blobs).await?;
         let (writer, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             database.to_owned(),
@@ -66,13 +52,13 @@ impl ReaderContext {
     }
 
     /// Stop the writer once everything submitted is done.
-    pub(crate) async fn close(self) -> Result<(), String> {
+    pub(crate) async fn close(self) -> Result<()> {
         drop(self.writer);
-        self.task.await.map_err(|e| e.to_string())?;
+        self.task.await?;
         let mut conn = writer::claim(self.read_conn).await?;
         sinex_store::blobs::commit_pending_extents(&mut conn, &self.blobs)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(Error::from)
     }
 }
 

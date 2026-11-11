@@ -2,6 +2,7 @@
 use super::Settings;
 use super::panel::{panel, span_text};
 use super::recipes::{correlations, deviations, input, tracked};
+use crate::{Error, Result};
 use sinex_analysis::Eligibility;
 use sinex_analysis::SpanSet;
 use sinex_analysis::coverage::{Completeness, Coverage};
@@ -20,20 +21,17 @@ pub(crate) async fn render_pack(
     conn: &mut PgConnection,
     reference: &str,
     budget: usize,
-) -> Result<(Presentation, String), String> {
+) -> Result<(Presentation, String)> {
     let pack = super::access::load_pack(conn, reference)
         .await?
-        .ok_or("no visible stored context pack for this reference")?;
+        .ok_or_else(|| Error::not_found("no visible stored context pack for this reference"))?;
     compile_pack(pack, budget)
 }
 
-fn compile_pack(
-    pack: super::access::StoredPack,
-    budget: usize,
-) -> Result<(Presentation, String), String> {
+fn compile_pack(pack: super::access::StoredPack, budget: usize) -> Result<(Presentation, String)> {
     let content = &pack.payload["analysis"];
     let sections: Vec<Section> = if content.is_object() {
-        serde_json::from_value(content["sections"].clone()).map_err(|error| error.to_string())?
+        serde_json::from_value(content["sections"].clone())?
     } else {
         resume_sections(&pack.payload)?
     };
@@ -63,10 +61,10 @@ fn compile_pack(
             .into(),
         as_of: pack.payload["read_as"]
             .as_i64()
-            .ok_or("stored context pack has no selected read context")?,
+            .ok_or_else(|| Error::internal("stored context pack has no selected read context"))?,
         day_setting: pack.payload["day_setting"]
             .as_str()
-            .ok_or("stored context pack has no logical-day setting")?
+            .ok_or_else(|| Error::internal("stored context pack has no logical-day setting"))?
             .into(),
     };
     Ok((
@@ -75,10 +73,9 @@ fn compile_pack(
     ))
 }
 
-fn resume_sections(payload: &serde_json::Value) -> Result<Vec<Section>, String> {
+fn resume_sections(payload: &serde_json::Value) -> Result<Vec<Section>> {
     use sinex_model::event_types::{activity::ActivityEvidence, work::ContextPack};
-    let pack: ContextPack =
-        serde_json::from_value(payload.clone()).map_err(|error| error.to_string())?;
+    let pack: ContextPack = serde_json::from_value(payload.clone())?;
     let reference = |evidence: &ActivityEvidence, description: String| Finding {
         template: Template::Observation {
             event_type: evidence.event_type.clone(),
@@ -172,7 +169,7 @@ pub(super) fn sections(
     settings: &Settings,
     day: jiff::civil::Date,
     provisional: bool,
-) -> Result<Vec<Section>, String> {
+) -> Result<Vec<Section>> {
     let metrics: Vec<&'static Metric> = METRICS.iter().collect();
     let day_span = settings.day_span(day, day)?;
     let label = day.to_string();
@@ -298,15 +295,11 @@ pub(super) fn sections(
 /// The data-quality findings from source coverage: every binding whose current
 /// read failed or was partial, failures first. A read that succeeded is not a
 /// data-quality finding.
-fn source_read_findings(
-    panel: &super::panel::Panel,
-    settings: &Settings,
-) -> Result<Vec<Finding>, String> {
+fn source_read_findings(panel: &super::panel::Panel, settings: &Settings) -> Result<Vec<Finding>> {
     use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
     let mut observations = Vec::new();
     for evidence in &panel.evidence {
-        let row: SourceCoverage = serde_json::from_value(evidence["observation"].clone())
-            .map_err(|error| error.to_string())?;
+        let row: SourceCoverage = serde_json::from_value(evidence["observation"].clone())?;
         let state = match row.state {
             CoverageState::Missing => "missing",
             CoverageState::Partial => "partial",
@@ -314,7 +307,7 @@ fn source_read_findings(
         };
         let citation = evidence["citation"]
             .as_str()
-            .ok_or("coverage evidence has no citation")?
+            .ok_or_else(|| Error::internal("coverage evidence has no citation"))?
             .to_owned();
         observations.push((state, row, citation));
     }
@@ -327,13 +320,11 @@ fn source_read_findings(
             b.ended_at,
         ))
     });
-    let zone = jiff::tz::TimeZone::get(settings.time_settings.zone_name())
-        .map_err(|error| error.to_string())?;
+    let zone = jiff::tz::TimeZone::get(settings.time_settings.zone_name())?;
     observations
         .into_iter()
         .map(|(state, row, citation)| {
-            let when = jiff::Timestamp::from_nanosecond(row.ended_at.unix_ns())
-                .map_err(|error| error.to_string())?
+            let when = jiff::Timestamp::from_nanosecond(row.ended_at.unix_ns())?
                 .to_zoned(zone.clone())
                 .to_string();
             Ok(Finding {
@@ -375,7 +366,7 @@ pub(crate) async fn why_not(
     settings: &Settings,
     metric: &'static Metric,
     day: jiff::civil::Date,
-) -> Result<String, String> {
+) -> Result<String> {
     let p = panel(conn, ctx, settings, &[metric], day, day).await?;
     let span = settings.day_span(day, day)?;
     let mut out = String::new();

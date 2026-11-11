@@ -1,4 +1,5 @@
 //! The API against a real database and the real writer.
+use crate::Result;
 mod backups;
 mod exact_payloads;
 mod sql_boundary;
@@ -27,7 +28,7 @@ struct World {
     commits: watch::Sender<u64>,
     /// Kept so the commit reader runs until the test ends.
     _stop: watch::Sender<bool>,
-    read_model_task: Option<tokio::task::JoinHandle<Result<(), String>>>,
+    read_model_task: Option<tokio::task::JoinHandle<Result<()>>>,
     read_models: watch::Sender<()>,
     writer: writer::WriterHandle,
     reads: sqlx::PgPool,
@@ -142,6 +143,20 @@ async fn world_with_config(
     db: devkit::pg::TestDatabase,
     source_config: crate::binding_runner::Config,
 ) -> World {
+    world_with_reads(
+        db,
+        source_config,
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+    )
+    .await
+}
+
+/// A world whose read pool is built from `reads`.
+async fn world_with_reads(
+    db: devkit::pg::TestDatabase,
+    source_config: crate::binding_runner::Config,
+    reads: PgPoolOptions,
+) -> World {
     let url = db.url(None);
     let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
@@ -160,11 +175,7 @@ async fn world_with_config(
         Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),
     ));
-    let reads = PgPoolOptions::new()
-        .max_connections(READ_CONNECTIONS)
-        .connect(&url)
-        .await
-        .unwrap();
+    let reads = reads.connect(&url).await.unwrap();
     let (stop, stopped) = watch::channel(false);
     let api = Api {
         backup_producers: None,
@@ -206,7 +217,7 @@ async fn start_read_models(
     commits: watch::Receiver<u64>,
     completed: watch::Sender<()>,
     stop: watch::Receiver<bool>,
-) -> tokio::task::JoinHandle<Result<(), String>> {
+) -> tokio::task::JoinHandle<Result<()>> {
     tokio::spawn(crate::commit_reader::run(
         <sqlx::PgConnection as sqlx::Connection>::connect(url)
             .await
@@ -252,7 +263,12 @@ async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
     assert_eq!(body["outcome"], json!("ok"));
     let (status, body) = call(&w, Some(READ), json!({"method": "archive", "target": "x"})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert!(body["reason"].as_str().unwrap().contains("needs agent"));
+    assert!(
+        body["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("needs agent")
+    );
     let (status, _) = call(
         &w,
         Some(AGENT),
@@ -271,15 +287,17 @@ async fn bad_queries_are_refused_with_the_place(db: devkit::pg::TestDatabase) {
         json!({"method": "query", "query": "events where exit_cod = 1"}),
     )
     .await;
-    assert_eq!(body["outcome"], json!("refused"));
-    assert!(body["reason"].as_str().unwrap().contains('^'));
-    let (_, body) = call(
+    assert_eq!(body["outcome"], json!("failed"));
+    assert_eq!(body["failure"]["kind"], json!("unknown_field"), "{body}");
+    assert!(body["failure"]["caret"].as_str().unwrap().contains('^'));
+    let (status, body) = call(
         &w,
         Some(READ),
         json!({"method": "query", "query": "related x"}),
     )
     .await;
-    assert_eq!(body["not_built"], json!(true));
+    assert_eq!(body["failure"]["kind"], json!("not_built"), "{body}");
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
 }
 
 #[devkit::test]
@@ -301,7 +319,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
             json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
         )
         .await;
-        assert_eq!(body["outcome"], "refused", "{body}");
+        assert_eq!(body["outcome"], "failed", "{body}");
     }
     let identity = sinex_sealing::Identity::generate();
     use age::secrecy::ExposeSecret;
@@ -318,7 +336,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
         json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
     )
     .await;
-    assert_eq!(body["outcome"], "refused", "{body}");
+    assert_eq!(body["outcome"], "failed", "{body}");
     let (_, body) = call(
         &w,
         Some(OPERATOR),
@@ -387,7 +405,7 @@ async fn sql_reads_as_the_reader_role(db: devkit::pg::TestDatabase) {
         json!({"method": "sql", "sql": "DELETE FROM core.events RETURNING id"}),
     )
     .await;
-    assert_eq!(body["outcome"], json!("refused"));
+    assert_eq!(body["outcome"], json!("failed"));
 }
 
 #[devkit::test]
@@ -469,14 +487,14 @@ async fn an_sql_cursor_serves_only_its_statement_and_caller(db: devkit::pg::Test
         json!({"method": "sql", "sql": sql, "page": 1, "cursor": cursor}),
     )
     .await;
-    assert_eq!(other["outcome"], json!("refused"), "{other}");
+    assert_eq!(other["outcome"], json!("failed"), "{other}");
     let (_, other) = call(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": "SELECT 1 AS n", "page": 1, "cursor": cursor}),
     )
     .await;
-    assert_eq!(other["outcome"], json!("refused"), "{other}");
+    assert_eq!(other["outcome"], json!("failed"), "{other}");
     let (_, next) = call(
         &w,
         Some(READ),
@@ -781,7 +799,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
         json!({"method": "privacy-class", "source": "terminal.atuin", "class": "open"}),
     )
     .await;
-    assert_eq!(body["outcome"], json!("refused"), "{body}");
+    assert_eq!(body["outcome"], json!("failed"), "{body}");
     let (status, _) = call(
         &w,
         Some(AGENT),
@@ -917,7 +935,7 @@ async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDataba
     )
     .await;
     assert!(
-        body["reason"]
+        body["failure"]["message"]
             .as_str()
             .unwrap()
             .starts_with("no recipe astrology")
@@ -976,7 +994,7 @@ async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatab
     )
     .await;
     assert!(
-        body["reason"]
+        body["failure"]["message"]
             .as_str()
             .unwrap()
             .starts_with("no metric astrology")
@@ -999,6 +1017,8 @@ mod fusion;
 mod queries;
 
 mod enable_status;
+
+mod failures;
 
 #[devkit::test]
 async fn declaration_discovery_pages_through_the_public_commands(db: devkit::pg::TestDatabase) {

@@ -15,6 +15,7 @@ pub mod copy_text;
 pub mod coverage;
 pub mod derivations;
 pub mod diagnostics;
+pub mod failure;
 pub mod library_shown;
 pub mod lifecycle;
 pub mod live;
@@ -67,6 +68,10 @@ pub enum Error {
     Blob(#[from] hashed_blobs::Error),
     #[error("{0}")]
     Invalid(String),
+    /// A named record (an event, an operation, a rule) that does not exist
+    /// or is not visible to the caller.
+    #[error("{0}")]
+    NotFound(String),
     #[error("query result changed; start the query again")]
     StaleCursor,
     /// The signal checkpoint moved since it was read.

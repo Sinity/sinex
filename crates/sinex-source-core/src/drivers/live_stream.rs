@@ -248,7 +248,7 @@ impl Reader for LiveStream {
             // Capture has not created its spool yet.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => {
-                return Err(DriverError::Io(format!(
+                return Err(DriverError::Read(format!(
                     "spool {}: {e}",
                     self.spool.display()
                 )));
@@ -366,7 +366,7 @@ impl Reader for LiveStream {
             }
             Ok(removed)
         })()
-        .map_err(|e| DriverError::Io(e.to_string()))
+        .map_err(DriverError::from)
     }
 }
 

@@ -1,5 +1,6 @@
 //! Backup requests use the existing writer; a snapshot and a hold are distinct lifetimes.
-use super::{Api, Caller, Reply, json, refused};
+use super::{Api, Caller, Reply, json};
+use crate::{Error, Result};
 use sinex_model::OperationId;
 
 impl Api {
@@ -11,85 +12,62 @@ impl Api {
         output: Option<String>,
         page: Option<u64>,
         cursor: Option<String>,
-    ) -> Reply {
-        let id = |text: &str| {
+    ) -> Result<Reply> {
+        let id = |text: &str| -> Result<OperationId> {
             text.parse::<uuid::Uuid>()
                 .map(OperationId)
-                .map_err(|e| e.to_string())
+                .map_err(|e| Error::bad_value(format!("backup hold {text}: {e}")))
         };
         if action == "list" {
             if hold.is_some() || output.is_some() {
-                return refused("backup list takes only --page and --cursor");
+                return Err(Error::bad_request(
+                    "backup list takes only --page and --cursor",
+                ));
             }
-            let after = match cursor.as_deref().map(id).transpose() {
-                Ok(value) => value,
-                Err(e) => return refused(e),
-            };
+            let after = cursor.as_deref().map(id).transpose()?;
             let size = i64::try_from(page.unwrap_or(100)).unwrap_or(i64::MAX);
             if size == 0 {
-                return refused("backup list page must be positive");
+                return Err(Error::bad_value("backup list page must be positive"));
             }
-            let mut conn = match self.acquire(caller).await {
-                Ok(conn) => conn,
-                Err(e) => return refused(e.to_string()),
+            let mut conn = self.acquire(caller).await?;
+            let holds = sinex_store::backup::list(&mut conn, after, size).await?;
+            let next = if holds.len() as u64 == size as u64 {
+                holds.last().map(|h| h.id.to_string())
+            } else {
+                None
             };
-            return match sinex_store::backup::list(&mut conn, after, size).await {
-                Ok(holds) => {
-                    let next = if holds.len() as u64 == size as u64 {
-                        holds.last().map(|h| h.id.to_string())
-                    } else {
-                        None
-                    };
-                    Reply::Ok {
-                        result: json!({"holds":holds,"page":{"cursor":next}}),
-                    }
-                }
-                Err(e) => refused(e.to_string()),
-            };
+            return Ok(Reply::Ok {
+                result: json!({"holds":holds,"page":{"cursor":next}}),
+            });
         }
         if page.is_some() || cursor.is_some() {
-            return refused("backup --page and --cursor belong to list");
+            return Err(Error::bad_request(
+                "backup --page and --cursor belong to list",
+            ));
         }
-        let Some(writer) = self.writer.as_ref() else {
-            return refused("the writer is not running");
-        };
+        let writer = self.writer()?;
         match action {
             "hold" if hold.is_none() && output.is_none() => {
-                match writer.backup_hold(caller.actor).await {
-                    Ok(hold) => Reply::Ok {
-                        result: json!({"hold":hold}),
-                    },
-                    Err(e) => refused(e.to_string()),
-                }
+                let hold = writer.backup_hold(caller.actor).await?;
+                Ok(Reply::Ok {
+                    result: json!({"hold":hold}),
+                })
             }
             "release" if output.is_none() => {
-                let hold = match hold
+                let hold = id(hold
                     .as_deref()
-                    .ok_or_else(|| "backup release needs HOLD".to_string())
-                    .and_then(id)
-                {
-                    Ok(hold) => hold,
-                    Err(e) => return refused(e.to_string()),
-                };
-                match writer.backup_release(hold, caller.actor).await {
-                    Ok(hold) => Reply::Ok {
-                        result: json!({"hold":hold}),
-                    },
-                    Err(e) => refused(e.to_string()),
-                }
+                    .ok_or_else(|| Error::bad_request("backup release needs HOLD"))?)?;
+                let hold = writer.backup_release(hold, caller.actor).await?;
+                Ok(Reply::Ok {
+                    result: json!({"hold":hold}),
+                })
             }
             "prepare" if hold.is_none() => {
-                let Some(output) = output else {
-                    return refused("backup prepare needs --output PATH");
-                };
+                let output = output
+                    .ok_or_else(|| Error::bad_request("backup prepare needs --output PATH"))?;
                 let output = std::path::PathBuf::from(output);
-                let revision = match crate::build_identity::current() {
-                    Ok(revision) => revision,
-                    Err(e) => return refused(e),
-                };
-                if let Err(e) = crate::backup::create(&output) {
-                    return refused(e);
-                }
+                let revision = crate::build_identity::current()?;
+                crate::backup::create(&output)?;
                 let source_publication = writer.source_publication();
                 let local_guard = source_publication.pause().await;
                 let mut paused = Vec::new();
@@ -128,7 +106,7 @@ impl Api {
                         for producer in &paused {
                             let _ = producer.release().await;
                         }
-                        return refused(e.to_string());
+                        return Err(e.into());
                     }
                 };
                 let hold = snapshot.hold.id;
@@ -136,7 +114,7 @@ impl Api {
                     for producer in &paused {
                         let _ = producer.release().await;
                     }
-                    return refused(format!("{error}; backup hold {hold} remains open"));
+                    return Err(error.with_note(format!("backup hold {hold} remains open")));
                 }
                 let local_bindings = crate::binding_runner::backup_bindings(
                     snapshot.connection(),
@@ -193,16 +171,18 @@ impl Api {
                 )
                 .await
                 {
-                    Ok(artifact) => Reply::Ok {
+                    Ok(artifact) => Ok(Reply::Ok {
                         result: json!({"artifact":artifact,"output":output,"hold_open":true}),
-                    },
-                    Err(e) => refused(format!(
-                        "{e}; backup hold {hold} remains open; incomplete output {}",
+                    }),
+                    Err(e) => Err(e.with_note(format!(
+                        "backup hold {hold} remains open; incomplete output {}",
                         output.display()
-                    )),
+                    ))),
                 }
             }
-            _ => refused("backup takes hold, release HOLD, prepare --output PATH, or list"),
+            _ => Err(Error::bad_request(
+                "backup takes hold, release HOLD, prepare --output PATH, or list",
+            )),
         }
     }
 }

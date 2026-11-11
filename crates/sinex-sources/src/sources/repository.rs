@@ -104,7 +104,7 @@ pub struct Repository {
 }
 
 fn error(e: impl std::fmt::Display) -> DriverError {
-    DriverError::Io(e.to_string())
+    DriverError::Read(e.to_string())
 }
 
 fn time(t: gix::date::Time) -> Result<Timestamp, DriverError> {

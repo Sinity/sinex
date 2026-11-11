@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 
 struct SlowReader {
     entered: Option<tokio::sync::oneshot::Sender<()>>,
@@ -11,9 +12,9 @@ impl Reader for SlowReader {
         self.release
             .recv_timeout(std::time::Duration::from_secs(5))
             .map_err(|_| {
-                drivers::DriverError::Io("runtime did not progress during the poll".into())
+                drivers::DriverError::Read("runtime did not progress during the poll".into())
             })?;
-        Err(drivers::DriverError::Io("synthetic poll finished".into()))
+        Err(drivers::DriverError::Read("synthetic poll finished".into()))
     }
 }
 
@@ -30,5 +31,11 @@ async fn synchronous_poll_does_not_stop_other_runtime_tasks() {
         release.send(()).unwrap();
     };
     let (result, ()) = tokio::join!(reader.acquire(Value::Null), unrelated);
-    assert!(result.err().unwrap().contains("synthetic poll finished"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("synthetic poll finished")
+    );
 }

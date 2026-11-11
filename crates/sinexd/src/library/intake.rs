@@ -1,6 +1,7 @@
 //! Intake: scanning a library root and making or continuing items from what
 //! the scan saw.
-use super::{Library, R, e};
+use super::{Library, R};
+use crate::Error;
 use serde_json::{Value, json};
 use sinex_library::reads;
 use sinex_model::event_types::library::FileCopy;
@@ -19,13 +20,12 @@ impl Library<'_> {
         path: &Path,
         reference: bool,
     ) -> R<Value> {
-        let format = sources::format("library").ok_or("library format is not registered")?;
+        let format = sources::format("library")
+            .ok_or_else(|| Error::not_configured("library format is not registered"))?;
         let mut settings = Settings::new(self.host);
         settings.options = json!({"reference": reference});
-        let selected = std::fs::canonicalize(path).map_err(e)?;
-        let stored = sinex_store::bindings::for_source(conn, "library.scan")
-            .await
-            .map_err(e)?;
+        let selected = std::fs::canonicalize(path)?;
+        let stored = sinex_store::bindings::for_source(conn, "library.scan").await?;
         let mut roots = std::collections::BTreeSet::new();
         for root in self.roots.iter().cloned().chain(
             stored
@@ -38,7 +38,7 @@ impl Library<'_> {
             };
             let root = if root.is_file() {
                 root.parent()
-                    .ok_or("library root has no parent")?
+                    .ok_or_else(|| Error::bad_request("library root has no parent"))?
                     .to_path_buf()
             } else {
                 root
@@ -48,19 +48,24 @@ impl Library<'_> {
             }
         }
         if roots.len() > 1 {
-            return Err("library selection belongs to several configured roots".into());
+            return Err(Error::bad_request(
+                "library selection belongs to several configured roots",
+            ));
         }
         if let Some(root) = roots.first() {
             settings.options["root"] = json!(root);
         }
-        let binding = (format.plan.ok_or("library format has no planner")?)(path, &settings)?
-            .into_iter()
-            .next()
-            .ok_or("library input has no binding")?;
+        let binding = (format
+            .plan
+            .ok_or_else(|| Error::not_configured("library format has no planner"))?)(
+            path, &settings,
+        )
+        .map_err(Error::bad_value)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::bad_request("library input has no binding"))?;
         let root_text = binding.input.display().to_string();
-        let before = reads::copies(conn, self.host, &root_text)
-            .await
-            .map_err(e)?;
+        let before = reads::copies(conn, self.host, &root_text).await?;
         let reader = crate::binding_reader::BindingReader::new(format, binding)?;
         crate::intake::request_class(conn, reader.source.as_ref()).await?;
         // The scan and the derivation futures are boxed like the intake in
@@ -74,9 +79,7 @@ impl Library<'_> {
         .await?;
         let files = counts.accounting.readings;
         let seen = counts.accounting.new + counts.accounting.revised;
-        let after = reads::copies(conn, self.host, &root_text)
-            .await
-            .map_err(e)?;
+        let after = reads::copies(conn, self.host, &root_text).await?;
         let keys: std::collections::BTreeSet<_> =
             after.iter().map(|copy| copy.item.clone()).collect();
         let computed = Box::pin(crate::derivation_runner::compute_now(

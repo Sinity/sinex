@@ -2,11 +2,12 @@
 //! engine and evaluated by the shared evaluator; evaluator reports other
 //! products forward are taken in beside them; the one host policy routes
 //! every firing; the outlets show, send away, write or run what it hands off.
+use crate::{Error, Result};
 mod config;
 mod evaluate;
 mod outlets;
 use crate::api::Api;
-use crate::intake::SubmitError;
+use crate::writer::WriteError;
 pub(crate) use config::Config;
 use sinex_model::event_types::signal::{
     DeliveryRecorded, OutcomeRecorded, ReportReceived, SignalRecord,
@@ -26,14 +27,11 @@ pub(crate) const DELIVERIES: &str = "sinex.signals.deliveries";
 /// remain live.
 const BASIS_CHANGED: &str = "basis_changed";
 
-fn error(error: impl std::fmt::Display) -> String {
-    error.to_string()
+fn millis(at: Timestamp) -> Result<i64> {
+    i64::try_from(at.unix_ns() / 1_000_000).map_err(Error::from)
 }
-fn millis(at: Timestamp) -> Result<i64, String> {
-    i64::try_from(at.unix_ns() / 1_000_000).map_err(error)
-}
-fn timestamp(at: i64) -> Result<Timestamp, String> {
-    Timestamp::from_unix_ns(i128::from(at) * 1_000_000).map_err(error)
+fn timestamp(at: i64) -> Result<Timestamp> {
+    Timestamp::from_unix_ns(i128::from(at) * 1_000_000).map_err(Error::from)
 }
 
 pub(crate) async fn query(
@@ -41,7 +39,7 @@ pub(crate) async fn query(
     text: &str,
     ctx: &sinex_model::query::Context,
     seq: i64,
-) -> Result<sinex_store::query::signals::SignalAnswer, String> {
+) -> Result<sinex_store::query::signals::SignalAnswer> {
     sinex_store::query::signals::standing_query(
         conn,
         text,
@@ -50,7 +48,7 @@ pub(crate) async fn query(
         sinex_sources::sources::signals::SPEC.name,
     )
     .await
-    .map_err(error)
+    .map_err(Error::from)
 }
 
 enum Step {
@@ -79,15 +77,14 @@ pub(crate) async fn run(
     settings_identity: String,
     mut commits: watch::Receiver<u64>,
     mut stop: watch::Receiver<bool>,
-) -> Result<(), String> {
-    let config = api
-        .source_config
-        .signals
-        .clone()
-        .ok_or("signals worker requires configured host policy")?;
-    let calendar = ::signals::DayCalendar::new(api.context().clock().map_err(error)?.day);
+) -> Result<()> {
+    let config =
+        api.source_config.signals.clone().ok_or_else(|| {
+            Error::not_configured("signals worker requires configured host policy")
+        })?;
+    let calendar = ::signals::DayCalendar::new(api.context().clock()?.day);
     let run = {
-        let mut conn = api.reads.acquire().await.map_err(error)?;
+        let mut conn = api.reads.acquire().await?;
         sinex_store::runs::start(
             &mut conn,
             &sinex_store::runs::Manifest {
@@ -99,8 +96,7 @@ pub(crate) async fn run(
             },
             &api.host,
         )
-        .await
-        .map_err(error)?
+        .await?
     };
     let host = Host {
         api: &api,
@@ -138,7 +134,7 @@ pub(crate) async fn run(
                 }
             }
         }
-        Ok::<_, String>(())
+        Ok::<_, Error>(())
     }
     .await;
     // Closing the channel stops the deliverer; what it reports until then is
@@ -147,12 +143,12 @@ pub(crate) async fn run(
     let mut worker = worker;
     loop {
         tokio::select! {
-            result = &mut worker => return outcome.and(result.map_err(error)?),
+            result = &mut worker => return outcome.and(result?),
             update = updates.recv() => match update {
                 Some(update) => if let Err(failure) = persist_update(&host, update).await {
                     outcome = Err(failure);
                 },
-                None => return outcome.and(worker.await.map_err(error)?),
+                None => return outcome.and(worker.await?),
             },
         }
     }
@@ -160,14 +156,8 @@ pub(crate) async fn run(
 
 /// The saved checkpoint and its revision, or a fresh one before the first
 /// step commits.
-async fn load(
-    host: &Host<'_>,
-    conn: &mut sqlx::PgConnection,
-) -> Result<(Option<u64>, Checkpoint), String> {
-    if let Some(saved) = sinex_store::signals::load(conn, &host.api.host)
-        .await
-        .map_err(error)?
-    {
+async fn load(host: &Host<'_>, conn: &mut sqlx::PgConnection) -> Result<(Option<u64>, Checkpoint)> {
+    if let Some(saved) = sinex_store::signals::load(conn, &host.api.host).await? {
         return Ok((Some(saved.revision), saved.checkpoint));
     }
     let start = millis(Timestamp::now())?.saturating_sub(1);
@@ -175,7 +165,7 @@ async fn load(
         None,
         Checkpoint {
             settings_identity: host.settings_identity.into(),
-            evaluator: ::signals::Evaluator::new(start, vec![], host.calendar).map_err(error)?,
+            evaluator: ::signals::Evaluator::new(start, vec![], host.calendar)?,
             host: ::signals::HostPolicy::new(
                 host.config.host_settings(),
                 ::signals::InterruptBudget {
@@ -199,15 +189,15 @@ async fn load(
 /// One step of the deliverer: evaluate the rules if the store changed, take
 /// in forwarded reports, advance the evaluator and the host policy to now,
 /// and commit what was handed off together with the new checkpoint.
-async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
+async fn step(host: &Host<'_>, resumed: bool) -> Result<Step> {
     let (api, config, calendar) = (host.api, host.config, host.calendar);
     let _serial = api
         .writer
         .as_ref()
-        .ok_or("signals require the writer")?
+        .ok_or_else(|| Error::not_configured("signals require the writer"))?
         .lock_signals()
         .await;
-    let mut conn = api.reads.acquire().await.map_err(error)?;
+    let mut conn = api.reads.acquire().await?;
     let (revision, mut state) = load(host, &mut conn).await?;
     let now = Timestamp::now();
     let at = millis(now)?;
@@ -217,16 +207,10 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         state.host.settings = config.host_settings();
         state.host.budget.per_hour = config.interrupt_budget_per_hour;
     }
-    sinex_store::query::initialize_calendar(&mut conn)
-        .await
-        .map_err(error)?;
-    let mut tx = conn.begin().await.map_err(error)?;
-    sinex_store::query::read_one_snapshot(&mut tx)
-        .await
-        .map_err(error)?;
-    let seq = sinex_store::query::current_seq(&mut tx)
-        .await
-        .map_err(error)?;
+    sinex_store::query::initialize_calendar(&mut conn).await?;
+    let mut tx = conn.begin().await?;
+    sinex_store::query::read_one_snapshot(&mut tx).await?;
+    let seq = sinex_store::query::current_seq(&mut tx).await?;
     let due = state
         .evaluator
         .next_due()
@@ -242,19 +226,19 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
         && state.observed_seq == seq
         && due.is_none_or(|due| due > at)
     {
-        tx.rollback().await.map_err(error)?;
+        tx.rollback().await?;
         return Ok(Step::Wait(due));
     }
     if at <= state.evaluator.now() {
-        tx.rollback().await.map_err(error)?;
+        tx.rollback().await?;
         return Ok(Step::Wait(Some(state.evaluator.now().saturating_add(1))));
     }
-    let read_mark = sinex_store::ReadMark::now(&mut tx).await.map_err(error)?;
+    let read_mark = sinex_store::ReadMark::now(&mut tx).await?;
     if revision.is_none() || reselect || state.observed_seq != seq {
         evaluate::evaluate(api, &mut tx, &mut state, now, seq, read_mark, calendar).await?;
     }
     absorb_reports(&mut tx, &mut state, seq).await?;
-    tx.commit().await.map_err(error)?;
+    tx.commit().await?;
     // After a restart, what was observed while down is taken in without
     // handing anything off for past instants.
     let handoffs = if resumed {
@@ -262,7 +246,7 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
     } else {
         state.evaluator.resume(at, calendar, &mut state.host)
     }
-    .map_err(error)?;
+    .map_err(Error::from)?;
     let (deliveries, mut records) = hand_off(config, &mut state, handoffs, read_mark, now)?;
     let changed = changed_basis(&mut conn, &deliveries).await?;
     let deliveries = withdraw(&mut state, deliveries, &mut records, &changed, now)?;
@@ -282,8 +266,8 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step, String> {
     // the same frozen inputs are never retried twice.
     match persist(api, &mut conn, records, commit, now).await {
         Ok(()) => Ok(Step::Committed),
-        Err(SubmitError::Stale(_)) => Ok(Step::Again),
-        Err(error) => Err(error.to_string()),
+        Err(Error::Write(WriteError::Stale(_))) => Ok(Step::Again),
+        Err(error) => Err(error),
     }
 }
 
@@ -294,14 +278,11 @@ async fn absorb_reports(
     conn: &mut sqlx::PgConnection,
     state: &mut Checkpoint,
     seq: i64,
-) -> Result<(), String> {
-    sinex_store::query::set_grants(conn, "guarded")
-        .await
-        .map_err(error)?;
+) -> Result<()> {
+    sinex_store::query::set_grants(conn, "guarded").await?;
     let reports =
         sinex_store::signals::reports(conn, ReportReceived::EVENT_TYPE, state.reports_seq, seq)
-            .await
-            .map_err(error)?;
+            .await?;
     for report in reports {
         if report.payload.get("withheld").is_some() {
             continue;
@@ -353,13 +334,10 @@ fn hand_off(
     handoffs: ::signals::Handoffs,
     read_mark: sinex_store::ReadMark,
     now: Timestamp,
-) -> Result<
-    (
-        Vec<(sinex_model::Event, sinex_store::ReadMark)>,
-        Vec<SignalRecord>,
-    ),
-    String,
-> {
+) -> Result<(
+    Vec<(sinex_model::Event, sinex_store::ReadMark)>,
+    Vec<SignalRecord>,
+)> {
     let mut deliveries = Vec::new();
     let mut records = Vec::new();
     let desktop = config.notifications.is_some();
@@ -374,9 +352,9 @@ fn hand_off(
             (Some(own), _) => (vec![own.event], own.class),
             (None, Some(forwarded)) => (vec![forwarded.report], forwarded.class),
             (None, None) => {
-                return Err(format!(
+                return Err(Error::internal(format!(
                     "signal delivery {id} names neither a rule this host runs nor a forwarded report"
-                ));
+                )));
             }
         };
         // The readings each matched row was computed from, under the read
@@ -415,11 +393,10 @@ fn hand_off(
                 &recorded,
                 sinex_sources::sources::signals::SPEC.name,
                 sinex_model::Origin::Derived { parents },
-                sinex_model::ReadingOrder(i64::try_from(now.unix_ns()).map_err(error)?),
-                *blake3::hash(&serde_json::to_vec(&recorded).map_err(error)?).as_bytes(),
+                sinex_model::ReadingOrder(i64::try_from(now.unix_ns())?),
+                *blake3::hash(&serde_json::to_vec(&recorded)?).as_bytes(),
                 class,
-            )
-            .map_err(error)?,
+            )?,
             read,
         ));
         match &delivery.decision {
@@ -561,25 +538,25 @@ fn hand_off(
 async fn changed_basis(
     conn: &mut sqlx::PgConnection,
     deliveries: &[(sinex_model::Event, sinex_store::ReadMark)],
-) -> Result<BTreeSet<String>, String> {
+) -> Result<BTreeSet<String>> {
     let mut changed = BTreeSet::new();
     for (event, read) in deliveries {
         let parents: Vec<uuid::Uuid> = match &event.origin {
             sinex_model::Origin::Derived { parents } => parents.iter().map(|id| id.0).collect(),
             sinex_model::Origin::Record { .. } => Vec::new(),
         };
-        if !read.holds(conn, &parents).await.map_err(error)? {
+        if !read.holds(conn, &parents).await? {
             changed.insert(delivery_id(event)?);
         }
     }
     Ok(changed)
 }
 
-fn delivery_id(event: &sinex_model::Event) -> Result<String, String> {
+fn delivery_id(event: &sinex_model::Event) -> Result<String> {
     event.payload["delivery_id"]
         .as_str()
         .map(str::to_owned)
-        .ok_or_else(|| "a signal delivery lacks its identity".into())
+        .ok_or_else(|| Error::internal("a signal delivery lacks its identity"))
 }
 
 /// Withdraw handoffs whose basis changed: no delivery event and no outlet
@@ -594,7 +571,7 @@ fn withdraw(
     records: &mut Vec<SignalRecord>,
     changed: &BTreeSet<String>,
     now: Timestamp,
-) -> Result<Vec<(sinex_model::Event, sinex_store::ReadMark)>, String> {
+) -> Result<Vec<(sinex_model::Event, sinex_store::ReadMark)>> {
     if changed.is_empty() {
         return Ok(deliveries);
     }
@@ -606,14 +583,14 @@ fn withdraw(
             kept.push((event, read));
             continue;
         }
-        let recorded: DeliveryRecorded = serde_json::from_value(event.payload).map_err(error)?;
+        let recorded: DeliveryRecorded = serde_json::from_value(event.payload)?;
         let fired = &recorded.delivery.fired;
         if let Some(inputs) = state.inputs.get_mut(&fired.trigger.rule.id) {
             for row in &fired.basis {
                 inputs.remove(&row.occurrence.id);
             }
         }
-        state.evaluator.retract(&id, at).map_err(error)?;
+        state.evaluator.retract(&id, at)?;
         state.outbox.remove(&id);
         state.open.remove(&id);
     }
@@ -687,9 +664,12 @@ async fn persist(
     records: Vec<SignalRecord>,
     mut commit: Commit,
     at: Timestamp,
-) -> Result<(), SubmitError> {
+) -> Result<()> {
     settle(&mut commit.checkpoint);
-    let writer = api.writer.as_ref().ok_or("signals require the writer")?;
+    let writer = api
+        .writer
+        .as_ref()
+        .ok_or_else(|| Error::not_configured("signals require the writer"))?;
     if records.is_empty() {
         writer.submit_signals(None, commit).await?;
         return Ok(());
@@ -713,15 +693,15 @@ async fn persist(
 async fn persist_update(
     host: &Host<'_>,
     update: signal_delivery::NotificationUpdate,
-) -> Result<(), String> {
+) -> Result<()> {
     let api = host.api;
     let _serial = api
         .writer
         .as_ref()
-        .ok_or("signals require the writer")?
+        .ok_or_else(|| Error::not_configured("signals require the writer"))?
         .lock_signals()
         .await;
-    let mut conn = api.reads.acquire().await.map_err(error)?;
+    let mut conn = api.reads.acquire().await?;
     let (revision, mut state) = load(host, &mut conn).await?;
     state.notifications = update.state;
     let at = Timestamp::now();
@@ -746,8 +726,7 @@ async fn persist_update(
         },
         at,
     )
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     let _ = update.persisted.send(());
     Ok(())
 }
@@ -759,9 +738,9 @@ async fn dispatch(
     host: &Host<'_>,
     notices: &mpsc::UnboundedSender<signal_delivery::NotificationRequest>,
     requested: &mut BTreeSet<String>,
-) -> Result<(), String> {
+) -> Result<()> {
     let state = {
-        let mut conn = host.api.reads.acquire().await.map_err(error)?;
+        let mut conn = host.api.reads.acquire().await?;
         load(host, &mut conn).await?.1
     };
     requested.retain(|request| {
@@ -774,11 +753,9 @@ async fn dispatch(
         match pending {
             Pending::Notice { notice } => {
                 if requested.insert(format!("show {id} {}", notice.showing)) {
-                    notices
-                        .send(signal_delivery::NotificationRequest::Deliver(Box::new(
-                            notice,
-                        )))
-                        .map_err(error)?;
+                    notices.send(signal_delivery::NotificationRequest::Deliver(Box::new(
+                        notice,
+                    )))?;
                 }
             }
             Pending::Clear => {
@@ -793,9 +770,7 @@ async fn dispatch(
                     continue;
                 }
                 if requested.insert(format!("clear {id}")) {
-                    notices
-                        .send(signal_delivery::NotificationRequest::Clear(id))
-                        .map_err(error)?;
+                    notices.send(signal_delivery::NotificationRequest::Clear(id))?;
                 }
             }
             effect @ (Pending::Value { .. } | Pending::Action { .. }) => {
@@ -814,15 +789,15 @@ async fn dispatch(
 }
 
 /// Drop an outbox entry that owes nothing any more.
-async fn forget(host: &Host<'_>, id: &str) -> Result<(), String> {
+async fn forget(host: &Host<'_>, id: &str) -> Result<()> {
     let api = host.api;
     let _serial = api
         .writer
         .as_ref()
-        .ok_or("signals require the writer")?
+        .ok_or_else(|| Error::not_configured("signals require the writer"))?
         .lock_signals()
         .await;
-    let mut conn = api.reads.acquire().await.map_err(error)?;
+    let mut conn = api.reads.acquire().await?;
     let (revision, mut state) = load(host, &mut conn).await?;
     if state.outbox.remove(id).is_none() {
         return Ok(());
@@ -842,7 +817,6 @@ async fn forget(host: &Host<'_>, id: &str) -> Result<(), String> {
         Timestamp::now(),
     )
     .await
-    .map_err(|error| error.to_string())
 }
 
 /// Record one outlet attempt for a value or action. The first record, the
@@ -852,15 +826,15 @@ async fn record_effect(
     host: &Host<'_>,
     id: &str,
     result: ::signals::DeliveryOutcome,
-) -> Result<bool, String> {
+) -> Result<bool> {
     let api = host.api;
     let _serial = api
         .writer
         .as_ref()
-        .ok_or("signals require the writer")?
+        .ok_or_else(|| Error::not_configured("signals require the writer"))?
         .lock_signals()
         .await;
-    let mut conn = api.reads.acquire().await.map_err(error)?;
+    let mut conn = api.reads.acquire().await?;
     let (revision, mut state) = load(host, &mut conn).await?;
     if result == ::signals::DeliveryOutcome::Unknown && state.outbox.remove(id).is_none() {
         return Ok(false);
@@ -880,8 +854,7 @@ async fn record_effect(
         },
         at,
     )
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     Ok(true)
 }
 

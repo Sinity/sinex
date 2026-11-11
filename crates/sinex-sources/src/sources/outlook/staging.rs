@@ -203,9 +203,9 @@ struct Folder {
 impl SharedPass for Folder {
     fn refresh(&mut self) -> Result<(), DriverError> {
         let now = sinex_source_core::drivers::file_facts(&self.binding.input)
-            .map_err(|error| DriverError::Io(error.to_string()))?;
+            .map_err(DriverError::from)?;
         if !same_revision(&now, &self.acquisition.facts) {
-            *self = build_folder(&self.binding, &self.converter).map_err(DriverError::Io)?;
+            *self = build_folder(&self.binding, &self.converter).map_err(DriverError::Read)?;
         }
         Ok(())
     }

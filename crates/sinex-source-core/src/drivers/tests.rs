@@ -372,7 +372,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             previous_part: None,
             manifest: sinex_model::Manifest::from_json(serde_json::json!({})),
             reading_order: Box::new(|_| sinex_model::ReadingOrder(1)),
-            cursor_at: Box::new(|_| Err(DriverError::Io("synthetic cursor read failure".into()))),
+            cursor_at: Box::new(|_| Err(DriverError::Read("synthetic cursor read failure".into()))),
             aligned: false,
             removed: Vec::new(),
             memory: None,

@@ -57,7 +57,7 @@ async fn stage_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
         json!({"method": "resume", "operation": operation}),
     )
     .await;
-    assert_eq!(resumed["outcome"], "refused", "{resumed}");
+    assert_eq!(resumed["outcome"], "failed", "{resumed}");
 }
 
 #[devkit::test]
@@ -120,9 +120,12 @@ async fn a_stage_of_nothing_readable_is_refused(db: devkit::pg::TestDatabase) {
         ),
     ] {
         let (_, answer) = call(&w, Some(OPERATOR), body).await;
-        assert_eq!(answer["outcome"], "refused", "{answer}");
+        assert_eq!(answer["outcome"], "failed", "{answer}");
         assert!(
-            answer["reason"].as_str().unwrap().contains(reason),
+            answer["failure"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(reason),
             "{answer}"
         );
     }
@@ -132,7 +135,7 @@ async fn a_stage_of_nothing_readable_is_refused(db: devkit::pg::TestDatabase) {
         json!({"method": "stage-show", "operation": uuid::Uuid::now_v7()}),
     )
     .await;
-    assert_eq!(missing["outcome"], "refused");
+    assert_eq!(missing["outcome"], "failed");
 }
 
 /// An agent stages only under the declared source locations and the
@@ -160,8 +163,8 @@ async fn an_agent_stages_only_under_the_allowed_roots(db: devkit::pg::TestDataba
             json!({"method": "stage", "path": [refused], "follow": true}),
         )
         .await;
-        assert_eq!(answer["outcome"], "refused", "{answer}");
-        let reason = answer["reason"].as_str().unwrap();
+        assert_eq!(answer["outcome"], "failed", "{answer}");
+        let reason = answer["failure"]["message"].as_str().unwrap();
         assert!(reason.contains("needs the operator"), "{reason}");
         assert!(reason.contains(&allowed.display().to_string()), "{reason}");
     }

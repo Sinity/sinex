@@ -2,6 +2,7 @@
 //! operator's unlock.
 use crate::material_access::sealing::Unlock;
 use crate::stored::StoredReader;
+use crate::{Error, Result};
 use sinex_model::{MaterialId, MaterialRef};
 use sinex_sealing::DataKey;
 use sinex_source_core::drain::RecordRead;
@@ -31,16 +32,13 @@ pub(crate) async fn open(
     blobs: &Blobs,
     material: MaterialId,
     unlock: Option<&Unlock>,
-) -> Result<Opened, String> {
+) -> Result<Opened> {
     let reference = sinex_store::material_bytes::reference(conn, material)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("stored material is missing")?;
-    let key = if blobs
-        .is_sealed(&reference.blob)
-        .map_err(|e| e.to_string())?
-    {
-        let unlock = unlock.ok_or("stored sealed material requires explicit unlock")?;
+        .await?
+        .ok_or_else(|| Error::not_found("stored material is missing"))?;
+    let key = if blobs.is_sealed(&reference.blob)? {
+        let unlock = unlock
+            .ok_or_else(|| Error::refused("stored sealed material requires explicit unlock"))?;
         Some(unlock.data_key(conn, material).await?)
     } else {
         None
@@ -56,7 +54,7 @@ pub(crate) struct MaterialOnDemand {
     sealed: bool,
     key: Option<DataKey>,
     unlock: Option<Unlock>,
-    opened: std::sync::OnceLock<Result<Arc<StoredReader>, String>>,
+    opened: std::sync::OnceLock<Result<Arc<StoredReader>, command_surface::Failure>>,
 }
 impl MaterialOnDemand {
     pub(crate) async fn new(
@@ -64,10 +62,8 @@ impl MaterialOnDemand {
         blobs: &Blobs,
         reference: MaterialRef,
         unlock: Option<&Unlock>,
-    ) -> Result<Self, String> {
-        let sealed = blobs
-            .is_sealed(&reference.blob)
-            .map_err(|e| e.to_string())?;
+    ) -> Result<Self> {
+        let sealed = blobs.is_sealed(&reference.blob)?;
         let key = match (sealed, unlock) {
             (true, Some(unlock)) => Some(unlock.data_key(conn, reference.id).await?),
             _ => None,
@@ -92,7 +88,9 @@ impl MaterialOnDemand {
         self.opened
             .get_or_init(|| {
                 if self.sealed && self.key.is_none() {
-                    return Err("stored sealed material requires explicit unlock".into());
+                    return Err(
+                        Error::refused("stored sealed material requires explicit unlock").failure(),
+                    );
                 }
                 open_checked(
                     &self.blobs,
@@ -102,6 +100,7 @@ impl MaterialOnDemand {
                     Arc::new(|| Ok(())),
                 )
                 .map(|opened| opened.body)
+                .map_err(Error::failure)
             })
             .as_ref()
             .map_err(|e| std::io::Error::other(e.clone()))
@@ -124,7 +123,7 @@ pub(crate) fn open_checked(
     key: Option<DataKey>,
     unlock: Option<&Unlock>,
     check: crate::stored::ReadCheck,
-) -> Result<Opened, String> {
+) -> Result<Opened> {
     let caller_check = check;
     let unlock = unlock.cloned();
     let check: crate::stored::ReadCheck = Arc::new(move || {
@@ -137,28 +136,24 @@ pub(crate) fn open_checked(
     check()?;
     let cancel = Arc::clone(&check);
     let body = if let Some(key) = &key {
-        let mut input = blobs
-            .read_sealed(
-                &reference.blob,
-                Some(reference.length),
-                key,
-                crate::material_access::sealing::read_limits(reference.length)?,
-                move || cancel().map_err(std::io::Error::other).map_err(Into::into),
-            )
-            .map_err(|e| e.to_string())?;
+        let mut input = blobs.read_sealed(
+            &reference.blob,
+            Some(reference.length),
+            key,
+            crate::material_access::sealing::read_limits(reference.length)?,
+            move || cancel().map_err(std::io::Error::other).map_err(Into::into),
+        )?;
         // Authenticate every byte before any is used.
-        std::io::copy(&mut input, &mut std::io::sink()).map_err(|e| e.to_string())?;
-        input.rewind().map_err(|e| e.to_string())?;
+        std::io::copy(&mut input, &mut std::io::sink())?;
+        input.rewind()?;
         let cancel = Arc::clone(&check);
         Arc::new(StoredReader::checked(input, reference.length, move || {
             cancel().map_err(std::io::Error::other)
         }))
     } else {
-        let input = blobs
-            .read_plain_seek(&reference.blob, reference.length, move || {
-                cancel().map_err(std::io::Error::other).map_err(Into::into)
-            })
-            .map_err(|e| e.to_string())?;
+        let input = blobs.read_plain_seek(&reference.blob, reference.length, move || {
+            cancel().map_err(std::io::Error::other).map_err(Into::into)
+        })?;
         let cancel = Arc::clone(&check);
         Arc::new(StoredReader::checked(input, reference.length, move || {
             cancel().map_err(std::io::Error::other)

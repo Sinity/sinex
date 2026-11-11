@@ -113,9 +113,9 @@ async fn no_rules_preserve_credential_shaped_request_errors(db: devkit::pg::Test
             json!({"method":"recompute","derivation":"synthetic","from":text}),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["outcome"], "refused", "{body}");
-        let reason = body["reason"].as_str().unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["outcome"], "failed", "{body}");
+        let reason = body["failure"]["message"].as_str().unwrap();
         assert!(reason.contains(&text), "{body}");
         assert!(reason.contains("not an RFC 3339 time"), "{body}");
         let query = format!("events where {text}");
@@ -128,7 +128,20 @@ async fn no_rules_preserve_credential_shaped_request_errors(db: devkit::pg::Test
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let body: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(body["outcome"], "refused", "{body}");
-        assert!(body["reason"].as_str().unwrap().contains(&text), "{body}");
+        assert_eq!(body["outcome"], "failed", "{body}");
+        // The query refusal shows the submitted line, unmasked, under its caret.
+        // A double quote opens a string left unterminated; a single quote is
+        // not a string delimiter, so that line parses and names a field
+        // `events` does not have.
+        let kind = if quote == '"' {
+            "invalid_query"
+        } else {
+            "unknown_field"
+        };
+        assert_eq!(body["failure"]["kind"], kind, "{body}");
+        assert!(
+            body["failure"]["caret"].as_str().unwrap().contains(&text),
+            "{body}"
+        );
     }
 }

@@ -1,6 +1,7 @@
 //! The media library end to end, against a real database and the real writer:
 //! intake, curation, the selection policy, ranking, opening, previews, imports,
 //! and item continuity across renames and edits.
+use crate::Result;
 use crate::library::{Library, dispatch};
 use crate::writer;
 use serde_json::{Value, json};
@@ -73,11 +74,11 @@ pub(super) async fn world(db: devkit::pg::TestDatabase) -> World {
 }
 
 impl World {
-    pub(super) async fn run(&mut self, request: Request) -> Result<Value, String> {
+    pub(super) async fn run(&mut self, request: Request) -> Result<Value> {
         self.run_as("operator", request).await
     }
 
-    pub(super) async fn run_as(&mut self, actor: &str, request: Request) -> Result<Value, String> {
+    pub(super) async fn run_as(&mut self, actor: &str, request: Request) -> Result<Value> {
         dispatch(
             &mut self.conn,
             Some(&self.writer),
@@ -93,7 +94,7 @@ impl World {
     }
 
     /// One curation request of `writes` (JSON acts), as `actor`.
-    pub(super) async fn curate_as(&mut self, actor: &str, writes: Value) -> Result<Value, String> {
+    pub(super) async fn curate_as(&mut self, actor: &str, writes: Value) -> Result<Value> {
         let writes = serde_json::from_value(writes).unwrap_or_else(|e| panic!("acts: {e}"));
         self.run_as(
             actor,

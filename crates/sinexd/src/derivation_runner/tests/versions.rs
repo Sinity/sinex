@@ -261,12 +261,16 @@ async fn switching_a_stale_comparison_preserves_selected_outputs(db: devkit::pg:
         .switch("test.days", comparison.id.unwrap(), "test")
         .await
         .unwrap_err();
-    assert!(error.contains("changed after comparison"), "{error}");
+    assert!(
+        error.to_string().contains("changed after comparison"),
+        "{error}"
+    );
     assert_eq!(days_by_version(&w).await, before);
     assert!(
         v2.recompute_all("test.days", None)
             .await
             .unwrap_err()
+            .to_string()
             .contains("compare")
     );
 }
@@ -309,6 +313,7 @@ async fn a_keep_history_switch_preserves_outputs_and_records_its_actor(
         next.switch("test.days", comparison.id.unwrap(), "agent:fixture")
             .await
             .unwrap_err()
+            .to_string()
             .contains("already selected")
     );
 }
@@ -352,7 +357,10 @@ async fn comparison_selection_requires_the_exact_logical_day_setting(db: devkit:
         .switch("test.days", comparison.id.unwrap(), "fixture")
         .await
         .unwrap_err();
-    assert!(error.contains("logical-day settings changed"), "{error}");
+    assert!(
+        error.to_string().contains("logical-day settings changed"),
+        "{error}"
+    );
     assert_eq!(
         w.count("SELECT count(*) FROM core.operations WHERE kind='producer_switch'")
             .await,

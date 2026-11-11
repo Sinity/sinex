@@ -1,5 +1,6 @@
 //! Materialize a canonical request through admission, then read its maintained output.
 use super::{Settings, stored::StoredProducts};
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_analysis::Eligibility;
 use sinex_derivations::Keyed;
@@ -19,16 +20,14 @@ pub(crate) async fn question(
     from: jiff::civil::Date,
     to: jiff::civil::Date,
     eligibility: Eligibility,
-) -> Result<AnalysisRequest, String> {
+) -> Result<AnalysisRequest> {
     if from > to {
-        return Err("analysis end precedes start".into());
+        return Err(Error::bad_request("analysis end precedes start"));
     }
     let mut names: Vec<_> = metrics.iter().map(|m| m.name.to_owned()).collect();
     names.sort();
     names.dedup();
-    let grants = sinex_store::query::current_grants(conn)
-        .await
-        .map_err(|error| error.to_string())?;
+    let grants = sinex_store::query::current_grants(conn).await?;
     let mut grants: Vec<String> = grants
         .split(',')
         .filter(|g| !g.is_empty() && *g != "sealed")
@@ -50,17 +49,10 @@ pub(crate) async fn question(
         zone: ctx.zone_name(),
         day_start: ctx.day_start.to_string(),
         grants,
-        started_at: settings
-            .time_settings
-            .day_start(from)
-            .map_err(|e| e.to_string())?,
-        ended_at: settings
-            .time_settings
-            .day_end(to)
-            .map_err(|e| e.to_string())?,
+        started_at: settings.time_settings.day_start(from)?,
+        ended_at: settings.time_settings.day_end(to)?,
         by: String::new(),
-        requested_at: Timestamp::from_unix_ns(ctx.now.as_nanosecond())
-            .map_err(|e| e.to_string())?,
+        requested_at: Timestamp::from_unix_ns(ctx.now.as_nanosecond())?,
     };
     let canonical = json!([
         request.operation,
@@ -83,11 +75,10 @@ pub(super) async fn find(
     conn: &mut PgConnection,
     event_type: &str,
     request: &str,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>> {
     Ok(
         sinex_store::query::live_payload(conn, event_type, "request", request)
-            .await
-            .map_err(|error| error.to_string())?
+            .await?
             .map(|(id, mut payload)| {
                 if event_type != AnalysisRequest::EVENT_TYPE {
                     payload["_citation"] = json!(format!("sinex:ev/{id}"));
@@ -104,13 +95,10 @@ pub(crate) async fn materialize(
     mut request: AnalysisRequest,
     actor: &str,
     host: &str,
-) -> Result<String, String> {
+) -> Result<String> {
     let time_settings = sinex_model::time_settings::TimeSettings::from_parts(
-        jiff::tz::TimeZone::get(&request.zone).map_err(|error| error.to_string())?,
-        request
-            .day_start
-            .parse::<jiff::civil::Time>()
-            .map_err(|error| error.to_string())?,
+        jiff::tz::TimeZone::get(&request.zone)?,
+        request.day_start.parse::<jiff::civil::Time>()?,
     );
     let id = request.request.clone();
     let existing = find(conn, "analysis.request", &id).await?;
@@ -131,14 +119,12 @@ pub(crate) async fn materialize(
             )
             .await?;
             if done.outcome.failures > 0 {
-                return Err("analysis request was not admitted".into());
+                return Err(Error::bad_request("analysis request was not admitted"));
             }
             json!(request)
         }
     };
-    let dirty = sinex_store::query::key_dirty(conn, StoredProducts::NAME, &key)
-        .await
-        .map_err(|error| error.to_string())?;
+    let dirty = sinex_store::query::key_dirty(conn, StoredProducts::NAME, &key).await?;
     if dirty || find(conn, "analysis.panel", &id).await?.is_none() {
         crate::derivation_runner::compute_now(
             conn,
@@ -161,17 +147,16 @@ pub(crate) struct StoredPack {
 pub(crate) async fn load_pack(
     conn: &mut PgConnection,
     reference: &str,
-) -> Result<Option<StoredPack>, String> {
+) -> Result<Option<StoredPack>> {
     if let Some(id) = reference.strip_prefix("sinex:ev/") {
         let id = uuid::Uuid::parse_str(id)
-            .map_err(|error| format!("context pack reference: {error}"))?;
+            .map_err(|error| Error::bad_value(format!("context pack reference: {error}")))?;
         return Ok(sinex_store::query::event_payload(
             conn,
             ContextPack::EVENT_TYPE,
             sinex_model::EventId(id),
         )
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
         .map(|payload| StoredPack {
             citation: format!("sinex:ev/{id}"),
             payload,
@@ -179,8 +164,7 @@ pub(crate) async fn load_pack(
     }
     Ok(
         sinex_store::query::live_payload(conn, ContextPack::EVENT_TYPE, "pack", reference)
-            .await
-            .map_err(|error| error.to_string())?
+            .await?
             .map(|(id, payload)| StoredPack {
                 citation: format!("sinex:ev/{id}"),
                 payload,

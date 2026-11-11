@@ -181,7 +181,14 @@ async fn a_second_crawl_refuses_without_waiting(db: devkit::pg::TestDatabase) {
     )
     .await
     .expect("a second crawl must answer while the first still holds the binding");
-    assert!(matches!(result, Err(error) if error == "a crawl is running"));
+    let failure = result.err().map(crate::Error::failure);
+    assert!(
+        failure
+            .as_ref()
+            .is_some_and(|failure| failure.message == "a crawl is running"
+                && failure.kind == command_surface::FailureKind::Conflict),
+        "{failure:?}"
+    );
     drop(active);
     run_crawl(&mut ctx).await;
     ctx.close().await.unwrap();

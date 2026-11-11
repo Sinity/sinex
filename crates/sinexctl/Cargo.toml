@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+command-surface.workspace = true
 sinex-protocol = { workspace = true, features = ["cli"] }
 clap.workspace = true
 serde_json.workspace = true

@@ -4,6 +4,7 @@
 //! that the next call presents. The daemon's memory for a statement is one
 //! page, however many rows it selects, and every row stays reachable.
 use super::*;
+use crate::{Error, Result};
 use sinex_store::query::read_sql;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,25 +32,16 @@ impl Api {
         statement: String,
         page: Option<u64>,
         cursor: Option<String>,
-    ) -> Reply {
+    ) -> Result<Reply> {
         let rows = page.unwrap_or(read_sql::DEFAULT_ROWS);
         let mut held = match cursor {
-            Some(token) => match self.take_cursor(caller, &statement, &token).await {
-                Ok(held) => held,
-                Err(reason) => return refused(reason),
-            },
+            Some(token) => self.take_cursor(caller, &statement, &token).await?,
             None => {
-                let conn = match self.acquire(caller).await {
-                    Ok(c) => c,
-                    Err(e) => return refused(e.to_string()),
-                };
                 // The cursor lives in the connection's transaction, so a
                 // statement that spans pages keeps its own connection, outside
                 // the pool, until its last page.
-                let mut conn = conn.detach();
-                if let Err(e) = read_sql::begin(&mut conn, &statement).await {
-                    return refused(e.to_string());
-                }
+                let mut conn = self.acquire(caller).await?.detach();
+                read_sql::begin(&mut conn, &statement).await?;
                 Held {
                     conn,
                     statement,
@@ -62,7 +54,7 @@ impl Api {
             Ok(page) => page,
             Err(e) => {
                 let _ = read_sql::end(&mut held.conn).await;
-                return refused(e.to_string());
+                return Err(e.into());
             }
         };
         let count = page.rows.len();
@@ -75,32 +67,29 @@ impl Api {
             self.sql_cursors.lock().await.insert(token.clone(), held);
             Some(token)
         };
-        data(json!({
+        Ok(data(json!({
             "rows": page.rows,
             "count": count,
             "page": { "size": rows, "cursor": next },
-        }))
+        })))
     }
 
     /// The held cursor for `token`, if it is still open and belongs to this
     /// caller and statement. Cursors left idle too long are closed on the way.
-    async fn take_cursor(
-        &self,
-        caller: &Caller,
-        statement: &str,
-        token: &str,
-    ) -> Result<Held, String> {
+    async fn take_cursor(&self, caller: &Caller, statement: &str, token: &str) -> Result<Held> {
         let mut open = self.sql_cursors.lock().await;
         open.retain(|_, held| held.used.elapsed() < IDLE);
         let Some(held) = open.remove(token) else {
-            return Err(
-                "this SQL cursor is closed (read to the end, idle for five minutes, or already in use); run the statement again"
-                    .into(),
-            );
+            return Err(Error::new(
+                command_surface::FailureKind::StaleCursor,
+                "this SQL cursor is closed (read to the end, idle for five minutes, or already in use); run the statement again",
+            ));
         };
         if held.caller != (caller.actor, caller.grants.clone()) || held.statement != statement {
             open.insert(token.to_owned(), held);
-            return Err("this SQL cursor belongs to another statement or caller".into());
+            return Err(Error::refused(
+                "this SQL cursor belongs to another statement or caller",
+            ));
         }
         Ok(held)
     }

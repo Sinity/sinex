@@ -1,6 +1,7 @@
 //! Telling a document's format from its bytes and path, and reading the text
 //! of the formats Sinex reads itself. Markup becomes plain text: block
 //! elements end a line, entities are decoded, scripts and styles are dropped.
+use crate::{Error, Result};
 use std::io::Read;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,10 +79,11 @@ pub(super) fn format(media_type: &str, path: &str, bytes: &[u8]) -> Option<Forma
 }
 
 /// The title and text of a document in a format read here.
-pub(super) fn text(format: Format, bytes: &[u8]) -> Result<(Option<String>, String), String> {
+pub(super) fn text(format: Format, bytes: &[u8]) -> Result<(Option<String>, String)> {
     match format {
         Format::Text | Format::Markdown => {
-            let text = std::str::from_utf8(bytes).map_err(|e| format!("not UTF-8 text: {e}"))?;
+            let text = std::str::from_utf8(bytes)
+                .map_err(|e| Error::bad_value(format!("not UTF-8 text: {e}")))?;
             let title = (format == Format::Markdown)
                 .then(|| {
                     text.lines()
@@ -91,7 +93,8 @@ pub(super) fn text(format: Format, bytes: &[u8]) -> Result<(Option<String>, Stri
             Ok((title, text.trim().to_owned()))
         }
         Format::Html => {
-            let html = std::str::from_utf8(bytes).map_err(|e| format!("not UTF-8 HTML: {e}"))?;
+            let html = std::str::from_utf8(bytes)
+                .map_err(|e| Error::bad_value(format!("not UTF-8 HTML: {e}")))?;
             let title = element_text(html, "title");
             Ok((
                 title,
@@ -110,7 +113,7 @@ pub(super) fn text(format: Format, bytes: &[u8]) -> Result<(Option<String>, Stri
                 &["text:p", "text:h", "text:line-break"],
             )?,
         )),
-        Format::Pdf => Err("a PDF is read with pdftotext".into()),
+        Format::Pdf => Err(Error::internal("a PDF is read with pdftotext")),
     }
 }
 
@@ -140,15 +143,18 @@ const HTML_BLOCKS: &[&str] = &[
 /// The text of one member of a ZIP document, read in pieces: the member is
 /// never held whole, so memory follows the text it holds, not the size it
 /// decompresses to.
-fn member_text(bytes: &[u8], name: &str, blocks: &[&str]) -> Result<String, String> {
-    let mut archive =
-        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
-    let mut file = archive.by_name(name).map_err(|e| format!("{name}: {e}"))?;
+fn member_text(bytes: &[u8], name: &str, blocks: &[&str]) -> Result<String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    let mut file = archive
+        .by_name(name)
+        .map_err(|e| Error::from(e).within(name))?;
     let mut reader = MarkupText::new(blocks, &[]);
     let mut chunk = vec![0u8; 64 * 1024];
     let mut carry: Vec<u8> = Vec::new();
     loop {
-        let read = file.read(&mut chunk).map_err(|e| format!("{name}: {e}"))?;
+        let read = file
+            .read(&mut chunk)
+            .map_err(|e| Error::from(e).within(name))?;
         if read == 0 {
             break;
         }
@@ -157,13 +163,13 @@ fn member_text(bytes: &[u8], name: &str, blocks: &[&str]) -> Result<String, Stri
         let valid = match std::str::from_utf8(&carry) {
             Ok(text) => text.len(),
             Err(e) if e.error_len().is_none() => e.valid_up_to(),
-            Err(_) => return Err(format!("{name}: not UTF-8 text")),
+            Err(_) => return Err(Error::internal(format!("{name}: not UTF-8 text"))),
         };
         reader.feed(std::str::from_utf8(&carry[..valid]).expect("checked above"));
         carry.drain(..valid);
     }
     if !carry.is_empty() {
-        return Err(format!("{name}: not UTF-8 text"));
+        return Err(Error::internal(format!("{name}: not UTF-8 text")));
     }
     Ok(reader.finish())
 }

@@ -718,7 +718,7 @@ pub async fn end_rule(conn: &mut PgConnection, name: &str, author: &str) -> Resu
     )
     .fetch_optional(&mut *conn)
     .await?
-    .ok_or_else(|| Error::Invalid(format!("no privacy rule named {name}")))?;
+    .ok_or_else(|| Error::NotFound(format!("no privacy rule named {name}")))?;
     if last.ended {
         return Err(Error::Invalid(format!("privacy rule {name} already ended")));
     }

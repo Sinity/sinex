@@ -42,7 +42,7 @@ impl Context {
     /// Explicit clock passed to the shared resolver; no zone database lookup.
     pub fn clock(&self) -> Result<query_language::time::Clock, super::QueryError> {
         let day = query_language::time::DaySetting::new(self.zone.clone(), self.day_start)
-            .map_err(super::syntax::error)?;
+            .map_err(super::QueryError::from)?;
         Ok(query_language::time::Clock::new(self.now, day))
     }
 

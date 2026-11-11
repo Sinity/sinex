@@ -1,37 +1,28 @@
 //! Query authoring and the small adapters that share the ordinary query engine.
 use super::*;
+use crate::{Error, Result};
 use sinex_model::Timestamp;
 use sinex_model::event_types::query::{Mark, QueryRecord, Saved};
 use sinex_model::query::saved::{SavedQuery, parameter};
 use std::collections::BTreeMap;
 
-fn error(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
-
-pub(super) async fn list(conn: &mut sqlx::PgConnection) -> Result<Vec<Saved>, String> {
-    sinex_store::query::saved_records(conn).await.map_err(error)
+pub(super) async fn list(conn: &mut sqlx::PgConnection) -> Result<Vec<Saved>> {
+    Ok(sinex_store::query::saved_records(conn).await?)
 }
 
 pub(super) async fn definitions(
     conn: &mut sqlx::PgConnection,
     requested: &str,
-) -> Result<BTreeMap<String, SavedQuery>, String> {
-    sinex_store::query::saved_definitions(conn, requested)
-        .await
-        .map_err(error)
+) -> Result<BTreeMap<String, SavedQuery>> {
+    Ok(sinex_store::query::saved_definitions(conn, requested).await?)
 }
 
 impl Api {
-    pub(super) async fn query_record(
-        &self,
-        request: Request,
-        caller: &Caller,
-    ) -> Result<Value, String> {
+    pub(super) async fn query_record(&self, request: Request, caller: &Caller) -> Result<Value> {
         if !caller.grants.split(',').any(|g| g == "guarded") {
-            return Err("query authoring requires the guarded grant".into());
+            return Err(Error::refused("query authoring requires the guarded grant"));
         }
-        let mut conn = self.acquire(caller).await.map_err(error)?;
+        let mut conn = self.acquire(caller).await?;
         let now = Timestamp::now();
         let record = match request {
             Request::Mark {
@@ -64,8 +55,7 @@ impl Api {
                 let parameters = declarations
                     .iter()
                     .map(|s| parameter(s))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(error)?;
+                    .collect::<Result<Vec<_>, _>>()?;
                 let mut definitions = if let Some(reference) = query::saved::reference_name(&query)
                 {
                     definitions(&mut conn, &reference).await?
@@ -75,14 +65,15 @@ impl Api {
                 let definition = SavedQuery {
                     name: name.clone(),
                     query: query.clone(),
-                    template: query::native::parse(&query, &self.context()).map_err(error)?,
+                    template: query::native::parse(&query, &self.context())
+                        .map_err(|error| error.failure(&query))?,
                     parameters: parameters.clone(),
                 };
                 definitions.insert(name.clone(), definition.clone());
                 definitions.insert(format!("{name}@{}", caller.actor), definition.clone());
                 definition
                     .validate_with(&self.context(), &definitions)
-                    .map_err(error)?;
+                    .map_err(|error| error.failure(&query))?;
                 QueryRecord::Saved(Saved {
                     template: definition.template,
                     name,
@@ -92,12 +83,12 @@ impl Api {
                     written_at: now,
                 })
             }
-            _ => return Err("not a query authoring command".into()),
+            _ => return Err(Error::bad_request("not a query authoring command")),
         };
         let writer = self
             .writer
             .as_ref()
-            .ok_or("query authoring requires sinexd run")?;
+            .ok_or_else(|| Error::not_configured("query authoring requires sinexd run"))?;
         let acquired =
             sinex_sources::sources::query::request_material(record, caller.actor, &self.host, now);
         let done = crate::intake::request(
@@ -111,9 +102,13 @@ impl Api {
         )
         .await?;
         if done.outcome.admitted != 1 || done.outcome.failures != 0 {
-            return Err("query request was not admitted as one event".into());
+            return Err(Error::internal(
+                "query request was not admitted as one event",
+            ));
         }
-        let material = done.material.ok_or("query admission has no material")?;
+        let material = done
+            .material
+            .ok_or_else(|| Error::internal("query admission has no material"))?;
         let id = sinex_store::live::at(
             &mut conn,
             sinex_model::RecordLocation {
@@ -122,9 +117,8 @@ impl Api {
             },
             0,
         )
-        .await
-        .map_err(error)?
-        .ok_or("query record was withdrawn before its response")?;
+        .await?
+        .ok_or_else(|| Error::conflict("query record was withdrawn before its response"))?;
         Ok(json!({"event":id,"citation":format!("sinex:record/{material}/0"),"material":material}))
     }
 
@@ -134,37 +128,25 @@ impl Api {
         since: Option<String>,
         until: Option<String>,
         page: Page,
-    ) -> Reply {
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
-        let ctx = match super::recall::context_for_page(&mut conn, &self.context(), &page).await {
-            Ok(ctx) => ctx,
-            Err(e) => return refused(e),
-        };
+    ) -> Result<Reply> {
+        let mut conn = self.acquire(caller).await?;
+        let ctx = super::recall::context_for_page(&mut conn, &self.context(), &page).await?;
         drop(conn);
         let end = match until {
-            Some(s) => match query::time::instant(&ctx, &s) {
-                Some(t) => t,
-                None => return refused("context until requires an absolute timestamp"),
-            },
+            Some(s) => query::time::instant(&ctx, &s)
+                .ok_or_else(|| Error::bad_value("context until requires an absolute timestamp"))?,
             None => ctx.now,
         };
         let since = since.unwrap_or_else(|| "2h".into());
         let start = if let Some(seconds) = query::time::duration(&since) {
-            match end.checked_sub(jiff::SignedDuration::from_secs_f64(seconds)) {
-                Ok(t) => t,
-                Err(e) => return refused(error(e)),
-            }
+            end.checked_sub(jiff::SignedDuration::from_secs_f64(seconds))?
         } else {
-            match query::time::instant(&ctx, &since) {
-                Some(t) => t,
-                None => return refused("context since requires a duration or absolute timestamp"),
-            }
+            query::time::instant(&ctx, &since).ok_or_else(|| {
+                Error::bad_value("context since requires a duration or absolute timestamp")
+            })?
         };
         if start >= end {
-            return refused("context end must follow its start");
+            return Err(Error::bad_value("context end must follow its start"));
         }
         // The absolute window and its continuation share this clock.
         self.recall_in(

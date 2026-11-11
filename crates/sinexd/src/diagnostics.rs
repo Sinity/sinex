@@ -1,6 +1,7 @@
 //! Diagnostics that work while the daemon is down: `doctor`, `status
 //! --offline`, `store verify --offline`. Read-only: they open the database
 //! directly in read-only transactions and never write.
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_store::Verified;
 use sinex_store::diagnostics::{self, Snapshot};
@@ -35,13 +36,9 @@ fn snapshot_json(s: &Snapshot) -> Value {
 }
 
 /// What the database holds, without the daemon.
-async fn status(database: &str) -> Result<Value, String> {
-    let mut conn = diagnostics::connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
-    let s = diagnostics::snapshot(&mut conn)
-        .await
-        .map_err(|e| e.to_string())?;
+async fn status(database: &str) -> Result<Value> {
+    let mut conn = diagnostics::connect(database).await?;
+    let s = diagnostics::snapshot(&mut conn).await?;
     Ok(snapshot_json(&s))
 }
 
@@ -109,15 +106,11 @@ async fn doctor(database: &str, store: &Path) -> Value {
 }
 
 /// Read every stored blob back and check it against its name.
-async fn verify_store(database: &str, store: &Path) -> Result<Value, String> {
-    let mut conn = diagnostics::connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
-    let names = diagnostics::blob_names(&mut conn)
-        .await
-        .map_err(|e| e.to_string())?;
-    let blobs = sinex_store::Blobs::open(store).map_err(|e| e.to_string())?;
-    blobs.load(&mut conn).await.map_err(|e| e.to_string())?;
+async fn verify_store(database: &str, store: &Path) -> Result<Value> {
+    let mut conn = diagnostics::connect(database).await?;
+    let names = diagnostics::blob_names(&mut conn).await?;
+    let blobs = sinex_store::Blobs::open(store)?;
+    blobs.load(&mut conn).await?;
     let store_path = store.to_path_buf();
     // Verification reads every byte; keep it off the async threads.
     tokio::task::spawn_blocking(move || {
@@ -140,7 +133,7 @@ async fn verify_store(database: &str, store: &Path) -> Result<Value, String> {
         })
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(Error::from)
 }
 
 #[derive(clap::Subcommand)]
@@ -165,7 +158,7 @@ pub(crate) enum Command {
         store: std::path::PathBuf,
     },
 }
-pub(crate) async fn run(command: Command) -> Result<(), String> {
+pub(crate) async fn run(command: Command) -> Result<()> {
     let value = match command {
         Command::Doctor { database, store } => doctor(&database, &store).await,
         Command::Status { database } => status(&database).await?,

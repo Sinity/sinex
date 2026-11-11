@@ -110,10 +110,10 @@ pub struct Gmail<T> {
 }
 
 fn invalid() -> DriverError {
-    DriverError::Io("Gmail response invalid".into())
+    DriverError::Read("Gmail response invalid".into())
 }
 fn failure(e: Error) -> DriverError {
-    DriverError::Io(e.to_string())
+    DriverError::Read(e.to_string())
 }
 
 fn text<'a>(object: &'a Value, key: &str) -> Result<&'a str, DriverError> {
@@ -166,7 +166,7 @@ impl<T: Transport> Api for Gmail<T> {
         if cursor.is_null() {
             let profile = self.transport.get("/profile", &[]).map_err(failure)?;
             if text(&profile, "emailAddress")? != self.account {
-                return Err(DriverError::Io(
+                return Err(DriverError::Read(
                     "Gmail authenticated account differs from configured account".into(),
                 ));
             }

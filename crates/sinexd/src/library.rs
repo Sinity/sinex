@@ -2,6 +2,7 @@
 //! curation goes through request intake as planned curation records. Reads
 //! use live events.
 use crate::writer::WriterHandle;
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_library::reads;
 use sinex_model::Timestamp;
@@ -27,11 +28,7 @@ pub(crate) struct Library<'a> {
     pub time_settings: sinex_model::time_settings::TimeSettings,
 }
 
-type R<T> = Result<T, String>;
-
-fn e(err: impl std::fmt::Display) -> String {
-    err.to_string()
-}
+type R<T> = Result<T>;
 
 /// The channel every library request arrives on: the daemon's API. The
 /// API does not yet report whether the CLI, MCP or the web called it.
@@ -81,10 +78,7 @@ impl Library<'_> {
                 .expect("request has material")
                 .manifest
                 .details
-                .insert(
-                    "owned_blobs".into(),
-                    serde_json::to_value(stored.cited).map_err(e)?,
-                );
+                .insert("owned_blobs".into(), serde_json::to_value(stored.cited)?);
         }
         // Boxed: the intake future is the bulk of every library write, and
         // inline it gave each caller's debug-build poll frame a ~15 KiB slot
@@ -117,10 +111,10 @@ impl Library<'_> {
             }
         };
         if result.outcome.failures > 0 {
-            return Err(format!(
+            return Err(Error::bad_request(format!(
                 "{} of {n} library records failed to read back",
                 result.outcome.failures
-            ));
+            )));
         }
         Ok(
             json!({"records":n, "admitted":result.outcome.admitted, "replaced":result.outcome.replaced,
@@ -130,9 +124,8 @@ impl Library<'_> {
 
     async fn item_or(&self, conn: &mut PgConnection, item: &str) -> R<Item> {
         reads::item(conn, item)
-            .await
-            .map_err(e)?
-            .ok_or_else(|| format!("no library item {item}"))
+            .await?
+            .ok_or_else(|| Error::bad_request(format!("no library item {item}")))
     }
 }
 
@@ -182,7 +175,9 @@ pub(crate) async fn dispatch(
         }
         (Some(w), false) => w,
         (None, false) => {
-            return Err("this daemon has no writer; writes go through `sinexd run`".into());
+            return Err(Error::not_configured(
+                "this daemon has no writer; writes go through `sinexd run`",
+            ));
         }
     };
     let library = Library {
@@ -195,7 +190,7 @@ pub(crate) async fn dispatch(
     let number = |s: &str, what: &str| {
         s.trim()
             .parse::<f64>()
-            .map_err(|_| format!("{what} must be a number, not `{s}`"))
+            .map_err(|_| Error::bad_request(format!("{what} must be a number, not `{s}`")))
     };
     match request {
         Request::LibraryAdd { path, reference } => {

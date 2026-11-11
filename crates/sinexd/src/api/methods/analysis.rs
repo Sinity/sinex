@@ -1,11 +1,12 @@
 //! The analysis commands.
 use super::*;
+use crate::{Error, Result};
 
 impl Api {
     /// The analysis calls. Each reads the daily metric figures with the
     /// caller's grants and answers at one commit position; findings are
     /// rendered from their slots, so every surface reads the same text.
-    pub(super) async fn analysis(&self, caller: &Caller, request: Request) -> Reply {
+    pub(super) async fn analysis(&self, caller: &Caller, request: Request) -> Result<Reply> {
         use crate::analysis::{self, Recipe};
         use sinex_derivations::figures::{Calculation, METRICS};
         if let Request::AnalysisCatalog = request {
@@ -39,7 +40,9 @@ impl Api {
                 .map(|(id, version, summary)| json!({"id": id, "version": version, "summary": summary}))
                 .collect();
             let recipes: Vec<&str> = Recipe::ALL.iter().map(|r| r.id()).collect();
-            return data(json!({"metrics": metrics, "methods": methods, "recipes": recipes}));
+            return Ok(data(
+                json!({"metrics": metrics, "methods": methods, "recipes": recipes}),
+            ));
         }
         let ctx = self.context();
         let time_settings =
@@ -48,11 +51,8 @@ impl Api {
             label: time_settings.label(),
             time_settings,
         };
-        let mut conn = match self.acquire(caller).await {
-            Ok(c) => c,
-            Err(e) => return refused(e.to_string()),
-        };
-        let outcome: Result<Value, String> = async {
+        let mut conn = self.acquire(caller).await?;
+        let outcome: Result<Value> = async {
             match request {
                 Request::AnalysisRun {
                     recipe,
@@ -66,7 +66,7 @@ impl Api {
                             p.parse::<f64>()
                                 .ok()
                                 .filter(|f| (0.0..=1.0).contains(f))
-                                .ok_or_else(|| format!("`{p}` is not a fraction from 0 to 1"))
+                                .ok_or_else(|| Error::bad_request(format!("`{p}` is not a fraction from 0 to 1")))
                         })
                         .transpose()?;
                     let eligibility = sinex_analysis::Eligibility {
@@ -76,7 +76,7 @@ impl Api {
                     let question = analysis::question(&mut conn, &ctx, &settings, "recipe", Some(recipe.id()),
                         &METRICS.iter().filter(|m| m.tracked).collect::<Vec<_>>(),
                         analysis::parse_day(&from)?, analysis::parse_day(&to)?, eligibility).await?;
-                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let run = analysis::run(
                         &mut conn,
@@ -103,7 +103,7 @@ impl Api {
                     let metrics = metrics(&metric.unwrap_or_default())?;
                     let question = analysis::question(&mut conn, &ctx, &settings, "panel", None, &metrics,
                         analysis::parse_day(&from)?, analysis::parse_day(&to)?, Default::default()).await?;
-                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let p = analysis::panel(
                         &mut conn,
@@ -135,7 +135,7 @@ impl Api {
                     let metric = metrics(&[metric])?[0];
                     let question = analysis::question(&mut conn, &ctx, &settings, "panel", None, &[metric],
                         analysis::parse_day(&day)?, analysis::parse_day(&day)?, Default::default()).await?;
-                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let text = analysis::why_not(
                         &mut conn,
@@ -157,28 +157,25 @@ impl Api {
                         Some(d) => analysis::parse_day(&d)?,
                         None => ctx.logical_date(ctx.now),
                     };
-                    let from = day.checked_sub(jiff::Span::new().days(56)).map_err(|e| e.to_string())?;
+                    let from = day.checked_sub(jiff::Span::new().days(56))?;
                     let all_metrics: Vec<_> = METRICS.iter().collect();
                     let question = analysis::question(&mut conn, &ctx, &settings, "brief", None, &all_metrics,
                         from, day, Default::default()).await?;
-                    let pack_request = analysis::materialize(&mut conn, self.writer.as_ref().ok_or("analysis requests require sinexd run")?, &self.blobs,
+                    let pack_request = analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let (p, citation) = analysis::render_pack(&mut conn, &format!("query:{pack_request}"), budget).await?;
                     Ok(json!({"text": p.markdown, "context_pack": citation, "presentation": p}))
                 }
-                _ => Err("not an analysis call".into()),
+                _ => Err(Error::bad_request("not an analysis call")),
             }
         }
         .await;
-        match outcome {
-            Ok(v) => data(v),
-            Err(e) => refused(e),
-        }
+        Ok(data(outcome?))
     }
 }
 
 /// The metrics named by `names`, or every metric when none is named.
-fn metrics(names: &[String]) -> Result<Vec<&'static sinex_derivations::figures::Metric>, String> {
+fn metrics(names: &[String]) -> Result<Vec<&'static sinex_derivations::figures::Metric>> {
     use sinex_derivations::figures::{METRICS, metric};
     if names.is_empty() {
         return Ok(METRICS.iter().collect());
@@ -187,8 +184,13 @@ fn metrics(names: &[String]) -> Result<Vec<&'static sinex_derivations::figures::
         .iter()
         .map(|name| {
             metric(name).ok_or_else(|| {
-                let known: Vec<&str> = METRICS.iter().map(|m| m.name).collect();
-                format!("no metric {name}; known: {}", known.join(", "))
+                let known: Vec<String> = METRICS.iter().map(|m| m.name.to_owned()).collect();
+                command_surface::Failure::new(
+                    command_surface::FailureKind::BadValue,
+                    format!("no metric {name}"),
+                )
+                .with_candidates(known)
+                .into()
             })
         })
         .collect()

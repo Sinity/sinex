@@ -36,9 +36,9 @@ async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs
     assert_eq!(scope["comparison"], comparison);
     assert!(scope["settings"].is_string());
     let (_, body) = call(&w, Some(AGENT), switch(comparison)).await;
-    assert_eq!(body["outcome"], "refused", "{body}");
+    assert_eq!(body["outcome"], "failed", "{body}");
     assert!(
-        body["reason"]
+        body["failure"]["message"]
             .as_str()
             .unwrap()
             .contains("already selected"),
@@ -50,9 +50,12 @@ async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs
         .unwrap_or_else(|| panic!("{body}"));
     admit(&w, &["ls"], 1).await;
     let (_, body) = call(&w, Some(AGENT), switch(stale)).await;
-    assert_eq!(body["outcome"], "refused", "{body}");
+    assert_eq!(body["outcome"], "failed", "{body}");
     assert!(
-        body["reason"].as_str().unwrap().contains("inputs changed"),
+        body["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("inputs changed"),
         "{body}"
     );
 }

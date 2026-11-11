@@ -1,10 +1,11 @@
 //! A stored material's records read through one verified reader. Sealed bodies
 //! stay off disk.
+use crate::{Error, Result};
 use sinex_source_core::shared_pass::ReadSeek;
 use sinex_source_core::{Framer, drivers};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;
-pub(crate) type ReadCheck = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+pub(crate) type ReadCheck = std::sync::Arc<dyn Fn() -> Result<()> + Send + Sync>;
 
 pub(crate) struct StoredReader {
     reader: Mutex<Box<dyn ReadSeek>>,
@@ -28,10 +29,13 @@ impl StoredReader {
         &self,
         manifest: &sinex_model::Manifest,
         framer: Framer,
-    ) -> Result<Vec<(usize, usize)>, String> {
-        let mut reader = self.reader.lock().map_err(|_| "stored reader poisoned")?;
-        reader.rewind().map_err(|e| e.to_string())?;
-        drivers::stored_records_from(manifest, &mut *reader, framer).map_err(|e| e.to_string())
+    ) -> Result<Vec<(usize, usize)>> {
+        let mut reader = self
+            .reader
+            .lock()
+            .map_err(|_| Error::internal("stored reader poisoned"))?;
+        reader.rewind()?;
+        drivers::stored_records_from(manifest, &mut *reader, framer).map_err(Error::from)
     }
 }
 impl sinex_source_core::drain::RecordRead for StoredReader {

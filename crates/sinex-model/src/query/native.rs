@@ -138,7 +138,7 @@ impl Template {
                         .as_ref()
                         .map(|value| {
                             query_language::time::resolve(scalar(value)?, &ctx.clock()?)
-                                .map_err(super::syntax::error)
+                                .map_err(QueryError::from)
                         })
                         .transpose()?;
                     if radius.is_none()

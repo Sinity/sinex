@@ -1,5 +1,6 @@
 //! Retain a converter's native input through the ordinary material writer.
 use super::*;
+use crate::{Error, Result};
 use sinex_model::{InputRef, MaterialId, ReadingOrder, RevisionChange};
 
 #[allow(clippy::too_many_arguments)]
@@ -13,24 +14,25 @@ pub(super) async fn retain(
     access: Access<'_>,
     acquisition: shared_pass::Acquisition,
     totals: &mut Totals,
-) -> Result<MaterialId, String> {
+) -> Result<MaterialId> {
     let (cursor, carry) = positions::load(conn, &binding.binding.name)
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
         .unwrap_or((Value::Null, Value::Null));
     let id = MaterialId::new();
     let next = cursor.clone();
     let path = acquisition.path.clone();
     let expected = acquisition.facts.clone();
     let check = Arc::new(move || {
-        let now = drivers::file_facts(&path).map_err(|error| error.to_string())?;
+        let now = drivers::file_facts(&path)?;
         if same_file(&expected, &now) {
             Ok(())
         } else {
-            Err("native input changed after conversion; retry an unchanged revision".into())
+            Err(Error::conflict(
+                "native input changed after conversion; retry an unchanged revision",
+            ))
         }
     });
-    let file = std::fs::File::open(&acquisition.path).map_err(|error| error.to_string())?;
+    let file = std::fs::File::open(&acquisition.path)?;
     let acquired = drivers::Acquired {
         input: InputRef {
             kind: "export".into(),

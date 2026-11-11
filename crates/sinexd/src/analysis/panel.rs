@@ -2,6 +2,7 @@
 //! with the caller's grants, the coverage of their sources at the same commit
 //! position, and the cells built from the two.
 use super::{Settings, rfc3339};
+use crate::{Error, Result};
 use serde_json::Value;
 use sinex_analysis::coverage::{self, Coverage};
 use sinex_analysis::methods::Point;
@@ -12,14 +13,8 @@ use sinex_model::query::Context;
 use sqlx::PgConnection;
 
 /// Coverage reads use the admitted source observations that can parent products.
-async fn coverage(
-    conn: &mut PgConnection,
-    sources: &[&str],
-    _as_of: i64,
-) -> Result<Vec<Coverage>, String> {
-    let events = sinex_store::live::of_types(conn, &["source.coverage".into()])
-        .await
-        .map_err(|e| e.to_string())?;
+async fn coverage(conn: &mut PgConnection, sources: &[&str], _as_of: i64) -> Result<Vec<Coverage>> {
+    let events = sinex_store::live::of_types(conn, &["source.coverage".into()]).await?;
     let mut out = Vec::new();
     for event in events {
         let Some(payload) = event.payload else {
@@ -73,7 +68,7 @@ pub(crate) async fn panel(
     metrics: &[&'static Metric],
     from: jiff::civil::Date,
     to: jiff::civil::Date,
-) -> Result<Panel, String> {
+) -> Result<Panel> {
     let question = super::access::question(
         conn,
         ctx,
@@ -88,49 +83,52 @@ pub(crate) async fn panel(
     .await?;
     let payload = super::access::find(conn, "analysis.panel", &question.request)
         .await?
-        .ok_or("analysis panel is not materialized; submit its canonical request first")?;
+        .ok_or_else(|| {
+            Error::not_built(
+                "analysis panel is not materialized; submit its canonical request first",
+            )
+        })?;
     from_payload(&payload)
 }
 
-pub(super) fn from_payload(payload: &Value) -> Result<Panel, String> {
+pub(super) fn from_payload(payload: &Value) -> Result<Panel> {
     let decode = |field: &str| {
         payload
             .get(field)
             .cloned()
-            .ok_or_else(|| format!("stored panel has no {field}"))
+            .ok_or_else(|| Error::internal(format!("stored panel has no {field}")))
     };
-    let units: Vec<Unit> = serde_json::from_value(decode("units")?).map_err(|e| e.to_string())?;
-    let coverage: Vec<Coverage> =
-        serde_json::from_value(decode("coverage")?).map_err(|e| e.to_string())?;
+    let units: Vec<Unit> = serde_json::from_value(decode("units")?)?;
+    let coverage: Vec<Coverage> = serde_json::from_value(decode("coverage")?)?;
     let mut cells = Vec::new();
     for row in payload["cells"]
         .as_array()
-        .ok_or("stored panel cells are not an array")?
+        .ok_or_else(|| Error::internal("stored panel cells are not an array"))?
     {
         let metric = row["metric"]
             .as_str()
             .and_then(sinex_derivations::figures::metric)
-            .ok_or("stored panel has an unknown metric")?;
+            .ok_or_else(|| Error::internal("stored panel has an unknown metric"))?;
         cells.push(PanelCell {
             metric: metric.name,
-            unit: serde_json::from_value(row["unit"].clone()).map_err(|e| e.to_string())?,
+            unit: serde_json::from_value(row["unit"].clone())?,
             dimension: row["dimension"]
                 .as_str()
-                .ok_or("stored panel dimension is absent")?
+                .ok_or_else(|| Error::internal("stored panel dimension is absent"))?
                 .into(),
             dimension_value: row["dimension_value"]
                 .as_str()
-                .ok_or("stored panel dimension value is absent")?
+                .ok_or_else(|| Error::internal("stored panel dimension value is absent"))?
                 .into(),
-            cell: serde_json::from_value(row["cell"].clone()).map_err(|e| e.to_string())?,
+            cell: serde_json::from_value(row["cell"].clone())?,
             numerator: row["numerator"].as_f64(),
             denominator: row["denominator"].as_f64(),
             rows: row["rows"]
                 .as_u64()
-                .ok_or("stored panel row count is absent")?,
+                .ok_or_else(|| Error::internal("stored panel row count is absent"))?,
             observed_seconds: row["observed_seconds"]
                 .as_f64()
-                .ok_or("stored panel observed seconds are absent")?,
+                .ok_or_else(|| Error::internal("stored panel observed seconds are absent"))?,
             reference: row["reference"].as_str().map(str::to_owned),
         });
     }
@@ -146,7 +144,7 @@ pub(super) fn from_payload(payload: &Value) -> Result<Panel, String> {
         cells,
         as_of: payload["read_as"]
             .as_i64()
-            .ok_or("stored panel has no selected read context")?,
+            .ok_or_else(|| Error::internal("stored panel has no selected read context"))?,
     })
 }
 
@@ -248,16 +246,12 @@ pub(crate) async fn gaps(
     sources: Option<&[String]>,
     from: jiff::civil::Date,
     to: jiff::civil::Date,
-) -> Result<Vec<Gap>, String> {
+) -> Result<Vec<Gap>> {
     let range = settings.day_span(from, to)?;
-    let as_of = sinex_store::query::current_seq(conn)
-        .await
-        .map_err(|e| e.to_string())?;
+    let as_of = sinex_store::query::current_seq(conn).await?;
     let names: Vec<String> = match sources {
         Some(s) => s.to_vec(),
-        None => sinex_store::coverage::sources(conn)
-            .await
-            .map_err(|e| e.to_string())?,
+        None => sinex_store::coverage::sources(conn).await?,
     };
     let mut out = Vec::new();
     for name in &names {

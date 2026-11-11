@@ -1,6 +1,7 @@
 //! The runner against a real database: keys dirtied by admission, outputs
 //! replacing the key's previous set, waiting keys, a comparison.
 use super::*;
+use crate::Result;
 use crate::dirty_keys::Registered as Keys;
 use crate::writer;
 use serde_json::json;

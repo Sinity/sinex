@@ -6,6 +6,7 @@
 //! incarnation, so a lost broker store replays from PostgreSQL. A store that
 //! lost only its newest messages keeps its incarnation; each pass first moves
 //! the saved position back to what the stream still holds (`align_with_stream`).
+use crate::{Error, Result};
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{EventId, OperationId};
@@ -33,10 +34,7 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
 const CONTRACT: &str = "3";
 const CONTRACT_KEY: &str = "sinex_confirmed_contract";
 
-async fn confirmed_stream(
-    js: &jetstream::Context,
-    subjects: &Subjects,
-) -> Result<stream::Stream, String> {
+async fn confirmed_stream(js: &jetstream::Context, subjects: &Subjects) -> Result<stream::Stream> {
     let mut config = stream::Config {
         name: subjects.confirmed_stream(),
         subjects: vec![subjects.confirmed_all()],
@@ -49,7 +47,7 @@ async fn confirmed_stream(
     let found = js
         .get_or_create_stream(config.clone())
         .await
-        .map_err(|error| format!("confirmed stream: {error}"))?;
+        .map_err(|error| Error::from(error).within("confirmed stream"))?;
     if found
         .cached_info()
         .config
@@ -59,24 +57,23 @@ async fn confirmed_stream(
         != Some(CONTRACT)
     {
         if found.cached_info().state.last_sequence > 0 {
-            return Err("confirmed_stream_contract_mismatch: existing stream requires an explicit reference-only version-3 conversion or parallel-stream decision".into());
+            return Err(Error::internal(
+                "confirmed_stream_contract_mismatch: existing stream requires an explicit reference-only version-3 conversion or parallel-stream decision",
+            ));
         }
         js.update_stream(config)
             .await
-            .map_err(|error| format!("confirmed stream contract: {error}"))?;
+            .map_err(|error| Error::from(error).within("confirmed stream contract"))?;
         return js
             .get_stream(subjects.confirmed_stream())
             .await
-            .map_err(|error| error.to_string());
+            .map_err(Error::from);
     }
     Ok(found)
 }
 
 /// Create a fresh reference-only version-3 stream, or verify the existing stream's contract.
-pub(crate) async fn ensure_stream(
-    js: &jetstream::Context,
-    subjects: &Subjects,
-) -> Result<(), String> {
+pub(crate) async fn ensure_stream(js: &jetstream::Context, subjects: &Subjects) -> Result<()> {
     confirmed_stream(js, subjects).await.map(drop)
 }
 
@@ -136,7 +133,7 @@ pub(crate) async fn run(
     subjects: Subjects,
     mut commits: watch::Receiver<u64>,
     mut stop: watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<()> {
     ensure_stream(&js, &subjects).await?;
     loop {
         if *stop.borrow() {
@@ -170,7 +167,7 @@ pub(crate) async fn publish_pending(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
-) -> Result<Published, String> {
+) -> Result<Published> {
     let timing_enabled = std::env::var_os("SINEX_BENCH_TIMINGS").is_some();
     publish_pending_measured(conn, js, subjects, |page| {
         if timing_enabled {
@@ -185,21 +182,16 @@ pub(crate) async fn publish_pending_measured(
     js: &jetstream::Context,
     subjects: &Subjects,
     mut page_done: impl FnMut(PageTiming),
-) -> Result<Published, String> {
+) -> Result<Published> {
     // Until the upgrade's publication key is built after start, a second copy
     // of an event has no key to go under; the saved position shows the wait.
-    if sinex_schema::online::pending(conn, sinex_schema::online::Task::PublishedKey)
-        .await
-        .map_err(|error| error.to_string())?
-    {
+    if sinex_schema::online::pending(conn, sinex_schema::online::Task::PublishedKey).await? {
         return Ok(Published::default());
     }
     let stream = confirmed_stream(js, subjects).await?;
     let instance = stream_instance(&stream);
     let consumer = consumer_for(&instance);
-    let (saved, _) = commit_log::consumer_position(conn, &consumer)
-        .await
-        .map_err(|error| error.to_string())?;
+    let (saved, _) = commit_log::consumer_position(conn, &consumer).await?;
     let position = align_with_stream(conn, &stream, &instance, &consumer, saved).await?;
     let mut cursor = commit_log::ChangeCursor::after(position);
     let mut settled = position;
@@ -207,9 +199,7 @@ pub(crate) async fn publish_pending_measured(
     total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
         let started = Instant::now();
-        let page = commit_log::changes_page(conn, cursor, PAGE, sinex_store::PAGE_BYTES)
-            .await
-            .map_err(|error| error.to_string())?;
+        let page = commit_log::changes_page(conn, cursor, PAGE, sinex_store::PAGE_BYTES).await?;
         let read = started.elapsed();
         if let Some(gap) = page.gap {
             publish(
@@ -226,16 +216,11 @@ pub(crate) async fn publish_pending_measured(
                 },
             )
             .await?
-            .await
-            .map_err(|error| error.to_string())?;
-            return Err(gap.reason);
+            .await?;
+            return Err(Error::internal(gap.reason));
         }
         if page.entries.is_empty() {
-            if position == 0
-                && !commit_log::consumer_exists(conn, &consumer)
-                    .await
-                    .map_err(|error| error.to_string())?
-            {
+            if position == 0 && !commit_log::consumer_exists(conn, &consumer).await? {
                 publish_chunk(
                     conn,
                     js,
@@ -349,7 +334,7 @@ async fn align_with_stream(
     instance: &str,
     consumer: &str,
     saved: i64,
-) -> Result<i64, String> {
+) -> Result<i64> {
     let last = stream.cached_info().state.last_sequence;
     let mut unlisted = Vec::new();
     let mut marker = None;
@@ -362,34 +347,32 @@ async fn align_with_stream(
                     break;
                 }
                 Ok(Confirmed::EventReference { event, .. }) => {
-                    unlisted.push((event.0, i64::try_from(seq).map_err(|e| e.to_string())?));
+                    unlisted.push((event.0, i64::try_from(seq)?));
                 }
                 _ => {}
             },
             // Erased messages leave holes.
             Err(error) if error.kind() == stream::RawMessageErrorKind::NoMessageFound => {}
-            Err(error) => return Err(format!("read confirmed stream message {seq}: {error}")),
+            Err(error) => {
+                return Err(Error::internal(format!(
+                    "read confirmed stream message {seq}: {error}"
+                )));
+            }
         }
         seq -= 1;
     }
     let held = marker.unwrap_or(0);
-    let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
-    commit_log::record_published_in(&mut tx, instance, &unlisted)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut tx = conn.begin().await?;
+    commit_log::record_published_in(&mut tx, instance, &unlisted).await?;
     if held < saved {
-        let last = i64::try_from(last).map_err(|error| error.to_string())?;
-        let forgotten = commit_log::forget_published_above(&mut tx, instance, last)
-            .await
-            .map_err(|error| error.to_string())?;
-        commit_log::rewind_consumer_position(&mut tx, consumer, held)
-            .await
-            .map_err(|error| error.to_string())?;
+        let last = i64::try_from(last)?;
+        let forgotten = commit_log::forget_published_above(&mut tx, instance, last).await?;
+        commit_log::rewind_consumer_position(&mut tx, consumer, held).await?;
         eprintln!(
             "sinexd: publisher: the confirmed stream holds positions only up to {held} (saved {saved}, last stream sequence {last}); forgot {forgotten} published records above it and publishing again from there"
         );
     }
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok(held)
 }
 
@@ -405,9 +388,9 @@ async fn publish_chunk(
     entries: &[commit_log::CommittedChange],
     complete: Option<i64>,
     total: &mut Published,
-) -> Result<(Duration, Duration, Duration), String> {
+) -> Result<(Duration, Duration, Duration)> {
     let acknowledge_started = Instant::now();
-    let mut tx = conn.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = conn.begin().await?;
     let mut acks = Vec::new();
     for entry in entries {
         let (message, subject, id, event) = match &entry.change {
@@ -456,14 +439,11 @@ async fn publish_chunk(
     }
     let mut placed = Vec::new();
     for (event, ack) in acks {
-        let ack = ack
-            .await
-            .map_err(|error| format!("confirmed stream did not acknowledge: {error}"))?;
+        let ack = ack.await.map_err(|error| {
+            Error::internal(format!("confirmed stream did not acknowledge: {error}"))
+        })?;
         if let Some(event) = event {
-            placed.push((
-                event,
-                i64::try_from(ack.sequence).map_err(|error| error.to_string())?,
-            ));
+            placed.push((event, i64::try_from(ack.sequence)?));
             total.events += 1;
         } else {
             total.changes += 1;
@@ -471,9 +451,7 @@ async fn publish_chunk(
     }
     let mut acknowledge = acknowledge_started.elapsed();
     let record_started = Instant::now();
-    commit_log::record_published_in(&mut tx, instance, &placed)
-        .await
-        .map_err(|error| error.to_string())?;
+    commit_log::record_published_in(&mut tx, instance, &placed).await?;
     total.tombstoned += erase_tombstoned_in(&mut tx, js, subjects, instance).await?;
     let mut record = record_started.elapsed();
     if let Some(position) = complete {
@@ -488,16 +466,16 @@ async fn publish_chunk(
         )
         .await?
         .await
-        .map_err(|error| format!("confirmed position did not acknowledge: {error}"))?;
+        .map_err(|error| {
+            Error::internal(format!("confirmed position did not acknowledge: {error}"))
+        })?;
         acknowledge += barrier_started.elapsed();
         let record_started = Instant::now();
-        commit_log::set_consumer_position(&mut tx, consumer, position, 0)
-            .await
-            .map_err(|error| error.to_string())?;
+        commit_log::set_consumer_position(&mut tx, consumer, position, 0).await?;
         record += record_started.elapsed();
     }
     let commit_started = Instant::now();
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok((acknowledge, record, commit_started.elapsed()))
 }
 
@@ -508,34 +486,29 @@ async fn erase_tombstoned_in(
     js: &jetstream::Context,
     subjects: &Subjects,
     instance: &str,
-) -> Result<u64, String> {
+) -> Result<u64> {
     let mut erased = 0;
     loop {
-        let pending = commit_log::tombstoned_on_stream_in(conn, instance, PAGE)
-            .await
-            .map_err(|error| error.to_string())?;
+        let pending = commit_log::tombstoned_on_stream_in(conn, instance, PAGE).await?;
         if pending.is_empty() {
             return Ok(erased);
         }
-        let stream = js
-            .get_stream(subjects.confirmed_stream())
-            .await
-            .map_err(|error| error.to_string())?;
+        let stream = js.get_stream(subjects.confirmed_stream()).await?;
         for item in &pending {
-            let seq = u64::try_from(item.stream_seq).map_err(|error| error.to_string())?;
+            let seq = u64::try_from(item.stream_seq)?;
             if let Err(error) = stream.delete_message(seq).await
                 && !message_gone(&stream, seq).await?
             {
-                return Err(format!("erase stream message {seq}: {error}"));
+                return Err(Error::internal(format!(
+                    "erase stream message {seq}: {error}"
+                )));
             }
         }
         let pairs: Vec<_> = pending
             .iter()
             .map(|item| (item.event_id, item.stream_seq))
             .collect();
-        commit_log::forget_published_in(conn, instance, &pairs)
-            .await
-            .map_err(|error| error.to_string())?;
+        commit_log::forget_published_in(conn, instance, &pairs).await?;
         erased += pairs.len() as u64;
     }
 }
@@ -545,7 +518,7 @@ async fn erase_tombstoned(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
-) -> Result<u64, String> {
+) -> Result<u64> {
     let stream = confirmed_stream(js, subjects).await?;
     erase_tombstoned_in(conn, js, subjects, &stream_instance(&stream)).await
 }
@@ -555,18 +528,23 @@ async fn publish(
     subject: String,
     id: String,
     message: &Confirmed,
-) -> Result<jetstream::context::PublishAckFuture, String> {
+) -> Result<jetstream::context::PublishAckFuture> {
     let mut headers = HeaderMap::new();
     headers.insert("Nats-Msg-Id", id.as_str());
-    let body = serde_json::to_vec(message).map_err(|e| e.to_string())?;
+    let body = serde_json::to_vec(message)?;
     js.publish_with_headers(subject, headers, body.into())
         .await
-        .map_err(|e| format!("publish {id}: {e}"))
+        .map_err(|e| Error::nats(format!("publish {id}: {e}")))
 }
 
-fn archived_message(n: &ArchiveChange) -> Result<Archived, String> {
-    let reason = serde_json::from_value(serde_json::Value::String(n.reason.clone()))
-        .map_err(|err| format!("event {}: archive reason {:?}: {err}", n.event_id, n.reason))?;
+fn archived_message(n: &ArchiveChange) -> Result<Archived> {
+    let reason =
+        serde_json::from_value(serde_json::Value::String(n.reason.clone())).map_err(|err| {
+            Error::internal(format!(
+                "event {}: archive reason {:?}: {err}",
+                n.event_id, n.reason
+            ))
+        })?;
     Ok(Archived {
         change_seq: n.change_seq,
         event: EventId(n.event_id),
@@ -583,7 +561,7 @@ pub(crate) async fn publish_all(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
-) -> Result<String, String> {
+) -> Result<String> {
     ensure_stream(js, subjects).await?;
     let started = Instant::now();
     let done = publish_pending(conn, js, subjects).await?;
@@ -605,11 +583,13 @@ pub(crate) async fn publish_all(
 /// Whether the stream no longer holds a message, which is what erasing it
 /// wants. A failed delete reports a missing message only in its description
 /// (generic code 10057), so the stream is asked directly.
-async fn message_gone(stream: &stream::Stream, seq: u64) -> Result<bool, String> {
+async fn message_gone(stream: &stream::Stream, seq: u64) -> Result<bool> {
     match stream.get_raw_message(seq).await {
         Ok(_) => Ok(false),
         Err(error) if missing(&error) => Ok(true),
-        Err(error) => Err(format!("check stream message {seq}: {error}")),
+        Err(error) => Err(Error::internal(format!(
+            "check stream message {seq}: {error}"
+        ))),
     }
 }
 

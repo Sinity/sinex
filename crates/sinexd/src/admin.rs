@@ -1,5 +1,6 @@
 //! `sinexd admin`: administration that needs the database but not the running
 //! daemon, and any command of the command table run locally.
+use crate::{Error, Result};
 use crate::{api, catalog, reader_context};
 use clap::Subcommand;
 use std::path::PathBuf;
@@ -71,21 +72,19 @@ pub(crate) enum Admin {
     Table(Vec<String>),
 }
 
-async fn schema(database: &str, kind_owners: Vec<String>, upgrade: bool) -> Result<(), String> {
+async fn schema(database: &str, kind_owners: Vec<String>, upgrade: bool) -> Result<()> {
     use sqlx::Connection;
     let mut owners = sinex_schema::kinds::Owners::default();
     for mapping in kind_owners {
         let (prefix, producer) = mapping
             .split_once('=')
-            .ok_or("--kind-owner needs polylogue=PRODUCER")?;
+            .ok_or_else(|| Error::bad_request("--kind-owner needs polylogue=PRODUCER"))?;
         if prefix != "polylogue" || !sinex_protocol::nats::valid_producer(producer) {
-            return Err("invalid kind owner".into());
+            return Err(Error::bad_request("invalid kind owner"));
         }
         owners.prefixes.insert(prefix.into(), producer.into());
     }
-    let mut connection = sqlx::PgConnection::connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut connection = sqlx::PgConnection::connect(database).await?;
     let applied = if upgrade {
         sinex_schema::apply_with_owners(&mut connection, &owners).await
     } else {
@@ -93,29 +92,37 @@ async fn schema(database: &str, kind_owners: Vec<String>, upgrade: bool) -> Resu
     };
     applied
         .map(|applied| println!("{applied}"))
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
 }
 
-async fn connect(database: &str) -> Result<sqlx::PgConnection, String> {
+async fn connect(database: &str) -> Result<sqlx::PgConnection> {
     use sqlx::Connection;
     sqlx::PgConnection::connect(database)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
 }
 
 /// `sinexd admin upgrade --prepare`: build what the upgrade can swap in,
 /// beside the serving daemon.
-async fn prepare(database: &str) -> Result<(), String> {
+async fn prepare(database: &str) -> Result<()> {
     let mut connection = connect(database).await?;
     sinex_schema::prepare::prepare(&mut connection, sinex_schema::prepare::BATCH)
         .await
         .map(|prepared| println!("{prepared}"))
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
 }
 
-pub(crate) async fn run(command: Admin) -> Result<(), String> {
+pub(crate) async fn run(command: Admin) -> Result<()> {
     match command {
-        Admin::Diagnostics { command } => crate::diagnostics::run(command).await,
+        // `sinexctl` reads the report, or the failure, from standard output.
+        Admin::Diagnostics { command } => match crate::diagnostics::run(command).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let failure = error.failure();
+                println!("{}", serde_json::json!({ "error": failure }));
+                Err(failure.into())
+            }
+        },
         Admin::Table(args) => admin_table(args).await,
         Admin::Schema {
             database,
@@ -135,7 +142,7 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
             sinex_schema::prepare::unprepare(&mut connection)
                 .await
                 .map(|()| println!("removed the upgrade preparation"))
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         }
         Admin::Upgrade {
             database,
@@ -144,12 +151,10 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
         } => schema(&database, kind_owners, true).await,
         Admin::PrepareDatabase { database, owner } => {
             use sqlx::Connection;
-            let mut connection = sqlx::PgConnection::connect(&database)
-                .await
-                .map_err(|e| e.to_string())?;
+            let mut connection = sqlx::PgConnection::connect(&database).await?;
             sinex_schema::prepare(&mut connection, &owner)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(Error::from)
         }
         Admin::Catalog => {
             print!("{}", catalog::render());
@@ -163,18 +168,21 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
             producers,
         } => {
             let hash_of = |path: &std::path::Path| {
-                let password = std::fs::read_to_string(path)
-                    .map_err(|e| format!("{}: {e}", path.display()))?;
+                let password = std::fs::read_to_string(path).map_err(|e| Error::file(path, e))?;
                 password_hash(password.trim_end_matches('\n'))
             };
             let daemon_hash = hash_of(&daemon_password_file)?;
             let mut users = Vec::new();
             for producer in producers {
-                let (name, file) = producer
-                    .split_once('=')
-                    .ok_or_else(|| format!("--producer {producer}: expected name=password-file"))?;
+                let (name, file) = producer.split_once('=').ok_or_else(|| {
+                    Error::bad_request(format!(
+                        "--producer {producer}: expected name=password-file"
+                    ))
+                })?;
                 if !sinex_protocol::nats::valid_producer(name) {
-                    return Err(format!("--producer {name}: not a valid producer name"));
+                    return Err(Error::bad_request(format!(
+                        "--producer {name}: not a valid producer name"
+                    )));
                 }
                 users.push((name.to_owned(), hash_of(std::path::Path::new(file))?));
             }
@@ -204,20 +212,29 @@ pub(crate) async fn run(command: Admin) -> Result<(), String> {
 }
 
 /// The bcrypt hash of a NATS password, in the `$2a$` form the server reads.
-pub(crate) fn password_hash(password: &str) -> Result<String, String> {
+pub(crate) fn password_hash(password: &str) -> Result<String> {
     bcrypt::hash_with_result(password, bcrypt::DEFAULT_COST)
         .map(|hash| hash.format_for_version(bcrypt::Version::TwoA))
-        .map_err(|e| format!("hashing a NATS password: {e}"))
+        .map_err(|e| Error::internal(format!("hashing a NATS password: {e}")))
 }
 
 /// Run one command-table command locally: the daemon's API, built over a
 /// local writer, called with the operator's access.
-async fn admin_table(args: Vec<String>) -> Result<(), String> {
+async fn admin_table(args: Vec<String>) -> Result<()> {
     use clap::{Arg, value_parser};
-    let name = args.first().ok_or("admin needs a command")?;
+    let name = args
+        .first()
+        .ok_or_else(|| Error::bad_request("admin needs a command"))?;
     let spec = sinex_protocol::command(name).ok_or_else(|| {
-        let names: Vec<&str> = sinex_protocol::COMMANDS.iter().map(|c| c.name).collect();
-        format!("no command `{name}`; commands: {}", names.join(", "))
+        let names: Vec<String> = sinex_protocol::COMMANDS
+            .iter()
+            .map(|c| c.name.to_owned())
+            .collect();
+        command_surface::Failure::new(
+            command_surface::FailureKind::BadRequest,
+            format!("no command `{name}`"),
+        )
+        .with_candidates(names)
     })?;
     let matches = sinex_protocol::cli::subcommand(spec)
         .arg(Arg::new("database").long("database").required(true))
@@ -240,7 +257,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
                 .default_value("04:00"),
         )
         .try_get_matches_from(&args)
-        .map_err(|e| e.to_string())?;
+        .map_err(Error::bad_request)?;
     let mut request =
         sinex_protocol::Request::from_args(name, sinex_protocol::cli::arguments(spec, &matches))?;
     // The process ends with the command, so a local stage runs to its end;
@@ -249,7 +266,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         *follow = Some(true);
         for given in path.iter_mut() {
             *given = std::path::absolute(&*given)
-                .map_err(|e| format!("{given}: {e}"))?
+                .map_err(|e| Error::bad_request(format!("{given}: {e}")))?
                 .display()
                 .to_string();
         }
@@ -258,12 +275,16 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     let store: &PathBuf = matches.get_one("store").expect("required");
     let host: &String = matches.get_one("host").expect("defaulted");
     let zone = match matches.get_one::<String>("zone") {
-        Some(name) => jiff::tz::TimeZone::get(name).map_err(|e| format!("zone {name}: {e}"))?,
+        Some(name) => jiff::tz::TimeZone::get(name)
+            .map_err(|e| Error::bad_request(format!("zone {name}: {e}")))?,
         None => jiff::tz::TimeZone::system(),
     };
     let day_start: &String = matches.get_one("day-start").expect("defaulted");
-    let day_start = sinex_model::query::time::clock(day_start)
-        .ok_or_else(|| format!("day start `{day_start}` is not a clock time like 04:00"))?;
+    let day_start = sinex_model::query::time::clock(day_start).ok_or_else(|| {
+        Error::bad_request(format!(
+            "day start `{day_start}` is not a clock time like 04:00"
+        ))
+    })?;
     let identity = if let Some(path) = matches.get_one::<PathBuf>("identity-file") {
         if !matches!(
             &request,
@@ -272,10 +293,11 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
                 ..
             } | sinex_protocol::Request::Stage { .. }
         ) {
-            return Err("--identity-file requires replay --sealed or stage".into());
+            return Err(Error::bad_request(
+                "--identity-file requires replay --sealed or stage",
+            ));
         }
-        let identity =
-            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let identity = std::fs::read_to_string(path).map_err(|e| Error::file(path, e))?;
         Some(identity)
     } else {
         None
@@ -291,8 +313,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
     let local = api::Api {
         backup_producers: None,
         source_config: Default::default(),
@@ -312,7 +333,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         library_roots: Vec::new(),
     };
     if let Some(identity) = identity
-        && let sinex_protocol::Reply::Refused { reason, .. } = local
+        && let sinex_protocol::Reply::Failed { failure } = local
             .call(
                 sinex_protocol::Request::Unlock {
                     identity: identity.trim().to_owned(),
@@ -324,7 +345,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     {
         drop(local);
         ctx.close().await?;
-        return Err(reason);
+        return Err(failure.into());
     }
     let reply = local.call(request, sinex_protocol::Access::Operator).await;
     drop(local);
@@ -337,13 +358,13 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
             );
             Ok(())
         }
-        sinex_protocol::Reply::Refused { reason, .. } => Err(reason),
-        sinex_protocol::Reply::StoppedEarly { reason, result } => {
+        sinex_protocol::Reply::Failed { failure } => Err(failure.into()),
+        sinex_protocol::Reply::StoppedEarly { failure, result } => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&result).expect("JSON values print")
             );
-            Err(reason)
+            Err(failure.into())
         }
     }
 }

@@ -416,7 +416,10 @@ fn parsers_pair_with_paths_once_or_one_each() {
     let each = items(&paths, &["zsh".into(), "atuin".into()]).unwrap();
     assert_eq!(each[1].parser.as_deref(), Some("atuin"));
     let error = items(&paths, &["a".into(), "b".into(), "c".into()]).unwrap_err();
-    assert!(error.contains("3 parsers for 2 paths"), "{error}");
+    assert!(
+        error.to_string().contains("3 parsers for 2 paths"),
+        "{error}"
+    );
 }
 
 #[devkit::test]
@@ -424,7 +427,7 @@ fn a_relative_path_is_refused() {
     let error = request(vec![detected(Path::new("relative/export.zip"))])
         .plan()
         .unwrap_err();
-    assert!(error.contains("absolute"), "{error}");
+    assert!(error.to_string().contains("absolute"), "{error}");
 }
 
 #[devkit::test]

@@ -1,6 +1,7 @@
 //! Stored analysis products and their presentation. Requests retain their
 //! source bytes; the keyed product derivation maintains panels, answers,
 //! findings and context packs through the ordinary admission lifecycle.
+use crate::{Error, Result};
 use sinex_analysis::Span;
 use sinex_model::Timestamp;
 use sinex_model::time_settings::TimeSettings;
@@ -41,22 +42,16 @@ impl Settings {
         &self,
         from: jiff::civil::Date,
         to_inclusive: jiff::civil::Date,
-    ) -> Result<Span, String> {
-        let start = self
-            .time_settings
-            .day_start(from)
-            .map_err(|e| e.to_string())?;
-        let end = self
-            .time_settings
-            .day_end(to_inclusive)
-            .map_err(|e| e.to_string())?;
+    ) -> Result<Span> {
+        let start = self.time_settings.day_start(from)?;
+        let end = self.time_settings.day_end(to_inclusive)?;
         Ok(Span::new(micros(start), micros(end)))
     }
 }
 
-pub(crate) fn parse_day(s: &str) -> Result<jiff::civil::Date, String> {
+pub(crate) fn parse_day(s: &str) -> Result<jiff::civil::Date> {
     s.parse()
-        .map_err(|e| format!("`{s}` is not a date like 2026-10-18: {e}"))
+        .map_err(|e| Error::internal(format!("`{s}` is not a date like 2026-10-18: {e}")))
 }
 
 fn micros(t: Timestamp) -> i64 {

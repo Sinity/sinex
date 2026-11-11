@@ -31,8 +31,8 @@ fn call(socket: &Path, request: Value) -> Value {
     let reply: sinex_protocol::Reply = serde_json::from_slice(&response[split + 4..]).unwrap();
     match reply {
         sinex_protocol::Reply::Ok { result } => result,
-        sinex_protocol::Reply::Refused { reason, .. }
-        | sinex_protocol::Reply::StoppedEarly { reason, .. } => panic!("{request}: {reason}"),
+        sinex_protocol::Reply::Failed { failure }
+        | sinex_protocol::Reply::StoppedEarly { failure, .. } => panic!("{request}: {failure:?}"),
     }
 }
 

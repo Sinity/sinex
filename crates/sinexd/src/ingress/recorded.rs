@@ -1,5 +1,6 @@
 //! Retained own material evidence and an independent current header check.
 use super::*;
+use crate::Result;
 use sinex_protocol::{
     RecordedContinuation, RecordedContinuationRequest, RecordedHeaders, RecordedMaterialBinding,
 };
@@ -10,7 +11,7 @@ impl Requests {
         conn: &mut PgConnection,
         producer: &str,
         claim: &RecordedContinuationRequest,
-    ) -> Result<RecordedContinuation, String> {
+    ) -> Result<RecordedContinuation> {
         let unknown = |reason: &str| RecordedContinuation::Unknown {
             request: claim.clone(),
             reason: reason.into(),
@@ -18,10 +19,7 @@ impl Requests {
         if claim.frame.is_empty() || claim.frame.contains('\0') {
             return Ok(unknown("material_receipt_identity_unknown"));
         }
-        let Some(saved) = commit_log::recorded_material(conn, producer, &claim.frame)
-            .await
-            .map_err(|error| error.to_string())?
-        else {
+        let Some(saved) = commit_log::recorded_material(conn, producer, &claim.frame).await? else {
             return Ok(unknown("material_receipt_not_recorded"));
         };
         if saved.receipt.number <= 0 || saved.receipt.refusal_kind().is_some() {
@@ -77,7 +75,9 @@ impl Requests {
                 .await
             {
                 Ok(()) => RecordedHeaders::PermittedHeaders,
-                Err(Check::Unavailable(error)) => return Err(error),
+                Err(Check::Unavailable(error)) => {
+                    return Err(Error::new(command_surface::FailureKind::NotRunning, error));
+                }
                 Err(reason) => RecordedHeaders::NotPermitted {
                     reason: reason.to_string(),
                 },
@@ -107,14 +107,14 @@ impl Requests {
         }
         for header in uses {
             authority::event(&self.read_grants, producer, &header.kind.name, header.class)
-                .map_err(Check::Configuration)?;
+                .map_err(|error| Check::Configuration(error.to_string()))?;
             if header.kind.name.contains('\0') {
                 return Err(Check::Configuration("header kind name contains NUL".into()));
             }
             header
                 .kind
                 .database_version()
-                .map_err(Check::Configuration)?;
+                .map_err(|error| Check::Configuration(error.to_string()))?;
         }
         let refs = uses
             .iter()

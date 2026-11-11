@@ -244,6 +244,7 @@ async fn empty_database_is_ready_at_zero_and_nonempty_old_contract_is_refused(
         ensure_stream(&js, &subjects)
             .await
             .unwrap_err()
+            .to_string()
             .starts_with("confirmed_stream_contract_mismatch:")
     );
     assert_eq!(
@@ -420,6 +421,7 @@ async fn retained_inline_contract_two_is_refused_without_erasing_messages(
         publish_pending(&mut conn, &js, &subjects)
             .await
             .unwrap_err()
+            .to_string()
             .starts_with("confirmed_stream_contract_mismatch:")
     );
     let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();

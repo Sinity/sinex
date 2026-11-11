@@ -64,7 +64,7 @@ impl Reader for Media {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        let io = |e: std::io::Error| DriverError::Io(format!("{}: {e}", self.spool.display()));
+        let io = |e: std::io::Error| DriverError::file(&self.spool, e);
         let next = complete(&self.spool)
             .map_err(io)?
             .into_iter()
@@ -169,7 +169,7 @@ impl Reader for Media {
             }
             Ok(n)
         })()
-        .map_err(|e| DriverError::Io(e.to_string()))
+        .map_err(DriverError::from)
     }
 }
 

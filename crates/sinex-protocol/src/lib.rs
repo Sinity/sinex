@@ -35,7 +35,7 @@ pub use nats::{
     RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery,
     ReplaySelection, Restored, Subjects,
 };
-pub use request::{Reply, Request};
+pub use request::{Reply, Request, stopped_early};
 pub use sinex_model::SourceRef;
 
 /// The notice at the head of every result that carries captured text: the

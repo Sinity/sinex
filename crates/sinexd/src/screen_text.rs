@@ -7,6 +7,7 @@
 //!
 //! Speech from audio segments needs a local speech-to-text engine; audio
 //! segments produce nothing here.
+use crate::{Error, Result};
 use sinex_derivations::{Env, Input, PerEvent, Reads};
 use sinex_model::event_types::session::ScreenText as ScreenTextPayload;
 use sinex_model::{Class, Event, Origin, ReadingOrder};
@@ -15,20 +16,23 @@ use std::process::{Command, Stdio};
 const LANGUAGES: &str = "eng+pol";
 
 /// The engine's version line, recorded with each output.
-pub(crate) fn engine() -> Result<String, String> {
+pub(crate) fn engine() -> Result<String> {
     let out = Command::new("tesseract")
         .arg("--version")
         .output()
-        .map_err(|e| format!("tesseract is not available: {e}"))?;
+        .map_err(|e| Error::from(e).within("tesseract is not available"))?;
     if !out.status.success() {
-        return Err(format!("tesseract --version exited with {}", out.status));
+        return Err(Error::internal(format!(
+            "tesseract --version exited with {}",
+            out.status
+        )));
     }
     let text =
         String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
     Ok(text.lines().next().unwrap_or("tesseract").trim().to_owned())
 }
 
-fn ocr(image: &[u8]) -> Result<String, String> {
+fn ocr(image: &[u8]) -> Result<String> {
     use std::io::Write;
     // At idle priority: reading text off stills is background work and must
     // not take the machine from the operator.
@@ -47,32 +51,30 @@ fn ocr(image: &[u8]) -> Result<String, String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    child
-        .stdin
-        .take()
-        .expect("piped")
-        .write_all(image)
-        .map_err(|e| e.to_string())?;
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        .spawn()?;
+    child.stdin.take().expect("piped").write_all(image)?;
+    let out = child.wait_with_output()?;
     if !out.status.success() {
-        return Err(format!("tesseract exited with {}", out.status));
+        return Err(Error::internal(format!(
+            "tesseract exited with {}",
+            out.status
+        )));
     }
     String::from_utf8(out.stdout)
         .map(|text| text.trim().to_owned())
-        .map_err(|_| "tesseract returned text that is not UTF-8".into())
+        .map_err(|_| Error::internal("tesseract returned text that is not UTF-8"))
 }
 
 fn text_for(
     segment: &sinex_model::event_types::session::MediaSegment,
     engine: Option<&str>,
-    read_image: impl FnOnce() -> Result<String, String>,
-) -> Result<(String, String), String> {
+    read_image: impl FnOnce() -> Result<String>,
+) -> Result<(String, String)> {
     if let Some(text) = &segment.accessibility_text {
         return Ok(("accessibility".into(), text.clone()));
     }
-    let engine = engine.ok_or("accessibility unavailable and no local OCR engine")?;
+    let engine = engine
+        .ok_or_else(|| Error::internal("accessibility unavailable and no local OCR engine"))?;
     Ok((engine.into(), read_image()?))
 }
 
@@ -110,18 +112,24 @@ impl PerEvent for ScreenText {
         }
     }
 
-    fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+    fn derive(&self, input: Input<'_>, _: &Env) -> std::result::Result<Vec<Event>, String> {
+        self.read_events(input).map_err(|error| error.to_string())
+    }
+}
+
+impl ScreenText {
+    fn read_events(&self, input: Input<'_>) -> Result<Vec<Event>> {
         let segment = input.event;
         if segment.payload.get("kind").and_then(|k| k.as_str()) != Some("screen") {
             return Ok(Vec::new());
         }
         let metadata = segment
             .payload_as::<sinex_model::event_types::session::MediaSegment>()
-            .ok_or("not a valid media segment")?;
+            .ok_or_else(|| Error::internal("not a valid media segment"))?;
         let (engine, text) = text_for(&metadata, self.engine.as_deref(), || {
             ocr(input
                 .bytes
-                .ok_or("the screen still's bytes were not read")?)
+                .ok_or_else(|| Error::internal("the screen still's bytes were not read"))?)
         })?;
         let started_at = metadata.started_at;
         let payload = ScreenTextPayload {
@@ -149,8 +157,7 @@ impl PerEvent for ScreenText {
             *hasher.finalize().as_bytes(),
             // A segment's text is as private as the segment.
             segment.class.max(Class::Guarded),
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         Ok(vec![event])
     }
 }

@@ -31,6 +31,7 @@ fn absent_accessibility_uses_local_ocr_and_preserves_an_unavailable_engine() {
     assert!(
         text_for(&segment(None), None, || panic!("no engine"))
             .unwrap_err()
+            .to_string()
             .contains("no local OCR")
     );
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 use crate::reader_context::ReaderContext;
 use serde_json::json;
 use sinex_source_core::Settings;
@@ -442,7 +443,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             locked[0]
                 .1
                 .as_ref()
-                .is_err_and(|e| e.contains("needs an operator unlock"))
+                .is_err_and(|e| e.to_string().contains("needs an operator unlock"))
         );
         assert_eq!(
             positions::load(&mut ctx.read_conn, &name)

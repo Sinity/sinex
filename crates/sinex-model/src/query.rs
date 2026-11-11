@@ -29,51 +29,123 @@ pub use tables::{
 pub use time::Context;
 pub use typed::{Completion, complete};
 
+/// What kind of refusal a query met: one of the language's kinds, or a
+/// request for something the language defines but Sinex does not build yet,
+/// which is never answered with an empty result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryErrorKind {
+    Language(query_language::ErrorKind),
+    NotBuilt,
+}
+
 /// Why a query was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]
 pub struct QueryError {
+    pub kind: QueryErrorKind,
     pub message: String,
     /// Byte offset in the query text, when the problem has a place.
     pub at: Option<usize>,
-    /// The query asks for something the language defines but Sinex does not
-    /// build yet. Never answered with an empty result.
-    pub not_built: bool,
+    /// Byte length of the refused text; zero marks a place between tokens.
+    pub length: usize,
+    /// What the caller can do instead, when the language knows; boxed so a
+    /// `Result` carrying the error stays small.
+    pub help: Option<Box<QueryHelp>>,
+}
+
+/// A refusal's correction: a query that runs as given, the names the input
+/// could have meant, and a hint.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryHelp {
+    pub suggestion: Option<String>,
+    pub candidates: Vec<String>,
+    pub hint: Option<String>,
 }
 
 impl QueryError {
-    pub fn new(message: impl Into<String>) -> Self {
+    fn with(kind: QueryErrorKind, at: Option<usize>, message: impl Into<String>) -> Self {
         Self {
+            kind,
             message: message.into(),
-            at: None,
-            not_built: false,
+            at,
+            length: 0,
+            help: None,
         }
+    }
+
+    /// The corrected query, if the language could form one.
+    pub fn suggestion(&self) -> Option<&str> {
+        self.help.as_ref()?.suggestion.as_deref()
+    }
+
+    pub fn new(message: impl Into<String>) -> Self {
+        Self::with(
+            QueryErrorKind::Language(query_language::ErrorKind::InvalidQuery),
+            None,
+            message,
+        )
     }
 
     pub fn at(at: usize, message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            at: Some(at),
-            not_built: false,
-        }
+        Self::with(
+            QueryErrorKind::Language(query_language::ErrorKind::InvalidQuery),
+            Some(at),
+            message,
+        )
     }
 
     pub fn not_built(at: usize, message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            at: Some(at),
-            not_built: true,
-        }
+        Self::with(QueryErrorKind::NotBuilt, Some(at), message)
     }
 
-    /// The message with a caret under the place in `text`, for terminals.
-    pub fn render(&self, text: &str) -> String {
-        match self.at.and_then(|at| text.get(..at)) {
-            Some(prefix) => {
-                let column = prefix.chars().count();
-                format!("{}\n  {text}\n  {}^", self.message, " ".repeat(column))
-            }
-            _ => self.message.clone(),
+    /// The shared failure for this refusal of `text`: its kind, message,
+    /// suggestion, candidates and hint, placed in `text` with a caret.
+    pub fn failure(self, text: &str) -> command_surface::Failure {
+        use command_surface::{Failure, FailureKind, InputSpan, Suggestion};
+        use query_language::ErrorKind as Language;
+        let kind = match self.kind {
+            QueryErrorKind::NotBuilt => FailureKind::NotBuilt,
+            QueryErrorKind::Language(Language::InvalidQuery) => FailureKind::InvalidQuery,
+            QueryErrorKind::Language(Language::UnknownField) => FailureKind::UnknownField,
+            QueryErrorKind::Language(Language::BadValue) => FailureKind::BadValue,
+            QueryErrorKind::Language(Language::NotAQuery) => FailureKind::NotAQuery,
+            QueryErrorKind::Language(Language::Ambiguous) => FailureKind::Ambiguous,
+            QueryErrorKind::Language(Language::StaleCursor) => FailureKind::StaleCursor,
+        };
+        let help = self.help.map(|help| *help).unwrap_or_default();
+        let mut failure = Failure::new(kind, self.message).with_candidates(help.candidates);
+        if let Some(at) = self.at.filter(|at| *at <= text.len()) {
+            failure = failure.at(
+                text,
+                InputSpan {
+                    offset: at,
+                    length: self.length,
+                },
+            );
+        }
+        if let Some(hint) = help.hint {
+            failure = failure.with_hint(hint);
+        }
+        match help.suggestion {
+            Some(corrected) => failure.with_suggestion(Suggestion::Query(corrected)),
+            None => failure,
+        }
+    }
+}
+
+/// The language's refusal, keeping its kind, span, suggestion, candidates and hint.
+impl From<query_language::Error> for QueryError {
+    fn from(error: query_language::Error) -> Self {
+        Self {
+            kind: QueryErrorKind::Language(error.kind),
+            message: error.message,
+            at: Some(error.position),
+            length: error.length,
+            help: Some(Box::new(QueryHelp {
+                suggestion: error.suggestion,
+                candidates: error.candidates,
+                hint: error.hint,
+            })),
         }
     }
 }

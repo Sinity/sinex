@@ -16,6 +16,7 @@ mod derivation_runner;
 mod diagnostics;
 mod dirty_keys;
 mod document_text;
+mod error;
 mod ingress;
 mod intake;
 mod library;
@@ -34,6 +35,7 @@ mod telemetry;
 mod writer;
 
 use clap::{Parser, Subcommand};
+pub(crate) use error::{Error, Result};
 use std::path::PathBuf;
 
 /// mimalloc instead of glibc's allocator. The running daemon's glibc held
@@ -151,27 +153,16 @@ async fn local_runner(
     store: Option<&std::path::Path>,
     configuration: &sinex_derivations::Configuration,
     time_settings: sinex_model::time_settings::TimeSettings,
-) -> Result<
-    (
-        derivation_runner::DerivationRunner,
-        tokio::task::JoinHandle<()>,
-    ),
-    String,
-> {
+) -> Result<(
+    derivation_runner::DerivationRunner,
+    tokio::task::JoinHandle<()>,
+)> {
     use sqlx::Connection;
-    let writer_conn = sqlx::PgConnection::connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
+    let writer_conn = sqlx::PgConnection::connect(database).await?;
     let mut writer_conn = writer::claim(writer_conn).await?;
-    let blobs = store
-        .map(sinex_store::blobs::Blobs::open)
-        .transpose()
-        .map_err(|e| e.to_string())?;
+    let blobs = store.map(sinex_store::blobs::Blobs::open).transpose()?;
     if let Some(blobs) = &blobs {
-        blobs
-            .recover(&mut writer_conn)
-            .await
-            .map_err(|error| error.to_string())?;
+        blobs.recover(&mut writer_conn).await?;
     }
     let (handle, queues) = writer::channels();
     let task = tokio::spawn(writer::run(
@@ -184,9 +175,7 @@ async fn local_runner(
         )),
         blobs.clone(),
     ));
-    let read = sqlx::PgConnection::connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
+    let read = sqlx::PgConnection::connect(database).await?;
     let mut runner = derivation_runner::DerivationRunner::start(
         read,
         handle,
@@ -214,7 +203,7 @@ async fn run_derive(
     sources: Option<PathBuf>,
     zone: Option<String>,
     day_start: String,
-) -> Result<(), String> {
+) -> Result<()> {
     let configuration = match &sources {
         Some(path) => binding_runner::Config::load(path)?.derivation_configuration(),
         None => sinex_derivations::Configuration::default(),
@@ -256,7 +245,7 @@ async fn run_derive(
     }
     runner.end_runs().await?;
     drop(runner);
-    writer_task.await.map_err(|e| e.to_string())
+    writer_task.await.map_err(Error::from)
 }
 
 /// This process's peak resident memory (VmHWM), in MB.
@@ -274,12 +263,14 @@ async fn publish(
     nats: &str,
     nats_password_file: Option<&std::path::Path>,
     subject_root: &str,
-) -> Result<(), String> {
+) -> Result<()> {
     use sqlx::Connection;
     let mut conn = sqlx::PgConnection::connect(database)
         .await
-        .map_err(|e| format!("database: {e}"))?;
-    let client = sinex_source_core::nats::connect(nats, nats_password_file).await?;
+        .map_err(|e| Error::from(e).within("database"))?;
+    let client = sinex_source_core::nats::connect(nats, nats_password_file)
+        .await
+        .map_err(Error::Nats)?;
     let js = publisher::context(client);
     let report =
         publisher::publish_all(&mut conn, &js, &sinex_protocol::Subjects::new(subject_root))
@@ -298,19 +289,20 @@ fn default_socket() -> PathBuf {
 fn effective_time_settings(
     zone: Option<&str>,
     day_start: &str,
-) -> Result<sinex_model::time_settings::TimeSettings, String> {
-    let start = sinex_model::query::time::clock(day_start)
-        .ok_or_else(|| format!("day start `{day_start}` is not a clock time"))?;
+) -> Result<sinex_model::time_settings::TimeSettings> {
+    let start = sinex_model::query::time::clock(day_start).ok_or_else(|| {
+        Error::bad_request(format!("day start `{day_start}` is not a clock time"))
+    })?;
     let day = match zone {
         Some(name) => {
-            let zone =
-                jiff::tz::TimeZone::get(name).map_err(|error| format!("zone {name}: {error}"))?;
-            query_language::time::DaySetting::new(zone, start).map_err(|error| error.to_string())?
+            let zone = jiff::tz::TimeZone::get(name)
+                .map_err(|error| Error::bad_request(format!("zone {name}: {error}")))?;
+            query_language::time::DaySetting::new(zone, start).map_err(Error::bad_value)?
         }
         // The host's named zone, the same default Polylogue uses, so both
         // products on one host share one logical day.
         None => query_language::time::DaySetting::system(start)
-            .map_err(|_| "system time zone has no IANA name; pass --zone".to_string())?,
+            .map_err(|_| Error::not_configured("system time zone has no IANA name; pass --zone"))?,
     };
     Ok(sinex_model::time_settings::TimeSettings::from_parts(
         day.zone().clone(),
@@ -324,10 +316,8 @@ fn api_options(
     tokens: PathBuf,
     zone: Option<String>,
     day_start: &str,
-) -> Result<daemon::ApiOptions, String> {
-    let day = effective_time_settings(zone.as_deref(), day_start)?
-        .day_setting()
-        .map_err(|error| error.to_string())?;
+) -> Result<daemon::ApiOptions> {
+    let day = effective_time_settings(zone.as_deref(), day_start)?.day_setting()?;
     Ok(daemon::ApiOptions {
         socket: socket.unwrap_or_else(default_socket),
         listen,
@@ -407,9 +397,10 @@ async fn main() -> std::process::ExitCode {
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        // The exit code comes from the shared failure table.
         Err(e) => {
             eprintln!("sinexd: {e}");
-            std::process::ExitCode::FAILURE
+            std::process::ExitCode::from(e.failure().kind.exit_code())
         }
     }
 }

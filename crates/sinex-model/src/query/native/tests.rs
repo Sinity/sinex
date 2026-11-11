@@ -94,7 +94,7 @@ fn operation_words_reserve_only_the_product_command_boundary() {
         "related sinex:ev/0190a0b0-0000-7000-8000-000000000001",
     ] {
         let error = super::super::bind(text, &ctx).unwrap_err();
-        assert!(error.not_built, "{text}: {error}");
+        assert_eq!(error.kind, QueryErrorKind::NotBuilt, "{text}: {error}");
         assert!(error.message.contains("Sinex operation"), "{text}: {error}");
     }
     for text in [

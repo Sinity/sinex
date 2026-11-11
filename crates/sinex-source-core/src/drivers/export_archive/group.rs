@@ -1,5 +1,5 @@
 //! One forward archive traversal shared by compatible logical bindings.
-use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_tar};
+use super::{Container, DriverError, ExportArchive, Framing, file_name, is_tar};
 mod records;
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
 use crate::shared_pass::{SharedReadStart, StoredFile};
@@ -97,7 +97,7 @@ pub struct ListedMember {
 /// member, or a tar's headers. A gzip-compressed file or a plain file is one
 /// member named after the file. Directories are not members.
 pub fn members(path: &std::path::Path) -> Result<(Container, Vec<ListedMember>), DriverError> {
-    let file = std::fs::File::open(path).map_err(|e| io(format!("{}: {e}", path.display())))?;
+    let file = std::fs::File::open(path).map_err(|e| DriverError::file(path, e))?;
     let opened = Opened::new(Input::Seekable(Box::new(file)), Arc::new(AtomicU64::new(0)))?;
     let container = opened.container;
     let mut out = Vec::new();
@@ -105,10 +105,10 @@ pub fn members(path: &std::path::Path) -> Result<(Container, Vec<ListedMember>),
         Container::Zip => {
             let reader = opened
                 .seekable
-                .ok_or_else(|| io("a ZIP opened without random access"))?;
-            let mut archive = zip::ZipArchive::new(reader).map_err(io)?;
+                .ok_or_else(|| DriverError::Read("a ZIP opened without random access".into()))?;
+            let mut archive = zip::ZipArchive::new(reader).map_err(DriverError::from)?;
             for index in 0..archive.len() {
-                let entry = archive.by_index_raw(index).map_err(io)?;
+                let entry = archive.by_index_raw(index).map_err(DriverError::from)?;
                 if entry.is_dir() {
                     continue;
                 }
@@ -120,13 +120,17 @@ pub fn members(path: &std::path::Path) -> Result<(Container, Vec<ListedMember>),
         }
         Container::Tar | Container::TarGzip => {
             let mut archive = tar::Archive::new(opened.reader);
-            for entry in archive.entries().map_err(io)? {
-                let entry = entry.map_err(io)?;
+            for entry in archive.entries().map_err(DriverError::from)? {
+                let entry = entry.map_err(DriverError::from)?;
                 if !entry.header().entry_type().is_file() {
                     continue;
                 }
                 out.push(ListedMember {
-                    name: entry.path().map_err(io)?.to_string_lossy().into_owned(),
+                    name: entry
+                        .path()
+                        .map_err(DriverError::from)?
+                        .to_string_lossy()
+                        .into_owned(),
                     size: Some(entry.size()),
                 });
             }
@@ -445,10 +449,11 @@ impl Context<'_, '_> {
         }
         // Only overlapping selectors with different framers need independent readers.
         // Keep one private, unlinked member file; its decoded bytes are never re-extracted.
-        let mut staged = tempfile::tempfile().map_err(io)?;
-        self.work.member_staging_bytes += std::io::copy(reader, &mut staged).map_err(io)?;
+        let mut staged = tempfile::tempfile().map_err(DriverError::from)?;
+        self.work.member_staging_bytes +=
+            std::io::copy(reader, &mut staged).map_err(DriverError::from)?;
         for framing in framings {
-            staged.rewind().map_err(io)?;
+            staged.rewind().map_err(DriverError::from)?;
             let selected: Vec<usize> = indices
                 .iter()
                 .copied()
@@ -505,7 +510,7 @@ impl Context<'_, '_> {
             let reason = error.to_string();
             for &index in indices {
                 if self.routes[index].active {
-                    (self.emit)(index, Err(DriverError::Io(format!("{name}: {reason}"))))?;
+                    (self.emit)(index, Err(DriverError::Read(format!("{name}: {reason}"))))?;
                     self.routes[index].active = false;
                 }
             }
@@ -650,7 +655,7 @@ impl Opened {
             Input::Sequential(reader) => reader,
             Input::Seekable(reader) => {
                 let mut reader = BufReader::with_capacity(65536, reader);
-                let head = reader.fill_buf().map_err(io)?;
+                let head = reader.fill_buf().map_err(DriverError::from)?;
                 if head.starts_with(b"PK\x03\x04") || head.starts_with(b"PK\x05\x06") {
                     return Ok(Self {
                         container: Container::Zip,
@@ -662,7 +667,7 @@ impl Opened {
             }
         };
         let mut reader = BufReader::with_capacity(65536, reader);
-        let head = reader.fill_buf().map_err(io)?;
+        let head = reader.fill_buf().map_err(DriverError::from)?;
         let container = if head.starts_with(b"PK\x03\x04") || head.starts_with(b"PK\x05\x06") {
             Container::Zip
         } else if is_tar(head) {
@@ -680,7 +685,7 @@ impl Opened {
                     count,
                 },
             );
-            let container = if is_tar(decoded.fill_buf().map_err(io)?) {
+            let container = if is_tar(decoded.fill_buf().map_err(DriverError::from)?) {
                 Container::TarGzip
             } else {
                 Container::Gzip
@@ -717,12 +722,16 @@ impl Opened {
             Container::Tar | Container::TarGzip => {
                 let mut archive = tar::Archive::new(input);
                 let mut member = 0;
-                for entry in archive.entries().map_err(io)? {
-                    let mut entry = entry.map_err(io)?;
+                for entry in archive.entries().map_err(DriverError::from)? {
+                    let mut entry = entry.map_err(DriverError::from)?;
                     if !entry.header().entry_type().is_file() {
                         continue;
                     }
-                    let name = entry.path().map_err(io)?.to_string_lossy().into_owned();
+                    let name = entry
+                        .path()
+                        .map_err(DriverError::from)?
+                        .to_string_lossy()
+                        .into_owned();
                     visit(member, name, &mut entry)?;
                     member += 1;
                 }
@@ -731,15 +740,16 @@ impl Opened {
                 let reader: Box<dyn ReadSeek> = match self.seekable {
                     Some(reader) => reader,
                     None => {
-                        let mut file = tempfile::tempfile().map_err(io)?;
-                        *zip_staged += std::io::copy(&mut input, &mut file).map_err(io)?;
-                        file.rewind().map_err(io)?;
+                        let mut file = tempfile::tempfile().map_err(DriverError::from)?;
+                        *zip_staged +=
+                            std::io::copy(&mut input, &mut file).map_err(DriverError::from)?;
+                        file.rewind().map_err(DriverError::from)?;
                         Box::new(file)
                     }
                 };
-                let mut archive = zip::ZipArchive::new(reader).map_err(io)?;
+                let mut archive = zip::ZipArchive::new(reader).map_err(DriverError::from)?;
                 for member in 0..archive.len() {
-                    let entry = archive.by_index(member).map_err(io)?;
+                    let entry = archive.by_index(member).map_err(DriverError::from)?;
                     if entry.is_dir() {
                         continue;
                     }

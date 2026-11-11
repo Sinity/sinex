@@ -2,6 +2,7 @@
 use crate::material_access::Sink;
 use crate::stage::{self, Totals};
 use crate::writer::WriterHandle;
+use crate::{Error, Result};
 use serde_json::Value;
 use sinex_model::{Class, RunId};
 use sinex_source_core::shared_pass::SharedReadStart;
@@ -33,11 +34,11 @@ pub(crate) struct BindingReader {
     pub batch_events: Option<u64>,
 }
 impl BindingReader {
-    pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self, String> {
+    pub(crate) fn new(kind: &InputFormat, binding: Binding) -> Result<Self> {
         let reader = kind
             .reader
-            .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
-        let reading = reader(&binding)?;
+            .ok_or_else(|| Error::internal(format!("{} is not read by a driver", kind.name)))?;
+        let reading = reader(&binding).map_err(Error::bad_value)?;
         Self::with_reading(kind, binding, reading)
     }
 
@@ -45,9 +46,11 @@ impl BindingReader {
         _kind: &InputFormat,
         binding: Binding,
         reading: sinex_source_core::Reading,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         Ok(Self {
-            source: sinex_sources::sources::source_for(&binding)?.into(),
+            source: sinex_sources::sources::source_for(&binding)
+                .map_err(Error::bad_value)?
+                .into(),
             reading: match reading {
                 sinex_source_core::Reading::Polled(reader) => {
                     Reading::Polled(PolledReader::new(reader))
@@ -70,7 +73,7 @@ pub(crate) async fn once(
     blobs: &Blobs,
     writer: &WriterHandle,
     mut readers: Vec<BindingReader>,
-) -> Result<Totals, String> {
+) -> Result<Totals> {
     let (_stop, stop) = watch::channel(false);
     let mut rounds = Rounds::default();
     let results = read(
@@ -113,7 +116,7 @@ pub(crate) struct Rounds {
 
 impl Rounds {
     /// Rounds that continue from the coverage stored for `host`.
-    pub(crate) async fn resume(conn: &mut PgConnection, host: &str) -> Result<Self, String> {
+    pub(crate) async fn resume(conn: &mut PgConnection, host: &str) -> Result<Self> {
         Ok(Self {
             runs: std::collections::BTreeMap::new(),
             coverage: coverage::Coverage::stored(conn, host).await?,
@@ -121,11 +124,11 @@ impl Rounds {
     }
 
     /// End every run these rounds started.
-    pub(crate) async fn end(self, conn: &mut PgConnection) -> Result<(), String> {
+    pub(crate) async fn end(self, conn: &mut PgConnection) -> Result<()> {
         for ((source, _, host), run) in self.runs {
-            sinex_store::runs::end(conn, run)
-                .await
-                .map_err(|error| format!("ending the {source} run on {host}: {error}"))?;
+            sinex_store::runs::end(conn, run).await.map_err(|error| {
+                Error::internal(format!("ending the {source} run on {host}: {error}"))
+            })?;
         }
         self.coverage.end(conn).await
     }
@@ -136,12 +139,12 @@ impl Rounds {
 struct Results<'a> {
     coverage: &'a mut coverage::Coverage,
     started_at: sinex_model::Timestamp,
-    list: Vec<(String, Result<Totals, String>)>,
-    report: &'a mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
+    list: Vec<(String, Result<Totals>)>,
+    report: &'a mut (dyn FnMut(&str, &Result<Totals>) + Send),
 }
 
 impl Results<'_> {
-    fn add(&mut self, binding: &Binding, run: Option<RunId>, result: Result<Totals, String>) {
+    fn add(&mut self, binding: &Binding, run: Option<RunId>, result: Result<Totals>) {
         (self.report)(&binding.name, &result);
         let mut observation = coverage::outcome(binding, self.started_at, &result);
         observation.observed_run = run;
@@ -176,8 +179,8 @@ pub(crate) async fn read(
     rounds: &mut Rounds,
     stop: watch::Receiver<bool>,
     access: Access<'_>,
-    report: &mut (dyn FnMut(&str, &Result<Totals, String>) + Send),
-) -> Vec<(String, Result<Totals, String>)> {
+    report: &mut (dyn FnMut(&str, &Result<Totals>) + Send),
+) -> Vec<(String, Result<Totals>)> {
     // Backup waits here before requesting writer P, so a reader waiting on its
     // writer acknowledgment never deadlocks the snapshot job.
     let publication = writer.source_publication();
@@ -230,7 +233,7 @@ pub(crate) async fn read(
                         &binding.binding.settings.host,
                     )
                     .await
-                    .map_err(|error| error.to_string())
+                    .map_err(Error::from)
                 }
                 Err(error) => Err(error),
             }
@@ -238,7 +241,7 @@ pub(crate) async fn read(
         if let Ok(run) = run {
             native_runs.insert(key, run);
         }
-        binding_runs.push(run);
+        binding_runs.push(run.map_err(Error::failure));
     }
     let mut passes: Vec<SharedFileRead> = Vec::new();
     for (index, b) in readers.iter_mut().enumerate() {
@@ -247,7 +250,11 @@ pub(crate) async fn read(
         let run = match &binding_runs[index] {
             Ok(run) => *run,
             Err(error) => {
-                results.add(&b.binding, None, Err(format!("source run: {error}")));
+                results.add(
+                    &b.binding,
+                    None,
+                    Err(Error::from(error.clone()).within("source run")),
+                );
                 continue;
             }
         };
@@ -257,7 +264,7 @@ pub(crate) async fn read(
                 restore(conn, blobs, b, access, &stop).await?;
                 b.remembered = true;
             }
-            Ok::<_, String>(())
+            Ok::<_, Error>(())
         }
         .await;
         if let Err(e) = init {
@@ -266,25 +273,21 @@ pub(crate) async fn read(
         }
         if let Reading::Shared(pass) = &mut b.reading {
             let choice = async {
-                pass.refresh().map_err(|error| error.to_string())?;
-                let facts = drivers::file_facts(pass.path()).map_err(|e| e.to_string())?;
+                pass.refresh()?;
+                let facts = drivers::file_facts(pass.path())?;
                 let cursor = positions::load(conn, &b.binding.name)
-                    .await
-                    .map_err(|e| e.to_string())?
+                    .await?
                     .map(|(cursor, _)| cursor)
                     .unwrap_or(Value::Null);
                 let floor = sinex_store::privacy::load(conn, std::iter::once(b.source.spec().name))
-                    .await
-                    .map_err(|e| e.to_string())?
+                    .await?
                     .floors
                     .get(b.source.spec().name)
                     .copied()
                     .unwrap_or_default();
                 let class = b.source.spec().class.max(floor);
-                let resume = pass
-                    .resume(&cursor, &facts, class)
-                    .map_err(|e| e.to_string())?;
-                Ok::<_, String>((resume, facts, class))
+                let resume = pass.resume(&cursor, &facts, class)?;
+                Ok::<_, Error>((resume, facts, class))
             }
             .await;
             match choice {
@@ -316,7 +319,7 @@ pub(crate) async fn read(
                 Err(e) => results.add(
                     &b.binding,
                     Some(run),
-                    Err(format!("{}: {e}", b.binding.name)),
+                    Err(Error::internal(format!("{}: {e}", b.binding.name))),
                 ),
             }
         } else if let Reading::Polled(reader) = &mut b.reading {
@@ -352,9 +355,9 @@ pub(crate) async fn read(
                     Ok(Some((cursor, _))) => reader
                         .remove_passed(&cursor)
                         .map(|_| totals)
-                        .map_err(|e| e.to_string()),
+                        .map_err(Error::from),
                     Ok(None) => Ok(totals),
-                    Err(e) => Err(e.to_string()),
+                    Err(e) => Err(e.into()),
                 },
                 Err(e) => Err(e),
             };
@@ -383,13 +386,13 @@ pub(crate) async fn read(
                     results.add(
                         &readers[i].binding,
                         binding_runs[i].as_ref().ok().copied(),
-                        r,
+                        r.map_err(Error::from),
                     );
                 }
             }
             Err(e) => {
                 for &i in &pass.indices {
-                    let failed = Err(format!("{}: {e}", readers[i].binding.name));
+                    let failed = Err(Error::internal(format!("{}: {e}", readers[i].binding.name)));
                     results.add(
                         &readers[i].binding,
                         binding_runs[i].as_ref().ok().copied(),
@@ -411,7 +414,7 @@ async fn restore(
     b: &mut BindingReader,
     access: Access<'_>,
     stop: &watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<()> {
     let Reading::Polled(reader) = &mut b.reading else {
         return Ok(());
     };
@@ -443,28 +446,23 @@ pub(crate) async fn restore_reader(
     binding: &str,
     unlock: Option<&crate::material_access::sealing::Unlock>,
     stop: &watch::Receiver<bool>,
-) -> Result<Class, String> {
+) -> Result<Class> {
     let cursor = positions::load(conn, binding)
-        .await
-        .map_err(|e| e.to_string())?
+        .await?
         .map(|(cursor, _)| cursor)
         .unwrap_or(Value::Null);
     let Some(last) = reader.history_from(&cursor) else {
         return Ok(Class::default());
     };
-    let saved = positions::reader_memory(conn, binding)
-        .await
-        .map_err(|e| e.to_string())?;
+    let saved = positions::reader_memory(conn, binding).await?;
     let mut reached_saved = false;
     let mut floor = Class::default();
     let mut newest_revision = None;
     let mut next = Some(last);
     'parts: while let Some(newest) = next {
-        let page = sinex_store::material_bytes::parts_from(conn, newest, PARTS_PER_QUERY)
-            .await
-            .map_err(|e| e.to_string())?;
+        let page = sinex_store::material_bytes::parts_from(conn, newest, PARTS_PER_QUERY).await?;
         if page.is_empty() {
-            return Err(format!("stored part {newest} is missing"));
+            return Err(Error::not_found(format!("stored part {newest} is missing")));
         }
         if newest == last {
             newest_revision = page[0].1;
@@ -474,7 +472,10 @@ pub(crate) async fn restore_reader(
             .and_then(|(reference, _)| reference.previous_part);
         for (reference, revision) in page {
             if *stop.borrow() {
-                return Err("restoring the reader's memory was cancelled".into());
+                return Err(Error::new(
+                    command_surface::FailureKind::Cancelled,
+                    "restoring the reader's memory was cancelled",
+                ));
             }
             if saved.as_ref().is_some_and(|m| m.material == reference.id) {
                 reached_saved = true;
@@ -488,34 +489,27 @@ pub(crate) async fn restore_reader(
             )
             .await?;
             floor = floor.max(bytes.floor());
-            let more = reader
-                .restore(
-                    &cursor,
-                    sinex_source_core::StoredMaterial {
-                        reference,
-                        bytes: Arc::new(bytes),
-                        same_revision: revision == newest_revision,
-                    },
-                )
-                .map_err(|e| e.to_string())?;
+            let more = reader.restore(
+                &cursor,
+                sinex_source_core::StoredMaterial {
+                    reference,
+                    bytes: Arc::new(bytes),
+                    same_revision: revision == newest_revision,
+                },
+            )?;
             if !more {
                 break 'parts;
             }
         }
     }
     if let Some(saved) = saved.filter(|_| reached_saved) {
-        reader
-            .restore_memory(&saved.bytes)
-            .map_err(|e| e.to_string())?;
+        reader.restore_memory(&saved.bytes)?;
         // The parts the saved memory stands for were not opened.
-        if sinex_store::positions::has_sealed_material(conn, binding)
-            .await
-            .map_err(|e| e.to_string())?
-        {
+        if sinex_store::positions::has_sealed_material(conn, binding).await? {
             floor = Class::Sealed;
         }
     }
-    reader.restored().map_err(|e| e.to_string())?;
+    reader.restored()?;
     Ok(floor)
 }
 

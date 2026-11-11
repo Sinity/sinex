@@ -16,6 +16,7 @@
 //! covers everything read before and after the interruption.
 use crate::material_access::{Access, Sink};
 use crate::writer::{self, StageWrite, WriterHandle};
+use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_model::lifecycle::OperationResult;
 use sinex_model::stage::{
@@ -57,13 +58,13 @@ pub(crate) struct Request {
 
 /// The staged items for `paths` read with `parsers`: none (each file is
 /// recognised by detection), one for every path, or one per path in order.
-pub(crate) fn items(paths: &[String], parsers: &[String]) -> Result<Vec<Item>, String> {
+pub(crate) fn items(paths: &[String], parsers: &[String]) -> Result<Vec<Item>> {
     if !parsers.is_empty() && parsers.len() != 1 && parsers.len() != paths.len() {
-        return Err(format!(
+        return Err(Error::bad_request(format!(
             "{} parsers for {} paths: name one parser for every path, or one per path",
             parsers.len(),
             paths.len()
-        ));
+        )));
     }
     Ok(paths
         .iter()
@@ -91,13 +92,15 @@ pub(crate) struct Claim {
 
 impl Claim {
     /// Hold every binding of `plan`, or none when one is being read.
-    pub(crate) fn take(running: &Running, plan: &StagePlan) -> Result<Self, String> {
+    pub(crate) fn take(running: &Running, plan: &StagePlan) -> Result<Self> {
         let names: Vec<String> = plan.bindings().map(|(_, b)| b.name.clone()).collect();
         let mut held = running
             .lock()
             .expect("the running stages are never poisoned");
         if let Some(busy) = names.iter().find(|name| held.contains(*name)) {
-            return Err(format!("{busy} is being read by another stage now"));
+            return Err(Error::bad_request(format!(
+                "{busy} is being read by another stage now"
+            )));
         }
         held.extend(names.iter().cloned());
         Ok(Self {
@@ -122,7 +125,7 @@ impl Drop for Claim {
 /// An agent stages only paths under `roots` (the declared source locations
 /// and the operator's staging roots); any other path needs the operator.
 /// The refusal names the roots.
-pub(crate) fn within_roots(items: &[Item], roots: &[PathBuf]) -> Result<(), String> {
+pub(crate) fn within_roots(items: &[Item], roots: &[PathBuf]) -> Result<()> {
     let resolve =
         |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let resolved: Vec<PathBuf> = roots.iter().map(|root| resolve(root)).collect();
@@ -130,7 +133,7 @@ pub(crate) fn within_roots(items: &[Item], roots: &[PathBuf]) -> Result<(), Stri
         let path = resolve(&item.path);
         if !resolved.iter().any(|root| path.starts_with(root)) {
             let listed: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
-            return Err(format!(
+            return Err(Error::bad_request(format!(
                 "{} is outside the places an agent may stage from; staging it needs the operator. An agent may stage under: {}",
                 item.path.display(),
                 if listed.is_empty() {
@@ -138,7 +141,7 @@ pub(crate) fn within_roots(items: &[Item], roots: &[PathBuf]) -> Result<(), Stri
                 } else {
                     listed.join(", ")
                 }
-            ));
+            )));
         }
     }
     Ok(())
@@ -150,7 +153,7 @@ pub(crate) fn within_roots(items: &[Item], roots: &[PathBuf]) -> Result<(), Stri
 pub(crate) fn not_continuous(
     plan: &StagePlan,
     continuous: &[(&'static sinex_source_core::InputFormat, Binding)],
-) -> Result<(), String> {
+) -> Result<()> {
     let resolved = |b: &Binding| {
         (
             b.source.clone(),
@@ -160,11 +163,11 @@ pub(crate) fn not_continuous(
     let read: BTreeSet<_> = continuous.iter().map(|(_, b)| resolved(b)).collect();
     for (_, binding) in plan.bindings() {
         if read.contains(&resolved(binding)) {
-            return Err(format!(
+            return Err(Error::bad_request(format!(
                 "{} is read continuously by {} from its canonical location; it needs no stage",
                 binding.input.display(),
                 binding.source
-            ));
+            )));
         }
     }
     Ok(())
@@ -175,8 +178,9 @@ impl Request {
         serde_json::to_value(self).expect("stage requests serialize")
     }
 
-    pub(crate) fn from_scope(scope: &Value) -> Result<Self, String> {
-        serde_json::from_value(scope.clone()).map_err(|e| format!("stored stage scope: {e}"))
+    pub(crate) fn from_scope(scope: &Value) -> Result<Self> {
+        serde_json::from_value(scope.clone())
+            .map_err(|e| Error::from(e).within("stored stage scope"))
     }
 
     fn settings(&self) -> Settings {
@@ -191,16 +195,17 @@ impl Request {
     /// Plan every path. Reads only listings and the few bytes detection
     /// tests, but blocks on the file system, so callers run it off the
     /// async workers.
-    pub(crate) fn plan(&self) -> Result<StagePlan, String> {
+    pub(crate) fn plan(&self) -> Result<StagePlan> {
         for item in &self.items {
             if !item.path.is_absolute() {
-                return Err(format!(
+                return Err(Error::bad_request(format!(
                     "{}: a staged path is absolute, so the daemon and the record agree on it",
                     item.path.display()
-                ));
+                )));
             }
         }
         sinex_sources::stage::plan(sources::formats(), &self.items, &self.settings())
+            .map_err(Error::bad_request)
     }
 }
 
@@ -335,7 +340,7 @@ impl Staging<'_> {
         request: &Request,
         plan: StagePlan,
         begun: tokio::sync::oneshot::Sender<Report>,
-    ) -> Result<Report, String> {
+    ) -> Result<Report> {
         let progress = Progress::new(plan);
         self.writer
             .stage(StageWrite::Begin {
@@ -344,8 +349,7 @@ impl Staging<'_> {
                 scope: request.scope(),
                 inventory: progress.inventory(),
             })
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         self.read(operation, request, progress, begun).await
     }
 
@@ -358,12 +362,9 @@ impl Staging<'_> {
         plan: StagePlan,
         saved: &SavedProgress,
         begun: tokio::sync::oneshot::Sender<Report>,
-    ) -> Result<Report, String> {
+    ) -> Result<Report> {
         let progress = Progress::resumed(plan, saved);
-        self.writer
-            .stage(StageWrite::Reopen { operation })
-            .await
-            .map_err(|e| e.to_string())?;
+        self.writer.stage(StageWrite::Reopen { operation }).await?;
         self.read(operation, request, progress, begun).await
     }
 
@@ -373,7 +374,7 @@ impl Staging<'_> {
         request: &Request,
         mut progress: Progress,
         begun: tokio::sync::oneshot::Sender<Report>,
-    ) -> Result<Report, String> {
+    ) -> Result<Report> {
         // The caller may have stopped waiting; the stage reads on.
         let _ = begun.send(Report {
             operation,
@@ -418,7 +419,13 @@ impl Staging<'_> {
                             readers.push(reader);
                         }
                         Err(error) => {
-                            fail(&mut progress, index, &binding.source, &error, &mut failures);
+                            fail(
+                                &mut progress,
+                                index,
+                                &binding.source,
+                                &error.to_string(),
+                                &mut failures,
+                            );
                         }
                     }
                 }
@@ -453,7 +460,13 @@ impl Staging<'_> {
                                 None => per_source.push((source, totals)),
                             }
                         }
-                        Err(error) => fail(&mut progress, index, &source, &error, &mut failures),
+                        Err(error) => fail(
+                            &mut progress,
+                            index,
+                            &source,
+                            &error.to_string(),
+                            &mut failures,
+                        ),
                     }
                 }
             }
@@ -462,11 +475,10 @@ impl Staging<'_> {
                     operation,
                     inventory: progress.inventory(),
                 })
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
         }
         if let Err(error) = rounds.end(&mut *self.read_conn).await {
-            failures.push(error);
+            failures.push(error.to_string());
         }
         let result = if failures.is_empty() {
             OperationResult::Ok
@@ -488,8 +500,7 @@ impl Staging<'_> {
                 inventory: inventory.clone(),
                 refusals: failures.clone(),
             })
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         let sources: BTreeMap<String, SourceTotals> = per_source
             .iter()
             .map(|(s, t)| (s.clone(), t.report()))
@@ -513,7 +524,7 @@ impl Staging<'_> {
         request: &Request,
         index: usize,
         progress: &Progress,
-    ) -> Result<MaterialId, String> {
+    ) -> Result<MaterialId> {
         let file = &progress.plan.files[index];
         let candidates = match &file.reading {
             FileReading::Unparsed { candidates } => candidates.clone(),
@@ -526,19 +537,18 @@ impl Staging<'_> {
                     .any(|spec| spec.class == Class::Sealed)
             })
         }) {
-            return Err(format!(
+            return Err(Error::not_found(format!(
                 "{sealed} reads sealed records, so the file is not stored unsealed without a parser; stage it with --parser"
-            ));
+            )));
         }
         let path = file.path.clone();
         let sink = Sink(self.blobs.clone());
         let (blob, observation) = tokio::task::spawn_blocking(move || {
-            let observation = drivers::file_facts(&path).map_err(|e| e.to_string())?;
-            let blob = sink.put_file(&path)?;
-            Ok::<_, String>((blob, observation))
+            let observation = drivers::file_facts(&path)?;
+            let blob = sink.put_file(&path).map_err(Error::internal)?;
+            Ok::<_, Error>((blob, observation))
         })
-        .await
-        .map_err(|e| e.to_string())??;
+        .await??;
         let locator = file.path.display().to_string();
         let mut details = serde_json::Map::new();
         details.insert("host".into(), json!(request.host));
@@ -575,8 +585,7 @@ impl Staging<'_> {
                     manifest,
                 },
             )))
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         Ok(id)
     }
 }
@@ -607,13 +616,11 @@ pub(crate) async fn local(
     store: &std::path::Path,
     request: Request,
     time_settings: sinex_model::time_settings::TimeSettings,
-) -> Result<Report, String> {
+) -> Result<Report> {
     let mut ctx =
         crate::reader_context::ReaderContext::open(database, store, time_settings).await?;
     let planned = request.clone();
-    let plan = tokio::task::spawn_blocking(move || planned.plan())
-        .await
-        .map_err(|e| e.to_string())??;
+    let plan = tokio::task::spawn_blocking(move || planned.plan()).await??;
     let (begun, _) = tokio::sync::oneshot::channel();
     let (_running, stop) = watch::channel(false);
     let outcome = Staging {
@@ -692,18 +699,18 @@ pub(crate) fn decided(a: &mut Accounting, out: &sinex_store::Outcome) {
 }
 
 /// Store `b`'s source, input and settings under its name.
-pub(crate) async fn record(read_conn: &mut PgConnection, b: &Binding) -> Result<(), String> {
+pub(crate) async fn record(read_conn: &mut PgConnection, b: &Binding) -> Result<()> {
     bindings::save(
         read_conn,
         &bindings::Stored {
             binding: b.name.clone(),
             source: b.source.clone(),
             input: b.input.display().to_string(),
-            settings: serde_json::to_value(&b.settings).map_err(|e| e.to_string())?,
+            settings: serde_json::to_value(&b.settings)?,
         },
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(Error::from)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -721,14 +728,13 @@ pub(crate) async fn drive(
     stop: tokio::sync::watch::Receiver<bool>,
     committed: Option<Committed>,
     batch_events: Option<u64>,
-) -> Result<Totals, String> {
+) -> Result<Totals> {
     let mut totals = Totals::committed(committed);
     let started = Instant::now();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
     let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
-        .await
-        .map_err(|e| e.to_string())?
+        .await?
         .floors
         .get(source.spec().name)
         .copied()
@@ -736,22 +742,27 @@ pub(crate) async fn drive(
     let effective_class = source.spec().class.max(floor).max(minimum_class);
     let material =
         crate::material_access::MaterialAccess::new(sink.0.clone(), effective_class, access)
-            .map_err(|e| format!("{}: {e}", source.spec().name))?;
+            .map_err(|e| Error::bad_request(format!("{}: {e}", source.spec().name)))?;
     let checked_stop = stop.clone();
-    let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
+    let check: std::sync::Arc<dyn Fn() -> Result<()> + Send + Sync> =
         std::sync::Arc::new(move || {
             if *checked_stop.borrow() {
-                return Err("capture cancelled".into());
+                return Err(Error::new(
+                    command_surface::FailureKind::Cancelled,
+                    "capture cancelled",
+                ));
             }
             Ok(())
         });
     loop {
         if *stop.borrow() {
-            return Err("capture cancelled".into());
+            return Err(Error::new(
+                command_surface::FailureKind::Cancelled,
+                "capture cancelled",
+            ));
         }
         let (cursor, carry) = positions::load(read_conn, binding)
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
         let poll_started = Instant::now();
         let mut acquired = reader.acquire(cursor.clone()).await?;
@@ -759,7 +770,7 @@ pub(crate) async fn drive(
         drivers::note_previous_through(&cursor, &mut acquired);
         let carry = material.carry(read_conn, binding, carry, &acquired).await?;
         if let Some(reason) = &acquired.observation.unavailable {
-            return Err(format!("{binding}: {reason}"));
+            return Err(Error::bad_request(format!("{binding}: {reason}")));
         }
         let had_material = acquired.material.is_some();
         check()?;

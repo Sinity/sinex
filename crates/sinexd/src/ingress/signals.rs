@@ -1,14 +1,12 @@
 //! Evaluator reports forwarded by another product enter through the
 //! ordinary authenticated ingress journal.
 use super::*;
+use crate::Result;
 use serde_json::json;
 use sinex_model::{MaterialId, Origin, Payloads, ReadingOrder, RecordLocation};
 
 impl Ingest {
-    pub(super) async fn signal_run(
-        &mut self,
-        producer: &str,
-    ) -> Result<sinex_model::RunId, String> {
+    pub(super) async fn signal_run(&mut self, producer: &str) -> Result<sinex_model::RunId> {
         let key = format!("signals:{producer}");
         if let Some(run) = self.runs.get(&key) {
             return Ok(*run);
@@ -26,8 +24,7 @@ impl Ingest {
             },
             &self.host,
         )
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
         self.runs.insert(key, run);
         Ok(run)
     }
@@ -42,7 +39,7 @@ impl Ingest {
             return Err(Check::Malformed("not a signal frame".into()));
         };
         let authority = authority::write(&self.grants, producer)
-            .map_err(Check::Configuration)?
+            .map_err(|error| Check::Configuration(error.to_string()))?
             .clone();
         if !authority.forward_signals || !authority.classes.contains(class) {
             return Err(Check::Configuration(

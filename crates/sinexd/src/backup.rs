@@ -1,4 +1,5 @@
 //! One local immutable core artifact, prepared under a live exported SQL snapshot.
+use crate::{Error, Result};
 use sinex_model::backup::{File as ManifestFile, Manifest};
 use sinex_store::backup::{self, Snapshot};
 use std::fs::{File, OpenOptions};
@@ -7,18 +8,20 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Component, Path};
 use tokio::sync::watch;
 
-fn file(path: &Path) -> Result<File, String> {
+fn file(path: &Path) -> Result<File> {
     OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(path)
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
 }
 
-fn stopped(stop: &watch::Receiver<bool>) -> Result<(), String> {
+fn stopped(stop: &watch::Receiver<bool>) -> Result<()> {
     if *stop.borrow() {
-        Err("backup preparation stopped; its hold remains open".into())
+        Err(Error::bad_request(
+            "backup preparation stopped; its hold remains open",
+        ))
     } else {
         Ok(())
     }
@@ -26,54 +29,49 @@ fn stopped(stop: &watch::Receiver<bool>) -> Result<(), String> {
 
 /// Create the private artifact roots before any producer can populate them.
 /// A partial attempt remains there, with its hold, and cannot be silently reused.
-pub(crate) fn create(path: &Path) -> Result<(), String> {
+pub(crate) fn create(path: &Path) -> Result<()> {
     if !path.is_absolute() {
-        return Err("backup output must be an absolute new directory".into());
+        return Err(Error::bad_request(
+            "backup output must be an absolute new directory",
+        ));
     }
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(path)
-        .map_err(|e| e.to_string())?;
+    std::fs::DirBuilder::new().mode(0o700).create(path)?;
     for directory in ["main", "keys"] {
         std::fs::DirBuilder::new()
             .mode(0o700)
-            .create(path.join(directory))
-            .map_err(|e| e.to_string())?;
+            .create(path.join(directory))?;
     }
     Ok(())
 }
 
-fn record<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String> {
+fn record<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     let mut out = file(path)?;
-    serde_json::to_writer_pretty(&mut out, value).map_err(|e| e.to_string())?;
-    out.write_all(b"\n").map_err(|e| e.to_string())?;
-    out.sync_all().map_err(|e| e.to_string())
+    serde_json::to_writer_pretty(&mut out, value)?;
+    out.write_all(b"\n")?;
+    out.sync_all().map_err(Error::from)
 }
 
-pub(crate) fn record_boundary(
-    output: &Path,
-    boundary: &sinex_model::backup::Hold,
-) -> Result<(), String> {
+pub(crate) fn record_boundary(output: &Path, boundary: &sinex_model::backup::Hold) -> Result<()> {
     let path = output.join("boundary.json");
     if path.exists() {
-        let found: sinex_model::backup::Hold =
-            serde_json::from_reader(File::open(path).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
+        let found: sinex_model::backup::Hold = serde_json::from_reader(File::open(path)?)?;
         if &found != boundary {
-            return Err("output belongs to a different backup boundary".into());
+            return Err(Error::bad_request(
+                "output belongs to a different backup boundary",
+            ));
         }
     } else {
         record(&path, boundary)?;
     }
     File::open(output)
         .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
 }
 
 /// libpq expands a URI passed as dbname, but treats PGDATABASE as a plain name.
 /// Passwords remain exclusively in the child's environment, including a URL
 /// query password, which has precedence over the user-info password in SQLx.
-fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command, String> {
+fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command> {
     let mut command = tokio::process::Command::new(program);
     let uri = database.split_once("://").is_some_and(|(scheme, _)| {
         scheme.eq_ignore_ascii_case("postgres") || scheme.eq_ignore_ascii_case("postgresql")
@@ -83,19 +81,19 @@ fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command, 
         return Ok(command);
     }
     let mut url = reqwest::Url::parse(database)
-        .map_err(|_| "invalid PostgreSQL connection URI".to_owned())?;
+        .map_err(|_| Error::bad_value("invalid PostgreSQL connection URI"))?;
     let mut password = url
         .password()
         .map(|encoded| {
             percent_encoding::percent_decode_str(encoded)
                 .decode_utf8()
                 .map(|password| password.into_owned())
-                .map_err(|_| "PostgreSQL password is not UTF-8".to_owned())
+                .map_err(|_| Error::bad_value("PostgreSQL password is not UTF-8"))
         })
         .transpose()?;
     if url.password().is_some() {
         url.set_password(None)
-            .map_err(|_| "cannot remove PostgreSQL URI password".to_owned())?;
+            .map_err(|_| Error::bad_value("cannot remove PostgreSQL URI password"))?;
     }
     let mut public = Vec::new();
     for (key, value) in url.query_pairs() {
@@ -142,7 +140,7 @@ async fn dump(
     output: &Path,
     keys: bool,
     mut stop: watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<()> {
     stopped(&stop)?;
     let name = if keys {
         "keys/data-keys.dump"
@@ -177,41 +175,39 @@ async fn dump(
             command.arg(format!("--exclude-table-data={table}"));
         }
     }
-    let mut child = command.spawn().map_err(|e| format!("start pg_dump: {e}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| Error::from(e).within("start pg_dump"))?;
     let status = tokio::select! {
-        result = child.wait() => result.map_err(|e| e.to_string())?,
+        result = child.wait() => result?,
         _ = stop.changed() => {
-            child.kill().await.map_err(|e| e.to_string())?;
-            child.wait().await.map_err(|e| e.to_string())?;
-            return Err("backup dump stopped; its hold remains open".into());
+            child.kill().await?;
+            child.wait().await?;
+            return Err(Error::bad_request("backup dump stopped; its hold remains open"));
         }
     };
     if !status.success() {
         let diagnostic = std::fs::read_to_string(&stderr_path)
             .unwrap_or_else(|error| format!("cannot read private dump diagnostic: {error}"));
-        return Err(format!(
+        return Err(Error::bad_request(format!(
             "pg_dump failed ({status}): {}; private log {}",
             diagnostic.trim(),
             stderr_path.display(),
-        ));
+        )));
     }
     File::open(output.join(name))
         .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())
+        .map_err(Error::from)
 }
 
-fn digest(
-    root: &Path,
-    relative: &str,
-    stop: &watch::Receiver<bool>,
-) -> Result<ManifestFile, String> {
-    let mut input = File::open(root.join(relative)).map_err(|e| e.to_string())?;
+fn digest(root: &Path, relative: &str, stop: &watch::Receiver<bool>) -> Result<ManifestFile> {
+    let mut input = File::open(root.join(relative))?;
     let mut buffer = [0; 64 * 1024];
     let mut hasher = blake3::Hasher::new();
     let mut bytes = 0;
     loop {
         stopped(stop)?;
-        let size = input.read(&mut buffer).map_err(|e| e.to_string())?;
+        let size = input.read(&mut buffer)?;
         if size == 0 {
             break;
         }
@@ -225,16 +221,18 @@ fn digest(
     })
 }
 
-fn segment_path(name: &str) -> Result<&Path, String> {
+fn segment_path(name: &str) -> Result<&Path> {
     let path = Path::new(name);
     if name.is_empty() || !path.components().all(|c| matches!(c, Component::Normal(_))) {
-        return Err("backup catalog contains a non-relative segment path".into());
+        return Err(Error::bad_request(
+            "backup catalog contains a non-relative segment path",
+        ));
     }
     Ok(path)
 }
 
 pub(crate) async fn local_sources(
-    bindings: Result<Vec<sinex_source_core::Binding>, String>,
+    bindings: Result<Vec<sinex_source_core::Binding>>,
     output: &Path,
 ) -> sinex_model::backup::ProducerSnapshot {
     let result = async {
@@ -249,19 +247,20 @@ pub(crate) async fn local_sources(
         let _cancel = Cancel(cancelled.clone());
         let destination = output.join("main/local-sources");
         let mut files = tokio::task::spawn_blocking(move || {
-            let captured = sinex_sources::live::capture_backup(&bindings, &cancelled)?;
+            let captured = sinex_sources::live::capture_backup(&bindings, &cancelled)
+                .map_err(Error::internal)?;
             sinex_transport::backup::capture_tree(
                 captured.directory.path(),
                 &destination,
                 &cancelled,
             )
+            .map_err(Error::internal)
         })
-        .await
-        .map_err(|e| e.to_string())??;
+        .await??;
         for file in &mut files {
             file.path = format!("main/local-sources/{}", file.path);
         }
-        Ok::<_, String>(files)
+        Ok::<_, Error>(files)
     }
     .await;
     match result {
@@ -275,7 +274,7 @@ pub(crate) async fn local_sources(
             producer: "@daemon".into(),
             run_id: None,
             files: Vec::new(),
-            unavailable: Some(reason),
+            unavailable: Some(reason.to_string()),
         },
     }
 }
@@ -289,7 +288,7 @@ pub(crate) async fn prepare(
     source_revision: String,
     producer_snapshots: Vec<sinex_model::backup::ProducerSnapshot>,
     required_producers: Option<Vec<String>>,
-) -> Result<Manifest, String> {
+) -> Result<Manifest> {
     let producers_complete = required_producers.as_ref().is_some_and(|required| {
         required.len() == producer_snapshots.len()
             && required.iter().all(|producer| {
@@ -314,15 +313,11 @@ pub(crate) async fn prepare(
     };
     // This record survives failures and identifies the hold without claiming a complete artifact.
     record_boundary(output, &manifest.boundary)?;
-    File::open(output)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())?;
+    File::open(output).and_then(|f| f.sync_all())?;
     dump(&snapshot, output, false, stop.clone()).await?;
     dump(&snapshot, output, true, stop.clone()).await?;
     let hold_id = snapshot.hold.id;
-    let segments = backup::segments(snapshot.connection(), hold_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let segments = backup::segments(snapshot.connection(), hold_id).await?;
     for segment in segments {
         stopped(&stop)?;
         let relative = segment_path(&segment.name)?.to_owned();
@@ -330,31 +325,28 @@ pub(crate) async fn prepare(
         let target = output.join("main").join(&relative);
         let check = stop.clone();
         let manifest_path = format!("main/{}", relative.display());
-        let copied = tokio::task::spawn_blocking(move || -> Result<ManifestFile, String> {
+        let copied = tokio::task::spawn_blocking(move || -> Result<ManifestFile> {
             if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(parent)?;
             }
-            let mut input = File::open(input).map_err(|e| e.to_string())?;
+            let mut input = File::open(input)?;
             let mut out = file(&target)?;
             let mut remaining = segment.committed_end;
             let mut buffer = [0; 64 * 1024];
             let mut hasher = blake3::Hasher::new();
             while remaining != 0 {
                 stopped(&check)?;
-                let take = usize::try_from(remaining.min(buffer.len() as u64))
-                    .map_err(|e| e.to_string())?;
-                input
-                    .read_exact(&mut buffer[..take])
-                    .map_err(|e| format!("short or unreadable committed segment: {e}"))?;
-                out.write_all(&buffer[..take]).map_err(|e| e.to_string())?;
+                let take = usize::try_from(remaining.min(buffer.len() as u64))?;
+                input.read_exact(&mut buffer[..take]).map_err(|e| {
+                    Error::bad_request(format!("short or unreadable committed segment: {e}"))
+                })?;
+                out.write_all(&buffer[..take])?;
                 hasher.update(&buffer[..take]);
                 remaining -= take as u64;
             }
-            out.sync_all().map_err(|e| e.to_string())?;
+            out.sync_all()?;
             if let Some(parent) = target.parent() {
-                File::open(parent)
-                    .and_then(|f| f.sync_all())
-                    .map_err(|e| e.to_string())?;
+                File::open(parent).and_then(|f| f.sync_all())?;
             }
             Ok(ManifestFile {
                 path: manifest_path,
@@ -362,49 +354,38 @@ pub(crate) async fn prepare(
                 blake3: hasher.finalize().to_hex().to_string(),
             })
         })
-        .await
-        .map_err(|e| e.to_string())??;
+        .await??;
         manifest.files.push(copied);
     }
-    snapshot
-        .validate_copy(&output.join("main"))
-        .await
-        .map_err(|e| e.to_string())?;
+    snapshot.validate_copy(&output.join("main")).await?;
     stopped(&stop)?;
     let digest_root = output.to_owned();
     let digest_stop = stop.clone();
-    let dumps = tokio::task::spawn_blocking(move || -> Result<_, String> {
+    let dumps = tokio::task::spawn_blocking(move || -> Result<_> {
         Ok([
             digest(&digest_root, "main/sinex.dump", &digest_stop)?,
             digest(&digest_root, "keys/data-keys.dump", &digest_stop)?,
         ])
     })
-    .await
-    .map_err(|e| e.to_string())??;
+    .await??;
     manifest.files.extend(dumps);
     for producer in &manifest.producer_snapshots {
         manifest.files.extend(producer.files.iter().cloned());
     }
     stopped(&stop)?;
     // Both pg_dump calls imported the same still-live snapshot of this database.
-    snapshot.close().await.map_err(|e| e.to_string())?;
+    snapshot.close().await?;
     for directory in ["main", "keys"] {
-        File::open(output.join(directory))
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
+        File::open(output.join(directory)).and_then(|f| f.sync_all())?;
     }
     // Each Borg repository carries the same immutable pairing identity and file digests.
     record(&output.join("main/manifest.json"), &manifest)?;
     record(&output.join("keys/manifest.json"), &manifest)?;
     for directory in [output.join("main"), output.join("keys")] {
-        File::open(directory)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
+        File::open(directory).and_then(|f| f.sync_all())?;
     }
     record(&output.join("manifest.json"), &manifest)?;
-    File::open(output)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())?;
+    File::open(output).and_then(|f| f.sync_all())?;
     Ok(manifest)
 }
 

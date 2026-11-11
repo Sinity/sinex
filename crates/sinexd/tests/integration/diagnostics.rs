@@ -47,8 +47,15 @@ fn status_refuses_an_unavailable_database() {
         ])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    // A database that cannot be reached is not running (exit 6); the failure
+    // is on standard output for `sinexctl`, the message on standard error.
+    assert_eq!(output.status.code(), Some(6), "{output:?}");
+    let reported: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reported["error"]["kind"], "not_running", "{reported}");
+    assert_eq!(
+        reported["error"]["code"], "database_unavailable",
+        "{reported}"
+    );
     assert!(!output.stderr.is_empty());
 }
 

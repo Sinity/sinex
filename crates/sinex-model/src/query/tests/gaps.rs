@@ -11,7 +11,7 @@ fn payload_types_are_taken_from_registered_schemas_and_used_by_aggregates() {
         "events where event_type = command.executed AND payload.exit_code ~ x",
         "events where event_type = command.executed | group by day(payload.exit_code)",
     ] {
-        assert!(!err(text).not_built, "{text}");
+        assert_ne!(err(text).kind, QueryErrorKind::NotBuilt, "{text}");
     }
     let query = q(
         "events where payload.exit_code >= 0 AND event_type = command.executed | agg sum(payload.duration_ns)",
@@ -297,13 +297,13 @@ fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
     let invocation = format!("query:bad(source=\"{}\")", "界".repeat(40));
     let error = bind_saved(&invocation, &ctx(), &definitions).unwrap_err();
     assert!(error.at.is_none());
-    assert_eq!(error.render(&invocation), error.message);
+    assert!(error.failure(&invocation).caret().is_none());
     let direct = "events where when < not-a-time";
     let error = bind_saved(direct, &ctx(), &definitions).unwrap_err();
     assert!(error.at.is_some());
-    assert!(error.render(direct).contains('^'));
-    let error = QueryError::at(1, "synthetic error");
-    assert_eq!(error.render("界"), "synthetic error");
+    assert!(error.failure(direct).caret().unwrap().contains('^'));
+    let failure = QueryError::at(1, "synthetic error").failure("界");
+    assert_eq!(failure.caret(), Some("界\n^"));
 }
 
 #[devkit::test]

@@ -5,6 +5,7 @@
 use crate::material_access::Access;
 use crate::stage::Totals;
 use crate::writer::{Priority, WriterHandle};
+use crate::{Error, Result};
 use sinex_model::event_types::coverage::{CoverageCompleteness, CoverageState, SourceCoverage};
 use sinex_model::{Class, RunId, Timestamp};
 use sinex_source_core::Binding;
@@ -22,7 +23,7 @@ const READ_SUCCEEDED: &str = "input read successfully; temporal coverage is not 
 pub(super) fn outcome(
     binding: &Binding,
     started_at: Timestamp,
-    result: &Result<Totals, String>,
+    result: &Result<Totals>,
 ) -> SourceCoverage {
     let (state, reason, events, failures) = match result {
         Ok(totals) if totals.accounting.failures == 0 => (
@@ -37,7 +38,7 @@ pub(super) fn outcome(
             totals.accounting.readings,
             totals.accounting.failures,
         ),
-        Err(error) => (CoverageState::Missing, Some(error.clone()), 0, 1),
+        Err(error) => (CoverageState::Missing, Some(error.to_string()), 0, 1),
     };
     SourceCoverage {
         observed_run: None,
@@ -71,14 +72,11 @@ pub(crate) struct Coverage {
 impl Coverage {
     /// Coverage that continues from the current readings stored for `host`, so
     /// a restarted reader writes nothing for a binding whose state is unchanged.
-    pub(crate) async fn stored(conn: &mut PgConnection, host: &str) -> Result<Self, String> {
-        let events = sinex_store::live::of_types(conn, &["source.coverage".into()])
-            .await
-            .map_err(|error| error.to_string())?;
+    pub(crate) async fn stored(conn: &mut PgConnection, host: &str) -> Result<Self> {
+        let events = sinex_store::live::of_types(conn, &["source.coverage".into()]).await?;
         let mut current = BTreeMap::new();
         for payload in events.into_iter().filter_map(|event| event.payload) {
-            let row: SourceCoverage =
-                serde_json::from_value(payload).map_err(|error| error.to_string())?;
+            let row: SourceCoverage = serde_json::from_value(payload)?;
             if row.host == host {
                 current.insert((row.binding, row.host), (row.state, row.reason));
             }
@@ -116,7 +114,7 @@ impl Coverage {
         blobs: &Blobs,
         writer: &WriterHandle,
         access: Access<'_>,
-        results: &mut Vec<(String, Result<Totals, String>)>,
+        results: &mut Vec<(String, Result<Totals>)>,
     ) {
         for observation in std::mem::take(&mut self.pending) {
             let source = observation.observed_source.clone();
@@ -128,18 +126,21 @@ impl Coverage {
                 }
                 Err(error) => {
                     eprintln!("sinexd: source coverage evidence for {source}: {error}");
-                    results.push((source, Err(format!("source coverage evidence: {error}"))));
+                    results.push((
+                        source,
+                        Err(Error::internal(format!(
+                            "source coverage evidence: {error}"
+                        ))),
+                    ));
                 }
             }
         }
     }
 
     /// End the runs that admitted coverage.
-    pub(crate) async fn end(self, conn: &mut PgConnection) -> Result<(), String> {
+    pub(crate) async fn end(self, conn: &mut PgConnection) -> Result<()> {
         for run in self.runs.into_values() {
-            sinex_store::runs::end(conn, run)
-                .await
-                .map_err(|error| error.to_string())?;
+            sinex_store::runs::end(conn, run).await?;
         }
         Ok(())
     }
@@ -152,7 +153,7 @@ async fn record(
     access: Access<'_>,
     runs: &mut BTreeMap<String, RunId>,
     observation: SourceCoverage,
-) -> Result<(), String> {
+) -> Result<()> {
     let binding = format!("source.observation:{}", observation.binding);
     let acquired = coverage::observation_material(observation.clone());
     bindings::save(
@@ -164,8 +165,7 @@ async fn record(
             settings: serde_json::json!({"host": observation.host}),
         },
     )
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     let floor = sinex_store::privacy::load(
         conn,
         [
@@ -174,8 +174,7 @@ async fn record(
         ]
         .into_iter(),
     )
-    .await
-    .map_err(|error| error.to_string())?
+    .await?
     .floors
     .values()
     .copied()
@@ -188,14 +187,13 @@ async fn record(
         .max()
         .unwrap_or_default();
     let settings = bindings::load(conn, &observation.binding)
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
         .map(|saved| {
             serde_json::from_value::<sinex_source_core::Settings>(saved.settings).map_err(|error| {
-                format!(
-                    "binding {} has invalid settings: {error}",
+                Error::from(error).within(format!(
+                    "binding {} has invalid settings",
                     observation.binding
-                )
+                ))
             })
         })
         .transpose()?
@@ -222,8 +220,7 @@ async fn record(
                 },
                 &observation.host,
             )
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
             runs.insert(observation.host.clone(), run);
             run
         }
@@ -245,7 +242,9 @@ async fn record(
     .await;
     let admitted = result?;
     if admitted.outcome.failures != 0 || admitted.outcome.admitted != 1 {
-        return Err("read outcome was not admitted as one coverage event".into());
+        return Err(Error::internal(
+            "read outcome was not admitted as one coverage event",
+        ));
     }
     Ok(())
 }

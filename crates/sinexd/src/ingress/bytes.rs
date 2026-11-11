@@ -2,6 +2,7 @@
 //! (`sinex_transport::frame_bytes`): stored before the frame is admitted, and
 //! removed once the frame is recorded.
 use super::*;
+use crate::Result;
 use sinex_transport::frame_bytes;
 
 impl Ingest {

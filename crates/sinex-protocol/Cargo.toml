@@ -10,6 +10,7 @@ license.workspace = true
 cli = ["dep:clap"]
 
 [dependencies]
+command-surface.workspace = true
 schemars.workspace = true
 query-language.workspace = true
 signals.workspace = true
