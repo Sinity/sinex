@@ -11,7 +11,7 @@ async fn external_exports_convert_once_and_wrong_bytes_never_get_descriptors(
     let exporter = root.path().join("exporter");
     std::fs::write(
         &exporter,
-        "#!/bin/sh\nset -eu\ntest \"$1\" = payload\ncat \"$2/$3\"\n",
+        "#!/bin/sh\nset -eu\ntest \"$1\" = payloads\nroot=$2\nshift 2\nfor hash do cat \"$root/$hash\"; done\n",
     )
     .unwrap();
     std::fs::set_permissions(&exporter, std::fs::Permissions::from_mode(0o700)).unwrap();

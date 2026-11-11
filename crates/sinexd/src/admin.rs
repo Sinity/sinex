@@ -37,7 +37,7 @@ pub(crate) enum Admin {
         unprepare: bool,
     },
     /// Convert verified predecessor streams to segments, keeping catalog identities.
-    /// The exporter is a separately pinned executable: payload SOURCE HASH writes decoded bytes.
+    /// The exporter is a separately pinned executable: payloads SOURCE HASH... writes concatenated decoded bytes.
     ConvertBlobs {
         #[arg(long)]
         database: String,
