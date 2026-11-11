@@ -97,6 +97,33 @@ fn package_selection_keeps_other_options_and_binary_arguments() {
     );
 }
 
+// The nightly fuzz workflow's invocation: profile names are option values,
+// not test names.
+#[devkit::test]
+fn profile_options_keep_their_values() {
+    let got = options(&[
+        "--profile",
+        "fuzz",
+        "--cargo-profile",
+        "release",
+        "-p",
+        "sinex-fuzz",
+    ]);
+    assert_eq!(
+        got.args,
+        [
+            "--locked",
+            "-p",
+            "sinex-fuzz",
+            "--profile",
+            "fuzz",
+            "--cargo-profile",
+            "release"
+        ]
+    );
+    assert!(!got.allow_no_tests);
+}
+
 #[devkit::test]
 fn test_selection_filtersets_keep_the_workspace_unless_package_is_selected() {
     let got = options(&["-E", "package(sinex-protocol)"]);

@@ -11,3 +11,11 @@ crash = { max-threads = 2 }
 [[profile.default.overrides]]
 filter = "binary_id(=sinexd::integration) & test(/^crash::/)"
 test-group = "crash"
+
+# Long runs of the generated-query properties: `cargo xtask test --profile
+# fuzz -p sinex-fuzz` with PROPTEST_CASES raised. Each property runs for as
+# long as its case count needs, so this profile reports slow tests without
+# terminating them.
+[profile.fuzz]
+default-filter = "package(sinex-fuzz) & test(/^tests::(generated_queries|changed_seed_queries|arbitrary_text)_keeps?_the_query_properties$/)"
+slow-timeout = { period = "60s" }

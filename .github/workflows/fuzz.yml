@@ -1,17 +1,23 @@
 name: fuzz
 
-# A long run of the generated-input properties on master each night; pull
-# requests run the same properties with the default number of cases as part
-# of `cargo xtask test`.
+# A long run of the generated-input properties on master each night, through
+# the same `cargo xtask test` as the ordinary suite, which prepares the schema
+# database the store's checked queries compile against. Pull requests run the
+# same properties with the default number of cases.
 on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      cases:
+        description: Cases per property
+        default: "200000"
 
 jobs:
   properties:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 200,000 cases of the slowest property take about two hours in release.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
@@ -21,5 +27,5 @@ jobs:
           save-if: false
       - name: Generated query inputs
         env:
-          PROPTEST_CASES: "200000"
-        run: nix develop --command cargo test --release -p sinex-fuzz -- generated changed_seed arbitrary_text
+          PROPTEST_CASES: ${{ inputs.cases || '200000' }}
+        run: nix develop --command cargo xtask test --profile fuzz --cargo-profile release -p sinex-fuzz
