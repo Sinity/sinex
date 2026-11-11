@@ -78,5 +78,5 @@ semantics.
 The `package` workflow builds `.#default` for every master commit and pushes
 its runtime closure to `sinity.cachix.org`. Sinnix deploys a revision only
 after fetching that package, so its switches never compile Sinex. To deploy a
-branch other than master, build its head first with
-`gh workflow run package --ref <branch>`.
+revision master does not contain, such as a deployment branch's head, build
+it first with `gh workflow run package -f rev=<commit>`.
