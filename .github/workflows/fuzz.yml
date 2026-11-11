@@ -16,7 +16,8 @@ on:
 jobs:
   properties:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 200,000 cases of the slowest property take about two hours in release.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
