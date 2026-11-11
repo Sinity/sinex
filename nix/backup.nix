@@ -59,7 +59,10 @@ in {
     description = "Sinex immutable core backup and paired Borg archives";
     after = [ "sinexd.service" ];
     requires = [ "sinexd.service" ];
-    unitConfig.RequiresMountsFor = localRepositories;
+    unitConfig = {
+      RequiresMountsFor = localRepositories;
+      PropagatesStopTo = [ "borgbackup-job-sinex.service" "borgbackup-job-sinex-keys.service" ];
+    };
     startAt = cfg.backup.startAt;
     path = [ pkgs.systemd pkgs.coreutils pkgs.jq pkgs.util-linux ];
     serviceConfig = {

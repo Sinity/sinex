@@ -144,5 +144,15 @@ self: {
     after_files = files("/var/lib/sinex/store")
     assert after == before, f"restored events differ: {before} vs {after}"
     assert after_files == before_files, f"restored exact segment bytes differ: {before_files!r} vs {after_files!r}"
+
+    with subtest("stopping the backup also stops its archive jobs"):
+        machine.succeed("rm -f /run/release-backup-copy /run/sinex-backup/artifact-ready; touch /run/hold-backup-copy")
+        machine.succeed("systemctl start --no-block sinex-backup.service")
+        machine.wait_until_succeeds("test -e /run/sinex-backup/artifact-ready")
+        interrupted_run = machine.succeed("cat /run/sinex-backup/active").strip()
+        machine.succeed("systemctl stop sinex-backup.service")
+        machine.wait_until_succeeds("! systemctl is-active --quiet borgbackup-job-sinex.service")
+        machine.wait_until_succeeds("! systemctl is-active --quiet borgbackup-job-sinex-keys.service")
+        machine.succeed(f"test -s {interrupted_run}/manifest.json; test ! -e {interrupted_run}/complete.json")
   '';
 }

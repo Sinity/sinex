@@ -46,7 +46,7 @@ use std::path::PathBuf;
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Parser)]
-#[command(name = "sinexd", about = "The Sinex daemon")]
+#[command(name = "sinexd", about = "The Sinex daemon", version = option_env!("SINEX_BUILD").unwrap_or(env!("CARGO_PKG_VERSION")))]
 struct Cli {
     #[command(subcommand)]
     command: Command,
