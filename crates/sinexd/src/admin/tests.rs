@@ -122,13 +122,15 @@ async fn source_cursor_upgrade_resumes_at_eof_and_reads_only_appended_bytes(
         assert_eq!(next.part_index, 1);
         assert_eq!(next.previous_part, Some(material.id));
         assert_eq!((next.reading_order)(0), sinex_model::ReadingOrder(4));
-        match next.stored.unwrap() {
+        let bytes = match next.stored.unwrap() {
             sinex_source_core::drivers::StoredBytes::FramedFile(file) => {
                 let mut bytes = [0; 2];
                 std::os::unix::fs::FileExt::read_exact_at(file.as_ref(), &mut bytes, 0).unwrap();
-                assert_eq!(&bytes, b"c\n");
+                bytes.to_vec()
             }
-            other => panic!("append fixture did not retain its framed file: {other:?}"),
-        }
+            sinex_source_core::drivers::StoredBytes::FramedMemory(bytes) => bytes.as_ref().clone(),
+            other => panic!("append fixture did not retain its framed bytes: {other:?}"),
+        };
+        assert_eq!(bytes, b"c\n");
     }
 }
