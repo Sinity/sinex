@@ -17,17 +17,27 @@ pub(super) const GAPS: &str =
 pub(super) const DRIFT: &str = "jsonb_typeof({t}.payload->'unknown_fields')='array'
     AND {t}.payload->'unknown_fields' <> '[]'::jsonb";
 
-pub(super) fn field(name: &str) -> Option<String> {
-    Some(match name {
-        "continuity" => "(CASE WHEN {t}.shapes=ARRAY['live-stream'] AND EXISTS (SELECT 1 FROM core.visible_events e JOIN core.runs r ON r.id=e.run_id WHERE e.source={t}.name AND e.commit_seq <= {seq}) THEN 'run_lifetimes' ELSE 'unknown' END)".into(),
-        "gaps" => format!("(SELECT count(*) FROM {GAPS} gaps WHERE gaps.source={{t}}.name)"),
-        "drift" => format!("(SELECT jsonb_build_object('status',CASE WHEN count(*)=0 THEN 'unknown' ELSE 'changes_recorded' END,
+/// A source's continuity evidence, over source row `{t}`.
+pub(super) fn continuity() -> String {
+    "(CASE WHEN {t}.shapes=ARRAY['live-stream'] AND EXISTS (SELECT 1 FROM core.visible_events e JOIN core.runs r ON r.id=e.run_id WHERE e.source={t}.name AND e.commit_seq <= {seq}) THEN 'run_lifetimes' ELSE 'unknown' END)".into()
+}
+
+/// The gaps between a source's recorded live runs.
+pub(super) fn gaps() -> String {
+    format!("(SELECT count(*) FROM {GAPS} gaps WHERE gaps.source={{t}}.name)")
+}
+
+/// The payload schema changes a source's parsers recorded.
+pub(super) fn drift() -> String {
+    format!("(SELECT jsonb_build_object('status',CASE WHEN count(*)=0 THEN 'unknown' ELSE 'changes_recorded' END,
             'reason','only payload field changes explicitly recorded by parsers are known', 'count',count(*))
             FROM core.visible_events e WHERE e.source={{t}}.name AND {}
-            AND e.commit_seq <= {{seq}} AND NOT audit.is_archived_at(e.id, {{seq}}))", DRIFT.replace("{t}", "e")),
-        "record_failures" => "(SELECT count(*)
+            AND e.commit_seq <= {{seq}} AND NOT audit.is_archived_at(e.id, {{seq}}))", DRIFT.replace("{t}", "e"))
+}
+
+/// The records of a source that failed to parse.
+pub(super) fn record_failures() -> String {
+    "(SELECT count(*)
             FROM raw.failures f JOIN raw.materials m ON m.id=f.material_id JOIN raw.inputs i ON i.id=m.input_id
-            JOIN raw.bindings b ON b.binding=i.binding WHERE b.source={t}.name)".into(),
-        _ => return None,
-    })
+            JOIN raw.bindings b ON b.binding=i.binding WHERE b.source={t}.name)".into()
 }

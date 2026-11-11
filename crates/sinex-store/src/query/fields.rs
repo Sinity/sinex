@@ -1,11 +1,13 @@
-//! The SQL each field of each table lowers to, keyed by the field names in
-//! `sinex_model::query::tables`. A test checks that every field there has an
-//! entry here.
+//! The SQL each field of each table lowers to, matched on the field
+//! identities `sinex_model::query::tables` declares.
 //!
 //! Templates name the table's table alias `{t}` and, for the archive, the
 //! archive row `{a}`; the compiler substitutes a distinct alias per nesting
 //! level, so an inner query of a time join never shadows the outer one.
-use sinex_model::query::Table;
+use sinex_model::query::{
+    ArchiveField, EventField, FailureField, FieldId, GapField, MaterialField, OperationField,
+    RunField, SourceField, Table,
+};
 
 /// The `FROM` clause of a table, with `{t}` (and `{a}`) for its aliases.
 pub(crate) fn from(table: Table) -> &'static str {
@@ -53,143 +55,152 @@ fn source_count(column: &str) -> String {
     format!("(SELECT sc.{column} FROM core.source_counts sc WHERE sc.source = {{t}}.name)")
 }
 
-pub(crate) fn field(table: Table, name: &str) -> Option<String> {
-    let event = |name: &str| -> Option<&'static str> {
-        Some(match name {
-            "id" => "{t}.id",
-            "event_type" => "{t}.event_type",
-            "kind_version" => "{t}.kind_version",
-            "validation" => "{t}.validation",
-            "source" => "{t}.source",
-            "host" => "(SELECT r.host FROM core.runs r WHERE r.id = {t}.run_id)",
-            "when" => "{t}.ts_orig",
-            "time_quality" => "{t}.ts_quality",
-            "time_suspect" => {
+/// The SQL of a declared field. The match is exhaustive, so a field the model
+/// declares without SQL here fails the build; a payload field an alias
+/// promotes has its SQL in [`alias_field`].
+pub(crate) fn field(id: FieldId) -> Option<String> {
+    let event = |field: EventField| -> &'static str {
+        match field {
+            EventField::Id => "{t}.id",
+            EventField::EventType => "{t}.event_type",
+            EventField::KindVersion => "{t}.kind_version",
+            EventField::Validation => "{t}.validation",
+            EventField::Source => "{t}.source",
+            EventField::Host => "(SELECT r.host FROM core.runs r WHERE r.id = {t}.run_id)",
+            EventField::When => "{t}.ts_orig",
+            EventField::TimeQuality => "{t}.ts_quality",
+            EventField::TimeSuspect => {
                 "(CASE WHEN {t}.ts_orig > {t}.ts_coided + interval '5 minutes' THEN 'future' \
                   WHEN {t}.ts_orig = 'epoch'::timestamptz THEN 'epoch zero' END)"
             }
-            "seen" => "{t}.ts_coided",
-            "written" => "{t}.ts_persisted",
-            "origin" => "(CASE WHEN {t}.material_id IS NULL THEN 'derived' ELSE 'material' END)",
-            "material" => "{t}.material_id",
-            "offset" => "{t}.anchor",
-            "output" => "{t}.output_index::bigint",
-            "parents" => "{t}.parents",
-            "producer" => "(SELECT r.name FROM core.runs r WHERE r.id = {t}.run_id)",
-            "producer_version" => {
+            EventField::Seen => "{t}.ts_coided",
+            EventField::Written => "{t}.ts_persisted",
+            EventField::Origin => {
+                "(CASE WHEN {t}.material_id IS NULL THEN 'derived' ELSE 'material' END)"
+            }
+            EventField::Material => "{t}.material_id",
+            EventField::Offset => "{t}.anchor",
+            EventField::Output => "{t}.output_index::bigint",
+            EventField::Parents => "{t}.parents",
+            EventField::Producer => "(SELECT r.name FROM core.runs r WHERE r.id = {t}.run_id)",
+            EventField::ProducerVersion => {
                 "(SELECT m.version FROM core.runs r JOIN core.manifests m ON m.id = r.manifest_id \
                   WHERE r.id = {t}.run_id)"
             }
-            "run" => "{t}.run_id",
-            "text" => "(SELECT s.text FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
-            "key" => "{t}.equivalence_key",
-            "class" => "{t}.class",
-            "state" => "{t}.record_state",
-            "commit_seq" => "{t}.commit_seq",
-            "payload" => "{t}.payload",
-            _ => return None,
-        })
+            EventField::Run => "{t}.run_id",
+            EventField::Text => {
+                "(SELECT s.text FROM core.visible_search_text s WHERE s.event_id = {t}.id)"
+            }
+            EventField::Key => "{t}.equivalence_key",
+            EventField::Class => "{t}.class",
+            EventField::State => "{t}.record_state",
+            EventField::CommitSeq => "{t}.commit_seq",
+            EventField::Payload => "{t}.payload",
+        }
     };
-    let sql: &str = match table {
-        Table::Events | Table::Drift => event(name)?,
-        Table::Gaps => match name {
-            "source" => "{t}.source",
-            "run" => "{t}.run",
-            "start" => "{t}.start",
-            "end" => "{t}.end",
-            "reason" => "{t}.reason",
-            _ => return None,
+    let sql: &str = match id {
+        FieldId::Event(field) => event(field),
+        FieldId::Archive(field) => match field {
+            ArchiveField::Archived => "{a}.recorded_at",
+            ArchiveField::Reason => "{a}.reason",
+            ArchiveField::Operation => "{a}.operation_id",
+            ArchiveField::ReplacedBy => "{a}.replaced_by",
+            ArchiveField::ArchivedSeq => "{a}.commit_seq",
         },
-        Table::Archive => match name {
-            "archived" => "{a}.recorded_at",
-            "reason" => "{a}.reason",
-            "operation" => "{a}.operation_id",
-            "replaced_by" => "{a}.replaced_by",
-            "archived_seq" => "{a}.commit_seq",
-            _ => event(name)?,
+        FieldId::Gap(field) => match field {
+            GapField::Source => "{t}.source",
+            GapField::Run => "{t}.run",
+            GapField::Start => "{t}.start",
+            GapField::End => "{t}.end",
+            GapField::Reason => "{t}.reason",
         },
-        Table::Materials => match name {
-            "id" => "{t}.id",
-            "binding" => "{t}_i.binding",
-            "parser" => "{t}.parser",
-            "parser_version" => "{t}.parser_version::bigint",
-            "hash" => "{t}.blob",
-            "size" => "{t}.length",
-            "stored" => "{t}_v.started_at",
-            "origin_path" => "{t}_i.locator",
-            "host" => "{t}_i.host",
-            "part" => "{t}.part_index::bigint",
-            "previous_part" => "{t}.previous_part_id",
-            "events" => {
+        FieldId::Material(field) => match field {
+            MaterialField::Id => "{t}.id",
+            MaterialField::Binding => "{t}_i.binding",
+            MaterialField::Parser => "{t}.parser",
+            MaterialField::ParserVersion => "{t}.parser_version::bigint",
+            MaterialField::Hash => "{t}.blob",
+            MaterialField::Size => "{t}.length",
+            MaterialField::Stored => "{t}_v.started_at",
+            MaterialField::OriginPath => "{t}_i.locator",
+            MaterialField::Host => "{t}_i.host",
+            MaterialField::Part => "{t}.part_index::bigint",
+            MaterialField::PreviousPart => "{t}.previous_part_id",
+            MaterialField::Events => {
                 "(SELECT count(*) FROM core.visible_events me WHERE me.material_id = {t}.id \
-                  AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
+              AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
             }
-            "first" => {
+            MaterialField::First => {
                 "(SELECT min(me.ts_orig) FROM core.visible_events me WHERE me.material_id = {t}.id \
-                  AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
+              AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
             }
-            "last" => {
+            MaterialField::Last => {
                 "(SELECT max(me.ts_orig) FROM core.visible_events me WHERE me.material_id = {t}.id \
-                  AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
+              AND NOT EXISTS (SELECT 1 FROM audit.archived ma WHERE ma.event_id = me.id))"
             }
-            _ => return None,
         },
-        Table::Runs => match name {
-            "id" => "{t}.id",
-            "producer" => "{t}.name",
-            "producer_version" => "{t}_m.version",
-            "host" => "{t}.host",
-            "started" => "{t}.started_at",
-            "ended" => "{t}.ended_at",
-            "status" => "(CASE WHEN {t}.ended_at IS NULL THEN 'running' ELSE 'finished' END)",
-            "events" => "{t}.events",
-            "failed" => "(SELECT count(*) FROM raw.failures rf WHERE rf.run_id = {t}.id)",
-            _ => return None,
+        FieldId::Run(field) => match field {
+            RunField::Id => "{t}.id",
+            RunField::Producer => "{t}.name",
+            RunField::ProducerVersion => "{t}_m.version",
+            RunField::Host => "{t}.host",
+            RunField::Started => "{t}.started_at",
+            RunField::Ended => "{t}.ended_at",
+            RunField::Status => {
+                "(CASE WHEN {t}.ended_at IS NULL THEN 'running' ELSE 'finished' END)"
+            }
+            RunField::Events => "{t}.events",
+            RunField::Failed => "(SELECT count(*) FROM raw.failures rf WHERE rf.run_id = {t}.id)",
         },
-        Table::Sources => {
-            return Some(match name {
-                "continuity" | "gaps" | "drift" | "record_failures" => {
-                    super::source_views::field(name)?
+        FieldId::Operation(field) => match field {
+            OperationField::Id => "{t}.id",
+            OperationField::Kind => "{t}.kind",
+            OperationField::Actor => "{t}.actor",
+            OperationField::Scope => "{t}.scope::text",
+            OperationField::Started => "{t}.at",
+        },
+        FieldId::Failure(field) => match field {
+            FailureField::Id => "{t}.id",
+            FailureField::When => "{t}.failed_at",
+            FailureField::Source => {
+                "(SELECT b.source FROM raw.bindings b WHERE b.binding={t}_i.binding)"
+            }
+            FailureField::Material => "{t}.material_id",
+            FailureField::Offset => "{t}.anchor",
+            FailureField::Reason => "{t}.reason",
+        },
+        FieldId::Source(field) => {
+            return Some(match field {
+                SourceField::Continuity => super::source_views::continuity(),
+                SourceField::Gaps => super::source_views::gaps(),
+                SourceField::Drift => super::source_views::drift(),
+                SourceField::RecordFailures => super::source_views::record_failures(),
+                SourceField::Binding | SourceField::Source => "{t}.name".to_string(),
+                SourceField::Shapes => "array_to_string({t}.shapes, ',')".to_string(),
+                SourceField::Expectation => "{t}.expectation".to_string(),
+                SourceField::SilentAfter => {
+                    "extract(epoch FROM {t}.silent_after)::bigint".to_string()
                 }
-                "binding" | "source" => "{t}.name".to_string(),
-                "shapes" => "array_to_string({t}.shapes, ',')".to_string(),
-                "expectation" => "{t}.expectation".to_string(),
-                "silent_after" => "extract(epoch FROM {t}.silent_after)::bigint".to_string(),
-                "every" => "extract(epoch FROM {t}.every)::bigint".to_string(),
-                "expires_after" => "extract(epoch FROM {t}.expires_after)::bigint".to_string(),
-                "version" => "{t}.version::bigint".to_string(),
-                "event_types" => "array_to_string({t}.event_types, ',')".to_string(),
-                "purpose" => "{t}.purpose".to_string(),
-                "events" => format!("coalesce({}, 0)", source_count("events")),
-                "first" => source_count("first_event"),
-                "last_event" => source_count("last_event"),
-                "last_seen" => source_count("last_seen"),
-                "failed_24h" => "(SELECT count(*) FROM raw.failures sf \
-                      JOIN raw.materials sm ON sm.id = sf.material_id \
-                      JOIN raw.inputs si ON si.id = sm.input_id \
-                      JOIN raw.bindings sb ON sb.binding = si.binding \
-                      WHERE sb.source = {t}.name AND sf.failed_at > now() - interval '24 hours')"
+                SourceField::Every => "extract(epoch FROM {t}.every)::bigint".to_string(),
+                SourceField::ExpiresAfter => {
+                    "extract(epoch FROM {t}.expires_after)::bigint".to_string()
+                }
+                SourceField::Version => "{t}.version::bigint".to_string(),
+                SourceField::EventTypes => "array_to_string({t}.event_types, ',')".to_string(),
+                SourceField::Purpose => "{t}.purpose".to_string(),
+                SourceField::Events => format!("coalesce({}, 0)", source_count("events")),
+                SourceField::First => source_count("first_event"),
+                SourceField::LastEvent => source_count("last_event"),
+                SourceField::LastSeen => source_count("last_seen"),
+                SourceField::Failed24h => "(SELECT count(*) FROM raw.failures sf \
+                  JOIN raw.materials sm ON sm.id = sf.material_id \
+                  JOIN raw.inputs si ON si.id = sm.input_id \
+                  JOIN raw.bindings sb ON sb.binding = si.binding \
+                  WHERE sb.source = {t}.name AND sf.failed_at > now() - interval '24 hours')"
                     .to_string(),
-                _ => return None,
             });
         }
-        Table::Operations => match name {
-            "id" => "{t}.id",
-            "kind" => "{t}.kind",
-            "actor" => "{t}.actor",
-            "scope" => "{t}.scope::text",
-            "started" => "{t}.at",
-            _ => return None,
-        },
-        Table::Failures => match name {
-            "id" => "{t}.id",
-            "when" => "{t}.failed_at",
-            "source" => "(SELECT b.source FROM raw.bindings b WHERE b.binding={t}_i.binding)",
-            "material" => "{t}.material_id",
-            "offset" => "{t}.anchor",
-            "reason" => "{t}.reason",
-            _ => return None,
-        },
+        FieldId::Promoted => return None,
     };
     Some(sql.to_string())
 }
