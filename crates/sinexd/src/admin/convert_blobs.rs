@@ -126,7 +126,9 @@ async fn convert(
     }
     // Ordinary startup must now accept the converted store, including a tail
     // left by an interrupted prior conversion.
-    blobs.recover(conn).await?;
+    drop(blobs);
+    let reopened = sinex_store::Blobs::open(store)?;
+    reopened.recover(conn).await?;
     println!(
         "{}",
         serde_json::json!({"complete":true,"converted":converted,"decoded_bytes":bytes})
