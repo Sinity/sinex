@@ -100,6 +100,11 @@ is the shared kind for an operation that did not finish.
   | a connection URL this build cannot use | `bad_value` | no | |
   | any other | `io` | no | the SQLSTATE |
 
+- **File and blob errors** are classified in the same module: a missing file
+  is `not_found`, a forbidden one `refused`, a slow one `timeout`; a sealed
+  blob read without its key is `refused`; damaged bytes and any other disk
+  error are `io`.
+
 - **HTTP** answers each failure with its kind's status; a kind with no status
   in the table (`not_running`, `cancelled`) answers 503. A missing or unknown
   token is answered 401 before any operation runs, with a `refused` failure.

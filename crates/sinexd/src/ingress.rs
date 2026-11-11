@@ -978,7 +978,7 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
 }
 
 /// The acknowledgment a recorded frame's row answers with.
-fn acknowledgment(s: StoredFrame) -> Result<Acknowledgment, String> {
+fn acknowledgment(s: StoredFrame) -> Result<Acknowledgment> {
     let admitted = s.admitted.into_iter().map(EventId).collect();
     let sqlx::types::Json(outcome) = s.outcome;
     let result = match outcome.result {
@@ -998,10 +998,10 @@ fn acknowledgment(s: StoredFrame) -> Result<Acknowledgment, String> {
         StoredResult::Refused { kind, .. } => FrameResult::Refused {
             kind,
             reason: s.refusal.ok_or_else(|| {
-                format!(
+                Error::internal(format!(
                     "frame {} from {} records a refusal without its reason",
                     s.frame, s.producer
-                )
+                ))
             })?,
         },
     };
