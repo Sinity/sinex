@@ -26,7 +26,7 @@
 //! Keys dirtied by an operation are held until it ends, so no aggregate is
 //! derived between two of its batches.
 use crate::admission::{
-    DirtyKeys, KeyInput, archive_at, mark_archived_dirty, mark_dirty, mark_inputs_dirty, position,
+    DirtyKeys, KeyInput, archive_at, mark_dirty, mark_inputs_dirty, mark_selected_dirty, position,
     remove_live, restore_at,
 };
 use crate::{Error, Result};
@@ -350,7 +350,7 @@ pub async fn step(
                 if !planned.refusals.is_empty() {
                     return Ok(Step::Refused(planned.refusals));
                 }
-                let moved = apply(conn, op, phase, &found, &planned, seq, keys).await?;
+                let moved = apply(conn, op, phase, &planned, seq, keys).await?;
                 counts.add(&moved.counts);
                 remove.extend(moved.remove);
             }
@@ -390,7 +390,7 @@ pub async fn step(
         if !planned.refusals.is_empty() {
             return Ok(Step::Refused(planned.refusals));
         }
-        let moved = apply(conn, op, phase, &found, &planned, seq, keys).await?;
+        let moved = apply(conn, op, phase, &planned, seq, keys).await?;
         counts.add(&moved.counts);
         remove.extend(moved.remove);
         progress.after = found.last().copied();
@@ -847,7 +847,6 @@ async fn apply(
     conn: &mut PgConnection,
     op: &Operation,
     phase: Phase,
-    roots: &[Uuid],
     planned: &Plan,
     seq: i64,
     keys: &dyn DirtyKeys,
@@ -863,9 +862,9 @@ async fn apply(
     match phase {
         Phase::Archive | Phase::ArchiveMadeLive => {
             let by = (ArchiveReason::Archive, Some(op.id.0));
-            mark_archived_dirty(conn, roots, seq, keys, None, by).await?;
-            archive_at(conn, roots, seq, by.0, None, by.1).await?;
-            remove_live(conn, roots).await?;
+            mark_selected_dirty(conn, &members, seq, keys, None).await?;
+            archive_at(conn, &members, seq, by.0, None, by.1).await?;
+            remove_live(conn, &members).await?;
             by_kind(&mut counts.archived);
         }
         Phase::Restore => {

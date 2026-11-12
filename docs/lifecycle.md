@@ -85,7 +85,7 @@ Undo, archive, restore and replay are ordinary, everyday features; tombstoning i
 
 ### Cost
 
-- A `core.event_children(parent, child)` table, written at admission and never compressed, serves the walk.
+- A `core.event_children(parent, child)` table, written at admission and never compressed, serves the walk. Archive selects each complete live chain once and uses that selection for dirty keys, archive history and live membership removal. Membership checks and payload reads are driven by selected IDs; derived source counts use their live source metadata. Compressed payload lookups still inspect native batch metadata.
 - A keyed aggregate's parents are its recorded read ranges ([hierarchy](events.md#hierarchy)), and `event_children` holds one row per range, so a day figure over millions of inputs costs one row per range, not one per input. The walk from an event finds the aggregates whose ranges contain it.
 - State is recorded at the granularity the operation names: a material's status, then per-event rows only below it. A transition costs in proportion to the materials and derived events it touches, never to all events.
 - Large transitions run in bounded-duration transactions (batches), each moving complete chains, with live admission served between them. Archiving one source's year of compressed data is the case the writer-hold target is measured on ([targets](architecture.md#throughput-targets)).
