@@ -164,7 +164,7 @@ fn storage_faults_and_invalid_encodings_have_different_errors() {
     let (descriptor, encoded) = encoding(root.path(), bytes);
     assert!(matches!(
         reader(root.path(), "node", "missing", &blob, bytes.len() as u64),
-        Err(Error::Storage(_))
+        Err(Error::Storage(error)) if error.kind() == std::io::ErrorKind::NotFound
     ));
     let blocked = root.path().join("not-a-directory");
     std::fs::write(&blocked, b"file").unwrap();
@@ -245,3 +245,52 @@ fn locally_linked_and_remotely_transferred_custody_write_only_shared_encoding() 
     assert_eq!(actual, bytes);
 }
 mod group;
+
+#[cfg(target_os = "linux")]
+#[devkit::test]
+fn a_real_input_io_failure_keeps_its_os_code_and_source() {
+    let root = tempfile::tempdir().unwrap();
+    // Linux rejects reads from unmapped address zero with EIO. This reaches
+    // frame custody through the codec's actual filesystem reader.
+    let input = std::fs::File::open("/proc/self/mem").unwrap();
+    let failure = write(root.path(), "node", "read-failure", &name(b"x"), 1, input).unwrap_err();
+    let source = std::error::Error::source(&failure)
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert_eq!(
+        source.raw_os_error(),
+        Some(5),
+        "the source is the original EIO"
+    );
+    let Error::Storage(error) = failure else {
+        panic!("input I/O was classified as validation");
+    };
+    assert_eq!(error.raw_os_error(), Some(5));
+    assert_eq!(error.kind(), std::io::Error::from_raw_os_error(5).kind());
+}
+
+#[cfg(target_os = "linux")]
+#[devkit::test]
+fn a_real_descriptor_persist_failure_keeps_its_os_code() {
+    let root = tempfile::tempdir().unwrap();
+    let bytes = b"synthetic descriptor persist failure";
+    let blob = name(bytes);
+    let dir = directory(root.path(), "node", "persist-failure");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir(descriptor_path(&dir, &blob[7..])).unwrap();
+    let failure = write(
+        root.path(),
+        "node",
+        "persist-failure",
+        &blob,
+        bytes.len() as u64,
+        bytes.as_slice(),
+    )
+    .unwrap_err();
+    let Error::Storage(error) = failure else {
+        panic!("descriptor persistence I/O was classified as validation");
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::IsADirectory);
+    assert_eq!(error.raw_os_error(), Some(21));
+}

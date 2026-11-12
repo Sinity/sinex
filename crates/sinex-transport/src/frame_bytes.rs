@@ -13,20 +13,21 @@ pub enum Error {
     Invalid(String),
     #[error("{0}")]
     Mismatch(String),
+    /// A filesystem or codec I/O failure, preserving its original kind and OS code.
     #[error("{0}")]
-    Storage(String),
+    Storage(#[source] std::io::Error),
+    /// Existing custody does not meet the configured group or mode policy.
+    #[error("{0}")]
+    Permissions(String),
 }
 impl From<&str> for Error {
     fn from(value: &str) -> Self {
         Self::Invalid(value.into())
     }
 }
-fn error(value: impl std::fmt::Display) -> Error {
-    Error::Storage(value.to_string())
-}
 fn encoding_error(value: hashed_blobs::Error) -> Error {
     match value {
-        hashed_blobs::Error::Io(error) => Error::Storage(error.to_string()),
+        hashed_blobs::Error::Io(error) => Error::Storage(error),
         other => Error::Mismatch(other.to_string()),
     }
 }
@@ -81,15 +82,20 @@ fn store_descriptor(dir: &Path, descriptor: &EncodedBlob, group: Option<u32>) ->
     let name = file_name(&descriptor.hash.to_string())?;
     let path = descriptor_path(dir, &name);
     permissions::check_existing_file(&path, group)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(dir).map_err(error)?;
-    temporary.write_all(&descriptor.encode()).map_err(error)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(dir).map_err(Error::Storage)?;
+    temporary
+        .write_all(&descriptor.encode())
+        .map_err(Error::Storage)?;
     permissions::share_completed_file(temporary.as_file(), group)?;
-    temporary.as_file().sync_all().map_err(error)?;
-    temporary.persist(path).map_err(error)?;
+    temporary.as_file().sync_all().map_err(Error::Storage)?;
+    temporary
+        .persist(path)
+        .map_err(|error| Error::Storage(error.error))?;
     sync_directory(dir)
 }
 fn load_descriptor(dir: &Path, blob: &str) -> Result<EncodedBlob, Error> {
-    let file = std::fs::File::open(descriptor_path(dir, &file_name(blob)?)).map_err(error)?;
+    let file =
+        std::fs::File::open(descriptor_path(dir, &file_name(blob)?)).map_err(Error::Storage)?;
     let plain = EncodedBlob {
         hash: Hash([0; 32]),
         decoded_len: 0,
@@ -101,7 +107,7 @@ fn load_descriptor(dir: &Path, blob: &str) -> Result<EncodedBlob, Error> {
     let mut bytes = Vec::new();
     file.take(plain.encode().len() as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(error)?;
+        .map_err(Error::Storage)?;
     let descriptor =
         EncodedBlob::decode(&bytes).map_err(|error| Error::Invalid(error.to_string()))?;
     validate(&descriptor, blob, None)?;
@@ -118,9 +124,11 @@ fn finish(
     let path = dir.join(file_name(&descriptor.hash.to_string())?);
     permissions::check_existing_file(&path, group)?;
     permissions::share_completed_file(temporary.as_file(), group)?;
-    temporary.as_file().sync_all().map_err(error)?;
+    temporary.as_file().sync_all().map_err(Error::Storage)?;
     store_descriptor(&dir, descriptor, group)?;
-    temporary.persist(path).map_err(error)?;
+    temporary
+        .persist(path)
+        .map_err(|error| Error::Storage(error.error))?;
     sync_directory(&dir)
 }
 
@@ -135,10 +143,10 @@ pub fn write(
 ) -> Result<(), Error> {
     file_name(blob)?;
     let (dir, _) = prepare_directory(root, producer, frame)?;
-    let temporary = tempfile::NamedTempFile::new_in(&dir).map_err(error)?;
+    let temporary = tempfile::NamedTempFile::new_in(&dir).map_err(Error::Storage)?;
     let prepared = Preparation::new(&dir)
         .map_err(encoding_error)?
-        .plain_into(temporary.reopen().map_err(error)?, input, 3)
+        .plain_into(temporary.reopen().map_err(Error::Storage)?, input, 3)
         .map_err(encoding_error)?;
     let descriptor = prepared.descriptor();
     validate(&descriptor, blob, Some(length))?;
@@ -165,10 +173,10 @@ pub fn write_encoded(
 ) -> Result<(), Error> {
     validate(descriptor, &descriptor.hash.to_string(), None)?;
     let (dir, _) = prepare_directory(root, producer, frame)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(&dir).map_err(error)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(&dir).map_err(Error::Storage)?;
     copy_encoded(&mut input, &mut temporary, descriptor)?;
     let checked = Prepared::from_encoded(
-        temporary.reopen().map_err(error)?,
+        temporary.reopen().map_err(Error::Storage)?,
         descriptor.clone(),
         None,
         ReadLimits::default(),
@@ -187,9 +195,9 @@ pub fn link_encoded(
     source: &Path,
 ) -> Result<(), Error> {
     validate(descriptor, &descriptor.hash.to_string(), None)?;
-    let source_file = std::fs::File::open(source).map_err(error)?;
+    let source_file = std::fs::File::open(source).map_err(Error::Storage)?;
     let checked = Prepared::from_encoded(
-        source_file.try_clone().map_err(error)?,
+        source_file.try_clone().map_err(Error::Storage)?,
         descriptor.clone(),
         None,
         ReadLimits::default(),
@@ -207,18 +215,18 @@ pub fn link_encoded(
     let target = dir.join(file_name(&descriptor.hash.to_string())?);
     permissions::check_existing_file(&target, group)?;
     permissions::share_completed_file(&source_file, group)?;
-    source_file.sync_all().map_err(error)?;
+    source_file.sync_all().map_err(Error::Storage)?;
     match std::fs::hard_link(source, &target) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
             return write_prepared(root, producer, frame, checked);
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing = std::fs::File::open(&target).map_err(self::error)?;
+            let existing = std::fs::File::open(&target).map_err(Error::Storage)?;
             Prepared::from_encoded(existing, descriptor.clone(), None, ReadLimits::default())
                 .map_err(encoding_error)?;
         }
-        Err(error) => return Err(self::error(error)),
+        Err(error) => return Err(Error::Storage(error)),
     }
     store_descriptor(&dir, descriptor, group)?;
     sync_directory(&dir)
@@ -232,8 +240,8 @@ pub fn encoded(
 ) -> Result<(EncodedBlob, std::fs::File), Error> {
     let dir = directory(root, producer, frame);
     let descriptor = load_descriptor(&dir, blob)?;
-    let file = std::fs::File::open(dir.join(file_name(blob)?)).map_err(error)?;
-    if file.metadata().map_err(error)?.len() != descriptor.stored_len {
+    let file = std::fs::File::open(dir.join(file_name(blob)?)).map_err(Error::Storage)?;
+    if file.metadata().map_err(Error::Storage)?.len() != descriptor.stored_len {
         return Err(Error::Mismatch("encoded custody length differs".into()));
     }
     Ok((descriptor, file))
@@ -260,9 +268,10 @@ pub fn reader(
 ) -> Result<hashed_blobs::BlobReader, Error> {
     let (descriptor, mut input) = encoded(root, producer, frame, blob)?;
     validate(&descriptor, blob, Some(length))?;
-    let mut file = tempfile::tempfile_in(directory(root, producer, frame)).map_err(error)?;
+    let mut file =
+        tempfile::tempfile_in(directory(root, producer, frame)).map_err(Error::Storage)?;
     copy_encoded(&mut input, &mut file, &descriptor)?;
-    file.rewind().map_err(error)?;
+    file.rewind().map_err(Error::Storage)?;
     let prepared = Prepared::from_encoded(file, descriptor, None, ReadLimits::default())
         .map_err(encoding_error)?;
     prepared
@@ -278,7 +287,7 @@ fn copy_encoded(
     let mut copied = 0u64;
     let mut buffer = [0; 65536];
     loop {
-        let n = input.read(&mut buffer).map_err(error)?;
+        let n = input.read(&mut buffer).map_err(Error::Storage)?;
         if n == 0 {
             break;
         }
@@ -289,7 +298,7 @@ fn copy_encoded(
             return Err(Error::Mismatch("encoded custody exceeds its length".into()));
         }
         hash.update(&buffer[..n]);
-        output.write_all(&buffer[..n]).map_err(error)?;
+        output.write_all(&buffer[..n]).map_err(Error::Storage)?;
     }
     if copied != descriptor.stored_len
         || Hash(*hash.finalize().as_bytes()) != descriptor.encoded_hash
@@ -335,15 +344,16 @@ pub fn receive(
     let completed = match std::fs::File::open(dir.join(&name)) {
         Ok(file) => Some(file),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(self::error(error)),
+        Err(error) => return Err(Error::Storage(error)),
     };
     if let Some(mut file) = completed {
-        if file.metadata().map_err(error)?.len() != total {
+        if file.metadata().map_err(Error::Storage)?.len() != total {
             return Err(Error::Mismatch(
                 "received encoding has a different length".into(),
             ));
         }
-        file.seek(std::io::SeekFrom::Start(offset)).map_err(error)?;
+        file.seek(std::io::SeekFrom::Start(offset))
+            .map_err(Error::Storage)?;
         if !same_bytes(&mut file, data)? {
             return Err(Error::Mismatch(
                 "producer resend differs from received encoding".into(),
@@ -359,36 +369,38 @@ pub fn receive(
         .truncate(false)
         .mode(0o600)
         .open(&path)
-        .map_err(error)?;
-    file.lock().map_err(error)?;
-    let have = file.metadata().map_err(error)?.len();
+        .map_err(Error::Storage)?;
+    file.lock().map_err(Error::Storage)?;
+    let have = file.metadata().map_err(Error::Storage)?.len();
     if have > total || offset > have {
         return Err("producer chunks are not an ordered prefix".into());
     }
     let overlap = (have.min(end) - offset) as usize;
-    file.seek(std::io::SeekFrom::Start(offset)).map_err(error)?;
+    file.seek(std::io::SeekFrom::Start(offset))
+        .map_err(Error::Storage)?;
     if !same_bytes(&mut file, &data[..overlap])? {
         return Err(Error::Mismatch(
             "producer resend differs from received prefix".into(),
         ));
     }
-    file.seek(std::io::SeekFrom::End(0)).map_err(error)?;
-    file.write_all(&data[overlap..]).map_err(error)?;
-    file.sync_all().map_err(error)?;
+    file.seek(std::io::SeekFrom::End(0))
+        .map_err(Error::Storage)?;
+    file.write_all(&data[overlap..]).map_err(Error::Storage)?;
+    file.sync_all().map_err(Error::Storage)?;
     sync_directory(&dir)?;
     if have.max(end) < total {
         return Ok(false);
     }
-    file.rewind().map_err(error)?;
+    file.rewind().map_err(Error::Storage)?;
     if let Err(error) = copy_encoded(&mut file, std::io::sink(), descriptor) {
         drop(file);
-        std::fs::remove_file(&path).map_err(self::error)?;
+        std::fs::remove_file(&path).map_err(Error::Storage)?;
         sync_directory(&dir)?;
         return Err(error);
     }
     permissions::share_completed_file(&file, group)?;
-    file.sync_all().map_err(error)?;
-    std::fs::rename(&path, dir.join(name)).map_err(error)?;
+    file.sync_all().map_err(Error::Storage)?;
+    std::fs::rename(&path, dir.join(name)).map_err(Error::Storage)?;
     sync_directory(&dir)?;
     Ok(true)
 }
@@ -397,7 +409,7 @@ fn same_bytes(file: &mut std::fs::File, data: &[u8]) -> Result<bool, Error> {
     let mut at = 0;
     while at < data.len() {
         let n = (data.len() - at).min(buffer.len());
-        file.read_exact(&mut buffer[..n]).map_err(error)?;
+        file.read_exact(&mut buffer[..n]).map_err(Error::Storage)?;
         if buffer[..n] != data[at..at + n] {
             return Ok(false);
         }
@@ -412,10 +424,10 @@ pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), Error> {
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(self::error(error)),
+        Err(error) => return Err(Error::Storage(error)),
     };
     for entry in entries {
-        let entry = entry.map_err(error)?;
+        let entry = entry.map_err(Error::Storage)?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let hash = name
@@ -426,7 +438,7 @@ pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), Error> {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(self::error(error)),
+                Err(error) => return Err(Error::Storage(error)),
             }
         }
     }
@@ -438,14 +450,14 @@ pub fn discard(root: &Path, producer: &str, frame: &str) -> Result<(), Error> {
                 error.kind(),
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
             ) => {}
-        Err(error) => return Err(self::error(error)),
+        Err(error) => return Err(Error::Storage(error)),
     };
     sync_directory(dir.parent().expect("frame has parent"))
 }
 fn sync_directory(dir: &Path) -> Result<(), Error> {
     std::fs::File::open(dir)
         .and_then(|file| file.sync_all())
-        .map_err(error)
+        .map_err(Error::Storage)
 }
 fn sync_directories(root: &Path, leaf: &Path) -> Result<(), Error> {
     let mut at = leaf;

@@ -7,17 +7,23 @@ pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>,
     let group = match std::fs::metadata(root) {
         Ok(meta) if meta.is_dir() && meta.mode() & 0o7777 == 0o2770 => meta.gid(),
         Ok(_) => {
-            std::fs::create_dir_all(leaf).map_err(super::error)?;
+            std::fs::create_dir_all(leaf).map_err(super::Error::Storage)?;
             return Ok(None);
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir_all(leaf).map_err(super::error)?;
+            std::fs::create_dir_all(leaf).map_err(super::Error::Storage)?;
             return Ok(None);
         }
-        Err(e) => return Err(super::error(e)),
+        Err(e) => return Err(super::Error::Storage(e)),
     };
     let mut at = root.to_owned();
-    for component in leaf.strip_prefix(root).map_err(super::error)?.components() {
+    for component in leaf
+        .strip_prefix(root)
+        .map_err(|_| {
+            super::Error::Invalid("producer frame directory leaves the store root".into())
+        })?
+        .components()
+    {
         if !matches!(component, std::path::Component::Normal(_)) {
             return Err("producer frame directory leaves the store root".into());
         }
@@ -25,11 +31,11 @@ pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>,
         let created = match std::fs::DirBuilder::new().mode(0o2770).create(&at) {
             Ok(()) => true,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
-            Err(e) => return Err(super::error(e)),
+            Err(e) => return Err(super::Error::Storage(e)),
         };
-        let meta = std::fs::symlink_metadata(&at).map_err(super::error)?;
+        let meta = std::fs::symlink_metadata(&at).map_err(super::Error::Storage)?;
         if !meta.is_dir() || meta.gid() != group {
-            return Err(super::Error::Storage(
+            return Err(super::Error::Permissions(
                 "producer frame directory does not belong to the store group".into(),
             ));
         }
@@ -38,9 +44,9 @@ pub(super) fn prepare_directory(root: &Path, leaf: &Path) -> Result<Option<u32>,
             // managed directory. Never adopt or chmod an existing private tree.
             std::fs::File::open(&at)
                 .and_then(|dir| dir.set_permissions(std::fs::Permissions::from_mode(0o2770)))
-                .map_err(super::error)?;
+                .map_err(super::Error::Storage)?;
         } else if meta.mode() & 0o7777 != 0o2770 {
-            return Err(super::Error::Storage(
+            return Err(super::Error::Permissions(
                 "producer frame directory requires configured group mode 2770".into(),
             ));
         }
@@ -53,15 +59,15 @@ pub(super) fn share_completed_file(
     group: Option<u32>,
 ) -> Result<(), super::Error> {
     if let Some(group) = group {
-        if file.metadata().map_err(super::error)?.gid() != group {
-            return Err(super::Error::Storage(
+        if file.metadata().map_err(super::Error::Storage)?.gid() != group {
+            return Err(super::Error::Permissions(
                 "producer frame file does not belong to the store group".into(),
             ));
         }
         // The receiver reads a verified copy and unlinks roles through the
         // shared directory. It does not need to write the sender's inode.
         file.set_permissions(std::fs::Permissions::from_mode(0o640))
-            .map_err(super::error)?;
+            .map_err(super::Error::Storage)?;
     }
     Ok(())
 }
@@ -71,12 +77,12 @@ pub(super) fn check_existing_file(path: &Path, group: Option<u32>) -> Result<(),
         match std::fs::symlink_metadata(path) {
             Ok(meta) if meta.is_file() && meta.gid() == group && meta.mode() & 0o7777 == 0o640 => {}
             Ok(_) => {
-                return Err(super::Error::Storage(
+                return Err(super::Error::Permissions(
                     "existing producer frame file requires configured group mode 0640".into(),
                 ));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(super::error(e)),
+            Err(e) => return Err(super::Error::Storage(e)),
         }
     }
     Ok(())
