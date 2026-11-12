@@ -104,6 +104,10 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     )
     .await
     .unwrap();
+    // This same-source reading is newer than the operation's fixed cut.
+    let new = source_reading("retired-source", 100, "01800000-0000-7000-8000-");
+    let new_id = new.id.0;
+    admit(&mut writer, &batch(vec![new])).await;
     let mut read = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut stream = source_roots(&mut read, &op, None).unwrap();
     let mut first = Vec::new();
@@ -128,16 +132,23 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     let more_unrelated: Vec<_> = (1..=8192)
         .map(|n| source_reading("unrelated-source", n, "017e0000-0000-7000-8000-"))
         .collect();
+    let added_id = more_unrelated[0].id.0;
     admit(&mut writer, &batch(more_unrelated)).await;
-    sqlx::query("SELECT compress_chunk(chunk,if_not_compressed=>true) FROM show_chunks('core.events') chunks(chunk)").execute(&mut *writer).await.unwrap();
+    let added_chunk: String =
+        sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id=$1")
+            .bind(added_id)
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+    sqlx::query("SELECT compress_chunk($1::regclass)")
+        .bind(added_chunk)
+        .execute(&mut *writer)
+        .await
+        .unwrap();
     let (reopened, mut progress) = stored(&mut writer, op.id).await.unwrap();
     assert_eq!(reopened.id, op.id);
     assert_eq!(reopened.start_seq, op.start_seq);
     assert_eq!(progress, saved);
-    // This same-source reading is newer than the operation's fixed cut.
-    let new = source_reading("retired-source", 100, "01800000-0000-7000-8000-");
-    let new_id = new.id.0;
-    admit(&mut writer, &batch(vec![new])).await;
     let mut read_tx = read.begin().await.unwrap();
     sqlx::query("SET LOCAL max_parallel_workers_per_gather=0")
         .execute(&mut *read_tx)

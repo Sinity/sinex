@@ -158,6 +158,20 @@ pub async fn begin(
     })
 }
 
+/// The latest unfinished operation over the same actor, act and exact scope.
+pub async fn unfinished(
+    conn: &mut PgConnection,
+    act: Act,
+    actor: &str,
+    scope: &Scope,
+) -> Result<Option<OperationId>> {
+    let value = serde_json::to_value(scope).expect("scopes serialize");
+    Ok(sqlx::query_scalar!(
+        "SELECT id FROM core.operations WHERE actor=$1 AND kind=$2 AND scope=$3 AND result IS DISTINCT FROM 'ok' ORDER BY at DESC LIMIT 1",
+        actor, act.as_db(), value
+    ).fetch_optional(conn).await?.map(OperationId))
+}
+
 /// A stored operation and its saved position, to resume it. Only one that
 /// has not ended `ok` resumes.
 pub async fn stored(conn: &mut PgConnection, id: OperationId) -> Result<(Operation, Progress)> {

@@ -87,13 +87,9 @@ pub(crate) async fn retire_source(
         after: None,
         before: None,
     };
-    let value = serde_json::to_value(&scope)?;
-    let existing = sqlx::query_scalar!(
-        "SELECT id FROM core.operations WHERE actor='sinex' AND kind='archive' AND scope=$1 AND result IS DISTINCT FROM 'ok' ORDER BY at DESC LIMIT 1",
-        value
-    ).fetch_optional(&mut *read).await?;
+    let existing = lifecycle::unfinished(read, Act::Archive, "sinex", &scope).await?;
     if let Some(id) = existing {
-        resume(read, writer, OperationId(id)).await
+        resume(read, writer, id).await
     } else {
         run(read, writer, Act::Archive, "sinex", scope, false).await
     }
