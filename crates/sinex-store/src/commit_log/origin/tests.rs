@@ -25,7 +25,7 @@ async fn closed_predecessor_gaps_do_not_poison_post_origin_deltas(db: devkit::pg
     assert_eq!(origin.position, 7);
     assert!(origin.requires_projection);
     sqlx::raw_sql("UPDATE core.counters SET value=8 WHERE name='commit_seq'; INSERT INTO core.commit_log(commit_seq) VALUES(8)").execute(&mut conn).await.unwrap();
-    let page = changes_page_after_origin(&mut conn, ChangeCursor::after(7), &origin, 10, 4096)
+    let page = references_after_origin(&mut conn, ChangeCursor::after(7), &origin, 10, 4096)
         .await
         .unwrap();
     assert!(page.gap.is_none());
@@ -39,7 +39,7 @@ async fn closed_predecessor_gaps_do_not_poison_post_origin_deltas(db: devkit::pg
             .unwrap();
     assert_eq!(before, after);
     assert!(
-        changes_page_after_origin(&mut conn, ChangeCursor::after(6), &origin, 10, 4096)
+        references_after_origin(&mut conn, ChangeCursor::after(6), &origin, 10, 4096)
             .await
             .is_err()
     );

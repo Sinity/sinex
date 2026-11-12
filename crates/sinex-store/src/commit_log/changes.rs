@@ -133,7 +133,8 @@ impl EventProjection for EventReference {
 }
 
 /// Read payload-free publication work with the same ordering and authority as
-/// the full canonical feed.
+/// the full canonical feed. Post-origin deltas require a complete certified
+/// projection; predecessor gaps remain closed by the schema constraint.
 pub async fn references_after_origin(
     conn: &mut PgConnection,
     after: ChangeCursor,
@@ -155,17 +156,6 @@ pub async fn changes_page(
     changes_page_from(conn, after, limit, bytes, None).await
 }
 
-/// Post-origin deltas are valid only after a complete certified projection.
-/// The schema excludes new incomplete tombstones; predecessor rows are closed.
-pub async fn changes_page_after_origin(
-    conn: &mut PgConnection,
-    after: ChangeCursor,
-    origin: &HistoryOrigin,
-    limit: i64,
-    bytes: i64,
-) -> Result<ChangePage> {
-    changes_page_from(conn, after, limit, bytes, Some(origin)).await
-}
 async fn changes_page_from<E: EventProjection>(
     conn: &mut PgConnection,
     after: ChangeCursor,

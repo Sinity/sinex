@@ -20,7 +20,7 @@ mod changes;
 mod origin;
 pub use changes::{
     Change, ChangeCursor, ChangePage, CommittedChange, EventReference, HistoryGap, LifecycleChange,
-    Tombstone, changes_page, changes_page_after_origin, references_after_origin,
+    Tombstone, changes_page, references_after_origin,
 };
 pub use origin::HistoryOrigin;
 
