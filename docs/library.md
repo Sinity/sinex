@@ -46,6 +46,11 @@ Every curation act writes **curation records** (`library.curation`), one shape f
 
 A record's identity is its **root** (the ID of its first revision); `sinex:curation/<root>@<rev>` names one revision. The origin and the imported source or proposing method are part of a statement's uniqueness, so each independent source keeps its own support and reimporting the same source record writes nothing.
 
+Curation and duplicate decisions retain their recorded authored times when
+converted to the shared authored header. Other authored inputs can have an
+unknown original time; currency and revision identity do not depend on that
+time.
+
 ### Requests and authorship
 
 Every library change is a **request** of one or more acts (`library-curate`: tag, untag, reject, set, note, rate, collect, uncollect, move, judge, define_scale, define_property, define_tag, relate, dismiss, withdraw, undo). The daemon plans the acts against one snapshot of the live curation records, stores the planned records as the request's material, and admits them through the one writer with that material as their origin, like every other input ([admission](admission.md)).

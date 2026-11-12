@@ -82,7 +82,7 @@ impl Duplicate {
                 .map(|d| serde_json::to_value(d).expect("decisions serialize")),
             author: self.author.clone(),
             via: self.via.clone(),
-            at: self.at,
+            at: Some(self.at),
             revises: self
                 .revises
                 .iter()

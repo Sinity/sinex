@@ -152,7 +152,8 @@ fn a_stored_record_gives_back_its_header() {
     };
     let header = header(&record).unwrap();
     assert_eq!(header.revision(), Revision::new("a", "b.2"));
-    assert_eq!(header.at, 2_000);
+    assert_eq!(header.at, Some(2_000));
+    assert_eq!(serde_json::to_value(&header).unwrap()["at"], json!(2_000));
     assert!(header.revises.contains(&Revision::new("a", "a")));
     assert!(header.withdraws.contains(&Withdrawn::Root("c".into())));
     assert!(

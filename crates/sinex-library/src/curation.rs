@@ -166,7 +166,7 @@ pub fn header(record: &Curation) -> Result<Header> {
         value: record.value.clone(),
         author: record.author.clone(),
         via: record.via.clone(),
-        at: i64::try_from(record.at.unix_ns() / 1_000_000).unwrap_or(i64::MAX),
+        at: Some(i64::try_from(record.at.unix_ns() / 1_000_000).unwrap_or(i64::MAX)),
         revises: record
             .revises
             .iter()
