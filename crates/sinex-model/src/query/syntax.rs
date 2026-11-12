@@ -5,8 +5,8 @@ use query_language::catalog::{Catalog, Field, FieldKind, ReferenceForm, Unit};
 pub fn catalog(ctx: &Context) -> Catalog {
     let declarations = ctx
         .catalog
-        .clone()
-        .unwrap_or_else(|| QueryCatalog::new(crate::event_types::declarations().iter().cloned()));
+        .as_ref()
+        .unwrap_or_else(|| QueryCatalog::bundled());
     let payload = || {
         declarations
             .fields

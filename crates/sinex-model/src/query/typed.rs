@@ -51,11 +51,7 @@ fn payload_fields(catalog: &QueryCatalog) -> Vec<PayloadField> {
 
 fn fields() -> &'static [PayloadField] {
     static FIELDS: OnceLock<Vec<PayloadField>> = OnceLock::new();
-    FIELDS.get_or_init(|| {
-        payload_fields(&QueryCatalog::new(
-            crate::event_types::declarations().iter().cloned(),
-        ))
-    })
+    FIELDS.get_or_init(|| payload_fields(QueryCatalog::bundled()))
 }
 
 fn definitions(ctx: &Context) -> Vec<PayloadField> {

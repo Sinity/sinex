@@ -40,6 +40,13 @@ pub struct QueryCatalog {
 }
 
 impl QueryCatalog {
+    /// Bundled declarations are immutable for this executable. Their field
+    /// descriptions and definition hashes are computed once for all queries.
+    pub(super) fn bundled() -> &'static Self {
+        static CATALOG: std::sync::OnceLock<QueryCatalog> = std::sync::OnceLock::new();
+        CATALOG.get_or_init(|| Self::new(crate::event_types::declarations().iter().cloned()))
+    }
+
     pub fn new(declarations: impl IntoIterator<Item = KindDeclaration>) -> Self {
         let mut catalog = Self::default();
         let mut counts = BTreeMap::<String, usize>::new();
