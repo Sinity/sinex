@@ -4,12 +4,13 @@
 //! size follows how long the previous batch held the writer.
 use crate::Result;
 use crate::writer::WriterHandle;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::{Value, json};
 use sinex_model::lifecycle::{Act, Scope};
 use sinex_model::{DbCheck, OperationId};
 use sinex_store::lifecycle::{self, Comparison, Counts, Operation, Progress, Refusal, Step};
 use sqlx::PgConnection;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// How long one batch should hold the writer. Live batches wait at most
 /// about this long behind an operation.
@@ -67,7 +68,30 @@ pub(crate) async fn run(
             "would_refuse": !refusals.is_empty(),
         })));
     }
-    drive(writer, &op, Progress::default()).await
+    drive(read, writer, &op, Progress::default()).await
+}
+
+/// Automatic retirement continues its existing source operation after restart.
+pub(crate) async fn retire_source(
+    read: &mut PgConnection,
+    writer: &WriterHandle,
+    source: String,
+) -> Result<Answer> {
+    let scope = Scope::Source {
+        source,
+        after: None,
+        before: None,
+    };
+    let value = serde_json::to_value(&scope)?;
+    let existing = sqlx::query_scalar!(
+        "SELECT id FROM core.operations WHERE actor='sinex' AND kind='archive' AND scope=$1 AND result IS DISTINCT FROM 'ok' ORDER BY at DESC LIMIT 1",
+        value
+    ).fetch_optional(&mut *read).await?;
+    if let Some(id) = existing {
+        resume(read, writer, OperationId(id)).await
+    } else {
+        run(read, writer, Act::Archive, "sinex", scope, false).await
+    }
 }
 
 /// Continue an operation from its saved position.
@@ -77,16 +101,46 @@ pub(crate) async fn resume(
     operation: OperationId,
 ) -> Result<Answer> {
     let (op, progress) = lifecycle::stored(read, operation).await?;
-    drive(writer, &op, progress).await
+    drive(read, writer, &op, progress).await
 }
 
-async fn drive(writer: &WriterHandle, op: &Operation, mut progress: Progress) -> Result<Answer> {
+async fn drive(
+    read: &mut PgConnection,
+    writer: &WriterHandle,
+    op: &Operation,
+    mut progress: Progress,
+) -> Result<Answer> {
+    let mut source = if matches!(op.scope, Scope::Source { .. }) && progress.phase == 0 {
+        Some(lifecycle::source_roots(read, op, progress.after)?.fuse())
+    } else {
+        None
+    };
+    let mut pending = None;
     let mut roots = FIRST_ROOTS;
     let mut total = Counts::default();
     loop {
-        let started = Instant::now();
-        let step = writer.lifecycle_step(op, progress, roots).await?;
-        match step {
+        let selected = if let Some(stream) = &mut source {
+            let mut ids = Vec::new();
+            if let Some(id) = pending.take() {
+                ids.push(id);
+            }
+            while (ids.len() as i64) < roots {
+                let Some(id) = stream.try_next().await? else {
+                    break;
+                };
+                ids.push(id);
+            }
+            pending = stream.try_next().await?;
+            lifecycle::Roots::Source {
+                ids,
+                complete: pending.is_none(),
+            }
+        } else {
+            lifecycle::Roots::Query(roots)
+        };
+        let completed = writer.lifecycle_step(op, progress, selected).await?;
+        let held = completed.held;
+        match completed.step {
             Step::Moved {
                 progress: saved,
                 counts,
@@ -98,7 +152,6 @@ async fn drive(writer: &WriterHandle, op: &Operation, mut progress: Progress) ->
                 if done {
                     return Ok(Answer::Done(report(op, &progress, &total, &[])));
                 }
-                let held = started.elapsed();
                 if held < BATCH_HOLD / 2 {
                     roots = roots.saturating_mul(2);
                 } else if held > BATCH_HOLD * 2 && roots > 1 {

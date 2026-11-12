@@ -275,19 +275,8 @@ impl DerivationRunner {
         known.extend(self.runs.keys().cloned());
         let retired = registry::retired_derivations(&mut self.read, &known).await?;
         for producer in retired {
-            match crate::lifecycle::run(
-                &mut self.read,
-                &self.writer,
-                sinex_model::lifecycle::Act::Archive,
-                "sinex",
-                sinex_model::lifecycle::Scope::Source {
-                    source: producer.clone(),
-                    after: None,
-                    before: None,
-                },
-                false,
-            )
-            .await?
+            match crate::lifecycle::retire_source(&mut self.read, &self.writer, producer.clone())
+                .await?
             {
                 crate::lifecycle::Answer::Done(_) => {
                     registry::forget_derivation(&mut self.read, &producer).await?;

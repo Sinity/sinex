@@ -1249,9 +1249,10 @@ async fn dirty_keys_wait_for_operation(db: devkit::pg::TestDatabase) {
     .await
     .unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let Step::Moved { progress, done, .. } = step(&mut tx, &op, Progress::default(), 1, &OneKey)
-        .await
-        .unwrap()
+    let Step::Moved { progress, done, .. } =
+        step(&mut tx, &op, Progress::default(), Roots::Query(1), &OneKey)
+            .await
+            .unwrap()
     else {
         panic!("refused");
     };

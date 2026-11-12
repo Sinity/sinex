@@ -19,9 +19,15 @@ async fn operation(conn: &mut PgConnection, act: Act, target: EventId) -> Operat
 
 /// One batch of `op` inside the caller's transaction.
 async fn first_batch(conn: &mut PgConnection, op: &Operation) {
-    let step = lifecycle::step(conn, op, Default::default(), 16, &NoDerivations)
-        .await
-        .unwrap();
+    let step = lifecycle::step(
+        conn,
+        op,
+        Default::default(),
+        lifecycle::Roots::Query(16),
+        &NoDerivations,
+    )
+    .await
+    .unwrap();
     assert!(matches!(step, Step::Moved { .. }), "{step:?}");
 }
 
