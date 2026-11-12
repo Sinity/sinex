@@ -232,7 +232,10 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
     let origin = crate::commit_log::HistoryOrigin::establish(&mut conn)
         .await
         .unwrap();
-    admit(&mut conn, vec![event("first reference", 1)]).await;
+    let mut first = event("first reference", 1);
+    first.id =
+        sinex_model::EventId(Uuid::parse_str("01800000-0000-7000-8000-000000000010").unwrap());
+    admit(&mut conn, vec![first]).await;
     sqlx::query("SELECT compress_chunk(c) FROM show_chunks('core.events') c")
         .execute(&mut *conn)
         .await
@@ -240,7 +243,8 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
     // A later admission can have an old UUID and land in an old compressed
     // time chunk. Commit position, rather than UUID age, defines this suffix.
     let mut later = event("second reference", 2);
-    later.id = sinex_model::EventId(Uuid::from_u128(1));
+    later.id =
+        sinex_model::EventId(Uuid::parse_str("01800000-0000-7000-8000-000000000001").unwrap());
     admit(&mut conn, vec![later]).await;
     let complete = changes_page(&mut conn, ChangeCursor::after(0), 100, i64::MAX)
         .await
