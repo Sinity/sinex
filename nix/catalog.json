@@ -1925,22 +1925,6 @@
             ]
           },
           "format": "journald"
-        },
-        {
-          "capture": false,
-          "description": {
-            "capabilities": [],
-            "credentials": [],
-            "locations": [
-              {
-                "path": "journal-json",
-                "root": "input"
-              }
-            ],
-            "owner": "system",
-            "streams": []
-          },
-          "format": "journal-json"
         }
       ],
       "eventTypes": [
@@ -1960,14 +1944,12 @@
       },
       "expiresAfterSeconds": null,
       "formats": [
-        "journald",
-        "journal-json"
+        "journald"
       ],
       "name": "machine.journald",
       "purpose": "machine timeline, service health, unit and boot intervals, and recall",
       "shapes": [
-        "live-stream",
-        "export-archive"
+        "live-stream"
       ]
     },
     {
@@ -2050,6 +2032,51 @@
       "purpose": "attention, presence and recall",
       "shapes": [
         "sqlite-rows"
+      ]
+    },
+    {
+      "class": "guarded",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "journal-json",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "streams": []
+          },
+          "format": "journal-json"
+        }
+      ],
+      "eventTypes": [
+        "journal.entry",
+        "unit.started",
+        "unit.stopped",
+        "unit.reloaded",
+        "boot.started",
+        "sleep.started",
+        "sleep.ended",
+        "shutdown.started"
+      ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "export",
+        "silentAfterSeconds": null
+      },
+      "expiresAfterSeconds": null,
+      "formats": [
+        "journal-json"
+      ],
+      "name": "machine.journald-export",
+      "purpose": "machine timeline, service health, unit and boot intervals, and recall",
+      "shapes": [
+        "export-archive"
       ]
     },
     {
