@@ -174,6 +174,72 @@ async fn a_first_page_loads_the_current_declarations_once(db: devkit::pg::TestDa
     assert_eq!(loads(&mut conn).await - before, 1);
 }
 
+#[devkit::test]
+async fn complete_first_pages_do_not_execute_a_total_query(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_commands(&mut conn, &[("one", "/"), ("two", "/"), ("three", "/")]).await;
+
+    async fn counts(conn: &mut PgConnection) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT coalesce(sum(generic_plans + custom_plans), 0)::bigint
+             FROM pg_prepared_statements WHERE statement LIKE 'SELECT count(*) FROM (%'",
+        )
+        .fetch_one(conn)
+        .await
+        .unwrap()
+    }
+
+    for (text, expected) in [
+        ("commands where exit_code < 0", 0),
+        ("commands where exit_code:known", 2),
+    ] {
+        let before = counts(&mut conn).await;
+        let answer = ask_page(
+            &mut conn,
+            text,
+            Page {
+                size: Some(2),
+                cursor: None,
+            },
+        )
+        .await;
+        assert_eq!(answer.total, expected);
+        assert_eq!(answer.rows.len() as i64, expected);
+        assert!(answer.page.cursor.is_none());
+        assert_eq!(counts(&mut conn).await - before, 0, "{text}");
+    }
+
+    let before = counts(&mut conn).await;
+    let first = ask_page(
+        &mut conn,
+        "commands",
+        Page {
+            size: Some(2),
+            cursor: None,
+        },
+    )
+    .await;
+    assert_eq!(first.total, 3);
+    assert_eq!(first.rows.len(), 2);
+    assert_eq!(counts(&mut conn).await - before, 1);
+    let before = counts(&mut conn).await;
+    let last = ask_page(
+        &mut conn,
+        "commands",
+        Page {
+            size: Some(2),
+            cursor: Some(first.page.cursor.unwrap()),
+        },
+    )
+    .await;
+    assert_eq!(last.total, 3);
+    assert_eq!(last.rows.len(), 1);
+    assert!(last.page.cursor.is_none());
+    assert_eq!(counts(&mut conn).await - before, 0);
+}
+
 async fn world(conn: &mut crate::AdmissionContext) -> Vec<(Uuid, Uuid)> {
     let ids = admit_commands(
         conn,
