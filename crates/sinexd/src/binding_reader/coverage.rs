@@ -7,7 +7,7 @@ use crate::stage::Totals;
 use crate::writer::{Priority, WriterHandle};
 use crate::{Error, Result};
 use sinex_model::event_types::coverage::{CoverageCompleteness, CoverageState, SourceCoverage};
-use sinex_model::{Class, EventPayload, RunId, Timestamp};
+use sinex_model::{Class, EventPayload, KindRef, RunId, Timestamp};
 use sinex_source_core::Binding;
 use sinex_sources::sources::coverage;
 use sinex_store::{Blobs, bindings};
@@ -73,17 +73,13 @@ impl Coverage {
     /// Coverage that continues from the current readings stored for `host`, so
     /// a restarted reader writes nothing for a binding whose state is unchanged.
     pub(crate) async fn stored(conn: &mut PgConnection, host: &str) -> Result<Self> {
-        // This is the reader's own state; an output grant must not decide
-        // whether it can resume a guarded binding.
-        let payloads = sqlx::query_scalar!(
-            "SELECT e.payload FROM core.events e
-             WHERE e.event_type=$1 AND e.kind_version=$2
-               AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
-             ORDER BY e.commit_seq,e.id",
-            SourceCoverage::EVENT_TYPE,
-            SourceCoverage::VERSION as i64,
+        let payloads = bindings::observations(
+            conn,
+            &KindRef {
+                name: SourceCoverage::EVENT_TYPE.into(),
+                version: SourceCoverage::VERSION,
+            },
         )
-        .fetch_all(conn)
         .await?;
         let mut current = BTreeMap::new();
         for payload in payloads {
