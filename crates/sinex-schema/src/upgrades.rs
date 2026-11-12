@@ -89,6 +89,8 @@ pub(crate) const NAMED: &[&str] = &[
     "append_file_stat_metadata",
     "search_trigram_text",
     "closed_tombstone_history",
+    "receipt_read_indexes",
+    "compressed_event_commit_ranges",
 ];
 
 #[cfg(test)]
@@ -187,6 +189,8 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(source_cursors::statements());
     steps.push(crate::search_trigram::statements());
     steps.push(crate::tombstone_history::statements());
+    steps.push(crate::receipt_indexes::statements());
+    steps.push(vec![crate::sparse_indexes::configuration()]);
     steps
 }
 

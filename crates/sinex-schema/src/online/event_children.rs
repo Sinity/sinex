@@ -1,21 +1,11 @@
-//! The parent edges of events stored before the upgrade, filled after start
-//! in ascending event order, so each step reads only the chunks after its
-//! mark. Events admitted after start already have their edges; inserting one
-//! again changes nothing.
+//! Retained parent arrays are streamed into the edge table once. The saved
+//! prefix remains authoritative across restarts; admission and tombstones
+//! write their own edges while the projection is incomplete.
 //!
-//! Every walk reads edges through `core.event_children_of` and
-//! `core.event_parents_of`. While the fill runs, the upgrade gives them a
-//! definition that also reads the `parents` arrays of the events after the
-//! mark, through the `parents` index, so a walk answers exactly as on a
-//! filled store. The step that reaches the end puts the fresh definitions
-//! back and ends the task in one transaction. The oldest chunks are filled
-//! first, and those are the compressed ones, so the fallback reads only
-//! uncompressed chunks once the fill is under way.
-//!
-//! A tombstone keeps its event's edges (it writes them before removing the
-//! event), so an event tombstoned before the fill reaches it keeps them too.
-//! Each batch locks the tombstone table, so a tombstone runs wholly before or
-//! after a batch and the two never wait on each other's edges.
+//! Walks use the edge table plus parent arrays beyond the committed prefix.
+//! A completed pass commits its edges and upper UUID cut together. Replacing
+//! the walk definitions and then removing the mark retain the existing
+//! two-transaction guarantee for readers planned against the fallback.
 use super::Task;
 use crate::Error;
 use sqlx::{Connection, PgConnection};
@@ -56,13 +46,19 @@ pub(super) fn begin() -> Vec<String> {
     ]
 }
 
-/// Fill the edges of the next `batch` events with parents after the mark and
-/// move the mark, in one transaction. `Some(edges written)` while events
-/// remained; `None` once the fill reached the end and the task finished.
-pub(super) async fn step(conn: &mut PgConnection, batch: i64) -> Result<Option<u64>, Error> {
+/// Complete the remaining parent projection, then retire its fallback.
+pub(super) async fn step(conn: &mut PgConnection) -> Result<(), Error> {
+    fill(conn).await?;
+    finish(conn).await
+}
+
+/// A pass and its upper UUID cut commit together. A crash rolls back the
+/// pass; a crash after commit resumes only beyond that cut. New admissions
+/// already own their edges, including rows whose IDs precede the cut.
+async fn fill(conn: &mut PgConnection) -> Result<u64, Error> {
     let mut tx = conn.begin().await?;
-    // A tombstone writes its event's edges and then removes the event; this
-    // lock orders it before or after the batch, never interleaved with it.
+    // A tombstone writes its edges before removing the event. Order it
+    // wholly before or after this pass so the two cannot deadlock on edges.
     sqlx::query("LOCK TABLE core.event_tombstones IN SHARE MODE")
         .execute(&mut *tx)
         .await?;
@@ -71,43 +67,52 @@ pub(super) async fn step(conn: &mut PgConnection, batch: i64) -> Result<Option<u
     )
     .fetch_one(&mut *tx)
     .await?;
-    // The mark is spelled out as a constant so chunks before it are excluded
-    // when the statement is planned.
-    let (last, written): (Option<String>, i64) = sqlx::query_as(&format!(
-        "WITH batch AS (
-           SELECT e.id, e.parents FROM core.events e
-           WHERE e.id > '{mark}'::uuid AND e.parents IS NOT NULL
-           ORDER BY e.id LIMIT $1),
-         written AS (
-           INSERT INTO core.event_children (parent, child)
-           SELECT DISTINCT p.parent, b.id FROM batch b CROSS JOIN LATERAL unnest(b.parents) p(parent)
-           ON CONFLICT DO NOTHING RETURNING 1)
-         SELECT (SELECT id::text FROM batch ORDER BY id DESC LIMIT 1), (SELECT count(*) FROM written)"
+    // Literal UUID bounds let TimescaleDB exclude completed chunks when
+    // planning. The newest existing ID bounds this pass; later admissions
+    // write their own edges rather than requiring another retained scan.
+    let cut: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT e.id::text FROM core.events e WHERE e.id > '{mark}'::uuid ORDER BY e.id DESC LIMIT 1"
     ))
     .persistent(false)
-    .bind(batch.max(1))
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
-    let Some(last) = last else {
-        tx.commit().await?;
-        finish(conn).await?;
-        return Ok(None);
-    };
-    sqlx::query("UPDATE sinex_schema.event_children_fill SET filled_through = $1::uuid")
-        .bind(&last)
+    let mut written = 0;
+    if let Some(cut) = cut {
+        written = sqlx::query(&format!(
+            "INSERT INTO core.event_children (parent, child)
+             SELECT p.parent, e.id FROM core.events e
+             CROSS JOIN LATERAL unnest(e.parents) p(parent)
+             WHERE e.id > '{mark}'::uuid AND e.id <= '{cut}'::uuid
+               AND e.parents IS NOT NULL
+             ON CONFLICT DO NOTHING"
+        ))
+        .persistent(false)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+        sqlx::query("UPDATE sinex_schema.event_children_fill SET filled_through = $1::uuid")
+            .bind(&cut)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
-    Ok(Some(
-        u64::try_from(written).expect("a count is not negative"),
-    ))
+    Ok(written)
 }
 
 /// Every edge is stored: give the walks their fresh definitions, then end the
 /// task. Two transactions, so a walk planned with the definition that reads
 /// the mark never finds the mark gone; an interruption between them leaves a
-/// filled store whose next step finds no event and ends here again.
+/// filled store whose next pass reads only a newly admitted tail.
 async fn finish(conn: &mut PgConnection) -> Result<(), Error> {
+    install_walks(conn).await?;
+    sqlx::query(&super::end(Task::EventChildren))
+        .persistent(false)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+async fn install_walks(conn: &mut PgConnection) -> Result<(), Error> {
     let mut tx = conn.begin().await?;
     for definition in [
         crate::tables::EVENT_CHILDREN_OF,
@@ -119,9 +124,8 @@ async fn finish(conn: &mut PgConnection) -> Result<(), Error> {
             .await?;
     }
     tx.commit().await?;
-    sqlx::query(&super::end(Task::EventChildren))
-        .persistent(false)
-        .execute(&mut *conn)
-        .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -269,6 +269,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   write_kind_prefixes text[],
   PRIMARY KEY (producer, frame)
 )".into(),
+        crate::receipt_indexes::MATERIAL.into(),
+        crate::receipt_indexes::REFUSALS.into(),
+        crate::receipt_indexes::MALFORMED.into(),
         // The archive is logical: archived rows stay in core.events. This is
         // the current state; archive_changes holds every transition.
         format!("CREATE TABLE audit.archived (
@@ -610,6 +613,7 @@ pub(crate) fn after_tables() -> Vec<String> {
             out.push(template.replace("$T", table));
         }
     }
+    out.push(crate::sparse_indexes::configuration());
     out.extend(blob_changes());
     out
 }

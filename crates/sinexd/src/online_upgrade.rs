@@ -1,4 +1,4 @@
-//! Upgrade work that runs after start (`sinex_schema::online`): bounded steps
+//! Upgrade work that runs after start (`sinex_schema::online`): native steps
 //! on their own connection, between which the daemon serves as usual. A stop
 //! or crash mid-step leaves a state the next start resumes from.
 use crate::Result;
@@ -18,7 +18,7 @@ pub(crate) async fn run(mut conn: PgConnection, mut stop: watch::Receiver<bool>)
         if *stop.borrow() {
             return Ok(());
         }
-        match online::step(&mut conn, online::BATCH).await {
+        match online::step(&mut conn).await {
             Ok(Progress::Advanced { .. }) => tokio::task::yield_now().await,
             Ok(Progress::Finished { task }) => {
                 eprintln!("sinexd: upgrade work after start: {} done", task.name());

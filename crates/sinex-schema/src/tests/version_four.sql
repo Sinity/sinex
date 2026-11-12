@@ -1,3 +1,5 @@
+-- Undo the later receipt access paths.
+DROP INDEX core.ingress_frames_material, core.ingress_frames_refused_at, core.ingress_frames_malformed_producer;
 -- Reconstruct the predecessor before the closed-history constraint.
 ALTER TABLE core.event_tombstones DROP CONSTRAINT IF EXISTS tombstone_history_complete;
 -- Undo the separate trigram read model before the older synthetic downgrades.

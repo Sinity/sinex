@@ -1,22 +1,17 @@
 //! Publication keys, event indexes and stored parent edges are completed by
-//! the running daemon in bounded steps after the structural upgrade. Each
+//! the running daemon after the structural upgrade. Each
 //! task's readers remain correct while its work is incomplete.
 //!
-//! The work is an ordered list of tasks. Each task exists while its mark table
-//! in `sinex_schema` exists: the upgrade creates the mark, and the step that
-//! finishes the task drops it in the same transaction as its last change. A
-//! finished store therefore holds no mark and matches a fresh one. Readers
-//! stay correct while a task remains; each task module says how.
+//! Mark tables retain publication, rowstore-index and parent-edge progress.
+//! Compressed feed indexes use native chunk settings as their completion
+//! authority. Each committed unit survives a restart; task modules describe
+//! how their readers stay correct while work remains.
 use crate::Error;
 use sqlx::PgConnection;
 
 mod event_children;
 mod event_indexes;
 mod published_key;
-
-/// Rows read per batch step (events with parents), each step
-/// one short transaction.
-pub const BATCH: i64 = 5_000;
 
 /// Held for the length of one step, so a session of a stopped daemon that is
 /// still building an index is waited for rather than raced.
@@ -58,8 +53,8 @@ impl Task {
 /// What one [`step`] did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Progress {
-    /// Part of `task` was done; `rows` rows were written. More may remain.
-    Advanced { task: Task, rows: u64 },
+    /// One native chunk completed; more of this task remains.
+    Advanced { task: Task },
     /// `task` finished.
     Finished { task: Task },
     /// Another session, such as a stopped daemon's backend that is still
@@ -72,11 +67,16 @@ pub enum Progress {
 /// The tasks that remain, in order.
 pub async fn remaining(conn: &mut PgConnection) -> Result<Vec<Task>, Error> {
     let marks: Vec<String> = Task::ALL.iter().map(|task| task.mark().into()).collect();
-    let present: Vec<bool> =
+    let mut present: Vec<bool> =
         sqlx::query_scalar("SELECT to_regclass(mark) IS NOT NULL FROM unnest($1::text[]) WITH ORDINALITY m(mark, n) ORDER BY n")
             .bind(&marks)
             .fetch_all(&mut *conn)
             .await?;
+    for (task, present) in Task::ALL.into_iter().zip(&mut present) {
+        if task == Task::FeedIndex && !*present {
+            *present = crate::sparse_indexes::pending(conn).await?;
+        }
+    }
     Ok(Task::ALL
         .into_iter()
         .zip(present)
@@ -86,16 +86,17 @@ pub async fn remaining(conn: &mut PgConnection) -> Result<Vec<Task>, Error> {
 
 /// Whether `task` remains.
 pub async fn pending(conn: &mut PgConnection, task: Task) -> Result<bool, Error> {
-    Ok(sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+    let marked: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
         .bind(task.mark())
         .fetch_one(&mut *conn)
-        .await?)
+        .await?;
+    Ok(marked || (task == Task::FeedIndex && crate::sparse_indexes::pending(conn).await?))
 }
 
-/// Run the next bounded unit of the first remaining task. Call it again until
+/// Run the next native unit of the first remaining task. Call it again until
 /// it returns [`Progress::Done`]; an interruption at any point resumes on the
 /// next call.
-pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error> {
+pub async fn step(conn: &mut PgConnection) -> Result<Progress, Error> {
     let Some(task) = remaining(conn).await?.first().copied() else {
         return Ok(Progress::Done);
     };
@@ -106,7 +107,7 @@ pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error
     if !held {
         return Ok(Progress::Waiting);
     }
-    let result = run(conn, task, batch).await;
+    let result = run(conn, task).await;
     let released = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(WORK_LOCK)
         .execute(&mut *conn)
@@ -116,19 +117,19 @@ pub async fn step(conn: &mut PgConnection, batch: i64) -> Result<Progress, Error
     Ok(progress)
 }
 
-async fn run(conn: &mut PgConnection, task: Task, batch: i64) -> Result<Progress, Error> {
+async fn run(conn: &mut PgConnection, task: Task) -> Result<Progress, Error> {
     // A task the previous holder finished between our check and the lock.
     if !pending(conn, task).await? {
         return Ok(Progress::Finished { task });
     }
     match task {
         Task::PublishedKey => published_key::step(conn).await?,
-        Task::FeedIndex => event_indexes::step(conn, &event_indexes::FEED).await?,
-        Task::EventChildren => {
-            if let Some(rows) = event_children::step(conn, batch).await? {
-                return Ok(Progress::Advanced { task, rows });
+        Task::FeedIndex => {
+            if event_indexes::step(conn, &event_indexes::FEED).await? {
+                return Ok(Progress::Advanced { task });
             }
         }
+        Task::EventChildren => event_children::step(conn).await?,
     }
     Ok(Progress::Finished { task })
 }
@@ -136,7 +137,7 @@ async fn run(conn: &mut PgConnection, task: Task, batch: i64) -> Result<Progress
 /// Run [`step`] until no work remains.
 pub async fn finish(conn: &mut PgConnection) -> Result<(), Error> {
     loop {
-        match step(conn, BATCH).await? {
+        match step(conn).await? {
             Progress::Advanced { .. } | Progress::Finished { .. } => {}
             Progress::Waiting => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
             Progress::Done => return Ok(()),

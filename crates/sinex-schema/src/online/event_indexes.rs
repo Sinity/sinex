@@ -3,9 +3,9 @@
 //! being indexed waits, and an interruption leaves the hypertable's index
 //! marked invalid, which is dropped and built again.
 //!
-//! Readers stay correct without them. Feed pages scan the chunks the index
-//! does not cover yet. Coverage reads the source and run counters and needs
-//! no event index.
+//! Feed readers wait for native feed access paths. Existing compressed chunks
+//! gain commit-position sparse metadata one chunk per online step. Coverage
+//! reads source and run counters without an event index.
 use super::Task;
 use crate::Error;
 use sqlx::PgConnection;
@@ -23,33 +23,39 @@ pub(super) const FEED: EventIndex = EventIndex {
     definition: crate::tables::EVENTS_FEED,
 };
 
-pub(super) async fn step(conn: &mut PgConnection, index: &EventIndex) -> Result<(), Error> {
-    let valid: Option<bool> = sqlx::query_scalar(
+pub(super) async fn step(conn: &mut PgConnection, index: &EventIndex) -> Result<bool, Error> {
+    let marked: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+        .bind(index.task.mark())
+        .fetch_one(&mut *conn)
+        .await?;
+    if marked {
+        let valid: Option<bool> = sqlx::query_scalar(
         "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('core.' || $1) AND indrelid = 'core.events'::regclass",
     )
     .bind(index.name)
     .fetch_optional(&mut *conn)
     .await?;
-    if valid == Some(false) {
-        sqlx::query(&format!("DROP INDEX core.{}", index.name))
+        if valid == Some(false) {
+            sqlx::query(&format!("DROP INDEX core.{}", index.name))
+                .persistent(false)
+                .execute(&mut *conn)
+                .await?;
+        }
+        if valid != Some(true) {
+            // Its own statement: a build one chunk per transaction cannot run
+            // inside a transaction block.
+            sqlx::query(&format!(
+                "{} WITH (timescaledb.transaction_per_chunk)",
+                index.definition
+            ))
+            .persistent(false)
+            .execute(&mut *conn)
+            .await?;
+        }
+        sqlx::query(&super::end(index.task))
             .persistent(false)
             .execute(&mut *conn)
             .await?;
     }
-    if valid != Some(true) {
-        // Its own statement: a build one chunk per transaction cannot run
-        // inside a transaction block.
-        sqlx::query(&format!(
-            "{} WITH (timescaledb.transaction_per_chunk)",
-            index.definition
-        ))
-        .persistent(false)
-        .execute(&mut *conn)
-        .await?;
-    }
-    sqlx::query(&super::end(index.task))
-        .persistent(false)
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
+    crate::sparse_indexes::step(conn).await
 }
