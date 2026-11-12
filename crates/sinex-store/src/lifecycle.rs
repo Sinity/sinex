@@ -232,7 +232,11 @@ impl Phase {
 #[derive(Debug)]
 pub enum Roots {
     Query(i64),
-    Source { ids: Vec<Uuid>, complete: bool },
+    Source {
+        operation: OperationId,
+        ids: Vec<Uuid>,
+        complete: bool,
+    },
 }
 
 /// Enumerate immutable source identities once, including currently archived
@@ -301,7 +305,17 @@ pub async fn step(
             done = true;
             break;
         };
-        if let Roots::Source { ids, complete } = &roots {
+        if let Roots::Source {
+            operation,
+            ids,
+            complete,
+        } = &roots
+        {
+            if *operation != op.id {
+                return Err(Error::Invalid(
+                    "source roots belong to another operation".into(),
+                ));
+            }
             if !matches!(op.scope, Scope::Source { .. }) || op.act == Act::Undo {
                 return Err(Error::Invalid(
                     "prepared source roots require one source phase".into(),
@@ -500,7 +514,7 @@ pub async fn run_on(
     let mut total = Counts::default();
     loop {
         let mut tx = conn.begin().await?;
-        match step(&mut tx, op, progress, roots, keys).await? {
+        match step(&mut tx, op, progress, Roots::Query(roots), keys).await? {
             Step::Moved {
                 progress: saved,
                 counts,

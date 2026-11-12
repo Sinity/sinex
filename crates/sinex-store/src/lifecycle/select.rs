@@ -171,35 +171,25 @@ pub(super) async fn source_batch(
     phase: Phase,
     ids: &[Uuid],
 ) -> Result<Vec<Uuid>> {
-    let Scope::Source {
-        source,
-        after: from,
-        before,
-    } = &op.scope
-    else {
+    let Scope::Source { source, .. } = &op.scope else {
         return Err(Error::Invalid("source roots require a source scope".into()));
     };
-    let bounded = from.is_some() || before.is_some();
+    // The same-operation stream has already checked immutable source/time/
+    // admission headers. Lifecycle membership can change before this batch.
     let live = phase.takes_live();
     let top = phase == Phase::Restore;
     Ok(sqlx::query_scalar!(
-        r#"SELECT e.id FROM unnest($1::uuid[]) selected(id)
-           CROSS JOIN LATERAL (SELECT e.id,e.source,e.commit_seq,e.ts_orig
-             FROM core.events e WHERE e.id=selected.id OFFSET 0) e
-           WHERE e.source=$2 AND e.commit_seq <= $3
-             AND (NOT $4 OR e.ts_orig IS NOT NULL)
-             AND ($5::timestamptz IS NULL OR e.ts_orig >= $5)
-             AND ($6::timestamptz IS NULL OR e.ts_orig < $6)
-             AND CASE WHEN $7 THEN
-               EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id=e.id)
-               OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)
-             ELSE EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
-               AND (NOT $8 OR NOT EXISTS (
-                 SELECT 1 FROM core.event_parents_of(e.id) c JOIN audit.archived p ON p.event_id=c.parent
-                 JOIN audit.archived s ON s.event_id=e.id
-                 WHERE p.operation_id IS NOT DISTINCT FROM s.operation_id)) END
-           ORDER BY e.id"#,
-        ids,source,op.start_seq,bounded,from.map(|t|t.0),before.map(|t|t.0),live,top
+        r#"SELECT selected.id AS "id!" FROM unnest($1::uuid[]) selected(id)
+           WHERE CASE WHEN $3 THEN
+             EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id=selected.id)
+             OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id=selected.id AND l.source=$2)
+           ELSE EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=selected.id)
+             AND (NOT $4 OR NOT EXISTS (
+               SELECT 1 FROM core.event_parents_of(selected.id) c JOIN audit.archived p ON p.event_id=c.parent
+               JOIN audit.archived s ON s.event_id=selected.id
+               WHERE p.operation_id IS NOT DISTINCT FROM s.operation_id)) END
+           ORDER BY selected.id"#,
+        ids, source, live, top
     ).fetch_all(conn).await?)
 }
 

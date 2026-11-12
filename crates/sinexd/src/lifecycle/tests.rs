@@ -169,3 +169,168 @@ async fn operations_run_in_writer_batches_and_resume(db: devkit::pg::TestDatabas
     drop(writer);
     task.await.unwrap();
 }
+
+#[devkit::test]
+async fn retired_source_resumes_identity_and_live_admission_while_read_waits(
+    db: devkit::pg::TestDatabase,
+) {
+    use futures::StreamExt;
+    use sqlx::Connection;
+    use tokio::sync::{Notify, oneshot};
+    let url = db.url(None);
+    let connection = PgConnection::connect(&url).await.unwrap();
+    let mut read = PgConnection::connect(&url).await.unwrap();
+    let (writer, queues) = channels();
+    let task = tokio::spawn(writer_run(
+        url.clone(),
+        claim(connection).await.unwrap(),
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        None,
+    ));
+    let readings: Vec<_> = (0..600).map(|k| reading(k, k)).collect();
+    writer
+        .submit(Priority::Live, batch(readings.clone()))
+        .await
+        .unwrap();
+    let op = lifecycle::begin(
+        &mut read,
+        Act::Archive,
+        "sinex",
+        Scope::Source {
+            source: "ops".into(),
+            after: None,
+            before: None,
+        },
+    )
+    .await
+    .unwrap();
+    let prefix: Vec<_> = readings.iter().take(64).map(|e| e.id.0).collect();
+    let first = writer
+        .lifecycle_step(
+            &op,
+            Progress::default(),
+            lifecycle::Roots::Source {
+                operation: op.id,
+                ids: prefix,
+                complete: false,
+            },
+        )
+        .await
+        .unwrap();
+    let Step::Moved {
+        progress: saved, ..
+    } = first.step
+    else {
+        panic!("first batch refused")
+    };
+    assert_eq!(saved.batches, 1);
+    // A stalled producer of selected identities owns no writer transaction.
+    let gate = Arc::new(Notify::new());
+    let release = gate.clone();
+    let (entered, waiting) = oneshot::channel();
+    let worker = writer.clone();
+    let operation = op.clone();
+    let reader = tokio::spawn(async move {
+        let mut conn = PgConnection::connect(&url).await.unwrap();
+        let native = lifecycle::source_roots(&mut conn, &operation, saved.after).unwrap();
+        let mut entered = Some(entered);
+        let selected = native
+            .then(move |id| {
+                let first = entered.take();
+                let gate = gate.clone();
+                async move {
+                    if let Some(first) = first {
+                        first.send(()).unwrap();
+                        gate.notified().await;
+                    }
+                    id
+                }
+            })
+            .boxed();
+        drive(&worker, &operation, saved, Some(selected)).await
+    });
+    waiting.await.unwrap();
+    let new = reading(9999, 9999);
+    let new_id = new.id.0;
+    let admitted = writer
+        .submit(Priority::Live, batch(vec![new]))
+        .await
+        .unwrap();
+    assert!(admitted.commit_seq.unwrap().0 > op.start_seq);
+    release.notify_one();
+    let Answer::Done(done) = reader.await.unwrap().unwrap() else {
+        panic!("source drive refused")
+    };
+    assert_eq!(done["operation"], serde_json::to_value(op.id).unwrap());
+    assert_eq!(live(&mut read).await, 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM core.live_equivalence WHERE event_id=$1"
+        )
+        .bind(new_id)
+        .fetch_one(&mut read)
+        .await
+        .unwrap(),
+        1
+    );
+    // Retire a deliberately unfinished native operation through the actual
+    // startup helper. It must use the saved identity and original cut.
+    let tail = reading(10000, 10000);
+    let tail_id = tail.id.0;
+    writer
+        .submit(Priority::Live, batch(vec![tail]))
+        .await
+        .unwrap();
+    let op = lifecycle::begin(
+        &mut read,
+        Act::Archive,
+        "sinex",
+        Scope::Source {
+            source: "ops".into(),
+            after: None,
+            before: None,
+        },
+    )
+    .await
+    .unwrap();
+    let part = writer
+        .lifecycle_step(
+            &op,
+            Progress::default(),
+            lifecycle::Roots::Source {
+                operation: op.id,
+                ids: vec![new_id],
+                complete: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(part.step, Step::Moved { done: false, .. }));
+    let Answer::Done(done) = retire_source(&mut read, &writer, "ops".into())
+        .await
+        .unwrap()
+    else {
+        panic!("retirement refused")
+    };
+    assert_eq!(done["operation"], serde_json::to_value(op.id).unwrap());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM core.operations WHERE actor='sinex' AND kind='archive'"
+        )
+        .fetch_one(&mut read)
+        .await
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM audit.archived WHERE event_id=$1")
+            .bind(tail_id)
+            .fetch_one(&mut read)
+            .await
+            .unwrap(),
+        1
+    );
+    drop(writer);
+    task.await.unwrap();
+}

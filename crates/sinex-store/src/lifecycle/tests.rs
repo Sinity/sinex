@@ -1770,3 +1770,5 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
         .unwrap();
     assert_eq!(remaining, 0, "the final owner removal reclaims every chunk");
 }
+
+mod source;

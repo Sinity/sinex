@@ -68,7 +68,12 @@ pub(crate) async fn run(
             "would_refuse": !refusals.is_empty(),
         })));
     }
-    drive(read, writer, &op, Progress::default()).await
+    let source = if matches!(op.scope, Scope::Source { .. }) {
+        Some(lifecycle::source_roots(read, &op, None)?)
+    } else {
+        None
+    };
+    drive(writer, &op, Progress::default(), source).await
 }
 
 /// Automatic retirement continues its existing source operation after restart.
@@ -101,20 +106,21 @@ pub(crate) async fn resume(
     operation: OperationId,
 ) -> Result<Answer> {
     let (op, progress) = lifecycle::stored(read, operation).await?;
-    drive(read, writer, &op, progress).await
-}
-
-async fn drive(
-    read: &mut PgConnection,
-    writer: &WriterHandle,
-    op: &Operation,
-    mut progress: Progress,
-) -> Result<Answer> {
-    let mut source = if matches!(op.scope, Scope::Source { .. }) && progress.phase == 0 {
-        Some(lifecycle::source_roots(read, op, progress.after)?.fuse())
+    let source = if matches!(op.scope, Scope::Source { .. }) && progress.phase == 0 {
+        Some(lifecycle::source_roots(read, &op, progress.after)?)
     } else {
         None
     };
+    drive(writer, &op, progress, source).await
+}
+
+async fn drive(
+    writer: &WriterHandle,
+    op: &Operation,
+    mut progress: Progress,
+    source: Option<futures::stream::BoxStream<'_, sinex_store::Result<uuid::Uuid>>>,
+) -> Result<Answer> {
+    let mut source = source.map(StreamExt::fuse);
     let mut pending = None;
     let mut roots = FIRST_ROOTS;
     let mut total = Counts::default();
@@ -132,6 +138,7 @@ async fn drive(
             }
             pending = stream.try_next().await?;
             lifecycle::Roots::Source {
+                operation: op.id,
                 ids,
                 complete: pending.is_none(),
             }
