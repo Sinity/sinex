@@ -557,7 +557,7 @@ fn stored(header: &authored::Header, case: usize) -> Curation {
                 authored::Target::Revision(r) => format!("{}@{}", name(&r.root), name(&r.rev)),
             })
             .collect(),
-        kind: if header.kind == authored::generator::WITHDRAWAL {
+        kind: if header.kind == authored_generator::WITHDRAWAL {
             CurationKind::Withdrawal
         } else {
             CurationKind::Note
@@ -582,7 +582,7 @@ async fn stored_currency_equals_the_shared_function_on_generated_histories(
 ) {
     let mut w = world(db).await;
     let mut runner = proptest::test_runner::TestRunner::deterministic();
-    let strategy = authored::generator::history(24);
+    let strategy = authored_generator::history(24);
     for case in 0..12 {
         let mut history = strategy.new_tree(&mut runner).unwrap().current();
         let reference: Vec<RootState> = history.states().unwrap();
