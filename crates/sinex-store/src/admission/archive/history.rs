@@ -35,9 +35,16 @@ pub(crate) async fn archive_at(
         INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason,replaced_by,operation_id,recorded_at)
         SELECT change_seq,event_id,archived_seq,true,reason,replaced_by,operation_id,archived_at FROM added)
       UPDATE core.source_counts c SET events = c.events - left_live.n
-      FROM (SELECT e.source, count(*) AS n FROM core.events e
-            WHERE e.id = ANY($1) AND e.id IN (SELECT event_id FROM added)
-            GROUP BY e.source) left_live
+      FROM (SELECT coalesce(live.source, stored.source) AS source, count(*) AS n
+            FROM added
+            LEFT JOIN LATERAL (
+              SELECT source FROM core.live_equivalence WHERE event_id = added.event_id OFFSET 0
+            ) live ON true
+            LEFT JOIN LATERAL (
+              SELECT source FROM core.events
+              WHERE id = added.event_id AND live.source IS NULL OFFSET 0
+            ) stored ON true
+            GROUP BY coalesce(live.source, stored.source)) left_live
       WHERE c.source = left_live.source"#,
       ids,replacements,position,reason.as_db(),operation)
       .execute(conn).await?;

@@ -34,7 +34,7 @@ mod write;
 
 pub(crate) use archive::{archive_at, position, remove_live, restore_at};
 pub use derived::{ComputedKey, DerivedScope, ReadMark};
-pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty};
+pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty, mark_selected_dirty};
 pub(crate) use register::observed;
 
 /// What a keyed derivation's key function sees of an admitted or archived event.

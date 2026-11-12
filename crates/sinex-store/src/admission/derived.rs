@@ -572,14 +572,35 @@ pub(crate) async fn mark_archived_dirty(
              UNION
              SELECT edge.child FROM descendants d CROSS JOIN LATERAL core.event_children_of(d.id) edge)
            SELECT d.id AS "id!" FROM descendants d
-           WHERE NOT (d.id = ANY($1))
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = d.id)"#,
+           LEFT JOIN LATERAL (
+             SELECT event_id FROM audit.archived WHERE event_id = d.id OFFSET 0
+           ) archived ON true
+           WHERE NOT (d.id = ANY($1)) AND archived.event_id IS NULL"#,
         ids,
     ).fetch_all(&mut *conn).await?;
     let all: Vec<Uuid> = ids.iter().chain(&descendants).copied().collect();
+    let marked = mark_selected_dirty(conn, &all, seq, keys, recomputing).await?;
+    super::archive::archive_at(conn, &descendants, seq, reason, None, operation).await?;
+    remove_live(conn, &descendants).await?;
+    Ok(marked)
+}
+
+/// Mark exactly the chain already selected and validated by the caller.
+pub(crate) async fn mark_selected_dirty(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+    seq: i64,
+    keys: &dyn DirtyKeys,
+    recomputing: Option<&Batch>,
+) -> Result<usize> {
     let rows = sqlx::query!(
-        "SELECT event_type, ts_orig, payload FROM core.events WHERE id = ANY($1)",
-        &all,
+        "SELECT e.event_type, e.ts_orig, e.payload
+         FROM (SELECT DISTINCT unnest($1::uuid[]) id) selected
+         CROSS JOIN LATERAL (
+           SELECT event_type, ts_orig, payload FROM core.events
+           WHERE id = selected.id OFFSET 0
+         ) e",
+        ids,
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -596,7 +617,7 @@ pub(crate) async fn mark_archived_dirty(
     // output's fields. Its existing ownership also makes it dirty.
     let owners = sqlx::query!(
         "SELECT DISTINCT derivation, key FROM derivation.outputs WHERE event_id = ANY($1)",
-        &all,
+        ids,
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -630,8 +651,6 @@ pub(crate) async fn mark_archived_dirty(
         seq,
     )
     .await?;
-    super::archive::archive_at(conn, &descendants, seq, reason, None, operation).await?;
-    remove_live(conn, &descendants).await?;
     Ok(marked)
 }
 

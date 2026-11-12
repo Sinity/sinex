@@ -231,3 +231,116 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     );
     assert_state_order(&mut writer).await;
 }
+
+#[devkit::test]
+async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut writer = context(&db).await;
+    let parent = source_reading("history-parent", 1, "017f0000-0000-7000-8000-");
+    admit(&mut writer, &batch(vec![parent.clone()])).await;
+    let mut history: Vec<_> = (1..=8192)
+        .map(|n| {
+            let mut e = source_reading("history", n, "017f0001-0000-7000-8000-");
+            e.origin = Origin::Derived {
+                parents: vec![parent.id],
+            };
+            e
+        })
+        .collect();
+    let history_ids: Vec<_> = history.iter().map(|e| e.id.0).collect();
+    admit(&mut writer, &batch(std::mem::take(&mut history))).await;
+    let seq = position(&mut writer).await.unwrap();
+    archive_at(
+        &mut writer,
+        &history_ids,
+        seq,
+        ArchiveReason::Archive,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    remove_live(&mut writer, &history_ids).await.unwrap();
+    let root = source_reading("selected-source", 1, "01800000-0000-7000-8000-");
+    admit(&mut writer, &batch(vec![root.clone()])).await;
+    let child = derived("selected-child", 1, &[&root]);
+    let child_id = child.id.0;
+    admit(&mut writer, &batch(vec![child])).await;
+    sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let op = begin(
+        &mut writer,
+        Act::Archive,
+        "agent:test",
+        Scope::Source {
+            source: "selected-source".into(),
+            after: None,
+            before: None,
+        },
+    )
+    .await
+    .unwrap();
+    let mut tx = writer.begin().await.unwrap();
+    let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid IN ('audit.archived'::regclass,'core.event_children'::regclass)";
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let Step::Moved { counts, .. } = step(
+        &mut tx,
+        &op,
+        Progress::default(),
+        Roots::Source {
+            operation: op.id,
+            ids: vec![root.id.0],
+            complete: true,
+        },
+        &NoDerivations,
+    )
+    .await
+    .unwrap() else {
+        panic!("archive refused")
+    };
+    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        after - before <= 16,
+        "selected chain visited {} archive/edge tuples",
+        after - before
+    );
+    assert_eq!(counts.archived.values().sum::<u64>(), 2);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT events FROM core.source_counts WHERE source='selected-child'"
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap(),
+        0
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM audit.archived WHERE event_id=$1)"
+        )
+        .bind(child_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap()
+    );
+    // The old final anti-join reads unrelated archive history when recursive
+    // cardinality estimates select a hash plan, as on compressed deployments.
+    sqlx::query("SET LOCAL enable_nestloop=off")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    sqlx::query("SELECT d.id FROM unnest($1::uuid[]) d(id) WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)")
+        .bind(vec![root.id.0,child_id]).fetch_all(&mut *tx).await.unwrap();
+    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        after - before >= 8192,
+        "old anti-join control visited {} tuples",
+        after - before
+    );
+    tx.commit().await.unwrap();
+    assert_state_order(&mut writer).await;
+}
