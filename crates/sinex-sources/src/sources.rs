@@ -202,6 +202,7 @@ pub fn formats() -> &'static [&'static InputFormat] {
         &journald::FORMAT,
         &file_watch::FORMAT,
         &activitywatch::FORMAT,
+        &journald::EXPORT_FORMAT,
         &repository::FORMAT,
         &chromium::FORMAT,
         &takeout_chrome::FORMAT,
