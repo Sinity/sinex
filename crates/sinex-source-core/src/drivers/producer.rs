@@ -708,17 +708,19 @@ impl Producer {
     /// Transfer the encoded frame custody, then submit its logical envelope.
     async fn deliver(&mut self, frame: Ingress, shared: &Store) -> Result<Acknowledgment, Error> {
         let root = self.frame_root(shared).to_owned();
-        sinex_transport::producer::transfer_frame(
-            &self.client,
-            &self.subjects,
-            &self.name,
-            &mut self.acks,
-            &root,
-            &frame,
-            ACK_WAIT,
-        )
-        .await
-        .map_err(submit_error)?;
+        if self.upload.is_some() {
+            sinex_transport::producer::transfer_frame(
+                &self.client,
+                &self.subjects,
+                &self.name,
+                &mut self.acks,
+                &root,
+                &frame,
+                ACK_WAIT,
+            )
+            .await
+            .map_err(submit_error)?;
+        }
         self.send(frame).await
     }
 

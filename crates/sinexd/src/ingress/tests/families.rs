@@ -211,7 +211,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         .refusal()
         .is_some()
     );
-    let request = FetchMaterial { material: a };
+    let request = FetchMaterial::new(a);
     let reply = rpc(
         &h.client,
         h.subjects.fetch_material("reader"),
@@ -259,9 +259,7 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
     let reply = rpc(
         &h.client,
         h.subjects.fetch_material("host-a"),
-        serde_json::to_vec(&FetchMaterial { material: id })
-            .unwrap()
-            .into(),
+        serde_json::to_vec(&FetchMaterial::new(id)).unwrap().into(),
     )
     .await
     .unwrap();

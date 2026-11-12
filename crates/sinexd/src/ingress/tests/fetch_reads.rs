@@ -25,9 +25,11 @@ fn event_refusal(reply: FetchEventReply) -> FetchRefusal {
     }
 }
 
-fn fetched_material(reply: FetchMaterialReply) -> (MaterialFrame, Vec<Vec<u8>>) {
+fn fetched_material(reply: FetchMaterialReply) -> (MaterialFrame, Vec<u8>) {
     match reply {
-        FetchMaterialReply::Material { material, extents } => (*material, extents),
+        FetchMaterialReply::Material {
+            material, bytes, ..
+        } => (*material, bytes),
         other => panic!("not a material: {other:?}"),
     }
 }
@@ -146,14 +148,14 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     let message = rpc(
         &h.client,
         h.subjects.fetch_material("replica"),
-        serde_json::to_vec(&FetchMaterial { material }).unwrap(),
+        serde_json::to_vec(&FetchMaterial::new(material)).unwrap(),
     )
     .await
     .unwrap();
     let reply: FetchMaterialReply = serde_json::from_slice(&message.payload).unwrap();
-    let (fetched, extents) = fetched_material(reply);
+    let (fetched, bytes) = fetched_material(reply);
     assert_eq!(fetched.id, material);
-    assert!(!extents.is_empty());
+    assert_eq!(bytes, format!("{command}\n").as_bytes());
 }
 
 #[devkit::test]
@@ -229,14 +231,14 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
         &h.client,
         h.subjects.fetch_material("replica"),
         "replica",
-        &FetchMaterial { material },
+        &FetchMaterial::new(material),
         Duration::from_secs(20),
     )
     .await
     .unwrap();
-    let (fetched, extents) = fetched_material(result);
+    let (fetched, bytes) = fetched_material(result);
     assert_eq!(fetched.manifest.detail("description"), &json!(description));
-    assert!(!extents.is_empty());
+    assert_eq!(bytes, b"retained source\n");
 }
 #[devkit::test]
 async fn accessible_empty_material_acknowledges_a_real_extent(db: devkit::pg::TestDatabase) {
@@ -415,23 +417,14 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
                 &h.client,
                 h.subjects.fetch_material("replica"),
                 "replica",
-                &FetchMaterial { material },
+                &FetchMaterial::new(material),
                 Duration::from_secs(20),
             )
             .await
         }
     };
     let (_, original) = fetched_material(fetch(material).await.unwrap());
-    let extents = original
-        .iter()
-        .map(|bytes| hashed_blobs::Extent::decode(bytes).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        hashed_blobs::Reader::new(&h.store_dir)
-            .read(&extents, None)
-            .unwrap(),
-        b"synthetic exact raw bytes\n"
-    );
+    assert_eq!(original, b"synthetic exact raw bytes\n");
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let source = sqlx::query_scalar!("SELECT source FROM core.events WHERE id=$1", event.0)
         .fetch_one(&mut conn)
@@ -537,4 +530,101 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     .unwrap();
     let refused = material_refusal(fetch(material).await.unwrap());
     assert_eq!(refused.kind, FetchRefusalKind::Locked);
+}
+
+#[devkit::test]
+async fn fetch_material_returns_bytes_and_ranges_and_pages_by_bytes(db: devkit::pg::TestDatabase) {
+    let grant = || crate::ingress::fetch::Grants {
+        indexed_catalog: None,
+        public_context: false,
+        write: None,
+        kind_prefixes: vec!["command".into()],
+        classes: vec![sinex_model::Class::Open, sinex_model::Class::Guarded],
+    };
+    let h = Harness::start_with_grants(
+        db,
+        std::collections::BTreeMap::from([("kitty".into(), grant()), ("replica".into(), grant())]),
+    )
+    .await;
+    let original = b"0123456789abcdef";
+    let (material, frame) = h.material_frame("byte-pages", original);
+    assert_eq!(h.send("kitty", &frame).await.refusal(), None);
+    let ack = h
+        .send(
+            "kitty",
+            &Ingress::Events {
+                source: Some(test_source("kitty")),
+                coverage: None,
+                frame: "byte-page-event".into(),
+                events: vec![imported(material, 0, "bytes")],
+                failures: vec![],
+            },
+        )
+        .await;
+    assert_eq!(ack.refusal(), None);
+    let mut request = FetchMaterial {
+        material,
+        offset: 3,
+        end: Some(14),
+        byte_budget: 4,
+    };
+    let mut collected = Vec::new();
+    for (offset, expected, next) in [
+        (3, &original[3..7], Some(7)),
+        (7, &original[7..11], Some(11)),
+        (11, &original[11..14], None),
+    ] {
+        let reply: FetchMaterialReply = sinex_transport::replies::request_json(
+            &h.client,
+            h.subjects.fetch_material("replica"),
+            "replica",
+            &request,
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        let FetchMaterialReply::Material {
+            material: metadata,
+            offset: actual,
+            bytes,
+            next_offset,
+        } = reply
+        else {
+            panic!("material page refused: {reply:?}")
+        };
+        assert_eq!(metadata.id, material);
+        assert_eq!(metadata.length, original.len() as u64);
+        assert_eq!(actual, offset);
+        assert_eq!(bytes, expected);
+        assert_eq!(next_offset, next);
+        collected.extend(bytes);
+        if let Some(next) = next_offset {
+            request.offset = next;
+        }
+    }
+    assert_eq!(collected, original[3..14]);
+    request.offset = 14;
+    let reply: FetchMaterialReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_material("replica"),
+        "replica",
+        &request,
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(reply, FetchMaterialReply::Material { bytes, next_offset: None, .. } if bytes.is_empty())
+    );
+    request.byte_budget = 0;
+    let reply: FetchMaterialReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_material("replica"),
+        "replica",
+        &request,
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    assert_eq!(material_refusal(reply).kind, FetchRefusalKind::Invalid);
 }

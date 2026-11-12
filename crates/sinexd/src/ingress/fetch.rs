@@ -407,15 +407,32 @@ impl Requests {
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            let descriptors = sinex_store::producer_reads::descriptors(&mut conn, &material.blob)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
             if self.blobs.is_sealed(&material.blob).map_err(unavailable)? {
                 return Err(Refusal {
                     kind: FetchRefusalKind::Locked,
                     reason: "sealed material requires an operator unlock".into(),
                 });
+            }
+            let end = request.end.unwrap_or(material.length);
+            if request.offset > end || end > material.length || request.byte_budget == 0 {
+                return Err(Refusal {
+                    kind: FetchRefusalKind::Invalid,
+                    reason: "material range must be within its bytes and the page budget positive"
+                        .into(),
+                });
+            }
+            let length = (end - request.offset).min(request.byte_budget);
+            let blobs = self.blobs.clone();
+            let blob = material.blob.clone();
+            let offset = request.offset;
+            let bytes =
+                tokio::task::spawn_blocking(move || blobs.read_range(&blob, offset, length))
+                    .await
+                    .map_err(unavailable)?
+                    .map_err(unavailable)?;
+            let through = offset + bytes.len() as u64;
+            if through != offset + length {
+                return Err(unavailable("material range is incomplete"));
             }
             Ok(FetchMaterialReply::Material {
                 material: Box::new(MaterialFrame {
@@ -431,7 +448,9 @@ impl Requests {
                     previous_part: material.previous_part,
                     manifest: material.manifest,
                 }),
-                extents: descriptors,
+                offset,
+                bytes,
+                next_offset: (through < end).then_some(through),
             })
         }
         .await;

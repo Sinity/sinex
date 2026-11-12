@@ -543,7 +543,8 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
         &ProducerHello::default(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .upload_bytes(Store::open(&store.0).unwrap());
     let path = dir.path().join("000000000000.ndjson");
     let bytes = b"synthetic spool range\n";
     std::fs::write(&path, bytes).unwrap();
@@ -639,7 +640,8 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
         &ProducerHello::default(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .upload_bytes(Store::open(&store.0).unwrap());
     producer.max_message = 1;
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
@@ -762,7 +764,8 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
             &ProducerHello::default(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .upload_bytes(Store::open(&store.0).unwrap());
         if large {
             producer.max_message = 1;
         }
@@ -788,7 +791,8 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
             &ProducerHello::default(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .upload_bytes(Store::open(&store.0).unwrap());
         if large {
             producer.max_message = 1;
         }
@@ -1269,4 +1273,68 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
         )
         .is_err()
     );
+}
+
+#[devkit::test(multi_thread)]
+async fn local_material_is_one_frame() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin(&nats, &subjects, "local").await;
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(root.path()).unwrap();
+    let snapshots = Snapshots::new().unwrap();
+    let bytes = synthetic_bytes(3 * CHUNK_BYTES);
+    let source = root.path().join("input");
+    std::fs::write(&source, &bytes).unwrap();
+    let blob = snapshots.put_file(&source).unwrap();
+    snapshots
+        .handoff(root.path(), "local", "one-material", &blob)
+        .unwrap();
+    let frame = Ingress::Material {
+        frame: "one-material".into(),
+        material: Box::new(MaterialFrame {
+            source: sinex_model::SourceRef {
+                name: "synthetic.source".into(),
+                version: 1,
+            },
+            id: sinex_model::MaterialId::new(),
+            input: sinex_model::InputRef {
+                kind: "file".into(),
+                locator: "/synthetic/input".into(),
+                host: "fixture".into(),
+            },
+            blob: blob.clone(),
+            length: bytes.len() as u64,
+            chunks: vec![],
+            parser: "p".into(),
+            parser_version: 1,
+            part_index: 0,
+            previous_part: None,
+            manifest: sinex_model::Manifest::from_json(json!({})),
+        }),
+    };
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects,
+        "local",
+        &sinex_protocol::ProducerHello::default(),
+    )
+    .await
+    .unwrap();
+    let ack = producer.deliver(frame.clone(), &store).await.unwrap();
+    assert_eq!(ack.refusal(), None);
+    assert_eq!(*received.lock().unwrap(), vec![frame]);
+    let mut actual = Vec::new();
+    frame_bytes::reader(
+        root.path(),
+        "local",
+        "one-material",
+        &blob,
+        bytes.len() as u64,
+    )
+    .unwrap()
+    .read_to_end(&mut actual)
+    .unwrap();
+    assert_eq!(actual, bytes);
 }

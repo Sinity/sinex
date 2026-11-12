@@ -194,8 +194,20 @@ pub fn link_encoded(
     descriptor: &EncodedBlob,
     source: &Path,
 ) -> Result<(), Error> {
-    validate(descriptor, &descriptor.hash.to_string(), None)?;
     let source_file = std::fs::File::open(source).map_err(Error::Storage)?;
+    link_file(root, producer, frame, descriptor, source, source_file)
+}
+/// Hand off a pinned immutable spool inode. If its name retired meanwhile,
+/// the pinned file still supplies the encoding without reopening that name.
+pub fn link_file(
+    root: &Path,
+    producer: &str,
+    frame: &str,
+    descriptor: &EncodedBlob,
+    source: &Path,
+    source_file: std::fs::File,
+) -> Result<(), Error> {
+    validate(descriptor, &descriptor.hash.to_string(), None)?;
     let checked = Prepared::from_encoded(
         source_file.try_clone().map_err(Error::Storage)?,
         descriptor.clone(),
@@ -217,8 +229,21 @@ pub fn link_encoded(
     permissions::share_completed_file(&source_file, group)?;
     source_file.sync_all().map_err(Error::Storage)?;
     match std::fs::hard_link(source, &target) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
+        Ok(()) => {
+            let source = source_file.metadata().map_err(Error::Storage)?;
+            let linked = std::fs::metadata(&target).map_err(Error::Storage)?;
+            if source.dev() != linked.dev() || source.ino() != linked.ino() {
+                return Err(Error::Mismatch(
+                    "spool path changed its pinned inode".into(),
+                ));
+            }
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::CrossesDevices | std::io::ErrorKind::NotFound
+            ) =>
+        {
             return write_prepared(root, producer, frame, checked);
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {

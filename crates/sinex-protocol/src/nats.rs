@@ -624,13 +624,31 @@ pub enum FetchEventReply {
 #[serde(deny_unknown_fields)]
 pub struct FetchMaterial {
     pub material: MaterialId,
+    /// First decoded byte, inclusive.
+    pub offset: u64,
+    /// Last decoded byte, exclusive; omitted means the material's end.
+    pub end: Option<u64>,
+    /// Maximum decoded bytes in this page. Continue at `next_offset`.
+    pub byte_budget: u64,
+}
+impl FetchMaterial {
+    pub fn new(material: MaterialId) -> Self {
+        Self {
+            material,
+            offset: 0,
+            end: None,
+            byte_budget: 1024 * 1024,
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "reply", rename_all = "snake_case")]
 pub enum FetchMaterialReply {
     Material {
         material: Box<MaterialFrame>,
-        extents: Vec<Vec<u8>>,
+        offset: u64,
+        bytes: Vec<u8>,
+        next_offset: Option<u64>,
     },
     Refused(FetchRefusal),
 }
@@ -641,7 +659,7 @@ pub struct ReceiptHint {
     pub frame_hash: String,
 }
 
-pub const PRODUCER_VERSION: u32 = 3;
+pub const PRODUCER_VERSION: u32 = 4;
 
 /// Checked before any material or events are sent. Event declarations can
 /// be registered here before checking the names the producer will emit.

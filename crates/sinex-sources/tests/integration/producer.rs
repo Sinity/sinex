@@ -198,7 +198,8 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
         &Default::default(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .upload_bytes(Store::open(&root.path().join("store")).unwrap());
     let first_started = Timestamp::now().unix_ns();
     live::drain(&mut producer, &store, &positions, bindings)
         .await
