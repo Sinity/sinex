@@ -164,14 +164,15 @@ async fn run_inner(
         return Err(Error::Invalid("page size is out of range".into()));
     }
     let mut ctx = ctx.clone();
-    if ctx.catalog.is_none() {
+    let current_catalog_loaded = ctx.catalog.is_none();
+    if current_catalog_loaded {
         ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
             sinex_schema::kinds::all(&mut tx).await?.into_values(),
         ));
     }
     let grants = current_grants(&mut tx).await?;
-    let mut question_form = continuation::query_identity(text, &ctx)?;
-    let mut question_id = continuation::identity("query", &question_form, &grants)?;
+    let question_form = continuation::query_identity(text, &ctx)?;
+    let question_id = continuation::identity("query", &question_form, &grants)?;
     let seal = continuation::seal_key(&mut tx).await?;
     let pinned = if let Some(raw) = page.cursor.as_deref() {
         let authenticated = continuation::authenticate(&seal, raw)?;
@@ -199,13 +200,19 @@ async fn run_inner(
                     "query declaration snapshot is unavailable".into(),
                 ));
             }
-            declarations
+            Some(declarations)
         }
-        None => sinex_schema::kinds::all(&mut tx).await?,
+        // The question identity already used this transaction's current
+        // declarations. Only a supplied catalog or historical cursor needs
+        // another snapshot here.
+        None if current_catalog_loaded => None,
+        None => Some(sinex_schema::kinds::all(&mut tx).await?),
     };
-    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
-        declarations.into_values(),
-    ));
+    if let Some(declarations) = declarations {
+        ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
+            declarations.into_values(),
+        ));
+    }
     let programmatic = query.and_then(|q| {
         let parsed = sinex_model::query::bind(text, &ctx).ok();
         (parsed.as_ref() != Some(q)).then(|| format!("{q:?}"))
