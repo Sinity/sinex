@@ -158,6 +158,20 @@ pub async fn begin(
     })
 }
 
+/// The latest unfinished operation over the same actor, act and exact scope.
+pub async fn unfinished(
+    conn: &mut PgConnection,
+    act: Act,
+    actor: &str,
+    scope: &Scope,
+) -> Result<Option<OperationId>> {
+    let value = serde_json::to_value(scope).expect("scopes serialize");
+    Ok(sqlx::query_scalar!(
+        "SELECT id FROM core.operations WHERE actor=$1 AND kind=$2 AND scope=$3 AND result IS DISTINCT FROM 'ok' ORDER BY at DESC LIMIT 1",
+        actor, act.as_db(), value
+    ).fetch_optional(conn).await?.map(OperationId))
+}
+
 /// A stored operation and its saved position, to resume it. Only one that
 /// has not ended `ok` resumes.
 pub async fn stored(conn: &mut PgConnection, id: OperationId) -> Result<(Operation, Progress)> {
@@ -227,13 +241,64 @@ impl Phase {
     }
 }
 
+/// The roots selected for one writer transaction. Source IDs are streamed
+/// once on the caller's read connection; their current state is checked here.
+#[derive(Debug)]
+pub enum Roots {
+    Query(i64),
+    Source {
+        operation: OperationId,
+        ids: Vec<Uuid>,
+        complete: bool,
+    },
+}
+
+/// Enumerate immutable source identities once, including currently archived
+/// readings. A restore before their writer batch must still be observed.
+pub fn source_roots<'a>(
+    conn: &'a mut PgConnection,
+    op: &'a Operation,
+    after: Option<Uuid>,
+) -> Result<futures::stream::BoxStream<'a, Result<Uuid>>> {
+    use futures::TryStreamExt;
+    let Scope::Source {
+        source,
+        after: from,
+        before,
+    } = &op.scope
+    else {
+        return Err(Error::Invalid("source roots require a source scope".into()));
+    };
+    let lower = after.unwrap_or(Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_0000));
+    let bounded = from.is_some() || before.is_some();
+    Ok(Box::pin(
+        sqlx::query_scalar!(
+            r#"SELECT e.id FROM core.events e
+           WHERE e.source=$1 AND e.id >= $2 AND pg_catalog.uuid_cmp(e.id,$2)>0
+             AND e.commit_seq <= $3
+             AND (NOT $4 OR e.ts_orig IS NOT NULL)
+             AND ($5::timestamptz IS NULL OR e.ts_orig >= $5)
+             AND ($6::timestamptz IS NULL OR e.ts_orig < $6)
+           ORDER BY e.id"#,
+            source,
+            lower,
+            op.start_seq,
+            bounded,
+            from.map(|t| t.0),
+            before.map(|t| t.0)
+        )
+        .fetch(conn)
+        .map_err(Error::from),
+    ))
+}
+
 /// Run one batch of `op` inside the caller's transaction: at most `roots`
 /// roots and their chains. On a refusal the caller rolls back.
 pub async fn step(
     conn: &mut PgConnection,
     op: &Operation,
     mut progress: Progress,
-    roots: i64,
+    roots: Roots,
     keys: &dyn DirtyKeys,
 ) -> Result<Step> {
     if progress.batches == 0 && progress.phase == 0 && progress.after.is_none() {
@@ -254,7 +319,60 @@ pub async fn step(
             done = true;
             break;
         };
-        let found = select::roots(conn, op, phase, progress.after, roots).await?;
+        if let Roots::Source {
+            operation,
+            ids,
+            complete,
+        } = &roots
+        {
+            if *operation != op.id {
+                return Err(Error::Invalid(
+                    "source roots belong to another operation".into(),
+                ));
+            }
+            if !matches!(op.scope, Scope::Source { .. }) || op.act == Act::Undo {
+                return Err(Error::Invalid(
+                    "prepared source roots require one source phase".into(),
+                ));
+            }
+            if ids.windows(2).any(|pair| pair[0] >= pair[1])
+                || ids
+                    .first()
+                    .is_some_and(|id| progress.after.is_some_and(|after| *id <= after))
+            {
+                return Err(Error::Invalid(
+                    "source roots must follow saved progress in ID order".into(),
+                ));
+            }
+            let found = select::source_batch(conn, op, phase, ids).await?;
+            if !found.is_empty() {
+                let planned = plan(conn, phase, &found, &HashSet::new()).await?;
+                if !planned.refusals.is_empty() {
+                    return Ok(Step::Refused(planned.refusals));
+                }
+                let moved = apply(conn, op, phase, &found, &planned, seq, keys).await?;
+                counts.add(&moved.counts);
+                remove.extend(moved.remove);
+            }
+            if let Some(last) = ids.last() {
+                progress.after = Some(*last);
+            }
+            if *complete {
+                let moved = materials::finish_phase(conn, op, phase, seq).await?;
+                counts.materials += moved.materials;
+                counts.bytes_removed += moved.remove.len() as u64;
+                counts.bytes_kept.extend(moved.kept);
+                remove.extend(moved.remove);
+                progress.phase += 1;
+                progress.after = None;
+                done = true;
+            }
+            break;
+        }
+        let Roots::Query(limit) = &roots else {
+            unreachable!()
+        };
+        let found = select::roots(conn, op, phase, progress.after, *limit).await?;
         if found.is_empty() {
             let moved = materials::finish_phase(conn, op, phase, seq).await?;
             counts.materials += moved.materials;
@@ -410,7 +528,7 @@ pub async fn run_on(
     let mut total = Counts::default();
     loop {
         let mut tx = conn.begin().await?;
-        match step(&mut tx, op, progress, roots, keys).await? {
+        match step(&mut tx, op, progress, Roots::Query(roots), keys).await? {
             Step::Moved {
                 progress: saved,
                 counts,

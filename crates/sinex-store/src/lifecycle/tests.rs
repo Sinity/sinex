@@ -1249,9 +1249,10 @@ async fn dirty_keys_wait_for_operation(db: devkit::pg::TestDatabase) {
     .await
     .unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let Step::Moved { progress, done, .. } = step(&mut tx, &op, Progress::default(), 1, &OneKey)
-        .await
-        .unwrap()
+    let Step::Moved { progress, done, .. } =
+        step(&mut tx, &op, Progress::default(), Roots::Query(1), &OneKey)
+            .await
+            .unwrap()
     else {
         panic!("refused");
     };
@@ -1769,3 +1770,5 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
         .unwrap();
     assert_eq!(remaining, 0, "the final owner removal reclaims every chunk");
 }
+
+mod source;

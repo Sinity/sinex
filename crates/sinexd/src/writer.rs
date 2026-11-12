@@ -17,6 +17,7 @@ use sinex_store::replay::{self, Diff};
 use sinex_store::{AdmissionContext, Blobs, DirtyKeys, Outcome};
 use sqlx::{Connection, PgConnection};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,7 +89,7 @@ enum WriterJob {
     Lifecycle {
         operation: Box<lifecycle::Operation>,
         progress: Progress,
-        roots: i64,
+        roots: lifecycle::Roots,
     },
     LifecycleEnd {
         operation: OperationId,
@@ -158,10 +159,16 @@ pub(crate) enum StageWrite {
     Unparsed(Box<sinex_store::stages::Unparsed>),
 }
 
+pub(crate) struct LifecycleStep {
+    pub step: Step,
+    /// Time processing on the writer, excluding queue and source reads.
+    pub held: Duration,
+}
+
 enum Done {
     Admitted(Outcome),
     Replayed(Vec<Outcome>, Diff),
-    Lifecycle(Step),
+    Lifecycle(LifecycleStep),
     Backup(
         sinex_model::backup::Hold,
         Option<Box<sinex_store::backup::Snapshot>>,
@@ -408,8 +415,8 @@ impl WriterHandle {
         &self,
         operation: &lifecycle::Operation,
         progress: Progress,
-        roots: i64,
-    ) -> Result<Step, WriteError> {
+        roots: lifecycle::Roots,
+    ) -> Result<LifecycleStep, WriteError> {
         match self
             .send(
                 Priority::Derived,
@@ -1210,10 +1217,11 @@ async fn lifecycle_step(
     connection: &mut AdmissionContext,
     operation: &lifecycle::Operation,
     progress: Progress,
-    roots: i64,
+    roots: lifecycle::Roots,
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
-) -> Result<Step, WriteError> {
+) -> Result<LifecycleStep, WriteError> {
+    let started = Instant::now();
     let mut tx = connection.begin().await?;
     let since = sinex_store::query::current_seq(&mut tx).await?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
@@ -1240,7 +1248,10 @@ async fn lifecycle_step(
             }
         }
     }
-    Ok(step)
+    Ok(LifecycleStep {
+        step,
+        held: started.elapsed(),
+    })
 }
 
 async fn lifecycle_end(

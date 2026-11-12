@@ -164,6 +164,35 @@ pub(super) async fn roots(
     Ok(rows)
 }
 
+/// Revalidate only the source identities already read outside the writer.
+pub(super) async fn source_batch(
+    conn: &mut PgConnection,
+    op: &Operation,
+    phase: Phase,
+    ids: &[Uuid],
+) -> Result<Vec<Uuid>> {
+    let Scope::Source { source, .. } = &op.scope else {
+        return Err(Error::Invalid("source roots require a source scope".into()));
+    };
+    // The same-operation stream has already checked immutable source/time/
+    // admission headers. Lifecycle membership can change before this batch.
+    let live = phase.takes_live();
+    let top = phase == Phase::Restore;
+    Ok(sqlx::query_scalar!(
+        r#"SELECT selected.id AS "id!" FROM unnest($1::uuid[]) selected(id)
+           WHERE CASE WHEN $3 THEN
+             EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id=selected.id)
+             OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id=selected.id AND l.source=$2)
+           ELSE EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=selected.id)
+             AND (NOT $4 OR NOT EXISTS (
+               SELECT 1 FROM core.event_parents_of(selected.id) c JOIN audit.archived p ON p.event_id=c.parent
+               JOIN audit.archived s ON s.event_id=selected.id
+               WHERE p.operation_id IS NOT DISTINCT FROM s.operation_id)) END
+           ORDER BY selected.id"#,
+        ids, source, live, top
+    ).fetch_all(conn).await?)
+}
+
 /// The materials an operation read readings into: a replay's selection.
 async fn admitted_in(conn: &mut PgConnection, operation: Uuid) -> Result<Vec<Uuid>> {
     let scope: Option<serde_json::Value> =
