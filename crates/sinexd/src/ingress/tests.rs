@@ -199,6 +199,13 @@ impl Harness {
             .await
             .unwrap();
         let mut catalog_conn = PgConnection::connect(&url).await.unwrap();
+        crate::publisher::ensure_stream(
+            &mut catalog_conn,
+            &crate::publisher::context(client.clone()),
+            &subjects,
+        )
+        .await
+        .unwrap();
         // The catalog and every grant's declarations in one registration.
         let mut declarations = crate::catalog::source_declarations();
         for write in grants.values().filter_map(|grant| grant.write.as_ref()) {
@@ -1056,7 +1063,7 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         .await;
     let js = jetstream::new(h.client.clone());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    crate::publisher::ensure_stream(&js, &h.subjects)
+    crate::publisher::ensure_stream(&mut conn, &js, &h.subjects)
         .await
         .unwrap();
     crate::publisher::publish_pending(&mut conn, &js, &h.subjects)

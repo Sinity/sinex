@@ -31,50 +31,61 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
         .build(client)
 }
 
-const CONTRACT: &str = "3";
+const CONTRACT: &str = "4";
 const CONTRACT_KEY: &str = "sinex_confirmed_contract";
+const ORIGIN_KEY: &str = "sinex_history_origin";
 
-async fn confirmed_stream(js: &jetstream::Context, subjects: &Subjects) -> Result<stream::Stream> {
-    let mut config = stream::Config {
-        name: subjects.confirmed_stream(),
-        subjects: vec![subjects.confirmed_all()],
-        storage: stream::StorageType::File,
-        retention: stream::RetentionPolicy::Limits,
-        duplicate_window: Duration::from_secs(120),
-        ..Default::default()
-    };
-    config.metadata.insert(CONTRACT_KEY.into(), CONTRACT.into());
-    let found = js
-        .get_or_create_stream(config.clone())
-        .await
-        .map_err(|error| Error::from(error).within("confirmed stream"))?;
-    if found
-        .cached_info()
-        .config
-        .metadata
-        .get(CONTRACT_KEY)
-        .map(String::as_str)
-        != Some(CONTRACT)
-    {
-        if found.cached_info().state.last_sequence > 0 {
-            return Err(Error::internal(
-                "confirmed_stream_contract_mismatch: existing stream requires an explicit reference-only version-3 conversion or parallel-stream decision",
-            ));
-        }
-        js.update_stream(config)
-            .await
-            .map_err(|error| Error::from(error).within("confirmed stream contract"))?;
-        return js
-            .get_stream(subjects.confirmed_stream())
-            .await
-            .map_err(Error::from);
+pub(crate) fn history_origin(stream: &stream::Stream) -> Result<commit_log::HistoryOrigin> {
+    let metadata = &stream.cached_info().config.metadata;
+    if metadata.get(CONTRACT_KEY).map(String::as_str) != Some(CONTRACT) {
+        return Err(Error::internal(
+            "confirmed_stream_contract_mismatch: preserve this stream and select a fresh namespace",
+        ));
     }
-    Ok(found)
+    let encoded = metadata
+        .get(ORIGIN_KEY)
+        .ok_or_else(|| Error::internal("confirmed stream has no history origin"))?;
+    serde_json::from_str(encoded).map_err(Error::from)
 }
-
-/// Create a fresh reference-only version-3 stream, or verify the existing stream's contract.
-pub(crate) async fn ensure_stream(js: &jetstream::Context, subjects: &Subjects) -> Result<()> {
-    confirmed_stream(js, subjects).await.map(drop)
+async fn confirmed_stream(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<stream::Stream> {
+    match js.get_stream(subjects.confirmed_stream()).await {
+        Ok(found) => {
+            history_origin(&found)?.validate(conn).await?;
+            Ok(found)
+        }
+        Err(error) if matches!(error.kind(),jetstream::context::GetStreamErrorKind::JetStream(ref e) if e.error_code()==jetstream::errors::ErrorCode::STREAM_NOT_FOUND) =>
+        {
+            let origin = commit_log::HistoryOrigin::establish(conn).await?;
+            let mut config = stream::Config {
+                name: subjects.confirmed_stream(),
+                subjects: vec![subjects.confirmed_all()],
+                storage: stream::StorageType::File,
+                retention: stream::RetentionPolicy::Limits,
+                duplicate_window: Duration::from_secs(120),
+                ..Default::default()
+            };
+            config.metadata.insert(CONTRACT_KEY.into(), CONTRACT.into());
+            config
+                .metadata
+                .insert(ORIGIN_KEY.into(), serde_json::to_string(&origin)?);
+            let found = js.get_or_create_stream(config).await?;
+            history_origin(&found)?.validate(conn).await?;
+            Ok(found)
+        }
+        Err(error) => Err(Error::from(error).within("confirmed stream")),
+    }
+}
+/// Establish a fresh snapshot origin, or verify the existing incarnation.
+pub(crate) async fn ensure_stream(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    subjects: &Subjects,
+) -> Result<()> {
+    confirmed_stream(conn, js, subjects).await.map(drop)
 }
 
 pub(crate) fn stream_instance(stream: &stream::Stream) -> String {
@@ -134,7 +145,7 @@ pub(crate) async fn run(
     mut commits: watch::Receiver<u64>,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
-    ensure_stream(&js, &subjects).await?;
+    ensure_stream(&mut conn, &js, &subjects).await?;
     loop {
         if *stop.borrow() {
             return Ok(());
@@ -188,18 +199,27 @@ pub(crate) async fn publish_pending_measured(
     if sinex_schema::online::pending(conn, sinex_schema::online::Task::PublishedKey).await? {
         return Ok(Published::default());
     }
-    let stream = confirmed_stream(js, subjects).await?;
+    let stream = confirmed_stream(conn, js, subjects).await?;
+    let origin = history_origin(&stream)?;
     let instance = stream_instance(&stream);
     let consumer = consumer_for(&instance);
     let (saved, _) = commit_log::consumer_position(conn, &consumer).await?;
-    let position = align_with_stream(conn, &stream, &instance, &consumer, saved).await?;
+    let position =
+        align_with_stream(conn, &stream, &instance, &consumer, saved, origin.position).await?;
     let mut cursor = commit_log::ChangeCursor::after(position);
     let mut settled = position;
     let mut total = Published::default();
     total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
         let started = Instant::now();
-        let page = commit_log::changes_page(conn, cursor, PAGE, sinex_store::PAGE_BYTES).await?;
+        let page = commit_log::changes_page_after_origin(
+            conn,
+            cursor,
+            &origin,
+            PAGE,
+            sinex_store::PAGE_BYTES,
+        )
+        .await?;
         let read = started.elapsed();
         if let Some(gap) = page.gap {
             publish(
@@ -220,7 +240,7 @@ pub(crate) async fn publish_pending_measured(
             return Err(Error::internal(gap.reason));
         }
         if page.entries.is_empty() {
-            if position == 0 && !commit_log::consumer_exists(conn, &consumer).await? {
+            if !commit_log::consumer_exists(conn, &consumer).await? {
                 publish_chunk(
                     conn,
                     js,
@@ -228,7 +248,7 @@ pub(crate) async fn publish_pending_measured(
                     &instance,
                     &consumer,
                     &[],
-                    Some(0),
+                    Some(origin.position),
                     &mut total,
                 )
                 .await?;
@@ -334,6 +354,7 @@ async fn align_with_stream(
     instance: &str,
     consumer: &str,
     saved: i64,
+    origin: i64,
 ) -> Result<i64> {
     let last = stream.cached_info().state.last_sequence;
     let mut unlisted = Vec::new();
@@ -361,7 +382,7 @@ async fn align_with_stream(
         }
         seq -= 1;
     }
-    let held = marker.unwrap_or(0);
+    let held = marker.unwrap_or(origin).max(origin);
     let mut tx = conn.begin().await?;
     commit_log::record_published_in(&mut tx, instance, &unlisted).await?;
     if held < saved {
@@ -519,7 +540,7 @@ async fn erase_tombstoned(
     js: &jetstream::Context,
     subjects: &Subjects,
 ) -> Result<u64> {
-    let stream = confirmed_stream(js, subjects).await?;
+    let stream = confirmed_stream(conn, js, subjects).await?;
     erase_tombstoned_in(conn, js, subjects, &stream_instance(&stream)).await
 }
 
@@ -562,7 +583,7 @@ pub(crate) async fn publish_all(
     js: &jetstream::Context,
     subjects: &Subjects,
 ) -> Result<String> {
-    ensure_stream(js, subjects).await?;
+    ensure_stream(conn, js, subjects).await?;
     let started = Instant::now();
     let done = publish_pending(conn, js, subjects).await?;
     let wall = started.elapsed();

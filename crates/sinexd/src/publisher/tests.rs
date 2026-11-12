@@ -120,7 +120,13 @@ async fn publishes_only_references_in_commit_order(db: devkit::pg::TestDatabase)
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
 
@@ -204,7 +210,13 @@ async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit:
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let limit = js.client().server_info().max_payload as u64;
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
@@ -238,7 +250,13 @@ async fn a_page_published_twice_is_stored_once(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     admit(&mut conn, batch(vec![executed("1", "ls", 1, Class::Open)])).await;
@@ -264,7 +282,13 @@ async fn archive_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let event = executed("1", "ls", 1, Class::Open);
@@ -303,7 +327,13 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let secret = executed("1", "export TOKEN=hunter2", 1, Class::Open);
@@ -381,7 +411,13 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
         .await
         .unwrap();
     js.delete_stream(subjects.confirmed_stream()).await.unwrap();
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     publish_pending(&mut publisher_conn, &js, &subjects)
         .await
         .unwrap();
@@ -405,7 +441,13 @@ async fn archive_consumer_observes_archive_restore_archive_without_duplicate_eve
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let event = executed("lifecycle", "pwd", 1, Class::Open);
@@ -473,7 +515,13 @@ async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -507,7 +555,13 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -578,7 +632,13 @@ async fn unrecorded_published_references_are_recorded_at_start(db: devkit::pg::T
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let event = executed("1", "pwd", 1, Class::Open);
@@ -640,7 +700,13 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();

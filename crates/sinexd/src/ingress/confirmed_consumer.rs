@@ -19,11 +19,18 @@ impl Requests {
             let head=sinex_store::query::current_seq(&mut conn).await?;
             drop(conn);
             let stream_name=self.subjects.confirmed_stream();let name=self.subjects.consumer_name(&scope);
+            let js=jetstream::new(self.client.clone());
+            let stream=js.get_stream(&stream_name).await?;
+            let origin=crate::publisher::history_origin(&stream)?;
+            let mut conn=self.reads.acquire().await?;
+            origin.validate(&mut conn).await?;
+            drop(conn);
+            if origin.requires_projection && request.basis.as_ref().is_none_or(|basis|basis.position<origin.position) {
+                return Ok(ConfirmedConsumerReply::ProjectionRequired {origin:origin.position,position:head,scope,stream_instance:crate::publisher::stream_instance(&stream)});
+            }
             if request.status_only {return Ok(ConfirmedConsumerReply::Provisioned{position:head,stream:stream_name,stream_instance:None,consumer:name,scope});}
             if request.after>head {return Ok(ConfirmedConsumerReply::Gap{position:head,scope,reason:"requested position exceeds durable commit history".into()});}
             let _guard=self.consumer_admin.lock().await;
-            let js=jetstream::new(self.client.clone());crate::publisher::ensure_stream(&js,&self.subjects).await?;
-            let stream=js.get_stream(&stream_name).await?;
             let config=consumer::pull::Config {
                 durable_name:Some(name.clone()),filter_subjects:filters,ack_policy:consumer::AckPolicy::Explicit,
                 deliver_policy:consumer::DeliverPolicy::All,ack_wait:Duration::from_secs(60),max_deliver:-1,

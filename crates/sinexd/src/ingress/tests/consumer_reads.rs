@@ -72,7 +72,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     );
     let js = jetstream::new(h.client.clone());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    crate::publisher::ensure_stream(&js, &h.subjects)
+    crate::publisher::ensure_stream(&mut conn, &js, &h.subjects)
         .await
         .unwrap();
     crate::publisher::publish_pending(&mut conn, &js, &h.subjects)

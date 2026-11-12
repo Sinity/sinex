@@ -233,7 +233,13 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     let mut broker = Broker::start();
     let subjects = Subjects::new(format!("outage{}", uuid::Uuid::now_v7().simple()));
     let direct = context(async_nats::connect(broker.url.as_str()).await.unwrap());
-    ensure_stream(&direct, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &direct,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let publishing = context(
         async_nats::ConnectOptions::new()
             .retry_on_initial_connect()
@@ -386,7 +392,13 @@ async fn stream_lost_its_newest_messages(
 ) {
     let mut broker = Broker::start();
     let js = context(async_nats::connect(broker.url.as_str()).await.unwrap());
-    ensure_stream(&js, subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        subjects,
+    )
+    .await
+    .unwrap();
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
     let mut publisher = PgConnection::connect(&url).await.unwrap();

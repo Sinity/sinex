@@ -222,7 +222,6 @@ async fn authorize_raw(
 }
 async fn instance(client: &async_nats::Client, subjects: &Subjects) -> Result<String> {
     let js = crate::publisher::context(client.clone());
-    crate::publisher::ensure_stream(&js, subjects).await?;
     let stream = js.get_stream(subjects.confirmed_stream()).await?;
     Ok(crate::publisher::stream_instance(&stream))
 }

@@ -55,7 +55,13 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -84,7 +90,13 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     let previous = instance(&js, &subjects).await;
     // This broker and database are owned by the synthetic test.
     js.delete_stream(subjects.confirmed_stream()).await.unwrap();
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let current = instance(&js, &subjects).await;
     assert_ne!(previous, current);
     publish(
@@ -138,7 +150,13 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -241,11 +259,15 @@ async fn empty_database_is_ready_at_zero_and_nonempty_old_contract_is_refused(
         .await
         .unwrap();
     assert!(
-        ensure_stream(&js, &subjects)
-            .await
-            .unwrap_err()
-            .to_string()
-            .starts_with("confirmed_stream_contract_mismatch:")
+        ensure_stream(
+            &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+            &js,
+            &subjects
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .starts_with("confirmed_stream_contract_mismatch:")
     );
     assert_eq!(
         js.get_stream(subjects.confirmed_stream())
