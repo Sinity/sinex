@@ -1,34 +1,34 @@
--- Inclusive UUID bounds prune compressed row groups; ANY keeps exact membership.
--- Keep the empty-page head row and fetch every selected payload once.
-WITH page AS MATERIALIZED (
-  SELECT head.value AS head, c.commit_seq, c.event_id
-  FROM core.counters head
-           LEFT JOIN LATERAL (
-             SELECT p.commit_seq, p.event_id FROM (
-               SELECT q.commit_seq, q.event_id,
-                      (sum(q.size) OVER (ORDER BY q.commit_seq) - q.size)::bigint AS before
-               FROM (
-                 SELECT u.commit_seq, u.event_id, u.size FROM (
-                   (SELECT s.commit_seq, s.id AS event_id,
-                      coalesce(pg_column_size(s.payload), 0)::bigint AS size
-                    FROM core.events s
-                    WHERE s.commit_seq > $1 AND s.commit_seq <= head.value
-                    ORDER BY s.commit_seq LIMIT $2)
-                   UNION ALL
-                   (SELECT l.commit_seq, NULL::uuid, 0::bigint
-                    FROM core.commit_log l
-                    WHERE l.commit_seq > $1 AND l.commit_seq <= head.value
-                    ORDER BY l.commit_seq LIMIT $2)
-                 ) u ORDER BY u.commit_seq LIMIT $2
-               ) q
-             ) p WHERE p.before < $3::bigint
-           ) c ON true
-           WHERE head.name='commit_seq'
+-- A scalar head bounds every branch in this statement's snapshot. Compressed
+-- batches use native commit-position min/max before selected payload hydration.
+WITH head AS MATERIALIZED (
+  SELECT value FROM core.counters WHERE name='commit_seq'
+), event_keys AS MATERIALIZED (
+  SELECT e.commit_seq,e.id FROM core.events e
+  WHERE e.commit_seq > $1 AND e.commit_seq <= (SELECT value FROM head)
+    AND (SELECT value FROM head)>$1
+  ORDER BY e.commit_seq,e.id LIMIT $2
+), candidates AS MATERIALIZED (
+  (SELECT k.commit_seq,k.id AS event_id,e.size FROM event_keys k
+   CROSS JOIN LATERAL (SELECT coalesce(pg_column_size(e.payload),0)::bigint AS size
+      FROM core.events e WHERE e.id=k.id OFFSET 0)e)
+  UNION ALL
+  (SELECT l.commit_seq,NULL::uuid,0::bigint FROM core.commit_log l
+   WHERE l.commit_seq>$1 AND l.commit_seq <= (SELECT value FROM head)
+     AND (SELECT value FROM head)>$1
+   ORDER BY l.commit_seq LIMIT $2)
+), selected AS MATERIALIZED (
+  SELECT * FROM candidates ORDER BY commit_seq LIMIT $2
+), bounded AS (
+  SELECT s.*,sum(size) OVER(ORDER BY commit_seq)-size AS before FROM selected s
+), page AS MATERIALIZED (
+  SELECT head.value AS head,c.commit_seq,c.event_id FROM head
+  LEFT JOIN (SELECT commit_seq,event_id FROM bounded WHERE before<$3::bigint)c ON true
 ), payload AS MATERIALIZED (
-  SELECT payload_event.* FROM core.events payload_event
-  WHERE payload_event.id >= (SELECT event_id FROM page WHERE event_id IS NOT NULL ORDER BY event_id LIMIT 1)
-    AND payload_event.id <= (SELECT event_id FROM page WHERE event_id IS NOT NULL ORDER BY event_id DESC LIMIT 1)
-    AND payload_event.id = ANY(ARRAY(SELECT event_id FROM page))
+  SELECT e.* FROM page CROSS JOIN LATERAL (
+    SELECT payload_event.* FROM core.events payload_event
+    WHERE payload_event.id >= page.event_id AND payload_event.id <= page.event_id
+      AND payload_event.id=ANY(ARRAY[page.event_id]) OFFSET 0
+  )e WHERE page.event_id IS NOT NULL
 )
 SELECT page.head AS "head!", page.commit_seq AS "commit_seq?", e.id AS "id?", e.event_type AS "event_type?",
              e.source AS "source?", e.run_id AS "run_id?", e.material_id, e.anchor,

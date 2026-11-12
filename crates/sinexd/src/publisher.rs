@@ -212,7 +212,7 @@ pub(crate) async fn publish_pending_measured(
     total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
         let started = Instant::now();
-        let page = commit_log::changes_page_after_origin(
+        let page = commit_log::references_after_origin(
             conn,
             cursor,
             &origin,
@@ -406,7 +406,7 @@ async fn publish_chunk(
     subjects: &Subjects,
     instance: &str,
     consumer: &str,
-    entries: &[commit_log::CommittedChange],
+    entries: &[commit_log::CommittedChange<commit_log::EventReference>],
     complete: Option<i64>,
     total: &mut Published,
 ) -> Result<(Duration, Duration, Duration)> {

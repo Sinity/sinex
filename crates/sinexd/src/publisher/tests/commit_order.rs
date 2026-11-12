@@ -190,10 +190,17 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
     let (before, _) = commit_log::consumer_position(&mut conn, &consumer)
         .await
         .unwrap();
-    let page =
-        commit_log::changes_page(&mut conn, commit_log::ChangeCursor::after(before), 1, 1024)
-            .await
-            .unwrap();
+    let stream = confirmed_stream(&mut conn, &js, &subjects).await.unwrap();
+    let origin = history_origin(&stream).unwrap();
+    let page = commit_log::references_after_origin(
+        &mut conn,
+        commit_log::ChangeCursor::after(before),
+        &origin,
+        1,
+        1024,
+    )
+    .await
+    .unwrap();
     assert_eq!(page.entries.len(), 1);
     assert!(matches!(
         page.entries[0].change,

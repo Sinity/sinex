@@ -221,3 +221,107 @@ async fn one_hundred_thousand_sibling_changes_do_not_form_a_page_or_checkpoint_c
     assert!(pages > 1);
     assert_eq!(seen, N);
 }
+
+#[devkit::test]
+async fn reference_pages_preserve_partial_positions_and_at_head_checks(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let origin = crate::commit_log::HistoryOrigin::establish(&mut conn)
+        .await
+        .unwrap();
+    admit(&mut conn, vec![event("first reference", 1)]).await;
+    sqlx::query("SELECT compress_chunk(c) FROM show_chunks('core.events') c")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    // A later admission can have an old UUID and land in an old compressed
+    // time chunk. Commit position, rather than UUID age, defines this suffix.
+    let mut later = event("second reference", 2);
+    later.id = sinex_model::EventId(Uuid::from_u128(1));
+    admit(&mut conn, vec![later]).await;
+    let complete = changes_page(&mut conn, ChangeCursor::after(0), 100, i64::MAX)
+        .await
+        .unwrap();
+    let expected: Vec<_> = complete.entries.iter().filter_map(tuple).collect();
+    let mut cursor = ChangeCursor::after(0);
+    let mut actual = Vec::new();
+    let mut last = 0;
+    loop {
+        let page = crate::commit_log::references_after_origin(&mut conn, cursor, &origin, 1, 1)
+            .await
+            .unwrap();
+        assert!(page.gap.is_none());
+        if page.entries.is_empty() {
+            break;
+        }
+        assert_eq!(page.entries.len(), 1);
+        let entry = &page.entries[0];
+        match &entry.change {
+            Change::Event(e) => actual.push((entry.position, e.id, "event")),
+            Change::PositionComplete => last = entry.position,
+            _ => panic!("fixture has only event references and completion"),
+        }
+        cursor = entry.cursor();
+    }
+    assert_eq!(actual, expected);
+    assert_eq!(last, complete.entries.last().unwrap().position);
+    // An exclusive history lock proves the complete-at-head path does not even
+    // acquire a relation lock on events. A partial cursor still reads its marker.
+    let mut blocker = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut lock = blocker.begin().await.unwrap();
+    sqlx::query("LOCK TABLE core.events IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    sqlx::query("SET statement_timeout='500ms'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let page = crate::commit_log::references_after_origin(
+        &mut conn,
+        ChangeCursor::after(last),
+        &origin,
+        10,
+        4096,
+    )
+    .await
+    .unwrap();
+    assert!(page.entries.is_empty());
+    let mut wrong = origin.clone();
+    wrong.store = "other synthetic store".into();
+    assert!(
+        crate::commit_log::references_after_origin(
+            &mut conn,
+            ChangeCursor::after(last),
+            &wrong,
+            10,
+            4096
+        )
+        .await
+        .is_err()
+    );
+    lock.rollback().await.unwrap();
+    sqlx::query("RESET statement_timeout")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    // Generic readers retain their historical-gap refusal even at the head.
+    sqlx::raw_sql(
+        "ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete;
+      INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id)
+      VALUES(uuidv7(),'synthetic','example.event',uuidv7())",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    assert!(
+        changes_page(&mut conn, ChangeCursor::after(last), 10, 4096)
+            .await
+            .unwrap()
+            .gap
+            .is_some()
+    );
+}
