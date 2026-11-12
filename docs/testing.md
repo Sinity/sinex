@@ -61,7 +61,10 @@ against the live prepared database whenever the checked crate compiles.
 
 Each test that needs PostgreSQL gets its own copy of the schema database from
 a template (`devkit::pg::test_database()`), so database tests run in
-parallel. Disposable PostgreSQL clusters and NATS servers are owned by the
+parallel. Native runs and Nix package builds disable connections to the
+finished template and use a separate read-only schema database for SQLx.
+Background workers therefore cannot block test clones by connecting to the
+template. Disposable PostgreSQL clusters and NATS servers are owned by the
 test run and reaped on every exit path.
 
 ## Development runs and reports
