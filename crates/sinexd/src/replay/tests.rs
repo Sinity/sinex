@@ -1,4 +1,5 @@
 //! Replay through the real writer and the zsh driver, on a real database.
+mod preparation;
 use super::*;
 use crate::material_access::Sink;
 use crate::reader_context::ReaderContext;
@@ -339,8 +340,8 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_sequence(
         .await
         .unwrap();
     assert_eq!(parts.len(), 2);
-    // The first part is read and sent normally. The next part cannot supply
-    // its declared range, after the replay transaction has begun.
+    // The first part prepares normally. The next part cannot supply its
+    // declared range, so none of the replacement reaches admission.
     sqlx::query("UPDATE raw.materials SET manifest=jsonb_set(manifest,'{records}','[[0,99999]]') WHERE id=$1")
         .bind(parts[1]).execute(&mut f.ctx.read_conn).await.unwrap();
     let error = run(

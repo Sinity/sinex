@@ -9,6 +9,9 @@
 //! descendants) are archived and the new readings admitted together, so a
 //! failure changes nothing and a crash leaves the sequence as it was. Finished
 //! sequences are journaled under the operation, and `resume` skips them.
+//! Parsing finishes into private, unlinked preparation before the sequence is
+//! queued, so neither parser work nor producer waits hold the writer. Atomic
+//! application still holds the writer for the sequence's admission work.
 //! The new readings carry the operation's ID as their run, so an undo finds
 //! what the replay admitted.
 //!
