@@ -320,6 +320,7 @@ pub fn source() -> DeclaredSource<JournaldParser> {
 
 #[cfg(feature = "full")]
 pub const EXPORT_SPEC: SourceSpec = SourceSpec {
+    name: "machine.journald-export",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
     parser: "journald-json-export",

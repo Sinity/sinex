@@ -78,7 +78,9 @@ directory of an input root. Each line is a complete vendor entry; a final
 line without a newline is read at EOF. The export retains its original
 bytes and journal cursor and produces the same journal and systemd state
 readings as live capture. Live capture continues to read its timestamped
-spool through the separate `journald` format.
+spool through the separate `journald` format. The finite export source is
+`machine.journald-export`; the continuous `machine.journald` source retains
+its live freshness expectation.
 
 ### Window managers and terminals
 
