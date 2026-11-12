@@ -70,8 +70,16 @@
           # Install a complete devkit template under its project/schema identity.
           export DEVKIT_PG_TEMPLATE="sinex_template_$(target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema hash)"
           psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE foundation RENAME TO $DEVKIT_PG_TEMPLATE"
-          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE $DEVKIT_PG_TEMPLATE WITH IS_TEMPLATE true"
-          export DATABASE_URL="postgresql:///$DEVKIT_PG_TEMPLATE?host=$PGHOST&port=$PGPORT"
+          # Templates admit no connections: a TimescaleDB scheduler attached
+          # to one would prevent concurrent test clones. Compile-time checks
+          # use their own read-only database, as devkit's native setup does.
+          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE $DEVKIT_PG_TEMPLATE WITH IS_TEMPLATE true ALLOW_CONNECTIONS false" \
+            -c "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = '$DEVKIT_PG_TEMPLATE'"
+          schema_database="sinex_schema_''${DEVKIT_PG_TEMPLATE#sinex_template_}"
+          createdb --template="$DEVKIT_PG_TEMPLATE" "$schema_database"
+          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE $schema_database SET default_transaction_read_only = on" \
+            -c "ALTER DATABASE $schema_database SET timescaledb.disable_load = on"
+          export DATABASE_URL="postgresql:///$schema_database?host=$PGHOST&port=$PGPORT"
         '';
         cargoBuildFlags = [
           "-p"
