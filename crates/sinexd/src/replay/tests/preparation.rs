@@ -156,6 +156,7 @@ async fn live_admission_commits_while_replay_parser_is_paused_then_replay_resume
     {
         context.writer.submit(Priority::Live, batch).await.unwrap();
     }
+    drop(sink);
     let during = live_ids(&mut context.read_conn).await;
     assert!(original.iter().all(|id| during.contains(id)));
     assert_eq!(during.len(), original.len() + 1);
