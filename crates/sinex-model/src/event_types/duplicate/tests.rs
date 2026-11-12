@@ -62,6 +62,9 @@ fn a_revision_supersedes_and_a_withdrawal_takes_it_back_by_the_descendant_rule()
 #[devkit::test]
 fn one_slot_per_unordered_pair_and_author() {
     let one = decision("r1", "r1", "operator", Some(Decision::Same));
+    let header = one.header().unwrap();
+    assert_eq!(header.at, Some(0));
+    assert_eq!(serde_json::to_value(&header).unwrap()["at"], 0);
     let mut swapped = one.clone();
     swapped.pair.reverse();
     assert_eq!(one.slots(), swapped.slots());
