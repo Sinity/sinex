@@ -3,6 +3,11 @@ use crate::{Applied, VERSION, apply, catalog};
 use sqlx::{Connection, Executor, PgConnection};
 
 async fn previous(conn: &mut PgConnection) {
+    conn.execute(
+        "ALTER TABLE core.event_tombstones DROP CONSTRAINT IF EXISTS tombstone_history_complete",
+    )
+    .await
+    .unwrap();
     conn.execute("DROP VIEW core.visible_search_trigram; DROP TABLE core.search_trigram; DROP VIEW core.visible_search_text; ALTER TABLE core.search_text ADD COLUMN trigram_indexed boolean NOT NULL DEFAULT true; CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)")
         .await.unwrap();
     conn.execute(PREVIOUS_VIEW).await.unwrap();

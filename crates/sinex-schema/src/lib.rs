@@ -34,6 +34,7 @@ mod description;
 pub mod kinds;
 mod signals;
 mod tables;
+mod tombstone_history;
 mod upgrades;
 mod vectors;
 

@@ -50,7 +50,8 @@ async fn source_cursor_upgrade_resumes_at_eof_and_reads_only_appended_bytes(
     // Reconstruct the search layout present before the cursor step; later
     // upgrades must also run from their actual preceding stored format.
     sqlx::raw_sql(
-        "DROP VIEW core.visible_search_trigram;
+        "ALTER TABLE core.event_tombstones DROP CONSTRAINT IF EXISTS tombstone_history_complete;
+         DROP VIEW core.visible_search_trigram;
          DROP TABLE core.search_trigram;
          DROP VIEW core.visible_search_text;
          ALTER TABLE core.search_text ADD COLUMN trigram_indexed boolean NOT NULL DEFAULT true;

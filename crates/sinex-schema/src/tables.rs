@@ -591,6 +591,7 @@ pub(crate) fn after_tables() -> Vec<String> {
     out.extend(crate::source_declarations::hooks());
     out.extend(crate::backups::hooks());
     out.extend(crate::blob_chunks::hooks());
+    out.push(crate::tombstone_history::COMPLETE.into());
     for table in ["core.events"] {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",

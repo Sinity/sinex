@@ -140,7 +140,7 @@ Archiving moves no data, so archiving years of data costs what its state rows co
 - One `core.events` table holds live and archived readings; archived rows stay where they are.
 - The live tables name the live reading of each record ([liveness](admission.md#liveness)).
 - `audit.archived` holds current state (commit position, reason, operation); `audit.archive_changes` holds every change into and out of the archive at its commit position, a restore with reason `restore`.
-- Tombstones are their own table, `core.event_tombstones`, with record identity: the skeleton fields above, the key as a hash, and the tombstone's and the original commit positions.
+- Tombstones are their own table, `core.event_tombstones`, with record identity: the skeleton fields above, the key as a hash, and the tombstone's and the original commit positions. Older tombstones may retain unknown positions or class. A PostgreSQL check leaves that predecessor set intact and enforces complete metadata on every later insert or update, so no later erasure can silently join the historical gap.
 - Material status is a column of the material with the operation that last set it; `raw.material_changes` holds every status change at its commit position.
 - An operation is a row of `core.operations`: kind, actor, scope, counts, start and end commit positions, result, refusals, and its saved progress (phase, last root moved, batches committed). The first batch writes it; a refusal before that records nothing.
 - Keys an operation dirties are held (`derivation.dirty.held_by`) until it ends; the writer releases every hold when it starts, since no operation runs then.

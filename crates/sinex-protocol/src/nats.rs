@@ -850,6 +850,14 @@ pub struct ConfirmedConsumer {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "reply", rename_all = "snake_case")]
 pub enum ConfirmedConsumerReply {
+    /// This incarnation starts at a current-state cut. Install a complete
+    /// owner-certified projection at or after `origin` before following it.
+    ProjectionRequired {
+        origin: i64,
+        position: i64,
+        scope: String,
+        stream_instance: String,
+    },
     /// The scoped durable consumer to read; `stream_instance` is absent for
     /// a status-only request, which provisions nothing.
     Provisioned {
