@@ -4,6 +4,7 @@
 //! meaning.
 use crate::Result;
 use serde_json::Value;
+use sinex_model::KindRef;
 use sqlx::PgConnection;
 
 /// One stored binding.
@@ -13,6 +14,22 @@ pub struct Stored {
     pub source: String,
     pub input: String,
     pub settings: Value,
+}
+
+/// Retained live observations of an exact kind, for the reader's own state.
+/// Client output grants do not mask the state needed to resume a binding.
+pub async fn observations(conn: &mut PgConnection, kind: &KindRef) -> Result<Vec<Value>> {
+    let version = kind.database_version().map_err(crate::Error::Invalid)?;
+    Ok(sqlx::query_scalar!(
+        "SELECT e.payload FROM core.events e
+         WHERE e.event_type=$1 AND e.kind_version=$2
+           AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
+         ORDER BY e.commit_seq,e.id",
+        kind.name,
+        version,
+    )
+    .fetch_all(conn)
+    .await?)
 }
 
 /// Record `b` (or update it when its settings changed).

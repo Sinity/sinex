@@ -7,7 +7,7 @@ use crate::stage::Totals;
 use crate::writer::{Priority, WriterHandle};
 use crate::{Error, Result};
 use sinex_model::event_types::coverage::{CoverageCompleteness, CoverageState, SourceCoverage};
-use sinex_model::{Class, RunId, Timestamp};
+use sinex_model::{Class, EventPayload, KindRef, RunId, Timestamp};
 use sinex_source_core::Binding;
 use sinex_sources::sources::coverage;
 use sinex_store::{Blobs, bindings};
@@ -73,9 +73,16 @@ impl Coverage {
     /// Coverage that continues from the current readings stored for `host`, so
     /// a restarted reader writes nothing for a binding whose state is unchanged.
     pub(crate) async fn stored(conn: &mut PgConnection, host: &str) -> Result<Self> {
-        let events = sinex_store::live::of_types(conn, &["source.coverage".into()]).await?;
+        let payloads = bindings::observations(
+            conn,
+            &KindRef {
+                name: SourceCoverage::EVENT_TYPE.into(),
+                version: SourceCoverage::VERSION,
+            },
+        )
+        .await?;
         let mut current = BTreeMap::new();
-        for payload in events.into_iter().filter_map(|event| event.payload) {
+        for payload in payloads {
             let row: SourceCoverage = serde_json::from_value(payload)?;
             if row.host == host {
                 current.insert((row.binding, row.host), (row.state, row.reason));
