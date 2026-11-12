@@ -56,7 +56,7 @@ async fn grandfathered_history_stays_unchanged_and_later_gaps_are_rejected(
         error.as_database_error().unwrap().code().as_deref(),
         Some("23514")
     );
-    let id: uuid::Uuid = sqlx::query_scalar(
+    let id: sqlx::types::Uuid = sqlx::query_scalar(
         "INSERT INTO core.event_tombstones
         (event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class)
         VALUES(uuidv7(),'synthetic','example.reading',uuidv7(),11,7,'guarded') RETURNING event_id",
