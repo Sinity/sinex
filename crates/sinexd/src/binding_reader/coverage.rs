@@ -86,7 +86,7 @@ impl Coverage {
         .fetch_all(conn)
         .await?;
         let mut current = BTreeMap::new();
-        for payload in payloads.into_iter().flatten() {
+        for payload in payloads {
             let row: SourceCoverage = serde_json::from_value(payload)?;
             if row.host == host {
                 current.insert((row.binding, row.host), (row.state, row.reason));
