@@ -14,15 +14,13 @@ impl Requests {
             let grant=self.grants(producer).map_err(|_| Error::refused("producer has no confirmed read grants"))?;
             let (filters,scope)=grant.consumer_scope(producer,&self.subjects);
             let cache=blake3::hash(request.cache.as_bytes()).to_hex().to_string();
-            let mut conn=self.reads.acquire().await?;
-            let head=sinex_store::query::current_seq(&mut conn).await?;
-            drop(conn);
             let stream_name=self.subjects.confirmed_stream();let name=self.subjects.consumer_name(&scope);
             let js=jetstream::new(self.client.clone());
             let stream=js.get_stream(&stream_name).await?;
             let origin=crate::publisher::history_origin(&stream)?;
             let mut conn=self.reads.acquire().await?;
             origin.validate(&mut conn).await?;
+            let head=sinex_store::query::current_seq(&mut conn).await?;
             drop(conn);
             let invalidated=if let Some(basis)=&request.basis {
                 match self.verify_replay_basis(producer,&request.cache,request.after,basis).await {

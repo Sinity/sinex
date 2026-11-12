@@ -1017,3 +1017,49 @@ async fn fresh_history_origin_requires_complete_projection_even_for_status_and_o
         "old incarnation cannot authorize a restored cache: {reply:?}"
     );
 }
+
+/// Reconstruct a retained predecessor row outside today's read contract.
+async fn predecessor_variant(h: &Harness, original: EventId, version: i64, class: &str) {
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    sqlx::query("INSERT INTO core.events
+        (id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,
+         commit_seq,payload,reading_order,record_hash,class,kind_version,validation,
+         source_version,source_fingerprint,producer_family,producer_identity,producer_host,producer_frame)
+        SELECT uuidv7(),event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,
+         commit_seq,payload,reading_order,record_hash,$3,$2,validation,
+         source_version,source_fingerprint,producer_family,producer_identity,producer_host,producer_frame
+        FROM core.events WHERE id=$1")
+        .bind(original.0).bind(version).bind(class).execute(&mut conn).await.unwrap();
+}
+#[devkit::test]
+async fn projection_never_certifies_a_later_page_with_an_unknown_kind_version(
+    db: devkit::pg::TestDatabase,
+) {
+    let (h, _, ids, _) = setup(db).await;
+    predecessor_variant(&h, ids[0], 2, "open").await;
+    let InputReplayReply::Page {
+        continuation: ReplayContinuation::Next { cursor },
+        ..
+    } = page(&h, "polylogue", "cache", None).await
+    else {
+        panic!("first bounded page")
+    };
+    assert!(matches!(page(&h,"polylogue","cache",Some(cursor)).await,
+        InputReplayReply::Incomplete{reason,..} if reason=="projection_indexed_kind_version_unknown"));
+}
+#[devkit::test]
+async fn projection_never_certifies_an_unavailable_sealed_row(db: devkit::pg::TestDatabase) {
+    let (mut h, _, ids, _) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
+    predecessor_variant(&h, ids[0], 1, "sealed").await;
+    let mut grants = (*h.requests.read_grants).clone();
+    grants
+        .get_mut("polylogue")
+        .unwrap()
+        .classes
+        .push(sinex_model::Class::Sealed);
+    h.requests.read_grants = std::sync::Arc::new(grants);
+    assert!(
+        matches!(h.requests.replay_inputs("polylogue","cache",None).await,
+        InputReplayReply::Incomplete{reason,..} if reason=="projection_indexed_input_unavailable")
+    );
+}

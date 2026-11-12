@@ -356,7 +356,7 @@ impl Requests {
                 }
             };
             read_coverage::current(&mut tx, &cursor.claims).await?;
-            read_coverage::projection_contract(&mut tx, &cursor.claims).await?;
+            read_coverage::projection_catalog(&mut tx, &cursor.claims).await?;
             let mut rows =
                 read_coverage::inputs(&mut tx, &cursor.claims, cursor.after, PAGE + 1).await?;
             let more = rows.len() > PAGE as usize;
@@ -365,6 +365,11 @@ impl Requests {
             }
             let mut inputs = Vec::with_capacity(rows.len());
             for row in rows {
+                if row.class == "sealed" {
+                    return Err(Failure::Invalidated(
+                        "projection_indexed_input_unavailable".into(),
+                    ));
+                }
                 if row.history_unknown || row.archived && row.lifecycle_position.is_none() {
                     return Err(Failure::Invalidated(
                         "coverage_archived_position_unknown".into(),
@@ -719,7 +724,7 @@ impl Requests {
         let mut current = claims;
         current.position = after;
         read_coverage::current(&mut conn, &current).await?;
-        read_coverage::projection_contract(&mut conn, &current)
+        read_coverage::projection_catalog(&mut conn, &current)
             .await
             .map_err(Failure::from)
     }

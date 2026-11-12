@@ -91,3 +91,64 @@ async fn history_constraint_rolls_back_with_the_schema_transaction(db: devkit::p
     .await
     .unwrap();
 }
+
+#[devkit::test]
+async fn native_dump_restore_preserves_the_closed_predecessor_exception(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    predecessor(&mut conn).await;
+    conn.execute("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) SELECT uuidv7(),'synthetic','example.reading',uuidv7() FROM generate_series(1,92)").await.unwrap();
+    apply(&mut conn).await.unwrap();
+    let expected: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT to_jsonb(t) FROM core.event_tombstones t ORDER BY event_id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    let dump = std::process::Command::new("pg_dump")
+        .args([
+            "--format=custom",
+            "--table=core.event_tombstones",
+            "--dbname",
+            &db.url(None),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dump.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dump.stderr)
+    );
+    let restored = devkit::pg::test_database().unwrap();
+    let mut target = PgConnection::connect(&restored.url(None)).await.unwrap();
+    // This disposable target contains the current empty template relation.
+    target
+        .execute("DROP TABLE core.event_tombstones CASCADE")
+        .await
+        .unwrap();
+    let mut child = std::process::Command::new("pg_restore")
+        .args(["--exit-on-error", "--dbname", &restored.url(None)])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), &dump.stdout).unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let actual: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT to_jsonb(t) FROM core.event_tombstones t ORDER BY event_id")
+            .fetch_all(&mut target)
+            .await
+            .unwrap();
+    assert_eq!(actual, expected);
+    let error=target.execute("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) VALUES(uuidv7(),'synthetic','example.reading',uuidv7())").await.unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("23514")
+    );
+}
