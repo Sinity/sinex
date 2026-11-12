@@ -1270,3 +1270,67 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
         .is_err()
     );
 }
+
+#[devkit::test(multi_thread)]
+async fn local_material_is_one_frame() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin(&nats, &subjects, "local").await;
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(root.path()).unwrap();
+    let snapshots = Snapshots::new().unwrap();
+    let bytes = synthetic_bytes(3 * CHUNK_BYTES);
+    let source = root.path().join("input");
+    std::fs::write(&source, &bytes).unwrap();
+    let blob = snapshots.put_file(&source).unwrap();
+    snapshots
+        .handoff(root.path(), "local", "one-material", &blob)
+        .unwrap();
+    let frame = Ingress::Material {
+        frame: "one-material".into(),
+        material: Box::new(MaterialFrame {
+            source: sinex_model::SourceRef {
+                name: "synthetic.source".into(),
+                version: 1,
+            },
+            id: sinex_model::MaterialId::new(),
+            input: sinex_model::InputRef {
+                kind: "file".into(),
+                locator: "/synthetic/input".into(),
+                host: "fixture".into(),
+            },
+            blob: blob.clone(),
+            length: bytes.len() as u64,
+            chunks: vec![],
+            parser: "p".into(),
+            parser_version: 1,
+            part_index: 0,
+            previous_part: None,
+            manifest: sinex_model::Manifest::from_json(json!({})),
+        }),
+    };
+    let mut producer = Producer::connect(
+        nats.url(),
+        None,
+        subjects,
+        "local",
+        &sinex_protocol::ProducerHello::default(),
+    )
+    .await
+    .unwrap();
+    let ack = producer.deliver(frame.clone(), &store).await.unwrap();
+    assert_eq!(ack.refusal(), None);
+    assert_eq!(*received.lock().unwrap(), vec![frame]);
+    let mut actual = Vec::new();
+    frame_bytes::reader(
+        root.path(),
+        "local",
+        "one-material",
+        &blob,
+        bytes.len() as u64,
+    )
+    .unwrap()
+    .read_to_end(&mut actual)
+    .unwrap();
+    assert_eq!(actual, bytes);
+}

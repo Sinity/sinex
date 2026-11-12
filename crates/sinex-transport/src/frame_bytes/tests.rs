@@ -294,3 +294,27 @@ fn a_real_descriptor_persist_failure_keeps_its_os_code() {
     assert_eq!(error.kind(), std::io::ErrorKind::IsADirectory);
     assert_eq!(error.raw_os_error(), Some(21));
 }
+
+#[devkit::test]
+fn pinned_local_custody_survives_retired_source_names() {
+    let root = tempfile::tempdir().unwrap();
+    let spool = tempfile::tempdir().unwrap();
+    let bytes = b"immutable spool bytes";
+    let (descriptor, data) = encoding(spool.path(), bytes);
+    let source = spool.path().join("owned");
+    std::fs::write(&source, data).unwrap();
+    let file = std::fs::File::open(&source).unwrap();
+    std::fs::remove_file(&source).unwrap();
+    link_file(root.path(), "node", "retired", &descriptor, &source, file).unwrap();
+    let mut decoded = reader(
+        root.path(),
+        "node",
+        "retired",
+        &descriptor.hash.to_string(),
+        bytes.len() as u64,
+    )
+    .unwrap();
+    let mut actual = Vec::new();
+    decoded.read_to_end(&mut actual).unwrap();
+    assert_eq!(actual, bytes);
+}
