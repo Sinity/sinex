@@ -8,7 +8,7 @@
 //! back) in one transaction, and one batch of a lifecycle operation at a time
 //! (punching the extents of bytes a tombstone freed after commit), so live
 //! batches are admitted between an operation's batches.
-use crate::Result;
+use crate::{Error, Result};
 
 use serde_json::Value;
 use sinex_model::{Batch, OperationId};
@@ -64,9 +64,7 @@ impl From<WriteError> for command_surface::Failure {
     }
 }
 
-/// One replay sequence: its batches run in one transaction, admitted as they
-/// arrive, so only a few are held at a time. A batch arriving as an error
-/// (the sequence could not be read) rolls the sequence back.
+/// One completely prepared replay sequence, applied in one transaction.
 pub(crate) struct ReplaySequence {
     pub operation: OperationId,
     pub actor: String,
@@ -75,8 +73,9 @@ pub(crate) struct ReplaySequence {
     pub root: uuid::Uuid,
     /// Roll back after reading the difference: a comparison.
     pub compare: bool,
-    pub batches: tokio::sync::mpsc::Receiver<Result<Batch>>,
+    pub batches: crate::replay::prepared::Batches,
     pub ingress: Option<crate::ingress::replay::CheckedReplay>,
+    pub check: AdmissionCheck,
 }
 
 enum WriterJob {
@@ -294,15 +293,25 @@ impl WriterHandle {
     /// Replay one sequence in one transaction; in compare mode nothing is kept.
     pub(crate) async fn replay(
         &self,
-        sequence: ReplaySequence,
+        mut sequence: ReplaySequence,
     ) -> Result<(Vec<Outcome>, Diff), WriteError> {
-        match self
+        let (caller, pending) = oneshot::channel::<()>();
+        let check = sequence.check;
+        sequence.check = Arc::new(move || {
+            if caller.is_closed() {
+                return Err(Error::refused("replay was cancelled before commit"));
+            }
+            check()
+        });
+        let result = match self
             .send(Priority::Derived, WriterJob::Replay(Box::new(sequence)))
             .await?
         {
             Done::Replayed(outcomes, diff) => Ok((outcomes, diff)),
             _ => unreachable!("a replay answers with its outcomes"),
-        }
+        };
+        drop(pending);
+        result
     }
 
     pub(crate) async fn record_replay(
@@ -1022,6 +1031,7 @@ async fn replay_sequence(
     keys: &dyn DirtyKeys,
 ) -> Result<(Vec<Outcome>, Diff), WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    (sequence.check)().map_err(|e| refuse(&e))?;
     if !sequence.compare
         && let Some(ingress) = &sequence.ingress
     {
@@ -1074,7 +1084,8 @@ async fn replay_sequence(
     )
     .await?;
     let mut outcomes = Vec::new();
-    while let Some(batch) = sequence.batches.recv().await {
+    while let Some(batch) = sequence.batches.next() {
+        (sequence.check)().map_err(|e| refuse(&e))?;
         let mut batch = batch.map_err(|e| refuse(&e))?;
         if let sinex_model::BatchKind::Ingress(frame) = &mut batch.kind
             && frame.frame.is_empty()
@@ -1101,8 +1112,10 @@ async fn replay_sequence(
     if sequence.compare {
         tx.rollback().await?;
     } else {
+        (sequence.check)().map_err(|e| refuse(&e))?;
         replay::sequence_done(&mut tx, sequence.operation, sequence.root).await?;
         refresh_read_models(&mut tx, since).await?;
+        (sequence.check)().map_err(|e| refuse(&e))?;
         tx.commit().await?;
     }
     Ok((outcomes, diff))

@@ -118,7 +118,7 @@ pub enum TimeQuality {
 }
 
 /// When the thing happened. An unknown time has no instant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TsOrig {
     pub at: Option<Timestamp>,
     pub quality: TimeQuality,

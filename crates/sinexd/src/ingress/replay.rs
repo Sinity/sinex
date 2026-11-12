@@ -522,12 +522,6 @@ impl Ingest {
                 archive: vec![],
             });
         }
-        let (send, receive) = tokio::sync::mpsc::channel(batches.len());
-        for batch in batches {
-            send.try_send(Ok(batch))
-                .map_err(|_| Check::Unavailable("replacement channel closed".into()))?;
-        }
-        drop(send);
         let content =
             serde_json::to_vec(s).map_err(|_| Check::Refused("invalid replay scope".into()))?;
         let mut scope = serde_json::json!({"root":s.root,"materials":s.materials,"event_types":s.event_types,"from":s.from,"until":s.until,
@@ -541,8 +535,9 @@ impl Ingest {
             scope,
             root: s.root.0,
             compare: false,
-            batches: receive,
+            batches: crate::replay::prepared::Batches::ready(batches),
             ingress: Some(request.clone()),
+            check: std::sync::Arc::new(|| Ok(())),
         })
     }
 }

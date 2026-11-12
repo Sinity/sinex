@@ -18,6 +18,26 @@ pub(super) async fn replay_scope(
     keys: &dyn DirtyKeys,
 ) -> Result<(usize, usize)> {
     let materials: Vec<Uuid> = scope.materials.iter().map(|m| m.0).collect();
+    // Preparation runs outside the writer. A lifecycle operation may have
+    // archived or tombstoned a selected material since it was read.
+    if let Some(material) = sqlx::query!(
+        "SELECT id,status FROM raw.materials WHERE id=ANY($1) AND status <> 'live' LIMIT 1",
+        &materials,
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    {
+        return Err(crate::Error::Invalid(format!(
+            "material {} is {}; {}",
+            material.id,
+            material.status,
+            if material.status == "archived" {
+                "restore it before replaying it"
+            } else {
+                "it is never read again"
+            }
+        )));
+    }
     let types: Option<Vec<String>> = scope.event_types.clone();
     let live: Vec<Uuid> = sqlx::query_scalar!(
         r#"WITH RECURSIVE read_here AS (

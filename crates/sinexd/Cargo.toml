@@ -30,7 +30,7 @@ authored.workspace = true
 sinex-analysis.workspace = true
 sinex-protocol = { workspace = true, features = ["cli"] }
 canonical-json.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 sqlx.workspace = true
 tokio = { workspace = true, features = ["net"] }
 clap.workspace = true

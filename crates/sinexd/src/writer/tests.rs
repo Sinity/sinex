@@ -1,4 +1,5 @@
 use super::*;
+mod replay;
 use crate::Error;
 use sinex_model::{
     BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation, RecordOutcome,

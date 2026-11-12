@@ -51,7 +51,7 @@ unit_properties = ["MemoryHigh=8G"]
 description = "Selected package/tests under nextest; pass -p PACKAGE and filters; full suites use bulk test"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 arguments = "required"
-pool = "normal"
+pool = "compile"
 result = "exit"
 # The outer budget includes compilation; individual test deadlines are unchanged.
 timeout_seconds = 3600

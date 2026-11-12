@@ -9,6 +9,9 @@
 //! descendants) are archived and the new readings admitted together, so a
 //! failure changes nothing and a crash leaves the sequence as it was. Finished
 //! sequences are journaled under the operation, and `resume` skips them.
+//! Parsing finishes into private, unlinked preparation before the sequence is
+//! queued, so neither parser work nor producer waits hold the writer. Atomic
+//! application still holds the writer for the sequence's admission work.
 //! The new readings carry the operation's ID as their run, so an undo finds
 //! what the replay admitted.
 //!
@@ -29,6 +32,7 @@ use sinex_store::replay::{self, Change, Diff, Stored};
 use sqlx::PgConnection;
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
+pub(crate) mod prepared;
 
 pub(crate) fn build_identity() -> Result<Value> {
     static BUILD: std::sync::OnceLock<Result<String, command_surface::Failure>> =
@@ -312,40 +316,19 @@ pub(crate) async fn run(
             o.unlock.as_ref(),
         )
         .await?;
-        let unlock = o.unlock.clone();
-        // The sequence is read on a blocking thread while the writer admits its
-        // batches as they come, a few at a time.
-        let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
-        let reading = {
-            let (blobs, in_scope, scope) = (blobs.clone(), in_scope.clone(), scope.clone());
-            tokio::task::spawn_blocking(move || {
-                read_sequence(
-                    &blobs,
-                    &sequence,
-                    &parsers,
-                    &in_scope,
-                    &scope,
-                    operation,
-                    &sender,
-                    &keys,
-                    unlock.as_ref(),
-                )
-            })
-        };
-        let replayed = writer
-            .replay(ReplaySequence {
-                ingress: None,
-                operation,
-                actor: o.actor.clone(),
-                scope: saved_scope.clone(),
-                root,
-                compare: o.compare,
-                batches,
-            })
-            .await;
-        let read = reading.await?;
-        let (outcomes, diff) = replayed
-            .map_err(|e| Error::bad_request(format!("sequence from material {root}: {e}")))?;
+        let (read, outcomes, diff) = SequenceReader {
+            blobs: blobs.clone(),
+            sequence,
+            parsers,
+            in_scope: in_scope.clone(),
+            scope: scope.clone(),
+            operation,
+            keys,
+            unlock: o.unlock.clone(),
+        }
+        .replace(writer, o.actor.clone(), saved_scope.clone(), o.compare)
+        .await
+        .map_err(|e| e.within(format!("sequence from material {root}")))?;
         report.materials += read.materials;
         report.events_read += read.events_read;
         report.failures += read.failures;
@@ -453,9 +436,6 @@ fn sequences(stored: &[Stored]) -> Vec<Vec<&Stored>> {
         .collect()
 }
 
-/// Batches of one sequence read ahead of the writer.
-const READ_AHEAD: usize = 4;
-
 /// What reading one sequence counted.
 #[derive(Debug, Default)]
 struct Read {
@@ -464,33 +444,82 @@ struct Read {
     failures: usize,
 }
 
-/// Drain every material of a sequence in order, carrying parser state, and send
-/// the batches that replace the in-scope materials' readings to the writer as
-/// they are built. The first batch carries the request to archive what is
-/// re-read. A material that cannot be read is sent as an error, which rolls
-/// the sequence back.
-#[allow(clippy::too_many_arguments)]
-fn read_sequence(
-    blobs: &sinex_store::Blobs,
-    sequence: &[Stored],
-    parsers: &[NativeReplaySource],
-    in_scope: &BTreeSet<Uuid>,
-    scope: &Scope,
+struct SequenceReader {
+    blobs: Blobs,
+    sequence: Vec<Stored>,
+    parsers: Vec<NativeReplaySource>,
+    in_scope: BTreeSet<Uuid>,
+    scope: Scope,
     operation: OperationId,
-    out: &tokio::sync::mpsc::Sender<Result<Batch>>,
-    keys: &HashMap<Uuid, sinex_sealing::DataKey>,
-    unlock: Option<&crate::material_access::sealing::Unlock>,
-) -> Read {
-    let mut read = Read::default();
-    if let Err(error) = read_sequence_into(
-        blobs, sequence, parsers, in_scope, scope, operation, out, &mut read, keys, unlock,
-    ) {
-        // The writer may already have stopped reading; nothing else to tell.
-        let _ = out.blocking_send(Err(error));
-    }
-    read
+    keys: HashMap<Uuid, sinex_sealing::DataKey>,
+    unlock: Option<crate::material_access::sealing::Unlock>,
 }
 
+impl SequenceReader {
+    async fn replace(
+        self,
+        writer: &WriterHandle,
+        actor: String,
+        scope: Value,
+        compare: bool,
+    ) -> Result<(Read, Vec<sinex_store::Outcome>, Diff)> {
+        let root = self.sequence[0].id;
+        let operation = self.operation;
+        let unlock = self.unlock.clone();
+        // Dropping the request closes this receiver, including while the
+        // blocking parser is waiting on stored input. Its reader checks it at
+        // each read and each prepared batch.
+        let (caller, pending) = tokio::sync::oneshot::channel::<()>();
+        let reading = tokio::task::spawn_blocking(move || -> Result<_> {
+            let check: crate::writer::AdmissionCheck = std::sync::Arc::new(move || {
+                if caller.is_closed() {
+                    Err(Error::refused("replay preparation was cancelled"))
+                } else {
+                    Ok(())
+                }
+            });
+            let mut prepared = prepared::Builder::new(self.blobs.root())?;
+            let mut read = Read::default();
+            read_sequence_into(
+                &self.blobs,
+                &self.sequence,
+                &self.parsers,
+                &self.in_scope,
+                &self.scope,
+                operation,
+                &mut |batch| prepared.push(batch),
+                &mut read,
+                &self.keys,
+                self.unlock.as_ref(),
+                &check,
+            )?;
+            Ok((prepared.finish()?, read))
+        });
+        let (batches, read) = reading.await??;
+        drop(pending);
+        let (outcomes, diff) = writer
+            .replay(ReplaySequence {
+                operation,
+                actor,
+                scope,
+                root,
+                compare,
+                batches,
+                ingress: None,
+                check: std::sync::Arc::new(move || {
+                    if let Some(unlock) = &unlock {
+                        unlock.check()?;
+                    }
+                    Ok(())
+                }),
+            })
+            .await?;
+        Ok((read, outcomes, diff))
+    }
+}
+
+/// Drain and prepare every material in order, carrying parser state. A read
+/// failure discards preparation before any replacement reaches admission.
 #[allow(clippy::too_many_arguments)]
 fn read_sequence_into(
     blobs: &sinex_store::Blobs,
@@ -499,17 +528,18 @@ fn read_sequence_into(
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
-    out: &tokio::sync::mpsc::Sender<Result<Batch>>,
+    out: &mut impl FnMut(Batch) -> Result<()>,
     report: &mut Read,
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
     unlock: Option<&crate::material_access::sealing::Unlock>,
+    check: &crate::writer::AdmissionCheck,
 ) -> Result<()> {
-    let send = |batch: Batch| {
+    let mut send = |batch: Batch| {
+        check()?;
         if let Some(unlock) = unlock {
             unlock.check()?;
         }
-        out.blocking_send(Ok(batch))
-            .map_err(|_| Error::internal("the writer stopped reading the sequence"))
+        out(batch)
     };
     let whole = scope.event_types.is_none() && scope.from.is_none() && scope.until.is_none();
     let narrowing = ReplayScope {
@@ -565,19 +595,12 @@ fn read_sequence_into(
             )?,
             manifest: m.manifest.clone(),
         };
-        let sender = out.clone();
         let stored = crate::material_access::open_checked(
             blobs,
             reference,
             key.cloned(),
             unlock,
-            std::sync::Arc::new(move || {
-                if sender.is_closed() {
-                    Err(Error::internal("the writer stopped reading the sequence"))
-                } else {
-                    Ok(())
-                }
-            }),
+            check.clone(),
         )?
         .body;
         let mut records = stored.records(&m.manifest, source.spec().framer)?;
