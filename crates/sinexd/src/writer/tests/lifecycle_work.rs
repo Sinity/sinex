@@ -27,13 +27,13 @@ fn with_events(events: Vec<Event>) -> Batch {
     b
 }
 
-async fn layout(conn: &mut AdmissionContext, chunk: &str, ids: &[Uuid]) -> Value {
+async fn layout(conn: &mut AdmissionContext, chunk: &str, ids: &[Uuid], cut: i64) -> Value {
     sqlx::query_scalar("SELECT jsonb_build_object('status',c.status,'rowstore_bytes',pg_relation_size(c.relid),
       'compressed_bytes',pg_relation_size(s.compress_relid),
       'rows',(SELECT count(*) FROM core.events WHERE id=ANY($2)),
-      'headers',(SELECT md5(string_agg(id::text||':'||commit_seq::text||':'||source,',' ORDER BY id)) FROM core.events WHERE id=ANY($2)))
+      'headers',(SELECT md5(string_agg(id::text||':'||(commit_seq-$3)::text||':'||source,',' ORDER BY id)) FROM core.events WHERE id=ANY($2)))
       FROM _timescaledb_catalog.chunk c JOIN _timescaledb_catalog.compression_settings s ON s.relid=c.relid WHERE c.relid=$1::regclass")
-      .bind(chunk).bind(ids).fetch_one(&mut **conn).await.unwrap()
+      .bind(chunk).bind(ids).bind(cut).fetch_one(&mut **conn).await.unwrap()
 }
 
 async fn work(conn: &mut AdmissionContext) -> i64 {
@@ -110,7 +110,7 @@ async fn arm(db: &devkit::pg::TestDatabase, unrelated: usize) -> (i64, Value) {
         .await
         .unwrap();
     assert_eq!(prepared, ids);
-    let before_layout = layout(&mut conn, &chunk, &ids).await;
+    let before_layout = layout(&mut conn, &chunk, &ids, op.start_seq).await;
     assert_eq!(
         before_layout["status"], 1,
         "selected input must be fully compressed"
@@ -132,7 +132,12 @@ async fn arm(db: &devkit::pg::TestDatabase, unrelated: usize) -> (i64, Value) {
     .unwrap();
     assert!(matches!(finished.step, Step::Moved { done: true, .. }));
     let after = work(&mut conn).await;
-    let after_layout = layout(&mut conn, &chunk, &ids).await;
+    eprintln!(
+        "isolated actual writer arm unrelated={unrelated} selected16 tuple_work={}",
+        after - before
+    );
+    std::io::Write::flush(&mut std::io::stderr()).unwrap();
+    let after_layout = layout(&mut conn, &chunk, &ids, op.start_seq).await;
     assert_eq!(
         after_layout, before_layout,
         "archive changed selected physical data"
@@ -157,6 +162,10 @@ async fn compressed_archive_writer_work_with_independent_unrelated_history(
     let (small, small_layout) = arm(&db, 8192).await;
     let other = devkit::pg::test_database().unwrap();
     let (large, large_layout) = arm(&other, 16384).await;
+    eprintln!(
+        "isolated actual writer totals unrelated8192={small} unrelated16384={large} selected16"
+    );
+    std::io::Write::flush(&mut std::io::stderr()).unwrap();
     assert_eq!(
         small_layout, large_layout,
         "independent selected inputs differ"
