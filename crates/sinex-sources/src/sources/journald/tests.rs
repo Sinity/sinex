@@ -349,3 +349,130 @@ fn a_spool_with_nothing_resumes_from_the_start() {
     assert_eq!(resume_cursor(&spool).unwrap(), None);
     std::fs::remove_dir_all(&spool).unwrap();
 }
+
+#[cfg(feature = "full")]
+#[devkit::test]
+fn raw_journal_exports_keep_live_readings_and_unknown_vendor_fields() {
+    let vendor = manager_entry(
+        "39f53479d3a045ac8e11786248231fbf",
+        json!({"UNIT": "example.service", "MESSAGE": [255, 0], "VENDOR_FIELD": ["first", "second"]}),
+    );
+    let bytes = vendor.to_string().into_bytes();
+    let exported = JournalExportParser
+        .parse(
+            &bytes.as_slice(),
+            &(),
+            &sinex_source_core::RecordContext::none(),
+        )
+        .unwrap()
+        .0;
+    assert_eq!(exported, read(vendor));
+    assert_eq!(entry(&exported).cursor, "s=1;i=9");
+    assert_eq!(
+        entry(&exported).logged_at.unwrap().unix_ns(),
+        1_700_000_000_000_000_000
+    );
+    assert_eq!(entry(&exported).fields["MESSAGE"], json!([255, 0]));
+    assert_eq!(
+        entry(&exported).fields["VENDOR_FIELD"],
+        json!(["first", "second"])
+    );
+    assert!(matches!(&exported[1], JournalReading::UnitStarted(x) if x.unit == "example.service"));
+    assert!(
+        JournalExportParser
+            .parse(
+                &b"{\"MESSAGE\":\"missing cursor\"}".as_slice(),
+                &(),
+                &sinex_source_core::RecordContext::none()
+            )
+            .is_err()
+    );
+}
+
+#[cfg(feature = "full")]
+#[devkit::test]
+fn registered_journal_export_reads_exact_bytes_and_final_unterminated_record() {
+    use sinex_source_core::{MaterialSink, RecordOutcome};
+    #[derive(Default)]
+    struct Sink(std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>);
+    impl MaterialSink for Sink {
+        fn put_file(&self, path: &Path) -> Result<String, String> {
+            self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
+        }
+        fn put(&self, bytes: &[u8]) -> Result<String, String> {
+            let hash = format!("blake3:{}", blake3::hash(bytes).to_hex());
+            self.0.lock().unwrap().insert(hash.clone(), bytes.to_vec());
+            Ok(hash)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("journal.ndjson");
+    let bytes = b"{\"__CURSOR\":\"first\",\"MESSAGE\":\"one\"}\n{\"__CURSOR\":\"last\",\"MESSAGE\":\"two\"}";
+    std::fs::write(&path, bytes).unwrap();
+    let format = crate::sources::formats()
+        .iter()
+        .find(|f| f.name == "journal-json")
+        .unwrap();
+    let bindings = (format.plan.unwrap())(
+        root.path(),
+        &sinex_source_core::binding::Settings::new("example-host"),
+    )
+    .unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].input, path);
+    let source = (format.source)(&bindings[0]).unwrap();
+    let sinex_source_core::Reading::Shared(reader) =
+        (format.reader.unwrap())(&bindings[0]).unwrap()
+    else {
+        panic!("journal export is a shared file reader")
+    };
+    let sink = Sink::default();
+    let blob = sink.put(bytes).unwrap();
+    let mut payloads = Vec::new();
+    sinex_source_core::shared_pass::read(
+        sinex_source_core::shared_pass::Input::Sequential(Box::new(std::io::Cursor::new(
+            bytes.to_vec(),
+        ))),
+        blob.clone(),
+        bytes.len() as u64,
+        Default::default(),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        vec![reader.route(Value::Null, Class::Guarded)],
+        &sink,
+        &mut |_, acquired| {
+            if let Some(material) = acquired?.material {
+                for batch in source
+                    .drain(sinex_source_core::DrainInput {
+                        source: source.spec().name,
+                        class: Class::Guarded,
+                        material: material.id,
+                        bytes: material.record_bytes(),
+                        records: &material.records,
+                        carry: Value::Null,
+                        reading_order: &|_| sinex_model::ReadingOrder(0),
+                        limits: Default::default(),
+                        manifest: &material.manifest,
+                    })
+                    .unwrap()
+                {
+                    for outcome in batch.outcomes {
+                        match outcome {
+                            RecordOutcome::Events { events, .. } => {
+                                payloads.extend(events.into_iter().map(|e| e.payload))
+                            }
+                            RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
+                        }
+                    }
+                }
+            }
+            Ok(true)
+        },
+    )
+    .unwrap();
+    assert_eq!(payloads.len(), 2);
+    assert_eq!(payloads[0]["cursor"], "first");
+    assert_eq!(payloads[1]["cursor"], "last");
+    assert_eq!(payloads[1]["message"], "two");
+    assert_eq!(sink.0.lock().unwrap()[&blob].as_slice(), bytes.as_slice());
+    assert_eq!(std::fs::read(path).unwrap().as_slice(), bytes.as_slice());
+}

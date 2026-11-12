@@ -24,6 +24,9 @@
 //! started or stopped, a boot, sleep, a shutdown), keyed by the same cursor.
 //! Only entries the expected program wrote count: `_COMM` is set by journald,
 //! so another program cannot fake one.
+//! `journal-json` reads unwrapped `journalctl -o json --all` exports through
+//! the export driver. Both formats use the same entry and state readings;
+//! export bytes remain unchanged and need no capture envelope.
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::JournalEntry;
 use sinex_model::event_types::system::{
@@ -258,50 +261,54 @@ impl Parser for JournaldParser {
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<JournalReading>, ()), RecordError> {
         let (_, line) = live_stream::received(record).map_err(RecordError::new)?;
-        if line.iter().all(u8::is_ascii_whitespace) {
-            return Ok((vec![], ()));
-        }
-        let mut fields: Map<String, Value> = serde_json::from_slice(&line)
-            .map_err(|e| RecordError::new(format!("journal entry is not a JSON object: {e}")))?;
-        let cursor = match fields.remove("__CURSOR") {
-            Some(Value::String(c)) if !c.is_empty() => c,
-            _ => return Err(RecordError::new("journal entry has no __CURSOR")),
-        };
-        let mut take = |name: &str| -> Option<String> {
-            let value = fields.get(name)?;
-            let decoded = text(value)?;
-            fields.remove(name);
-            Some(decoded)
-        };
-        let logged_at = take("__REALTIME_TIMESTAMP")
-            .and_then(|us| us.parse::<i128>().ok())
-            .and_then(|us| Timestamp::from_unix_ns(us * 1_000).ok());
-        let unit = take("_SYSTEMD_UNIT");
-        let user_unit = take("_SYSTEMD_USER_UNIT");
-        let from_sinex =
-            unit.as_deref().is_some_and(sinex_unit) || user_unit.as_deref().is_some_and(sinex_unit);
-        let entry = JournalEntry {
-            cursor,
-            logged_at,
-            boot_id: take("_BOOT_ID"),
-            hostname: take("_HOSTNAME"),
-            message: take("MESSAGE"),
-            priority: take("PRIORITY").and_then(|p| p.parse().ok()),
-            unit,
-            user_unit,
-            identifier: take("SYSLOG_IDENTIFIER"),
-            pid: take("_PID").and_then(|p| p.parse().ok()),
-            uid: take("_UID").and_then(|u| u.parse().ok()),
-            command: take("_COMM"),
-            transport: take("_TRANSPORT"),
-            from_sinex,
-            fields,
-        };
-        let change = state_change(&entry);
-        let mut out = vec![JournalReading::Entry(entry)];
-        out.extend(change);
-        Ok((out, ()))
+        Ok((read_entry(&line)?, ()))
     }
+}
+
+fn read_entry(line: &[u8]) -> Result<Vec<JournalReading>, RecordError> {
+    if line.iter().all(u8::is_ascii_whitespace) {
+        return Ok(vec![]);
+    }
+    let mut fields: Map<String, Value> = serde_json::from_slice(line)
+        .map_err(|e| RecordError::new(format!("journal entry is not a JSON object: {e}")))?;
+    let cursor = match fields.remove("__CURSOR") {
+        Some(Value::String(c)) if !c.is_empty() => c,
+        _ => return Err(RecordError::new("journal entry has no __CURSOR")),
+    };
+    let mut take = |name: &str| -> Option<String> {
+        let value = fields.get(name)?;
+        let decoded = text(value)?;
+        fields.remove(name);
+        Some(decoded)
+    };
+    let logged_at = take("__REALTIME_TIMESTAMP")
+        .and_then(|us| us.parse::<i128>().ok())
+        .and_then(|us| Timestamp::from_unix_ns(us * 1_000).ok());
+    let unit = take("_SYSTEMD_UNIT");
+    let user_unit = take("_SYSTEMD_USER_UNIT");
+    let from_sinex =
+        unit.as_deref().is_some_and(sinex_unit) || user_unit.as_deref().is_some_and(sinex_unit);
+    let entry = JournalEntry {
+        cursor,
+        logged_at,
+        boot_id: take("_BOOT_ID"),
+        hostname: take("_HOSTNAME"),
+        message: take("MESSAGE"),
+        priority: take("PRIORITY").and_then(|p| p.parse().ok()),
+        unit,
+        user_unit,
+        identifier: take("SYSLOG_IDENTIFIER"),
+        pid: take("_PID").and_then(|p| p.parse().ok()),
+        uid: take("_UID").and_then(|u| u.parse().ok()),
+        command: take("_COMM"),
+        transport: take("_TRANSPORT"),
+        from_sinex,
+        fields,
+    };
+    let change = state_change(&entry);
+    let mut out = vec![JournalReading::Entry(entry)];
+    out.extend(change);
+    Ok(out)
 }
 
 pub fn source() -> DeclaredSource<JournaldParser> {
@@ -310,6 +317,90 @@ pub fn source() -> DeclaredSource<JournaldParser> {
         parser: JournaldParser,
     }
 }
+
+#[cfg(feature = "full")]
+pub const EXPORT_SPEC: SourceSpec = SourceSpec {
+    origin: Origin::Input(Shape::ExportArchive),
+    expect: Expectation::Export,
+    parser: "journald-json-export",
+    parser_version: 1,
+    framer: sinex_source_core::Framer::export(
+        frame_export,
+        sinex_source_core::drivers::export_archive::Framing::Lines,
+    ),
+    ..SPEC
+};
+
+#[cfg(feature = "full")]
+fn frame_export(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    sinex_source_core::drivers::export_archive::Framing::Lines.frame(bytes, true)
+}
+
+#[cfg(feature = "full")]
+pub struct JournalExportParser;
+
+#[cfg(feature = "full")]
+impl Parser for JournalExportParser {
+    type Record<'a> = &'a [u8];
+    type Carry = ();
+    type Payload = JournalReading;
+
+    fn parse(
+        &self,
+        record: &&[u8],
+        _: &(),
+        _: &sinex_source_core::RecordContext<'_>,
+    ) -> Result<(Vec<JournalReading>, ()), RecordError> {
+        Ok((read_entry(record)?, ()))
+    }
+}
+
+/// Raw JSON-lines exports, including a final record without a newline.
+#[cfg(feature = "full")]
+pub const EXPORT_FORMAT: sinex_source_core::binding::InputFormat =
+    sinex_source_core::binding::InputFormat {
+        name: "journal-json",
+        accepts: &[],
+        discovery: sinex_source_core::discovery::DiscoverySpec {
+            owner: sinex_source_core::discovery::Owner::System,
+            locations: &[sinex_source_core::discovery::Location {
+                root: "input",
+                path: "journal-json",
+            }],
+            capabilities: &[],
+            credentials: &[],
+            streams: &[],
+        },
+        discover: crate::discovery::discover_format,
+        specs: || vec![&EXPORT_SPEC],
+        plan: Some(|input, settings| {
+            Ok(sinex_source_core::binding::per_file(
+                &EXPORT_SPEC,
+                input,
+                settings,
+                true,
+                sinex_source_core::binding::any,
+            ))
+        }),
+        source: |_| {
+            Ok(Box::new(DeclaredSource {
+                spec: EXPORT_SPEC,
+                parser: JournalExportParser,
+            }))
+        },
+        reader: Some(|binding| {
+            Ok(sinex_source_core::binding::shared(
+                sinex_source_core::drivers::export_archive::ExportArchive {
+                    path: binding.input.clone(),
+                    host: binding.settings.host.clone(),
+                    select: |_| true,
+                    framing: sinex_source_core::drivers::export_archive::Framing::Lines,
+                    part_bytes: sinex_source_core::drivers::export_archive::PART_BYTES,
+                },
+            ))
+        }),
+        capture: None,
+    };
 
 /// The spool reader of the live journal, or of the archive in `directory`.
 pub fn driver(spool: PathBuf, host: String, directory: Option<&str>) -> LiveStream {
