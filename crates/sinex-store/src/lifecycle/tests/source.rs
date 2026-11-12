@@ -1,10 +1,11 @@
 use super::*;
 use futures::TryStreamExt;
+use sinex_model::{EventPayload, event_types::operator::LogEntry};
 use sqlx::Connection;
 
 fn source_reading(source: &str, n: u64, prefix: &str) -> Event {
     let mut event = Event::build(
-        &sinex_model::event_types::operator::LogEntry {
+        &LogEntry {
             written_at: None,
             label: None,
             text: format!("synthetic source {n}"),
@@ -382,10 +383,10 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
 struct TextKeys;
 impl crate::admission::DirtyKeys for TextKeys {
     fn reads_type(&self, kind: &str) -> bool {
-        kind == "operator.log_entry"
+        kind == LogEntry::EVENT_TYPE
     }
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)> {
-        assert_eq!(event.event_type, "operator.log_entry");
+        assert_eq!(event.event_type, LogEntry::EVENT_TYPE);
         vec![(
             "text-consumer".into(),
             json!({"text": event.payload["text"]}),
