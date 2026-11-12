@@ -1084,3 +1084,123 @@ async fn projection_never_certifies_an_unavailable_sealed_row(db: devkit::pg::Te
         InputReplayReply::Incomplete{reason,..} if reason=="projection_indexed_input_unavailable")
     );
 }
+#[devkit::test]
+async fn projection_restart_uses_its_pre_snapshot_native_prefix_and_refuses_erased_boundaries(
+    db: devkit::pg::TestDatabase,
+) {
+    let (h, _, _, _) = setup_inputs(db, 1, "prefix", sinex_model::Class::Open).await;
+    let js = crate::publisher::context(h.client.clone());
+    let stream = js.get_stream(h.subjects.confirmed_stream()).await.unwrap();
+    assert_eq!(stream.cached_info().state.messages, 0);
+    let InputReplayReply::Page {
+        position,
+        continuation: ReplayContinuation::Complete {
+            projection: empty, ..
+        },
+        ..
+    } = page(&h, "polylogue", "cache", None).await
+    else {
+        panic!("complete empty-tail snapshot")
+    };
+    let request = |basis| sinex_protocol::ConfirmedConsumer {
+        basis: Some(basis),
+        completion: None,
+        after: position,
+        cache: "cache".into(),
+        status_only: false,
+    };
+    let reply = h
+        .requests
+        .confirmed_consumer("polylogue", &request(empty))
+        .await;
+    let sinex_protocol::ConfirmedConsumerReply::Provisioned { consumer, .. } = reply else {
+        panic!("empty tail skips nothing: {reply:?}")
+    };
+    let native: jetstream::consumer::PullConsumer = stream.get_consumer(&consumer).await.unwrap();
+    assert_eq!(
+        native.cached_info().config.deliver_policy,
+        jetstream::consumer::DeliverPolicy::ByStartSequence { start_sequence: 1 }
+    );
+    // The native tail is deliberately between publication pages: no completion
+    // marker for the SQL cut has to exist for its signed projection to resume.
+    let ack = js
+        .publish(
+            h.subjects.confirmed_control(),
+            serde_json::to_vec(&Confirmed::PositionComplete { commit_seq: 0 })
+                .unwrap()
+                .into(),
+        )
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let InputReplayReply::Page {
+        position: cut,
+        continuation: ReplayContinuation::Complete { projection, .. },
+        ..
+    } = page(&h, "polylogue", "cache", None).await
+    else {
+        panic!("complete snapshot after native prefix")
+    };
+    assert_eq!(cut, position);
+    assert!(cut > 0);
+    let reply = h
+        .requests
+        .confirmed_consumer("polylogue", &request(projection.clone()))
+        .await;
+    let sinex_protocol::ConfirmedConsumerReply::Provisioned { consumer, .. } = reply else {
+        panic!("covered prefix provisions: {reply:?}")
+    };
+    let native: jetstream::consumer::PullConsumer = stream.get_consumer(&consumer).await.unwrap();
+    assert_eq!(
+        native.cached_info().config.deliver_policy,
+        jetstream::consumer::DeliverPolicy::ByStartSequence {
+            start_sequence: ack.sequence + 1
+        }
+    );
+    assert_eq!(
+        native.cached_info().delivered.consumer_sequence,
+        0,
+        "seeded floor is not completion delivery evidence"
+    );
+    let raw = stream.get_raw_message(ack.sequence).await.unwrap();
+    let mut prefix = sinex_store::read_coverage::NativePrefix::Message {
+        sequence: ack.sequence,
+        fingerprint: super::super::native_prefix::fingerprint(&raw),
+    };
+    assert_eq!(
+        super::super::native_prefix::projection_start(&stream, &prefix)
+            .await
+            .unwrap(),
+        ack.sequence + 1
+    );
+    if let sinex_store::read_coverage::NativePrefix::Message { fingerprint, .. } = &mut prefix {
+        fingerprint.push('0');
+    }
+    assert!(matches!(
+        super::super::native_prefix::projection_start(&stream, &prefix).await,
+        Err(super::super::coverage::Failure::Invalidated(_))
+    ));
+    stream.delete_message(ack.sequence).await.unwrap();
+    let reply = h
+        .requests
+        .confirmed_consumer("polylogue", &request(projection))
+        .await;
+    assert!(
+        matches!(
+            reply,
+            sinex_protocol::ConfirmedConsumerReply::ProjectionRequired { .. }
+        ),
+        "erased covered boundary cannot skip: {reply:?}"
+    );
+    // An empty prefix remains conservative even after erased sequence numbers.
+    assert_eq!(
+        super::super::native_prefix::projection_start(
+            &stream,
+            &sinex_store::read_coverage::NativePrefix::Empty
+        )
+        .await
+        .unwrap(),
+        1
+    );
+}
