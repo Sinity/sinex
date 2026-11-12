@@ -224,7 +224,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     assert_eq!(
         count(
             &mut writer,
-            &format!("SELECT count(*) FROM core.event_tombstones WHERE id='{erased}'")
+            &format!("SELECT count(*) FROM core.event_tombstones WHERE event_id='{erased}'")
         )
         .await,
         1
