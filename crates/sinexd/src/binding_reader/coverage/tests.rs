@@ -171,10 +171,12 @@ async fn coverage_restart_keeps_old_readings_and_resumes_current_state(
     // would never write. Its source field predates observed_source.
     let (old_id, old_payload): (uuid::Uuid, serde_json::Value) = sqlx::query_as(
         "INSERT INTO core.events
-         SELECT (jsonb_populate_record(NULL::core.events,to_jsonb(e) || jsonb_build_object(
-           'id',uuidv7(),'kind_version',$1::bigint,
-           'payload',(payload-'observed_source') || jsonb_build_object('source',payload->'observed_source')))).*
-         FROM core.events e WHERE event_type='source.coverage' LIMIT 1 RETURNING id,payload",
+           (id,event_type,source,run_id,material_id,anchor,parents,ts_orig,ts_quality,
+            commit_seq,payload,reading_order,record_hash,class,kind_version,validation)
+         SELECT uuidv7(),event_type,source,run_id,material_id,anchor,parents,ts_orig,ts_quality,
+           commit_seq,(payload-'observed_source') || jsonb_build_object('source',payload->'observed_source'),
+           reading_order,record_hash,class,$1,validation
+         FROM core.events WHERE event_type='source.coverage' LIMIT 1 RETURNING id,payload",
     )
     .bind((SourceCoverage::VERSION - 1) as i64)
     .fetch_one(&mut context.read_conn)
@@ -240,9 +242,11 @@ async fn coverage_restart_reports_a_malformed_current_reading(db: devkit::pg::Te
     rounds.end(&mut context.read_conn).await.unwrap();
     sqlx::query(
         "INSERT INTO core.events
-         SELECT (jsonb_populate_record(NULL::core.events,to_jsonb(e) || jsonb_build_object(
-           'id',uuidv7(),'payload',payload-'observed_source'))).*
-         FROM core.events e WHERE event_type='source.coverage' LIMIT 1",
+           (id,event_type,source,run_id,material_id,anchor,parents,ts_orig,ts_quality,
+            commit_seq,payload,reading_order,record_hash,class,kind_version,validation)
+         SELECT uuidv7(),event_type,source,run_id,material_id,anchor,parents,ts_orig,ts_quality,
+           commit_seq,payload-'observed_source',reading_order,record_hash,class,kind_version,validation
+         FROM core.events WHERE event_type='source.coverage' LIMIT 1",
     )
     .execute(&mut context.read_conn)
     .await
