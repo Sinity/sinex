@@ -168,6 +168,8 @@ pub(crate) async fn walk(
         .collect();
     // The visible view owns payload masking. Edges and tombstone skeletons
     // retain identity after a tombstone, without reconstructing cleared content.
+    // Compressed event estimates can otherwise turn a small selected set into
+    // whole-history joins. Keep each event and its details keyed by that set.
     let rows = sqlx::query_scalar!(
         r#"WITH selected AS (
              SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(id uuid, depth numeric))
@@ -194,11 +196,11 @@ pub(crate) async fn walk(
              'tombstone_operation', t.operation_id, 'tombstoned', t.removed_at,
              'payload', e.payload) AS "row!"
            FROM selected f
-           LEFT JOIN core.visible_events e ON e.id=f.id
-           LEFT JOIN core.event_tombstones t ON t.event_id=f.id
-           LEFT JOIN audit.archived a ON a.event_id=e.id
-           LEFT JOIN raw.materials m ON m.id=e.material_id
-           LEFT JOIN core.runs r ON r.id=e.run_id
+           LEFT JOIN LATERAL (SELECT * FROM core.visible_events WHERE id=f.id OFFSET 0) e ON true
+           LEFT JOIN LATERAL (SELECT * FROM core.event_tombstones WHERE event_id=f.id OFFSET 0) t ON true
+           LEFT JOIN LATERAL (SELECT event_id FROM audit.archived WHERE event_id=e.id OFFSET 0) a ON true
+           LEFT JOIN LATERAL (SELECT * FROM raw.materials WHERE id=e.material_id OFFSET 0) m ON true
+           LEFT JOIN LATERAL (SELECT * FROM core.runs WHERE id=e.run_id OFFSET 0) r ON true
            ORDER BY f.depth,
              CASE WHEN $2 THEN coalesce(e.ts_orig,t.ts_orig) END NULLS LAST, f.id"#,
         Json::Array(selected),
