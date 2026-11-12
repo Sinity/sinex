@@ -356,6 +356,12 @@ async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase)
         json!({"method": "query", "query": "events where ls"}),
     )
     .await;
+    assert_eq!(body["outcome"], "ok", "archive target query: {body}");
+    assert_eq!(
+        body["result"]["rows"].as_array().map(Vec::len),
+        Some(1),
+        "archive target query: {body}"
+    );
     let id = body["result"]["rows"][0]["id"]
         .as_str()
         .unwrap()
