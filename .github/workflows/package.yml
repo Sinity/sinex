@@ -21,7 +21,8 @@ on:
         default: false
 
 env:
-  REV: ${{ inputs.rev || github.sha }}
+  # Export exclusions must have the same meaning on builders and deployers.
+  FLAKE: "git+https://github.com/${{ github.repository }}?rev=${{ inputs.rev || github.sha }}&shallow=1&exportIgnore=1"
 
 concurrency:
   group: package-${{ inputs.rev || github.sha }}
@@ -41,10 +42,15 @@ jobs:
           name: sinity
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
+      - name: Identify the source and package
+        run: |
+          nix --version
+          nix flake metadata --json "$FLAKE"
+          nix eval --json "${FLAKE}#default.drvPath"
       - name: Build the package
         run: |
-          dependencies=$(nix build --no-link --print-build-logs --print-out-paths "github:${GITHUB_REPOSITORY}/${REV}#sinex-dependencies")
-          out=$(nix build --no-link --print-build-logs --print-out-paths "github:${GITHUB_REPOSITORY}/${REV}#default")
+          dependencies=$(nix build --no-link --print-build-logs --print-out-paths "${FLAKE}#sinex-dependencies")
+          out=$(nix build --no-link --print-build-logs --print-out-paths "${FLAKE}#default")
           echo "built $out"
           echo "dependencies=$dependencies" >> "$GITHUB_ENV"
           echo "out=$out" >> "$GITHUB_ENV"
@@ -54,8 +60,8 @@ jobs:
         if: ${{ inputs.verify-vms }}
         run: |
           nix build --no-link --print-build-logs \
-            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.postgresql-uuid-bounds" \
-            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.module" \
-            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.vm-stack" \
-            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.vm-topology" \
-            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.vm-restore"
+            "${FLAKE}#checks.x86_64-linux.postgresql-uuid-bounds" \
+            "${FLAKE}#checks.x86_64-linux.module" \
+            "${FLAKE}#checks.x86_64-linux.vm-stack" \
+            "${FLAKE}#checks.x86_64-linux.vm-topology" \
+            "${FLAKE}#checks.x86_64-linux.vm-restore"

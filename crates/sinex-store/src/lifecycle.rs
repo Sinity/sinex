@@ -862,7 +862,12 @@ async fn apply(
     match phase {
         Phase::Archive | Phase::ArchiveMadeLive => {
             let by = (ArchiveReason::Archive, Some(op.id.0));
-            mark_selected_dirty(conn, &members, seq, keys, None).await?;
+            let selected: Vec<_> = planned
+                .members
+                .iter()
+                .map(|member| (member.id, member.event_type.as_str()))
+                .collect();
+            mark_selected_dirty(conn, &selected, seq, keys).await?;
             archive_at(conn, &members, seq, by.0, None, by.1).await?;
             remove_live(conn, &members).await?;
             by_kind(&mut counts.archived);

@@ -99,5 +99,10 @@ Sinnix deploys a revision only
 after fetching that package, so its switches never compile Sinex. To deploy a
 revision master does not contain, such as a deployment branch's head, build
 it first with `gh workflow run package -f rev=<commit>`.
+The builder uses the explicit Git fetch policy `exportIgnore=1`, including
+for module and VM checks. Deployers use that same policy when pinning the
+revision. The workflow records the Nix version, resolved source path and NAR
+hash, and package derivation before building; a runtime signature alone does
+not identify the module source used to evaluate it.
 For a package or nixpkgs change, add `-f verify-vms=true` to verify the
 deployment module and the stack, topology and restore VMs in that workflow.

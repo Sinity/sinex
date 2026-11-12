@@ -579,31 +579,52 @@ pub(crate) async fn mark_archived_dirty(
         ids,
     ).fetch_all(&mut *conn).await?;
     let all: Vec<Uuid> = ids.iter().chain(&descendants).copied().collect();
-    let marked = mark_selected_dirty(conn, &all, seq, keys, recomputing).await?;
+    let marked = mark_dirty_events(conn, &all, &all, seq, keys, recomputing).await?;
     super::archive::archive_at(conn, &descendants, seq, reason, None, operation).await?;
     remove_live(conn, &descendants).await?;
     Ok(marked)
 }
 
-/// Mark exactly the chain already selected and validated by the caller.
+/// Use the selected chain's kinds before reading payloads. Ownership keys
+/// still become dirty even when no current derivation consumes their kind.
 pub(crate) async fn mark_selected_dirty(
     conn: &mut PgConnection,
+    selected: &[(Uuid, &str)],
+    seq: i64,
+    keys: &dyn DirtyKeys,
+) -> Result<usize> {
+    let ids: Vec<_> = selected.iter().map(|(id, _)| *id).collect();
+    let inputs: Vec<_> = selected
+        .iter()
+        .filter(|(_, kind)| keys.reads_type(kind))
+        .map(|(id, _)| *id)
+        .collect();
+    mark_dirty_events(conn, &ids, &inputs, seq, keys, None).await
+}
+
+async fn mark_dirty_events(
+    conn: &mut PgConnection,
     ids: &[Uuid],
+    inputs: &[Uuid],
     seq: i64,
     keys: &dyn DirtyKeys,
     recomputing: Option<&Batch>,
 ) -> Result<usize> {
-    let rows = sqlx::query!(
-        "SELECT e.event_type, e.ts_orig, e.payload
+    let rows = if inputs.is_empty() {
+        vec![]
+    } else {
+        sqlx::query!(
+            "SELECT e.event_type, e.ts_orig, e.payload
          FROM (SELECT DISTINCT unnest($1::uuid[]) id) selected
          CROSS JOIN LATERAL (
            SELECT event_type, ts_orig, payload FROM core.events
            WHERE id = selected.id OFFSET 0
          ) e",
-        ids,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+            inputs,
+        )
+        .fetch_all(&mut *conn)
+        .await?
+    };
     let inputs: Vec<_> = rows
         .iter()
         .map(|row| KeyInput {
