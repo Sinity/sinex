@@ -1,7 +1,7 @@
 {
   description = "Sinex: a durable record of one person's digital life";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.devtools-nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
+  inputs.crane.url = "github:ipetkov/crane/eb35abda9f232cc6610b1d1e3200d15c49b7ac54";
   inputs.rust-overlay = {
     url = "github:oxalica/rust-overlay/4748ec2f5ed4a881474ed4c98aa71a5308cdac8d";
     inputs.nixpkgs.follows = "nixpkgs";
@@ -10,7 +10,7 @@
     {
       self,
       nixpkgs,
-      devtools-nixpkgs,
+      crane,
       rust-overlay,
     }:
     let
@@ -21,134 +21,32 @@
         config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ];
       };
       toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-      nextest = (import devtools-nixpkgs { inherit system; }).cargo-nextest;
-      rustPlatform = pkgs.makeRustPlatform {
-        cargo = toolchain;
-        rustc = toolchain;
-      };
+      nextest = pkgs.cargo-nextest;
       llvmTools = "${toolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin";
       postgres = import ./nix/postgresql.nix {
         postgresql = pkgs.postgresql_18;
         extensions = p: [ p.pgvector ];
       };
-      server = rustPlatform.buildRustPackage {
-        pname = "sinex";
-        version = "0.1.0";
-        src = ./.;
-        cargoLock = {
-          lockFile = ./Cargo.lock;
-          # Git dependencies are fetched at the SHA recorded in Cargo.lock.
-          allowBuiltinFetchGit = true;
-        };
-        SINEX_BUILD = "${
+      build = import ./nix/build.nix {
+        inherit
+          pkgs
+          crane
+          toolchain
+          postgres
+          ;
+        source = self.outPath;
+        revision = "${
           builtins.substring 0 40 (
             self.rev or self.dirtyRev or (throw "Sinex requires a Git source revision")
           )
         };dirty=${if self ? rev then "false" else "true"}";
-        nativeBuildInputs = [ postgres ];
-        # sinex-sources tests start a throwaway NATS server and make git
-        # repositories.
-        nativeCheckInputs = [
-          pkgs.nats-server
-          pkgs.git
-          pkgs.gnutar
-        ];
-        preBuild = ''
-          cargo run --offline --locked -p xtask -- boundaries
-          export PGDATA=$(mktemp -d)
-          export PGHOST=$(mktemp -d)
-          export PGPORT=5432
-          initdb --no-locale --auth=trust --data-checksums > /dev/null
-          pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p $PGPORT" -w start > /dev/null
-          trap 'pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null || true' EXIT
-          createdb foundation
-          export DATABASE_URL="postgresql:///foundation?host=$PGHOST&port=$PGPORT"
-          # The schema tool has no checked queries, so it builds before the
-          # database exists and provisions the one the store's queries need.
-          cargo build --offline --locked -p sinex-schema --target-dir target --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget}
-          target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
-          # Install a complete devkit template under its project/schema identity.
-          export DEVKIT_PG_TEMPLATE="sinex_template_$(target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema hash)"
-          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE foundation RENAME TO $DEVKIT_PG_TEMPLATE"
-          # Templates admit no connections: a TimescaleDB scheduler attached
-          # to one would prevent concurrent test clones. Compile-time checks
-          # use their own read-only database, as devkit's native setup does.
-          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE $DEVKIT_PG_TEMPLATE WITH IS_TEMPLATE true ALLOW_CONNECTIONS false" \
-            -c "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = '$DEVKIT_PG_TEMPLATE'"
-          schema_database="sinex_schema_''${DEVKIT_PG_TEMPLATE#sinex_template_}"
-          createdb --template="$DEVKIT_PG_TEMPLATE" "$schema_database"
-          psql -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE $schema_database SET default_transaction_read_only = on" \
-            -c "ALTER DATABASE $schema_database SET timescaledb.disable_load = on"
-          export DATABASE_URL="postgresql:///$schema_database?host=$PGHOST&port=$PGPORT"
-        '';
-        cargoBuildFlags = [
-          "-p"
-          "sinexd"
-          "-p"
-          "sinexctl"
-          "-p"
-          "xtask"
-        ];
-        doCheck = true;
-        preCheck = ''
-          export DEVKIT_PG_SOCKET="$PGHOST"
-        '';
-        # The memory test measures its process's peak RSS, so it needs a
-        # process of its own, which nextest gives it and `cargo test` does not.
-        # Nix's syscall filter prevents setting xattrs and ACLs. The native
-        # xtask suite runs the GNU tar restoration test with those assertions.
-        checkFlags = [
-          "--skip"
-          "drivers::tests::backfill_of_a_large_file_peaks_well_under_its_size"
-          "--skip"
-          "drivers::dir_snapshot::tests::restore_tar::gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl"
-        ];
-        # Schema tests clone the builder's prepared database. Store and daemon
-        # database tests run under `xtask test`.
-        cargoTestFlags = [
-          "-p"
-          "sinex-model"
-          "-p"
-          "sinex-protocol"
-          "-p"
-          "sinex-schema"
-          "-p"
-          "sinex-sources"
-          "-p"
-          "sinex-source-core"
-          "-p"
-          "sinex-sealing"
-          "-p"
-          "sinex-derivations"
-        ];
       };
-      capture = rustPlatform.buildRustPackage {
-        pname = "sinex-capture";
-        version = "0.1.0";
-        src = ./.;
-        cargoLock = {
-          lockFile = ./Cargo.lock;
-          allowBuiltinFetchGit = true;
-        };
-        cargoBuildFlags = [
-          "-p"
-          "sinex-session"
-          "-p"
-          "sinex-capture"
-        ];
-        doCheck = false;
-      };
-      package = pkgs.symlinkJoin {
-        name = "sinex-0.1.0";
-        paths = [
-          server
-          capture
-        ];
-      };
+      package = build.package;
     in
     {
       packages.${system} = {
         default = package;
+        sinex-dependencies = build.dependencies;
         sinexd = package;
         sinexctl = package;
         postgresql = postgres;
