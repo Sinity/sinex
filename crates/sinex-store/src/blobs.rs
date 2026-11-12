@@ -362,6 +362,16 @@ impl Blobs {
         if chunked {
             return self.delete_chunked(conn, name).await;
         }
+        let shared = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM core.blob_chunks c JOIN core.blobs b ON b.hash=c.blob
+               WHERE c.chunk=$1 AND c.blob<>$1 AND b.status<>'removed') AS "shared!""#,
+            name,
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if shared || self.held_by_pending_chunk(name)? {
+            return Ok(true);
+        }
         let descriptor = sqlx::query_scalar!(
             "SELECT descriptor FROM core.blob_extents WHERE hash=$1",
             name
@@ -376,6 +386,18 @@ impl Blobs {
         }
         self.punch(name, extent.as_ref())?;
         Ok(true)
+    }
+    /// A prepared chunk list can reuse an extent before its SQL reference commits.
+    pub(crate) fn held_by_pending_chunk(&self, name: &str) -> Result<bool> {
+        let hash = parse(name)?;
+        let state = self.state()?;
+        Ok(state.unrecorded_chunk_lists.iter().any(|blob| {
+            *blob != hash
+                && state
+                    .chunk_lists
+                    .get(blob)
+                    .is_some_and(|chunks| chunks.contains(&hash))
+        }))
     }
     /// Remove a chunked blob: punch the chunks no held blob shares (neither
     /// held as a blob of their own nor listed by another blob that is not

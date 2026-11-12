@@ -50,6 +50,8 @@ async fn shutdown_cleanup_releases_the_writer_claim_even_on_failure(db: devkit::
             .unwrap()
     );
     conn.close().await.unwrap();
+    // Exercise the real extent flush error, with bytes queued for shutdown.
+    blobs.put(b"synthetic pending shutdown bytes").unwrap();
     let mut fault = connect(&url).await.unwrap();
     sqlx::query("DROP TABLE core.blob_extents")
         .execute(&mut fault)
