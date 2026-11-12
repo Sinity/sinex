@@ -330,6 +330,11 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     .unwrap();
     assert_eq!(event_refusal(denied).kind, FetchRefusalKind::Denied);
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    // Reconstruct predecessor metadata to exercise reads of retained unknown history.
+    sqlx::query("ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete")
+        .execute(&mut conn)
+        .await
+        .unwrap();
     sqlx::query!(
         "UPDATE core.event_tombstones SET original_commit_seq=NULL WHERE event_id=$1",
         request.event.0

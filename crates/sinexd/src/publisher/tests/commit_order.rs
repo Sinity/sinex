@@ -302,6 +302,13 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::p
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -369,6 +376,13 @@ async fn references_expose_no_source_key_and_route_by_stored_class(db: devkit::p
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();

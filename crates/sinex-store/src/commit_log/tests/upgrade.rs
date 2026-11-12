@@ -130,7 +130,8 @@ async fn upgrade_keeps_every_mapping_including_tombstones_without_commit_rows(
             .fetch_all(&mut conn)
             .await
             .unwrap();
-    tombstone(&mut conn, before[1000].0).await;
+    sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) VALUES($1,'test.source','test.event',$2)")
+        .bind(before[1000].0).bind(Uuid::now_v7()).execute(&mut conn).await.unwrap();
     set_consumer_position(&mut conn, "publisher", 4500, 150)
         .await
         .unwrap();

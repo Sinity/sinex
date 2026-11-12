@@ -694,7 +694,12 @@ impl Requests {
             || proof.position != claims.position
             || proof.scope != claims.scope
             || proof.catalog != claims.catalog
-            || after < claims.position
+        {
+            return Err(Failure::Unverified(
+                "invalid full-projection certificate".into(),
+            ));
+        }
+        if after < claims.position
             || !same(
                 &claims,
                 producer,
