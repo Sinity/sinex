@@ -21,6 +21,9 @@ impl Registered {
 }
 
 impl DirtyKeys for Registered {
+    fn reads_type(&self, kind: &str) -> bool {
+        self.derivations.iter().any(|d| d.reads_type(kind))
+    }
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)> {
         let view = KeyView {
             event_type: event.event_type,

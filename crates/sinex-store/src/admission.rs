@@ -60,6 +60,11 @@ pub struct AffectedRange {
 /// The key functions of the keyed derivations, supplied by the daemon, which
 /// owns the derivation registry. Admission marks every returned key dirty.
 pub trait DirtyKeys: Send + Sync {
+    /// Whether keys, affected ranges or neighbours can consume this kind.
+    /// Custom implementations remain conservative unless they declare it.
+    fn reads_type(&self, _: &str) -> bool {
+        true
+    }
     /// Every registered producer target for this input. Neighbour selection
     /// does not restrict this mapping to the producer that offered a window.
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)>;
@@ -75,6 +80,9 @@ pub trait DirtyKeys: Send + Sync {
 pub struct NoDerivations;
 
 impl DirtyKeys for NoDerivations {
+    fn reads_type(&self, _: &str) -> bool {
+        false
+    }
     fn keys(&self, _: &KeyInput<'_>) -> Vec<(String, Value)> {
         Vec::new()
     }

@@ -51,3 +51,13 @@ fn dirty_keys_use_the_same_local_hour_as_the_runner() {
             .any(|(name, key)| *name == "activity.spans" && key["hour"] == json!(hour))
     );
 }
+
+#[test]
+fn payload_applicability_uses_the_registered_input_types() {
+    let keys = Registered::new(
+        vec![Box::new(sinex_derivations::activity::ActivitySpans)],
+        TimeSettings::new("Etc/UTC", 0, 0).unwrap(),
+    );
+    assert!(keys.reads_type("key.pressed"));
+    assert!(!keys.reads_type("synthetic.unconsumed"));
+}
