@@ -184,17 +184,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         operate(&mut writer, Act::Restore, events(&[&roots[64]]), 16).await,
         Ended::Ok { .. }
     ));
-    // Erasure after selection removes current membership; the source batch
-    // must skip it without trying to reconstruct its old immutable headers.
     let erased = roots[80].id.0;
-    assert!(matches!(
-        operate(&mut writer, Act::Archive, events(&[&roots[80]]), 16).await,
-        Ended::Ok { .. }
-    ));
-    assert!(matches!(
-        operate(&mut writer, Act::Tombstone, events(&[&roots[80]]), 16).await,
-        Ended::Ok { .. }
-    ));
     let mut batches = 0;
     for chunk in prepared.chunks(16) {
         let complete = chunk.last() == prepared.last();
@@ -204,6 +194,16 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
             eprintln!(
                 "compressed writer work pair unrelated8192={first_work} unrelated16384={work}"
             );
+            // Erasing after this pair keeps its selected chunk unchanged.
+            // The later batch must still skip the disappeared membership.
+            assert!(matches!(
+                operate(&mut writer, Act::Archive, events(&[&roots[80]]), 16).await,
+                Ended::Ok { .. }
+            ));
+            assert!(matches!(
+                operate(&mut writer, Act::Tombstone, events(&[&roots[80]]), 16).await,
+                Ended::Ok { .. }
+            ));
         }
         progress = next;
         batches += 1;
