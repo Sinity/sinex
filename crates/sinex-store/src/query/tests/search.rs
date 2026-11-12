@@ -112,10 +112,15 @@ async fn eligible_prefix_branch_can_use_its_trigram_index(db: devkit::pg::TestDa
     .execute(&mut conn)
     .await
     .unwrap();
-    sqlx::raw_sql("ANALYZE core.events; ANALYZE core.search_text; ANALYZE core.search_trigram")
-        .execute(&mut conn)
-        .await
-        .unwrap();
+    // Match the upgrade's bulk-built index. Fixture inserts otherwise leave
+    // a GIN pending list whose scan cost can make a primary-key scan cheaper.
+    sqlx::raw_sql(
+        "REINDEX INDEX core.search_trigram_text;
+         ANALYZE core.events; ANALYZE core.search_text; ANALYZE core.search_trigram",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
     sqlx::query("SET enable_seqscan=off")
         .execute(&mut conn)
         .await
