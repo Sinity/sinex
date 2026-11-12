@@ -10,8 +10,7 @@ fn conversion_refuses_a_wrong_export_name_length_or_key_before_installing_bytes(
             root.path(),
             &name,
             bytes.len() as u64 + 1,
-            std::io::Cursor::new(bytes),
-            None
+            std::io::Cursor::new(bytes)
         )
         .is_err()
     );
@@ -20,8 +19,7 @@ fn conversion_refuses_a_wrong_export_name_length_or_key_before_installing_bytes(
             root.path(),
             &Hash::of(b"different").to_string(),
             bytes.len() as u64,
-            std::io::Cursor::new(bytes),
-            None
+            std::io::Cursor::new(bytes)
         )
         .is_err()
     );
@@ -35,12 +33,12 @@ fn conversion_refuses_a_wrong_export_name_length_or_key_before_installing_bytes(
         key: [8; 32],
     };
     assert!(
-        prepare(
+        prepare_sealed(
             root.path(),
             &name,
             bytes.len() as u64,
             std::io::Cursor::new(bytes),
-            Some(&wrong)
+            &wrong
         )
         .is_err()
     );
@@ -76,12 +74,12 @@ async fn converted_streams_keep_existing_material_and_key_rows(db: devkit::pg::T
         .await
         .unwrap();
     let before:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(m)||jsonb_build_object('key',(SELECT to_jsonb(k) FROM privacy.data_keys k WHERE k.material_id=m.id)) FROM raw.materials m WHERE id=$1").bind(material.0).fetch_one(&mut conn).await.unwrap();
-    let prepared = prepare(
+    let prepared = prepare_sealed(
         &root.path().join("incoming"),
         &name,
         bytes.len() as u64,
         std::io::Cursor::new(bytes),
-        Some(&key),
+        &key,
     )
     .unwrap();
     blobs.convert_prepared(&mut conn, prepared).await.unwrap();
@@ -131,7 +129,6 @@ async fn a_conversion_group_keeps_catalog_rows_and_resumes_after_reopen(
                 &hash,
                 bytes.len() as u64,
                 std::io::Cursor::new(bytes),
-                None,
             )
             .unwrap(),
         );
@@ -164,4 +161,42 @@ async fn a_conversion_group_keeps_catalog_rows_and_resumes_after_reopen(
     .await
     .unwrap();
     assert_eq!(missing, 0);
+}
+
+#[test]
+fn plain_conversion_accepts_a_nonseekable_stream_with_short_and_interrupted_reads() {
+    struct Chunks<'a> {
+        bytes: &'a [u8],
+        interrupted: bool,
+    }
+    impl Read for Chunks<'_> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            let n = self.bytes.len().min(out.len()).min(3);
+            out[..n].copy_from_slice(&self.bytes[..n]);
+            self.bytes = &self.bytes[n..];
+            Ok(n)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let bytes = b"synthetic streamed source bytes";
+    let value = prepare(
+        root.path(),
+        &Hash::of(bytes).to_string(),
+        bytes.len() as u64,
+        Chunks {
+            bytes,
+            interrupted: false,
+        },
+    )
+    .unwrap();
+    let mut reader = value
+        .reader(None, hashed_blobs::ReadLimits::default())
+        .unwrap();
+    let mut actual = Vec::new();
+    reader.read_to_end(&mut actual).unwrap();
+    assert_eq!(actual, bytes);
 }

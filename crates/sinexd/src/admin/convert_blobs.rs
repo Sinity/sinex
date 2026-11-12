@@ -2,7 +2,7 @@
 //! runs here; every stream is verified before its extents are committed.
 use crate::{Error, Result};
 use sqlx::Connection;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
@@ -86,20 +86,11 @@ async fn convert(
             .ok_or_else(|| Error::internal("exporter output missing"))?;
         let mut group = Vec::new();
         for (name, length) in selected {
-            let mut decoded = tempfile::tempfile()?;
-            let copied = std::io::copy(&mut output.by_ref().take(length), &mut decoded)?;
-            if copied != length {
-                return Err(Error::internal(format!(
-                    "exporter ended before {name}: {copied} of {length} bytes"
-                )));
-            }
-            decoded.seek(SeekFrom::Start(0))?;
             group.push(sinex_store::blobs::migration::prepare(
                 &store.join("incoming"),
                 &name,
                 length,
-                decoded,
-                None,
+                output.by_ref().take(length),
             )?);
             after = name;
         }
