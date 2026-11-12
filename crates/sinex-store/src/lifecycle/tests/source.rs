@@ -67,6 +67,16 @@ async fn prepared_step(
     (progress, done, whole_work)
 }
 
+async fn selected_layout(conn: &mut AdmissionContext, chunk: &str, ids: &[Uuid]) -> Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object('relid',c.relid,'status',c.status,'compressed_relation',s.compress_relid,
+          'rowstore_bytes',pg_relation_size(c.relid),'compressed_bytes',pg_relation_size(s.compress_relid),
+          'rows',(SELECT count(*) FROM core.events WHERE id=ANY($2)),
+          'headers',(SELECT md5(string_agg(id::text||':'||commit_seq::text||':'||source,',' ORDER BY id)) FROM core.events WHERE id=ANY($2)))
+         FROM _timescaledb_catalog.chunk c JOIN _timescaledb_catalog.compression_settings s ON s.relid=c.relid WHERE c.relid=$1::regclass"
+    ).bind(chunk).bind(ids).fetch_one(&mut **conn).await.unwrap()
+}
+
 #[devkit::test]
 async fn compressed_source_stream_resumes_and_observes_restored_roots(
     db: devkit::pg::TestDatabase,
@@ -88,6 +98,12 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         operate(&mut writer, Act::Archive, events(&[&roots[64]]), 16).await,
         Ended::Ok { .. }
     ));
+    let selected_chunk: String =
+        sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id=$1")
+            .bind(roots[0].id.0)
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
     sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
         .execute(&mut *writer)
         .await
@@ -114,6 +130,13 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     for _ in 0..16 {
         first.push(stream.try_next().await.unwrap().unwrap());
     }
+    let selected_ids: Vec<_> = roots
+        .iter()
+        .map(|e| e.id.0)
+        .chain(std::iter::once(new_id))
+        .collect();
+    let initial_layout = selected_layout(&mut writer, &selected_chunk, &selected_ids).await;
+    eprintln!("selected layout before pair {initial_layout}");
     let (saved, done, first_work) =
         prepared_step(&mut writer, &op, Progress::default(), first, false).await;
     assert!(!done);
@@ -188,6 +211,13 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     let mut batches = 0;
     for chunk in prepared.chunks(16) {
         let complete = chunk.last() == prepared.last();
+        if batches == 0 {
+            let layout = selected_layout(&mut writer, &selected_chunk, &selected_ids).await;
+            assert_eq!(
+                layout, initial_layout,
+                "selected compression and row state changed between work observations"
+            );
+        }
         let (next, done, work) =
             prepared_step(&mut writer, &reopened, progress, chunk.to_vec(), complete).await;
         if batches == 0 {
