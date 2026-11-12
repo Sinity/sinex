@@ -266,7 +266,18 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
         match &entry.change {
             Change::Event(e) => actual.push((entry.position, e.id, "event")),
             Change::PositionComplete => last = entry.position,
-            _ => panic!("fixture has only event references and completion"),
+            Change::Archive(change) => actual.push((
+                entry.position,
+                change.archive.event_id,
+                if change.archive.archived {
+                    "archived"
+                } else {
+                    "restored"
+                },
+            )),
+            Change::Tombstoned(change) => {
+                actual.push((entry.position, change.event_id, "tombstoned"))
+            }
         }
         cursor = entry.cursor();
     }
