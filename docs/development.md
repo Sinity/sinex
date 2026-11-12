@@ -1,7 +1,7 @@
 # Development
 
 `rust-toolchain.toml` selects Rust and its components for rustup, the Nix
-shell and both Nix package builds. The flake reads it through its pinned
+shell and the Nix package build. The flake reads it through its pinned
 rust-overlay input. Change the compiler version in common and both products
 together. Coverage uses that toolchain's LLVM tools; fuzz instrumentation
 uses its bundled sanitizer runtime.
@@ -76,7 +76,17 @@ semantics.
 ## Published package
 
 The `package` workflow builds `.#default` for every master commit and pushes
-its runtime closure to `sinity.cachix.org`. Sinnix deploys a revision only
+its runtime closure and `.#sinex-dependencies` to `sinity.cachix.org`. The
+dependency artifact uses the exact production Cargo graph; the runtime
+builds `sinexd`, `sinexctl`, `sinex-session` and `sinex-capture` together and
+ships those four binaries. A separately built native schema tool prepares
+the read-only PostgreSQL database used by compile-time query checks.
+Required CI owns workspace boundaries and tests; packaging does not repeat
+them or ship `xtask`. The development shell, package and VM checks use the
+same pinned nixpkgs revision as Polylogue and the shared crates.
+Sinnix deploys a revision only
 after fetching that package, so its switches never compile Sinex. To deploy a
 revision master does not contain, such as a deployment branch's head, build
 it first with `gh workflow run package -f rev=<commit>`.
+For a package or nixpkgs change, add `-f verify-vms=true` to verify the
+deployment module and the stack, topology and restore VMs in that workflow.

@@ -15,6 +15,10 @@ on:
       rev:
         description: Commit to build and publish
         required: true
+      verify-vms:
+        description: Verify the module and deployed stack, topology and restore VMs
+        type: boolean
+        default: false
 
 env:
   REV: ${{ inputs.rev || github.sha }}
@@ -39,8 +43,19 @@ jobs:
           skipPush: true
       - name: Build the package
         run: |
+          dependencies=$(nix build --no-link --print-build-logs --print-out-paths "github:${GITHUB_REPOSITORY}/${REV}#sinex-dependencies")
           out=$(nix build --no-link --print-build-logs --print-out-paths "github:${GITHUB_REPOSITORY}/${REV}#default")
           echo "built $out"
+          echo "dependencies=$dependencies" >> "$GITHUB_ENV"
           echo "out=$out" >> "$GITHUB_ENV"
       - name: Publish its closure to sinity.cachix.org
-        run: cachix push sinity "$out"
+        run: cachix push sinity "$out" "$dependencies"
+      - name: Verify the deployment module and VMs
+        if: ${{ inputs.verify-vms }}
+        run: |
+          nix build --no-link --print-build-logs \
+            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.postgresql-uuid-bounds" \
+            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.module" \
+            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.vm-stack" \
+            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.vm-topology" \
+            "github:${GITHUB_REPOSITORY}/${REV}#checks.x86_64-linux.vm-restore"
