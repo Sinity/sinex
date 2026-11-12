@@ -8,19 +8,13 @@ async fn positions(conn: &mut PgConnection) -> Vec<serde_json::Value> {
         .unwrap()
 }
 
-async fn wal(conn: &mut PgConnection) -> String {
-    sqlx::query_scalar("SELECT pg_current_wal_insert_lsn()::text")
-        .fetch_one(conn)
-        .await
-        .unwrap()
-}
-
-async fn wal_since(conn: &mut PgConnection, before: &str) -> i64 {
-    sqlx::query_scalar("SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(), $1::pg_lsn)::bigint")
-        .bind(before)
-        .fetch_one(conn)
-        .await
-        .unwrap()
+async fn statement_wal(conn: &mut PgConnection, statement: &str) -> i64 {
+    let plan: serde_json::Value =
+        sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, WAL, FORMAT JSON) {statement}"))
+            .fetch_one(conn)
+            .await
+            .unwrap();
+    plan[0]["Plan"]["WAL Bytes"].as_i64().unwrap()
 }
 
 #[devkit::test]
@@ -64,10 +58,17 @@ async fn commit_positions_compact_without_deleting_event_history(db: devkit::pg:
     assert_eq!(expected.len(), 5);
 
     let mut old = conn.begin().await.unwrap();
-    let start = wal(&mut old).await;
-    assert_eq!(sqlx::query("DELETE FROM core.commit_log c USING core.events e WHERE e.id=c.event_id AND e.commit_seq=c.commit_seq")
-        .execute(&mut *old).await.unwrap().rows_affected(),32768);
-    let old_wal = wal_since(&mut old, &start).await;
+    let old_wal = statement_wal(&mut old,
+        "DELETE FROM core.commit_log c USING core.events e WHERE e.id=c.event_id AND e.commit_seq=c.commit_seq"
+    ).await;
+    let old_deleted: i64 = sqlx::query_scalar(
+        "SELECT n_tup_del FROM pg_stat_xact_user_tables WHERE relid='core.commit_log'::regclass",
+    )
+    .fetch_one(&mut *old)
+    .await
+    .unwrap();
+    assert_eq!(old_deleted, 32768);
+    assert_eq!(positions(&mut old).await.len(), 5);
     old.rollback().await.unwrap();
     assert_eq!(positions(&mut conn).await, before);
 
@@ -92,10 +93,18 @@ async fn commit_positions_compact_without_deleting_event_history(db: devkit::pg:
         1
     );
 
+    // The positive control's rolled-back work can remain in backend stats.
+    // A fresh backend scopes the candidate's mutation counters to its own work.
+    conn.close().await.unwrap();
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let start = wal(&mut tx).await;
+    let mut new_wal = None;
     for statement in statements() {
-        sqlx::raw_sql(&statement).execute(&mut *tx).await.unwrap();
+        if statement.starts_with("INSERT INTO core.commit_log(") {
+            new_wal = Some(statement_wal(&mut tx, &statement).await);
+        } else {
+            sqlx::raw_sql(&statement).execute(&mut *tx).await.unwrap();
+        }
     }
     assert_eq!(positions(&mut tx).await, expected);
     assert_eq!(
@@ -119,10 +128,12 @@ async fn commit_positions_compact_without_deleting_event_history(db: devkit::pg:
     .await
     .unwrap();
     assert_eq!(deleted, 0);
-    let new_wal = wal_since(&mut tx, &start).await;
+    // EXPLAIN counts this statement's WAL, so parallel fixture databases
+    // cannot contaminate the old DELETE versus keeper INSERT comparison.
+    let new_wal = new_wal.expect("the production step reinserts its keepers");
     assert!(
         new_wal * 4 < old_wal,
-        "compaction WAL {new_wal}, original DELETE WAL {old_wal}"
+        "keeper INSERT WAL {new_wal}, original DELETE WAL {old_wal}"
     );
     let original_positions: Vec<i64> = sqlx::query_scalar(
         "SELECT original_commit_seq FROM core.event_tombstones ORDER BY original_commit_seq",
