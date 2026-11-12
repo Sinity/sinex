@@ -79,6 +79,8 @@ pub(crate) struct DerivationRunner {
     previous_orders: BTreeMap<String, i64>,
     /// Where each per-event derivation's last pass that found no input ended.
     empty_passes: BTreeMap<String, EmptyPass>,
+    /// Retirement waits for the historical child edges before walking chains.
+    retirement_pending: bool,
     pub counts: BTreeMap<String, Counts>,
 }
 
@@ -232,14 +234,32 @@ impl DerivationRunner {
             runs,
             previous_orders,
             empty_passes: BTreeMap::new(),
+            retirement_pending: true,
             counts: BTreeMap::new(),
         };
         for d in &catalog {
             registry::register_derivation(&mut runner.read, d, crate::build_identity::current()?)
                 .await?;
         }
-        runner.archive_retired_outputs().await?;
+        runner.retire_outputs_when_ready().await?;
         Ok(runner)
+    }
+
+    /// An upgraded store's fallback child walks read historical event chunks.
+    /// Let the daemon's online schema worker finish the edge fill before any
+    /// retirement walk, then retire before admitting new derivation outputs.
+    async fn retire_outputs_when_ready(&mut self) -> Result<bool> {
+        if !self.retirement_pending {
+            return Ok(true);
+        }
+        if sinex_schema::online::pending(&mut self.read, sinex_schema::online::Task::EventChildren)
+            .await?
+        {
+            return Ok(false);
+        }
+        self.archive_retired_outputs().await?;
+        self.retirement_pending = false;
+        Ok(true)
     }
 
     /// Archive, through the lifecycle, the outputs of every registered
@@ -400,6 +420,7 @@ impl DerivationRunner {
             runs,
             previous_orders: BTreeMap::new(),
             empty_passes: BTreeMap::new(),
+            retirement_pending: false,
             counts: BTreeMap::new(),
         })
     }
@@ -529,6 +550,9 @@ impl DerivationRunner {
     /// derivations that ran, then its per-event derivations. Returns how much
     /// work it did.
     pub(crate) async fn pass(&mut self) -> Result<usize> {
+        if !self.retire_outputs_when_ready().await? {
+            return Ok(0);
+        }
         let env = self.env();
         self.passes = self.passes.wrapping_add(1);
         let every_rank = self.passes.is_multiple_of(EVERY_LEVEL_EVERY);
