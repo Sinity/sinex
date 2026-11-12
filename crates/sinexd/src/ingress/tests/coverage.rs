@@ -1036,7 +1036,7 @@ async fn projection_never_certifies_a_later_page_with_an_unknown_kind_version(
     db: devkit::pg::TestDatabase,
 ) {
     let (h, _, ids, _) = setup(db).await;
-    predecessor_variant(&h, ids[0], 2, "open").await;
+    predecessor_variant(&h, *ids.last().unwrap(), 2, "open").await;
     let InputReplayReply::Page {
         continuation: ReplayContinuation::Next { cursor },
         ..
