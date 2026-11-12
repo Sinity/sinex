@@ -225,7 +225,10 @@ outer read snapshot. `hour()` continues to name the local clock hour.
   and tombstone ([as-of reads](lifecycle.md#as-of-reads)).
 - Continuations are sealed to the question and the caller-visible context. A changed
   definition, grant or incompatible change refuses with `stale_cursor` and says how to
-  restart. Totals count rows after semantic stages.
+  restart. Totals count rows after semantic stages. A first page fetches one extra row
+  to detect continuation. When that page contains the whole answer, its row count
+  is the exact total; otherwise a separate count runs in the same snapshot.
+  Continued pages retain the sealed total.
 - SQL continuations seek after the last row's typed sort values and stable identity;
   grouped results retain their complete group identity even when fields hide a key.
   The seal key belongs to the database and is unavailable through public read-only SQL.
