@@ -60,7 +60,7 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util.workspace = true
 blake3.workspace = true
 rusqlite.workspace = true
-authored = { workspace = true, features = ["generator"] }
+authored-generator.workspace = true
 proptest.workspace = true
 
 [lints]

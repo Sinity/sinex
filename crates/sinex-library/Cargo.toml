@@ -19,7 +19,6 @@ ranking.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true
-authored = { workspace = true, features = ["generator"] }
 
 [lints]
 workspace = true
