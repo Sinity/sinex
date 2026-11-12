@@ -46,8 +46,17 @@ pub(crate) fn statements() -> Vec<String> {
          FROM core.commit_log c
          WHERE c.event_id = t.event_id AND t.original_commit_seq IS NULL"
             .into(),
-        "DELETE FROM core.commit_log c USING core.events e
-         WHERE e.id = c.event_id AND e.commit_seq = c.commit_seq"
+        // Most rows repeat positions retained by events. Copy the few other
+        // positions before replacing the heap, avoiding a delete and index
+        // maintenance for every historical event. The upgrade is one transaction.
+        "CREATE TEMP TABLE sinex_commit_log_positions_kept ON COMMIT DROP AS
+         SELECT c.commit_seq, c.persisted_at FROM core.commit_log c
+         WHERE NOT EXISTS (SELECT 1 FROM core.events e
+           WHERE e.id = c.event_id AND e.commit_seq = c.commit_seq)"
+            .into(),
+        "TRUNCATE core.commit_log".into(),
+        "INSERT INTO core.commit_log(commit_seq,persisted_at)
+         SELECT commit_seq,persisted_at FROM sinex_commit_log_positions_kept"
             .into(),
         "ALTER TABLE core.commit_log DROP COLUMN event_id, DROP COLUMN event_type".into(),
         "DROP INDEX core.events_ts_orig_idx".into(),
@@ -74,3 +83,6 @@ pub(crate) fn previous(tables: &mut [String], after_tables: &mut Vec<String>) {
             .map(|statement| (*statement).to_owned()),
     );
 }
+
+#[cfg(test)]
+mod tests;
