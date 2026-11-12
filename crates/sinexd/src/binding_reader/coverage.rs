@@ -7,7 +7,7 @@ use crate::stage::Totals;
 use crate::writer::{Priority, WriterHandle};
 use crate::{Error, Result};
 use sinex_model::event_types::coverage::{CoverageCompleteness, CoverageState, SourceCoverage};
-use sinex_model::{Class, RunId, Timestamp};
+use sinex_model::{Class, EventPayload, RunId, Timestamp};
 use sinex_source_core::Binding;
 use sinex_sources::sources::coverage;
 use sinex_store::{Blobs, bindings};
@@ -75,7 +75,11 @@ impl Coverage {
     pub(crate) async fn stored(conn: &mut PgConnection, host: &str) -> Result<Self> {
         let events = sinex_store::live::of_types(conn, &["source.coverage".into()]).await?;
         let mut current = BTreeMap::new();
-        for payload in events.into_iter().filter_map(|event| event.payload) {
+        for payload in events
+            .into_iter()
+            .filter(|event| event.kind_version == SourceCoverage::VERSION as i64)
+            .filter_map(|event| event.payload)
+        {
             let row: SourceCoverage = serde_json::from_value(payload)?;
             if row.host == host {
                 current.insert((row.binding, row.host), (row.state, row.reason));

@@ -97,6 +97,96 @@ const RUNS: &str =
 const OPEN_RUNS: &str = "SELECT count(*) FROM core.runs WHERE name IN ('terminal.zsh-history','source.observation') AND ended_at IS NULL";
 
 #[devkit::test]
+async fn coverage_restart_keeps_old_readings_and_resumes_current_state(
+    db: devkit::pg::TestDatabase,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("history");
+    std::fs::write(&input, b"").unwrap();
+    let mut context = open(&db, root.path()).await;
+    let mut readers = vec![zsh_reader(&input)];
+    let mut rounds = crate::binding_reader::Rounds::default();
+    assert_eq!(
+        round(&mut context, &mut readers, &mut rounds).await,
+        [false]
+    );
+    rounds.end(&mut context.read_conn).await.unwrap();
+
+    // Reconstruct a predecessor reading that the current admission path
+    // would never write. Its source field predates observed_source.
+    let (old_id, old_payload): (uuid::Uuid, serde_json::Value) = sqlx::query_as(
+        "UPDATE core.events SET kind_version=$1,
+           payload=(payload-'observed_source') || jsonb_build_object('source',payload->'observed_source')
+         WHERE event_type='source.coverage' RETURNING id,payload",
+    )
+    .bind((SourceCoverage::VERSION - 1) as i64)
+    .fetch_one(&mut context.read_conn)
+    .await
+    .unwrap();
+    context.close().await.unwrap();
+
+    let mut context = open(&db, root.path()).await;
+    let mut readers = vec![zsh_reader(&input)];
+    let mut rounds = crate::binding_reader::Rounds::resume(&mut context.read_conn, "synthetic")
+        .await
+        .unwrap();
+    assert_eq!(
+        round(&mut context, &mut readers, &mut rounds).await,
+        [false]
+    );
+    assert_eq!(count(&mut context, COVERAGE_READINGS).await, 2);
+    let retained: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+            .bind(old_id)
+            .fetch_one(&mut context.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(retained, old_payload);
+    assert_eq!(count(&mut context, LIVE_COVERAGE).await, 1);
+    rounds.end(&mut context.read_conn).await.unwrap();
+    context.close().await.unwrap();
+
+    let mut context = open(&db, root.path()).await;
+    let mut readers = vec![zsh_reader(&input)];
+    let mut rounds = crate::binding_reader::Rounds::resume(&mut context.read_conn, "synthetic")
+        .await
+        .unwrap();
+    assert_eq!(
+        round(&mut context, &mut readers, &mut rounds).await,
+        [false]
+    );
+    assert_eq!(count(&mut context, COVERAGE_READINGS).await, 2);
+    rounds.end(&mut context.read_conn).await.unwrap();
+    context.close().await.unwrap();
+}
+
+#[devkit::test]
+async fn coverage_restart_reports_a_malformed_current_reading(db: devkit::pg::TestDatabase) {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("history");
+    std::fs::write(&input, b"").unwrap();
+    let mut context = open(&db, root.path()).await;
+    let mut readers = vec![zsh_reader(&input)];
+    let mut rounds = crate::binding_reader::Rounds::default();
+    assert_eq!(
+        round(&mut context, &mut readers, &mut rounds).await,
+        [false]
+    );
+    rounds.end(&mut context.read_conn).await.unwrap();
+    sqlx::query(
+        "UPDATE core.events SET payload=payload-'observed_source' WHERE event_type='source.coverage'",
+    )
+    .execute(&mut context.read_conn)
+    .await
+    .unwrap();
+    let Err(error) = Coverage::stored(&mut context.read_conn, "synthetic").await else {
+        panic!("malformed current coverage must be reported");
+    };
+    assert!(error.to_string().contains("observed_source"));
+    context.close().await.unwrap();
+}
+
+#[devkit::test]
 async fn coverage_on_change(db: devkit::pg::TestDatabase) {
     let root = tempfile::tempdir().unwrap();
     let input = root.path().join("history");
