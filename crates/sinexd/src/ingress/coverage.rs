@@ -10,7 +10,7 @@ use sinex_store::read_coverage::{self, Claims};
 mod delivery;
 
 #[derive(Debug, thiserror::Error)]
-enum Failure {
+pub(super) enum Failure {
     #[error("{0}")]
     Invalidated(String),
     #[error("{0}")]
@@ -674,7 +674,7 @@ impl Requests {
         cache: &str,
         after: i64,
         proof: &sinex_protocol::FullProjectionComplete,
-    ) -> Result<()> {
+    ) -> Result<(), Failure> {
         let mut conn = self.reads.acquire().await?;
         let claims = read_coverage::open(&mut conn, &proof.stamp).await?;
         let Contract {
@@ -707,7 +707,7 @@ impl Requests {
                 &self.public_context.host,
             )
         {
-            return Err(Error::conflict("coverage_replay_basis_changed"));
+            return Err(Failure::Invalidated("coverage_replay_basis_changed".into()));
         }
         // A native resume after the certificate may include later ordinary
         // lifecycle changes. Its retained replay basis is still valid.
@@ -716,7 +716,7 @@ impl Requests {
         read_coverage::current(&mut conn, &current).await?;
         read_coverage::projection_contract(&mut conn, &current)
             .await
-            .map_err(Error::from)
+            .map_err(Failure::from)
     }
 }
 

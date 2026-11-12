@@ -50,3 +50,6 @@ impl HistoryOrigin {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

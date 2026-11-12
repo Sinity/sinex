@@ -11,7 +11,6 @@ impl Requests {
     ) -> ConfirmedConsumerReply {
         let result:Result<_>=async {
             if request.after<0 || request.cache.is_empty() {return Err(Error::internal("consumer needs a nonnegative position and an index cache identity"));}
-            if let Some(basis)=&request.basis {self.verify_replay_basis(producer,&request.cache,request.after,basis).await?;}
             let grant=self.grants(producer).map_err(|_| Error::refused("producer has no confirmed read grants"))?;
             let (filters,scope)=grant.consumer_scope(producer,&self.subjects);
             let cache=blake3::hash(request.cache.as_bytes()).to_hex().to_string();
@@ -25,7 +24,14 @@ impl Requests {
             let mut conn=self.reads.acquire().await?;
             origin.validate(&mut conn).await?;
             drop(conn);
-            if origin.requires_projection && request.basis.as_ref().is_none_or(|basis|basis.position<origin.position) {
+            let invalidated=if let Some(basis)=&request.basis {
+                match self.verify_replay_basis(producer,&request.cache,request.after,basis).await {
+                    Ok(())=>false,
+                    Err(super::coverage::Failure::Invalidated(_))=>true,
+                    Err(error)=>return Err(Error::from(error)),
+                }
+            } else {false};
+            if invalidated || (origin.requires_projection && request.basis.as_ref().is_none_or(|basis|basis.position<origin.position)) {
                 return Ok(ConfirmedConsumerReply::ProjectionRequired {origin:origin.position,position:head,scope,stream_instance:crate::publisher::stream_instance(&stream)});
             }
             if request.status_only {return Ok(ConfirmedConsumerReply::Provisioned{position:head,stream:stream_name,stream_instance:None,consumer:name,scope});}

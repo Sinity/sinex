@@ -37,7 +37,7 @@ Producer positions and unacknowledged journals use the same encoding and one syn
 
 **Event outcomes** are the admission function's: admitted, repeated, superseded, older, removed, failed, superseded-in-batch, and dropped as `superseded_input`, with the committed position and the event IDs Sinex minted. A producer is told success only after commit.
 
-**Acknowledgments are typed** (producer protocol version 3). Each names the frame, the order Sinex recorded it in and the hash of the frame body recorded under that name, and carries exactly one result: `admitted` (the registered material and its extents, the admitted event IDs, the counts above and the last commit position), `kinds_registered` (each declaration with its definition hash), `replayed` (the replay's operation, its admitted event IDs and last position) or `refused` (the refusal kind and reason). A conflict refusal carries the hash of the body already recorded, never the offered one. `core.ingress_frames.outcome` stores the same result, tagged by `result`, beside the frame's columns. The connect reply (`welcome` or `refused`), the consumer reply (`provisioned`, `gap` or `refused`) and the fetch replies (`event`, `erased` or `refused`; `material` or `refused`) are typed the same way, so a reply that is two things at once cannot be written or read.
+**Acknowledgments are typed** (producer protocol version 3). Each names the frame, the order Sinex recorded it in and the hash of the frame body recorded under that name, and carries exactly one result: `admitted` (the registered material and its extents, the admitted event IDs, the counts above and the last commit position), `kinds_registered` (each declaration with its definition hash), `replayed` (the replay's operation, its admitted event IDs and last position) or `refused` (the refusal kind and reason). A conflict refusal carries the hash of the body already recorded, never the offered one. `core.ingress_frames.outcome` stores the same result, tagged by `result`, beside the frame's columns. The connect reply (`welcome` or `refused`), the consumer reply (`provisioned`, `projection_required`, `gap` or `refused`) and the fetch replies (`event`, `erased` or `refused`; `material` or `refused`) are typed the same way, so a reply that is two things at once cannot be written or read.
 
 ### Write identity
 
@@ -92,7 +92,7 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 
 ## The confirmed stream
 
-**Every committed change is published to the confirmed stream, in commit order.** It is the delivery log for everything outside the daemon.
+**Every committed change after the stream origin is published in commit order.** A fresh incarnation pins a database cut and starts with a certified current-state snapshot for each consumer, followed by complete deltas. It is the delivery log for everything outside the daemon.
 
 ### Content
 
@@ -107,17 +107,17 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 
 ### Retention
 
-**The confirmed stream keeps everything**: no age limit, no compaction, no discard. A new outside derivation reads from the beginning without falling back to PostgreSQL, so there is only one delivery path. Its size is a storage cost, measured and reported in status.
+**The confirmed stream keeps every post-origin delivery**: no age limit, no compaction, no discard. A new outside derivation installs every bounded page of an owner-certified indexed projection at B, at or after the origin H, then reads deltas strictly after B. The projection preserves original admission positions and retained archived state. Completion atomically replaces reconstructible consumer state and its saved certificate; a partial projection is never an applied prefix. Original producer journals and paid outputs are outside that replacement. Stream size is a storage cost, measured and reported in status.
 
 **Tombstone reaches the stream.** The publisher records every acknowledged copy's sequence together with the native stream incarnation (name and creation time). A tombstone deletes those exact copies. Its notice carries the newly allocated tombstone position and the exact original admission position. The original position remains an empty slot; rebuild never inserts an extra data tuple there. Payload-free archive history and lineage remain available for reconstruction.
 
 ### Rebuild and outages
 
-- If the NATS store is lost, the publisher detects the new native stream incarnation and republishes from PostgreSQL with the same commit positions. Tombstoned events produce skeleton notices at their actual tombstone positions. Pruned commit-log rows are reconstructed from retained events and lifecycle metadata. Unknown historical positions or class metadata produce a named `Gap`; no completion barrier crosses it.
+- A fresh native stream incarnation records a serialized PostgreSQL origin H and a domain-separated store identity in owner metadata. If the broker store is lost, its replacement gets a new origin and consumers acquire a new complete projection. Restoring a database below H or belonging to another store refuses the stream. Missing predecessor tombstone metadata remains unknown and unchanged; the schema preserves that closed predecessor set while rejecting every new incomplete tombstone. The ordinary full-history reader still reports those unknown positions as a named gap.
 - Restarting the same broker store resumes its saved PostgreSQL checkpoint. Data items have stable logical IDs, so replay before a completion barrier is idempotent; handlers also deduplicate durable staged items after the broker's duplicate window expires.
-- The stream carries reference-only contract version 3 metadata, independently of the producer protocol version. A nonempty older inline-metadata stream is refused and preserved. Conversion or a parallel stream requires an explicit operational decision.
+- The stream carries reference-only contract version 4 metadata with its database origin, independently of the producer protocol version. Existing streams without that origin are refused and preserved; deployment selects a fresh namespace. A consumer, including status-only and restored-cache requests, needs a valid same-incarnation full-projection certificate when the origin requires it. A changed scope, catalog, incarnation or invalidated projection requests a new projection; unavailable owner evidence refuses without claiming a reset.
 - A NATS outage pauses the publisher, which resumes from its saved position; derivation inside the daemon continues.
-- **Identical sequences.** For any filter, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences. They differ only in fields withheld or carried by reference under the consumer's grants.
+- **Identical post-origin sequences.** For any filter and positions after H, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences. They differ only in fields withheld or carried by reference under the consumer's grants.
 
 ## Outside consumers and handlers
 
@@ -130,7 +130,7 @@ An outside handler declares:
 | identity | its producer and consumer identity |
 | version | the exact version of its logic; outputs carry it |
 | input filter | which kinds and sources it reads |
-| start position | an explicit commit position to start from (the beginning is allowed, since the stream keeps history) |
+| start position | a certified projection position followed by all later complete deltas |
 
 It then behaves as follows:
 

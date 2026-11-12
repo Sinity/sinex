@@ -109,12 +109,29 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     .unwrap()
     .await
     .unwrap();
+    let origin =
+        history_origin(&js.get_stream(subjects.confirmed_stream()).await.unwrap()).unwrap();
+    assert_eq!(
+        origin.position,
+        commit_log::latest(&mut conn).await.unwrap()
+    );
+    assert!(origin.requires_projection);
     assert_eq!(
         publish_pending(&mut conn, &js, &subjects)
             .await
             .unwrap()
             .events,
-        2
+        0
+    );
+    let later = executed("later", "echo later", 3, Class::Open);
+    let later_id = later.id;
+    admit(&mut conn, batch(vec![later])).await;
+    assert_eq!(
+        publish_pending(&mut conn, &js, &subjects)
+            .await
+            .unwrap()
+            .events,
+        1
     );
     assert_eq!(
         read_wire_all(&js, &subjects)
@@ -122,7 +139,7 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
             .iter()
             .filter_map(tuple)
             .collect::<Vec<_>>(),
-        expected
+        vec![(origin.position + 1, later_id, "event")]
     );
     // An old incarnation's sequence must never delete the unrelated new stream slot.
     sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class) VALUES($1,'atuin','command.executed',$2,5,1,'open')")
@@ -131,7 +148,7 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
         erase_tombstoned_in(&mut conn, &js, &subjects, &current)
             .await
             .unwrap(),
-        1
+        0
     );
     assert!(
         js.get_stream(subjects.confirmed_stream())

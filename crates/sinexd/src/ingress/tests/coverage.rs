@@ -901,3 +901,119 @@ async fn canonical_read_stamp_cannot_certify_an_out_of_scope_cited_parent(
     .unwrap();
     assert_eq!(count, 0, "the whole new canonical frame rolls back");
 }
+
+#[devkit::test]
+async fn fresh_history_origin_requires_complete_projection_even_for_status_and_old_cache(
+    db: devkit::pg::TestDatabase,
+) {
+    let (h, _, ids, _) = setup_inputs(db, 1, "synthetic", sinex_model::Class::Open).await;
+    let js = crate::publisher::context(h.client.clone());
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    js.delete_stream(h.subjects.confirmed_stream())
+        .await
+        .unwrap();
+    sqlx::raw_sql("ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete;
+        INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id)
+        SELECT uuidv7(),'synthetic','polylogue.message',uuidv7() FROM generate_series(1,92);
+        ALTER TABLE core.event_tombstones ADD CONSTRAINT tombstone_history_complete CHECK
+        (commit_seq IS NOT NULL AND original_commit_seq IS NOT NULL AND class IS NOT NULL) NOT VALID")
+        .execute(&mut conn).await.unwrap();
+    crate::publisher::ensure_stream(&mut conn, &js, &h.subjects)
+        .await
+        .unwrap();
+    let origin = crate::publisher::history_origin(
+        &js.get_stream(h.subjects.confirmed_stream()).await.unwrap(),
+    )
+    .unwrap();
+    assert!(origin.requires_projection);
+    assert!(origin.position > 0);
+    for status_only in [false, true] {
+        let reply = h
+            .requests
+            .confirmed_consumer(
+                "polylogue",
+                &sinex_protocol::ConfirmedConsumer {
+                    after: origin.position,
+                    cache: "cache".into(),
+                    basis: None,
+                    status_only,
+                },
+            )
+            .await;
+        assert!(
+            matches!(reply,sinex_protocol::ConfirmedConsumerReply::ProjectionRequired{origin:p,..} if p==origin.position)
+        );
+    }
+    assert_eq!(
+        js.get_stream(h.subjects.confirmed_stream())
+            .await
+            .unwrap()
+            .cached_info()
+            .state
+            .consumer_count,
+        0
+    );
+    let InputReplayReply::Page {
+        position,
+        inputs,
+        continuation: ReplayContinuation::Complete { projection, .. },
+        ..
+    } = page(&h, "polylogue", "cache", None).await
+    else {
+        panic!("complete current-state projection")
+    };
+    assert_eq!(position, origin.position);
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].event, ids[0]);
+    for status_only in [false, true] {
+        let reply = h
+            .requests
+            .confirmed_consumer(
+                "polylogue",
+                &sinex_protocol::ConfirmedConsumer {
+                    after: position,
+                    cache: "cache".into(),
+                    basis: Some(projection.clone()),
+                    status_only,
+                },
+            )
+            .await;
+        assert!(
+            matches!(
+                reply,
+                sinex_protocol::ConfirmedConsumerReply::Provisioned { .. }
+            ),
+            "{reply:?}"
+        );
+    }
+    crate::publisher::publish_pending(&mut conn, &js, &h.subjects)
+        .await
+        .unwrap();
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM core.event_tombstones WHERE commit_seq IS NULL AND original_commit_seq IS NULL AND class IS NULL").fetch_one(&mut conn).await.unwrap();
+    assert_eq!(count, 92);
+    js.delete_stream(h.subjects.confirmed_stream())
+        .await
+        .unwrap();
+    crate::publisher::ensure_stream(&mut conn, &js, &h.subjects)
+        .await
+        .unwrap();
+    let reply = h
+        .requests
+        .confirmed_consumer(
+            "polylogue",
+            &sinex_protocol::ConfirmedConsumer {
+                after: position,
+                cache: "cache".into(),
+                basis: Some(projection),
+                status_only: true,
+            },
+        )
+        .await;
+    assert!(
+        matches!(
+            reply,
+            sinex_protocol::ConfirmedConsumerReply::ProjectionRequired { .. }
+        ),
+        "old incarnation cannot authorize a restored cache: {reply:?}"
+    );
+}

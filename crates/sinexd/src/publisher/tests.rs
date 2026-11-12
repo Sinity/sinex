@@ -422,12 +422,14 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
         .await
         .unwrap();
     let rebuilt = read_wire_all(&js, &subjects).await;
+    let origin =
+        history_origin(&js.get_stream(subjects.confirmed_stream()).await.unwrap()).unwrap();
+    assert!(origin.requires_projection);
     assert_eq!(
-        rebuilt
-            .iter()
-            .filter_map(commit_order::tuple)
-            .collect::<Vec<_>>(),
-        expected
+        rebuilt,
+        vec![Confirmed::PositionComplete {
+            commit_seq: origin.position
+        }]
     );
     assert!(!rebuilt.iter().any(
         |message| matches!(message, Confirmed::EventReference{event,..} if *event == secret_id)
@@ -739,7 +741,7 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
     )
     .await
     .unwrap();
-    sqlx::query("INSERT INTO core.event_tombstones (event_id, source, event_type, operation_id) VALUES ($1, 'test.source', 'test.event', $2)")
+    sqlx::query("INSERT INTO core.event_tombstones (event_id, source, event_type, operation_id,commit_seq,original_commit_seq,class) VALUES ($1, 'test.source', 'test.event', $2,2,1,'open')")
         .bind(id.0).bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
     // The message was erased before a stop, while its pair was still stored.
     let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
@@ -753,22 +755,13 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         erase_tombstoned(&mut conn, &js, &subjects).await.unwrap(),
         0
     );
-    assert!(
-        publish_pending(&mut conn, &js, &subjects)
-            .await
-            .unwrap_err()
-            .to_string()
-            .starts_with("commit_history_position_unknown:")
-    );
+    sqlx::query("UPDATE core.counters SET value=2 WHERE name='commit_seq'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
     let wire = read_wire_all(&js, &subjects).await;
-    assert!(
-        matches!(wire.last(), Some(Confirmed::Gap { reason }) if reason == "commit_history_position_unknown")
-    );
-    assert!(
-        !wire
-            .iter()
-            .any(|message| matches!(message, Confirmed::Tombstoned { .. }))
-    );
+    assert!(wire.iter().any(|message|matches!(message,Confirmed::Tombstoned{event,commit_seq:Some(2),original_commit_seq:Some(1),..} if *event==id)));
     assert!(
         read_all(&js, &subjects)
             .await

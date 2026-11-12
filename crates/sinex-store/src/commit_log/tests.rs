@@ -10,8 +10,8 @@ async fn pairs(conn: &mut PgConnection) -> Vec<(Uuid, i64)> {
 
 async fn tombstone(conn: &mut PgConnection, id: Uuid) {
     sqlx::query(
-        "INSERT INTO core.event_tombstones (event_id, source, event_type, operation_id)
-         VALUES ($1, 'test.source', 'test.event', $2)",
+        "INSERT INTO core.event_tombstones (event_id, source, event_type, operation_id,commit_seq,original_commit_seq,class)
+         VALUES ($1, 'test.source', 'test.event', $2,2,1,'open')",
     )
     .bind(id)
     .bind(Uuid::now_v7())
@@ -134,8 +134,8 @@ async fn random_identifiers_keep_exact_copies_through_scattered_erasure(
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     sqlx::raw_sql("INSERT INTO core.published SELECT md5(i::text)::uuid, i*3 FROM generate_series(1,10000) i;
-        INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id)
-          SELECT md5(i::text)::uuid,'test.source','test.event',uuidv7() FROM generate_series(1,10000,10) i")
+        INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class)
+          SELECT md5(i::text)::uuid,'test.source','test.event',uuidv7(),2,1,'open' FROM generate_series(1,10000,10) i")
         .execute(&mut conn).await.unwrap();
     let id: Uuid = sqlx::query_scalar("SELECT md5('1')::uuid")
         .fetch_one(&mut conn)

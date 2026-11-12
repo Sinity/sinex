@@ -57,7 +57,7 @@ async fn confirmed_stream(
             history_origin(&found)?.validate(conn).await?;
             Ok(found)
         }
-        Err(error) if matches!(error.kind(),jetstream::context::GetStreamErrorKind::JetStream(ref e) if e.error_code()==jetstream::errors::ErrorCode::STREAM_NOT_FOUND) =>
+        Err(error) if matches!(error.kind(),jetstream::context::GetStreamErrorKind::JetStream(ref e) if e.error_code()==jetstream::ErrorCode::STREAM_NOT_FOUND) =>
         {
             let origin = commit_log::HistoryOrigin::establish(conn).await?;
             let mut config = stream::Config {
