@@ -142,3 +142,14 @@ async fn prepared_fallback_walk_survives_each_finish_commit_and_restart(
             .unwrap()
     );
 }
+
+#[devkit::test]
+async fn an_initial_nil_prefix_needs_no_native_timestamp_lower_bound(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    seed(&mut conn).await;
+    conn.execute("UPDATE sinex_schema.event_children_fill SET filled_through='00000000-0000-0000-0000-000000000000'")
+        .await.unwrap();
+    assert_eq!(fill(&mut conn).await.unwrap(), 8193);
+    assert_eq!(count_edges(&mut conn).await, 8193);
+    finish(&mut conn).await.unwrap();
+}

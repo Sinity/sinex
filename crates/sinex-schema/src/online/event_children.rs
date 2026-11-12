@@ -62,28 +62,40 @@ async fn fill(conn: &mut PgConnection) -> Result<u64, Error> {
     sqlx::query("LOCK TABLE core.event_tombstones IN SHARE MODE")
         .execute(&mut *tx)
         .await?;
-    let mark: String = sqlx::query_scalar(
-        "SELECT filled_through::text FROM sinex_schema.event_children_fill FOR UPDATE",
+    let mark: sqlx::types::Uuid = sqlx::query_scalar(
+        "SELECT filled_through FROM sinex_schema.event_children_fill FOR UPDATE",
     )
     .fetch_one(&mut *tx)
     .await?;
-    // Literal UUID bounds let TimescaleDB exclude completed chunks when
-    // planning. The newest existing ID bounds this pass; later admissions
-    // write their own edges rather than requiring another retained scan.
-    let cut: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT e.id::text FROM core.events e WHERE e.id > '{mark}'::uuid ORDER BY e.id DESC LIMIT 1"
-    ))
-    .persistent(false)
-    .fetch_optional(&mut *tx)
-    .await?;
+    // Read the newest key without a strict partition predicate. UUID time
+    // pruning must not collapse distinct IDs in the prefix's timestamp.
+    let cut: Option<sqlx::types::Uuid> =
+        sqlx::query_scalar("SELECT e.id FROM core.events e ORDER BY e.id DESC LIMIT 1")
+            .persistent(false)
+            .fetch_optional(&mut *tx)
+            .await?;
     let mut written = 0;
-    if let Some(cut) = cut {
+    if let Some(cut) = cut.filter(|cut| *cut > mark) {
+        // Inclusive bounds prune chunks without excluding a shared UUID
+        // timestamp. uuid_cmp retains the exact residual over every bit.
+        // A nil/older prefix has no timestamp that native pruning can use.
+        let lower = if mark.get_version_num() == 7 {
+            format!("AND e.id >= '{mark}'::uuid")
+        } else {
+            String::new()
+        };
+        let upper = if cut.get_version_num() == 7 {
+            format!("AND e.id <= '{cut}'::uuid")
+        } else {
+            String::new()
+        };
         written = sqlx::query(&format!(
             "INSERT INTO core.event_children (parent, child)
              SELECT p.parent, e.id FROM core.events e
              CROSS JOIN LATERAL unnest(e.parents) p(parent)
-             WHERE e.id > '{mark}'::uuid AND e.id <= '{cut}'::uuid
-               AND e.parents IS NOT NULL
+             WHERE pg_catalog.uuid_cmp(e.id,'{mark}'::uuid)>0
+               AND pg_catalog.uuid_cmp(e.id,'{cut}'::uuid)<=0
+               {lower} {upper} AND e.parents IS NOT NULL
              ON CONFLICT DO NOTHING"
         ))
         .persistent(false)

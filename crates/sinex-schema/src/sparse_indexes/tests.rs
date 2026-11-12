@@ -45,14 +45,15 @@ async fn batch_work(conn: &mut PgConnection) -> (u64, serde_json::Value) {
                     .and_then(|name| name.as_str())
                     .filter(|name| names.iter().any(|candidate| candidate.as_str() == *name))
                     .map(|_| {
-                        object
+                        (object
                             .get("Actual Rows")
-                            .and_then(|n| n.as_u64())
-                            .unwrap_or(0)
+                            .and_then(|n| n.as_f64())
+                            .unwrap_or(0.0)
                             * object
                                 .get("Actual Loops")
-                                .and_then(|n| n.as_u64())
-                                .unwrap_or(0)
+                                .and_then(|n| n.as_f64())
+                                .unwrap_or(0.0))
+                        .ceil() as u64
                     })
                     .unwrap_or(0);
                 own + object
