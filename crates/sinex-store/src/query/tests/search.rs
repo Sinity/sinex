@@ -93,8 +93,29 @@ async fn eligible_prefix_branch_can_use_its_trigram_index(db: devkit::pg::TestDa
         .unwrap();
     crate::read_models::tests::admit_search_kinds(&mut conn, Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
-    // Tiny fixtures otherwise favor a sequential scan. Force index choice to
-    // distinguish an applicable trigram index from a scan.
+    // A three-event fixture can legitimately start at the event primary key
+    // and probe the text primary key. Give the planner a selective prefix
+    // among unrelated readings, with real statistics for both sides.
+    sqlx::query(
+        "WITH events AS (
+           INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,
+             commit_seq,payload,reading_order,record_hash,class)
+           SELECT uuidv7(),'command.imported','synthetic-plan',uuidv7(),uuidv7(),n,'unknown',
+             1,'{}',1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,5000)n
+           RETURNING id
+         ), words AS (
+           INSERT INTO core.search_text(event_id,text)
+           SELECT id,'unrelated synthetic reading '||id::text FROM events
+         ) INSERT INTO core.search_trigram(event_id,text)
+           SELECT id,'unrelated synthetic reading '||id::text FROM events",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::raw_sql("ANALYZE core.events; ANALYZE core.search_text; ANALYZE core.search_trigram")
+        .execute(&mut conn)
+        .await
+        .unwrap();
     sqlx::query("SET enable_seqscan=off")
         .execute(&mut conn)
         .await
@@ -111,6 +132,7 @@ async fn eligible_prefix_branch_can_use_its_trigram_index(db: devkit::pg::TestDa
         .await
         .unwrap();
     assert!(plan.to_string().contains("search_trigram_text"), "{plan}");
+    assert_eq!(ask(&mut conn, "events where car*").await.total, 3);
 }
 
 async fn flags(conn: &mut PgConnection) -> Vec<(String, bool)> {
