@@ -47,8 +47,23 @@ async fn source_cursor_upgrade_resumes_at_eof_and_reads_only_appended_bytes(
         .await
         .unwrap();
     }
+    // Reconstruct the search layout present before the cursor step; later
+    // upgrades must also run from their actual preceding stored format.
+    sqlx::raw_sql(
+        "DROP VIEW core.visible_search_trigram;
+         DROP TABLE core.search_trigram;
+         DROP VIEW core.visible_search_text;
+         ALTER TABLE core.search_text ADD COLUMN trigram_indexed boolean NOT NULL DEFAULT true;
+         CREATE INDEX search_text_trigram ON core.search_text USING gin(text gin_trgm_ops);
+         CREATE VIEW core.visible_search_text AS SELECT s.event_id,s.text,s.tsv,s.trigram_indexed
+           FROM core.search_text s JOIN core.events e ON e.id=s.event_id
+           WHERE core.class_visible(e.class);",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
     sqlx::query("UPDATE sinex_schema.applied SET version=$1")
-        .bind(sinex_schema::VERSION - 1)
+        .bind(sinex_schema::version_before("append_file_stat_metadata").unwrap())
         .execute(&mut conn)
         .await
         .unwrap();
