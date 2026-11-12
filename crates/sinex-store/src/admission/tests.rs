@@ -746,6 +746,7 @@ async fn a_read_mark_holds_until_its_readings_are_replaced(db: devkit::pg::TestD
 mod kinds;
 
 mod cache;
+mod dirty_ranges;
 mod equivalence;
 mod known_fields;
 mod nearby;
