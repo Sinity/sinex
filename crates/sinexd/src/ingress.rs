@@ -29,6 +29,7 @@ mod bytes;
 mod confirmed_consumer;
 mod coverage;
 pub(crate) mod fetch;
+mod native_prefix;
 mod recorded;
 pub(crate) mod replay;
 mod signals;

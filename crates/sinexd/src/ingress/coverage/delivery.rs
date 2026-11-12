@@ -34,7 +34,8 @@ pub(super) async fn verify(
         || info.config.metadata.get("sinex_scope") != Some(&scope)
         || info.config.metadata.get("sinex_cache") != Some(&cache)
         || info.config.filter_subjects != filters
-        || info.config.deliver_policy != consumer::DeliverPolicy::All
+        || !matches!(info.config.deliver_policy, consumer::DeliverPolicy::ByStartSequence { start_sequence } if start_sequence <= completion.stream_sequence)
+        || info.delivered.consumer_sequence == 0
         || info.config.ack_policy != consumer::AckPolicy::Explicit
         || completion.stream_sequence > info.delivered.stream_sequence
     {
@@ -42,17 +43,12 @@ pub(super) async fn verify(
             "coverage_native_delivery_window_unproven".into(),
         ));
     }
-    let message = stream
-        .get_raw_message(completion.stream_sequence)
-        .await
-        .map_err(Error::nats)?;
-    if message.subject.as_str() != subjects.confirmed_control()
-        || !matches!(serde_json::from_slice::<sinex_protocol::Confirmed>(&message.payload),
-            Ok(sinex_protocol::Confirmed::PositionComplete { commit_seq }) if commit_seq == position)
-    {
-        return Err(Failure::Invalidated(
-            "coverage_native_completed_position_unproven".into(),
-        ));
-    }
+    super::super::native_prefix::completion(
+        &stream,
+        completion,
+        position,
+        &subjects.confirmed_control(),
+    )
+    .await?;
     Ok(())
 }

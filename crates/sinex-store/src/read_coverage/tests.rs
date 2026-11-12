@@ -9,6 +9,7 @@ fn claims() -> Claims {
         scope: "scope".into(),
         position: 0,
         instance: "instance".into(),
+        native_prefix: NativePrefix::Empty,
         catalog: "catalog".into(),
         host: "host".into(),
         settings_identity: "settings".into(),

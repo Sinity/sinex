@@ -45,6 +45,15 @@ impl From<AuthorityError> for Error {
 }
 
 pub const DOMAIN: &str = "sinex.owner_protocol.admitted_input_coverage.v1";
+/// Native coverage captured before the authoritative projection snapshot.
+/// It permits overlap-free bootstrap, but is not a delivered completion.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NativePrefix {
+    Empty,
+    Message { sequence: u64, fingerprint: String },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Claims {
@@ -55,6 +64,7 @@ pub struct Claims {
     pub scope: String,
     pub position: i64,
     pub instance: String,
+    pub native_prefix: NativePrefix,
     pub catalog: String,
     pub host: String,
     pub settings_identity: String,

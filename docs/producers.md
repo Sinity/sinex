@@ -121,6 +121,18 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 - A NATS outage pauses the publisher, which resumes from its saved position; derivation inside the daemon continues.
 - **Identical post-origin sequences.** For any filter and positions after H, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences. They differ only in fields withheld or carried by reference under the consumer's grants.
 
+Producer protocol version 5 carries the actual completion receipt on consumer
+resume requests. Its fingerprint binds the stream instance, native sequence,
+original broker timestamp, subject and body. An erased or changed boundary
+requests a new projection; unavailable native evidence refuses for retry.
+
+A complete projection captures native prefix N before opening SQL cut B. Since
+publication follows committed admission, B covers every fact emitted through N.
+The existing signed basis binds that prefix, so its first consumer starts at
+N+1 without searching completion markers. N proves projection coverage, not
+completion delivery. An empty prefix starts at one and skips nothing. A lost
+or changed prefix cannot authorize a skip.
+
 ## Outside consumers and handlers
 
 **An outside consumer is declared in configuration.** Each one (Polylogue, an outside derivation, an agent runner or any other handler) has an identity and a credential that may request its daemon-provisioned, grant-scoped durable consumer and publish to its own ingress subject. Its token's grants decide what it sees, under the same output rules as every other caller ([grants](privacy.md#rules-classes-grants-and-actions)). A producer's consumer normally holds the grants for its own kinds, so it fetches its own payloads complete.
@@ -137,7 +149,7 @@ An outside handler declares:
 It then behaves as follows:
 
 - **It sees only committed facts**, under its grants, in commit order, plus lifecycle messages.
-- **Its position** is acknowledged in NATS and saved durably as a commit position, with a deduplication key per message kind. It acknowledges a message only after its own durable local state and its outputs to Sinex are acknowledged, and resumes after its last acknowledged message.
+- **Its completed position and actual native completion receipt** commit with the corresponding local result. A reconnect validates that exact stored marker and reoffers it, then later data; it does not redeliver the original history. Broker ACKs and a native floor seeded by a start sequence do not prove completion. A separate staged cursor can acknowledge durably saved partial pages without moving the completed boundary. A late old barrier cannot move that boundary past unapplied data.
 - **Its outputs return through the ingress** with source, version, a stable output identity and parent citations, and follow the [derivation](derivations.md) rules, including whole-chain archival: when an input is archived, the outputs that cite it are archived with it.
 - **Delivery is at least once.** Duplicates never duplicate conclusions, because outputs have stable identities; external side effects are the handler's to make idempotent.
 - **A filter or version change** requires an explicit start decision, with the resulting lag visible in status.
