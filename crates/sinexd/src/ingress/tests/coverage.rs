@@ -447,6 +447,7 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
         h.subjects.confirmed_consumer("polylogue"),
         "polylogue",
         &sinex_protocol::ConfirmedConsumer {
+            completion: None,
             basis: Some(projection),
             after: p,
             cache: "cache".into(),
@@ -520,7 +521,15 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
         let sequence = message.info().unwrap().stream_sequence;
         match serde_json::from_slice::<Confirmed>(&message.payload).unwrap() {
             Confirmed::PositionComplete { commit_seq } if commit_seq == q => {
-                barrier = Some(sequence)
+                barrier = Some((
+                    sequence,
+                    sinex_protocol::DeliveredCompletion::fingerprint(
+                        sequence,
+                        message.info().unwrap().published.unix_timestamp_nanos(),
+                        message.subject.as_str(),
+                        &message.payload,
+                    ),
+                ))
             }
             Confirmed::EventReference { commit_seq, .. } if commit_seq == q => {
                 partial = Some(sequence)
@@ -530,10 +539,15 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
         // No ACK is sent. Coverage must be available before the caller's SQL
         // transaction; only that transaction may make its eventual ACK legal.
     }
-    assert_eq!(consumer.info().await.unwrap().ack_floor.stream_sequence, 0);
+    assert_eq!(
+        consumer.info().await.unwrap().ack_floor.consumer_sequence,
+        0
+    );
+    let (sequence, fingerprint) = barrier.expect("delivered completion");
     let completion = sinex_protocol::DeliveredCompletion {
         stream_instance: welcome_instance.unwrap(),
-        stream_sequence: barrier.expect("delivered completion"),
+        stream_sequence: sequence,
+        fingerprint,
     };
     let mut invalid = completion.clone();
     invalid.stream_sequence = partial.expect("delivered partial datum");
@@ -556,7 +570,10 @@ async fn delivered_completion_certifies_coverage_before_any_local_commit_or_ack(
     assert!(
         matches!(proof_with_completion(&h,basis,q,Some(completion)).await,CoverageStatus::Complete{proof} if proof.position==q)
     );
-    assert_eq!(consumer.info().await.unwrap().ack_floor.stream_sequence, 0);
+    assert_eq!(
+        consumer.info().await.unwrap().ack_floor.consumer_sequence,
+        0
+    );
 }
 #[devkit::test]
 async fn paged_owner_replay_survives_later_admission_and_lifecycle(db: devkit::pg::TestDatabase) {
@@ -818,6 +835,7 @@ async fn full_projection_replays_canonical_and_foreign_records_separately_from_r
         h.subjects.confirmed_consumer("polylogue"),
         "polylogue",
         &sinex_protocol::ConfirmedConsumer {
+            completion: None,
             basis: Some(forged),
             after: projection.position,
             cache: "cache".into(),
@@ -933,6 +951,7 @@ async fn fresh_history_origin_requires_complete_projection_even_for_status_and_o
             .confirmed_consumer(
                 "polylogue",
                 &sinex_protocol::ConfirmedConsumer {
+                    completion: None,
                     after: origin.position,
                     cache: "cache".into(),
                     basis: None,
@@ -971,6 +990,7 @@ async fn fresh_history_origin_requires_complete_projection_even_for_status_and_o
             .confirmed_consumer(
                 "polylogue",
                 &sinex_protocol::ConfirmedConsumer {
+                    completion: None,
                     after: position,
                     cache: "cache".into(),
                     basis: Some(projection.clone()),
@@ -1002,6 +1022,7 @@ async fn fresh_history_origin_requires_complete_projection_even_for_status_and_o
         .confirmed_consumer(
             "polylogue",
             &sinex_protocol::ConfirmedConsumer {
+                completion: None,
                 after: position,
                 cache: "cache".into(),
                 basis: Some(projection),

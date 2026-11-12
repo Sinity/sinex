@@ -1,11 +1,17 @@
 use super::*;
 use sinex_protocol::{ConfirmedConsumer, ConfirmedConsumerReply};
 
-async fn provision(h: &Harness, producer: &str, after: i64) -> ConfirmedConsumerReply {
+async fn provision(
+    h: &Harness,
+    producer: &str,
+    after: i64,
+    completion: Option<sinex_protocol::DeliveredCompletion>,
+) -> ConfirmedConsumerReply {
     let reply = rpc(
         &h.client,
         h.subjects.confirmed_consumer(producer),
         serde_json::to_vec(&ConfirmedConsumer {
+            completion,
             basis: None,
             after,
             cache: "synthetic-index".into(),
@@ -92,7 +98,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     .unwrap()
     .await
     .unwrap();
-    let denied = provision(&h, "unconfigured", 0).await;
+    let denied = provision(&h, "unconfigured", 0, None).await;
     assert!(
         matches!(denied, ConfirmedConsumerReply::Refused { .. }),
         "{denied:?}"
@@ -102,7 +108,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         consumer: declared_consumer,
         scope: declared_scope,
         ..
-    } = provision(&h, "replica", 0).await
+    } = provision(&h, "replica", 0, None).await
     else {
         panic!("replica consumer is provisioned")
     };
@@ -119,12 +125,26 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         .unwrap();
     let mut events = Vec::new();
     let mut complete = 0;
+    let mut completion = None;
     while let Some(message) = batch.next().await {
         let message = message.unwrap();
         let item: Confirmed = serde_json::from_slice(&message.payload).unwrap();
         match item {
             Confirmed::EventReference { event, .. } => events.push(event),
-            Confirmed::PositionComplete { commit_seq } => complete = commit_seq,
+            Confirmed::PositionComplete { commit_seq } => {
+                complete = commit_seq;
+                let info = message.info().unwrap();
+                completion = Some(sinex_protocol::DeliveredCompletion {
+                    stream_instance: crate::publisher::stream_instance(&stream),
+                    stream_sequence: info.stream_sequence,
+                    fingerprint: sinex_protocol::DeliveredCompletion::fingerprint(
+                        info.stream_sequence,
+                        info.published.unix_timestamp_nanos(),
+                        message.subject.as_str(),
+                        &message.payload,
+                    ),
+                });
+            }
             other => panic!("unexpected scoped message: {other:?}"),
         }
         message.double_ack().await.unwrap();
@@ -137,6 +157,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         &h.client,
         h.subjects.confirmed_consumer("replica"),
         serde_json::to_vec(&ConfirmedConsumer {
+            completion: None,
             basis: None,
             after: 0,
             cache: "synthetic-index".into(),
@@ -157,31 +178,42 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         delivered,
         "status does not reset the native durable"
     );
-    let reply = provision(&h, "replica", head).await;
+    let reply = provision(&h, "replica", head, completion.clone()).await;
     assert!(
         matches!(reply, ConfirmedConsumerReply::Provisioned { .. }),
         "{reply:?}"
     );
     let current: jetstream::consumer::PullConsumer =
         stream.get_consumer(&declared_consumer).await.unwrap();
+    assert_eq!(current.cached_info().delivered.consumer_sequence, 0);
     assert_eq!(
-        current.cached_info().delivered.consumer_sequence,
-        delivered,
-        "exact acknowledged barrier resumes native durable"
+        current.cached_info().config.deliver_policy,
+        jetstream::consumer::DeliverPolicy::ByStartSequence {
+            start_sequence: completion.as_ref().unwrap().stream_sequence,
+        },
+        "restart reoffers exactly the completion, without original history"
     );
-    let reply = provision(&h, "replica", head - 1).await;
+    let mut batch = current
+        .fetch()
+        .max_messages(100)
+        .expires(Duration::from_millis(300))
+        .messages()
+        .await
+        .unwrap();
+    let marker = batch.next().await.unwrap().unwrap();
     assert!(
-        matches!(reply, ConfirmedConsumerReply::Provisioned { .. }),
-        "{reply:?}"
+        matches!(serde_json::from_slice::<Confirmed>(&marker.payload).unwrap(), Confirmed::PositionComplete { commit_seq } if commit_seq == head)
     );
-    let restored: jetstream::consumer::PullConsumer =
-        stream.get_consumer(&declared_consumer).await.unwrap();
-    assert_eq!(
-        restored.cached_info().delivered.consumer_sequence,
-        0,
-        "restored older index replays retained stream rather than skipping native acknowledgments"
+    assert!(
+        batch.next().await.is_none(),
+        "no earlier event is redelivered"
     );
-    let reply = provision(&h, "replica", head + 1).await;
+    let reply = provision(&h, "replica", head - 1, None).await;
+    assert!(
+        matches!(reply, ConfirmedConsumerReply::ProjectionRequired { .. }),
+        "an unproved scalar cannot skip history: {reply:?}"
+    );
+    let reply = provision(&h, "replica", head + 1, None).await;
     assert!(
         matches!(reply, ConfirmedConsumerReply::Gap { .. }),
         "{reply:?}"

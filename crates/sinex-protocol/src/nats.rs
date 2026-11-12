@@ -659,7 +659,7 @@ pub struct ReceiptHint {
     pub frame_hash: String,
 }
 
-pub const PRODUCER_VERSION: u32 = 4;
+pub const PRODUCER_VERSION: u32 = 5;
 
 /// Checked before any material or events are sent. Event declarations can
 /// be registered here before checking the names the producer will emit.
@@ -861,6 +861,9 @@ pub struct ConfirmedConsumer {
     #[serde(default)]
     pub basis: Option<crate::FullProjectionComplete>,
     pub after: i64,
+    /// The actual completion saved atomically with `after`, not the latest
+    /// staged message or the broker's acknowledgment floor.
+    pub completion: Option<crate::DeliveredCompletion>,
     pub cache: String,
     #[serde(default)]
     pub status_only: bool,

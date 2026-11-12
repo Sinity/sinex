@@ -27,6 +27,26 @@ pub struct CoverageRequest {
 pub struct DeliveredCompletion {
     pub stream_instance: String,
     pub stream_sequence: u64,
+    pub fingerprint: String,
+}
+impl DeliveredCompletion {
+    /// Bind an immutable native record, including its original broker timestamp.
+    /// A new append of an old payload is not the original delivered boundary.
+    pub fn fingerprint(
+        sequence: u64,
+        published_nanos: i128,
+        subject: &str,
+        payload: &[u8],
+    ) -> String {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"sinex.native_record.v1\0");
+        hash.update(&sequence.to_le_bytes());
+        hash.update(&published_nanos.to_le_bytes());
+        hash.update(&(subject.len() as u64).to_le_bytes());
+        hash.update(subject.as_bytes());
+        hash.update(payload);
+        hash.finalize().to_hex().to_string()
+    }
 }
 
 /// The signed stamp is opaque. Its claims are validated by the owner on new writes.

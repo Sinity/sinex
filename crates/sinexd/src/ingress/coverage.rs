@@ -286,7 +286,16 @@ impl Requests {
             if !grant.public_context {
                 return Err(Failure::Invalidated("public_context_not_authorized".into()));
             }
-            let native = instance(&self.client, &self.subjects).await?;
+            let stream = crate::publisher::context(self.client.clone())
+                .get_stream(self.subjects.confirmed_stream())
+                .await
+                .map_err(Error::nats)?;
+            let native = crate::publisher::stream_instance(&stream);
+            let native_prefix = if cursor.is_none() {
+                Some(super::native_prefix::capture(&stream).await?)
+            } else {
+                None
+            };
             let mut conn = self.reads.acquire().await?;
             use sqlx::Connection;
             let mut tx = conn.begin().await?;
@@ -342,6 +351,7 @@ impl Requests {
                         scope,
                         catalog,
                         instance: native,
+                        native_prefix: native_prefix.expect("initial projection prefix"),
                         host: self.public_context.host.clone(),
                         settings_identity,
                         owner_revision,
@@ -679,7 +689,7 @@ impl Requests {
         cache: &str,
         after: i64,
         proof: &sinex_protocol::FullProjectionComplete,
-    ) -> Result<(), Failure> {
+    ) -> Result<Claims, Failure> {
         let mut conn = self.reads.acquire().await?;
         let claims = read_coverage::open(&mut conn, &proof.stamp).await?;
         let Contract {
@@ -721,12 +731,11 @@ impl Requests {
         }
         // A native resume after the certificate may include later ordinary
         // lifecycle changes. Its retained replay basis is still valid.
-        let mut current = claims;
+        let mut current = claims.clone();
         current.position = after;
         read_coverage::current(&mut conn, &current).await?;
-        read_coverage::projection_catalog(&mut conn, &current)
-            .await
-            .map_err(Failure::from)
+        read_coverage::projection_catalog(&mut conn, &current).await?;
+        Ok(claims)
     }
 }
 
