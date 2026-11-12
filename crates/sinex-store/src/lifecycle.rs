@@ -519,16 +519,23 @@ async fn plan(
     roots: &[Uuid],
     leaving: &HashSet<Uuid>,
 ) -> Result<Plan> {
+    // Recursive cardinality estimates grow independently of the actual chain.
+    // Keep lookups parameterized by each discovered ID. Live membership
+    // already carries the type, so archiving need not read event history.
     match phase {
         Phase::Archive | Phase::ArchiveMadeLive => {
             let rows = sqlx::query!(
                 r#"WITH RECURSIVE chain(id) AS (
                      SELECT unnest($1::uuid[])
                      UNION
-                     SELECT c.child FROM chain CROSS JOIN LATERAL core.event_children_of(chain.id) c)
-                   SELECT e.id, e.event_type FROM chain JOIN core.events e ON e.id = chain.id
-                   WHERE EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = e.id)
-                      OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)"#,
+                     SELECT c.child FROM chain CROSS JOIN LATERAL (
+                       SELECT child FROM core.event_children_of(chain.id) OFFSET 0) c)
+                   SELECT live.event_id AS "id!", live.event_type AS "event_type!"
+                   FROM chain CROSS JOIN LATERAL (
+                     SELECT event_id, event_type FROM core.live_locations WHERE event_id = chain.id
+                     UNION
+                     SELECT event_id, event_type FROM core.live_equivalence WHERE event_id = chain.id
+                     OFFSET 0) live"#,
                 roots
             )
             .fetch_all(&mut *conn)
@@ -550,11 +557,13 @@ async fn plan(
                 r#"WITH RECURSIVE chain(id) AS (
                      SELECT unnest($1::uuid[])
                      UNION
-                     SELECT c.child FROM chain CROSS JOIN LATERAL core.event_children_of(chain.id) c)
+                     SELECT c.child FROM chain CROSS JOIN LATERAL (
+                       SELECT child FROM core.event_children_of(chain.id) OFFSET 0) c)
                    SELECT e.id, e.event_type,
                      (EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = e.id)
                       OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)) AS "live!"
-                   FROM chain JOIN core.events e ON e.id = chain.id"#,
+                   FROM chain CROSS JOIN LATERAL (
+                     SELECT e.id, e.event_type FROM core.events e WHERE e.id = chain.id OFFSET 0) e"#,
                 roots
             )
             .fetch_all(&mut *conn)
@@ -596,13 +605,15 @@ async fn plan_restore(
              WHERE a.event_id = ANY($1)
              UNION
              SELECT c.child, chain.operation, chain.seq
-             FROM chain CROSS JOIN LATERAL core.event_children_of(chain.id) c
+             FROM chain CROSS JOIN LATERAL (
+               SELECT child FROM core.event_children_of(chain.id) OFFSET 0) c
              JOIN audit.archived a ON a.event_id = c.child
                AND ((chain.operation IS NOT NULL AND a.operation_id = chain.operation)
                  OR (chain.operation IS NULL AND a.operation_id IS NULL AND a.archived_seq = chain.seq)))
            SELECT DISTINCT e.id, e.event_type, e.parents,
              EXISTS (SELECT 1 FROM derivation.outputs o WHERE o.event_id = e.id) AS "keyed!"
-           FROM chain JOIN core.events e ON e.id = chain.id"#,
+           FROM chain CROSS JOIN LATERAL (
+             SELECT e.id, e.event_type, e.parents FROM core.events e WHERE e.id = chain.id OFFSET 0) e"#,
         roots
     )
     .fetch_all(&mut *conn)
