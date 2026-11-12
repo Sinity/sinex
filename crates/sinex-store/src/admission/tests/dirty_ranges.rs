@@ -35,7 +35,7 @@ fn event(kind: &str, payload: Value) -> Event {
             version: 1,
         },
         payload.clone(),
-        "synthetic.dirty_ranges".into(),
+        "synthetic".into(),
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
@@ -64,11 +64,11 @@ async fn dirty_output_ranges_preserve_boundaries_without_scanning_unrelated_even
                     name: name.into(),
                     version: 1,
                 },
-                "synthetic.dirty_ranges".into(),
+                "synthetic".into(),
             )
         })
         .collect();
-    sinex_schema::kinds::register(&mut conn, "synthetic.dirty_ranges", &declarations)
+    sinex_schema::kinds::register(&mut conn, "synthetic", &declarations)
         .await
         .unwrap();
     let mut events: Vec<_> = (0..8192)
