@@ -18,9 +18,10 @@ working rules that apply here.
 
 - [`docs/`](docs/README.md) is the design of record: each area page owns its
   behaviour, model and formats, and [docs/architecture.md](docs/architecture.md)
-  is the orientation across them. The docs describe Sinex as designed, not
-  as built; when code and design differ, the design is the target and
-  closing the difference is the work.
+  is the orientation across them. Relevant design constraints bind changes
+  to that behaviour. The selected Bead bounds the current delivery;
+  unrelated future capabilities and other design gaps do not become its
+  scope or release blockers.
 - CLI help, MCP tool schemas, the generated catalog and each module's `//!`
   documentation describe the current build.
 - Plans, open questions, decisions and acceptance criteria live in Beads, the
@@ -97,41 +98,12 @@ Code is shared only where the mechanics are identical.
 
 ## Building, testing and measuring
 
-Enter the development shell with `nix develop`. It carries the Rust
-toolchain read from `rust-toolchain.toml`, nextest, PostgreSQL with
-TimescaleDB, `nats-server` and the mold linker. It installs the repository's
-hooks when no hooks path is set. [Development](docs/development.md) owns
-local overrides and plain commands. Pull requests and master run `cargo xtask
-check` and `cargo xtask test` on GitHub Actions in this shell; read the result
-with `gh pr checks`.
-
-| Command | Does |
-|---|---|
-| `cargo xtask check` | formatting, boundaries, workspace and reduced-capture Clippy against the schema database, including the fuzz harness |
-| `cargo xtask compile -p <crate> [--tests]` | compile selected packages, preparing the schema database when needed |
-| `cargo xtask test -p <crate> -E 'test(<name>)'` | selected Rust tests under nextest |
-| `cargo xtask test` | every Rust test and bounded fuzz-corpus replay |
-| `cargo xtask test --no-run` | build every test binary without running tests |
-| `cargo xtask warm` | build every test binary and run the workspace and fuzz Clippy without running tests |
-| `cargo xtask run --watch --output DIR` | an isolated development stack and watched rebuilds |
-| `cargo xtask vm --output DIR` | the module check and three exported NixOS VM scenarios |
-| `cargo xtask coverage --output DIR --format html -- -p <crate>` | LLVM coverage of selected tests |
-| `cargo xtask changed` | the nextest filter for packages changed since the merge base, and their dependents |
-| `cargo xtask db ensure` | build the database for the current schema and print its `DATABASE_URL`; `db exec` runs a command with it set |
-| `cargo xtask bench ...` | backfill and derivation on a fixed sample of real inputs |
-| `cargo xtask status`, `cargo xtask history ...` | what failed in this checkout's last run, and the recorded run history |
-| `nix build .#checks.x86_64-linux.vm-stack` | one NixOS VM test (`vm-stack`, `vm-topology`, `vm-restore`) |
-| `nix flake check` | the locked package plus Nix checks, including the VM tests |
-| `nix build` | the packages |
-
-`cargo xtask test` defaults to the full workspace. Cargo package and target
-flags bound compilation; nextest filters select execution within those
-targets. [Development](docs/development.md) describes focused selection.
-Every xtask run is recorded in devkit's history database.
-Fuzzing runs as tests: bounded corpus replay inside `test`, longer runs as a
-test profile over the same harness. Development runs,
-coverage, VM scenarios and history comparisons are described in
-[testing.md](docs/testing.md#development-runs-and-reports).
+[Development](docs/development.md) owns shell setup, command selection,
+local overrides and build graphs. Enter with `nix develop`. Use
+`cargo xtask compile -p <crate> --tests` while editing,
+`cargo xtask test -p <crate> -E 'test(<name>)'` for focused behaviour, and
+`cargo xtask check` plus `cargo xtask test` for the required hosted checks.
+Sinex package and target selectors bound compilation.
 
 **SQL is checked against a real schema.** The store's queries are SQLx
 checked queries compiled against a live database built from the current
@@ -142,16 +114,6 @@ otherwise a throwaway cluster. There is no offline query cache; that is the oper
 (2026-01-29 to 2026-05-27), with room for a better-designed one if a real need
 appears (2026-10-18,
 `cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:08497767-3da2-4255-ad19-a28cf92936dd`).
-
-A host may queue these same commands through its own job runner; the
-operator's host does so with AgentCTL, whose descriptor in `.agentctl/`
-carries only host tuning. Use it where your environment provides it; the
-commands and their results are the same either way.
-
-The pre-commit hook checks whitespace and formatting of staged files in
-seconds. Crate boundaries, Clippy and tests run in `cargo xtask check` and
-`cargo xtask test`, which GitHub Actions runs for every pull request; pull
-requests run the tests their changes can affect, and master runs all of them.
 
 **Performance is a product goal.** The pipeline overlaps every stage:
 acquisition, parsing on blocking workers, one writer that takes one
@@ -166,10 +128,10 @@ one machine; host tuning belongs in deployment configuration.
 ## How work is done here
 
 **Design first.** Before writing code, read the owning page in `docs/`, the
-pages it links to, the current code of the area, and the
+relevant linked pages, the current code of the area, and the
 predecessor's implementation and tests for what you are building (the
 earlier Sinex is in this repository's Git history, and its old Beads are its
-plans). Write the whole change from the design: complete features, built on
+plans). Implement the selected behaviour completely, built on
 the architecture's abstractions, with the predecessor's behaviour and test
 cases ported.
 
@@ -179,17 +141,10 @@ sites in one pass. Type-check after each layer you write
 workspace); it reports every type error at once. Run the wider tests once the
 change is coherent.
 
-**Review your own work before verifying it.** Read the whole diff once
-against the task, the owning page, the architecture and the predecessor's
-behaviour, and list everything wrong in that one pass: a requirement not met,
-a mechanism duplicated, a predecessor left in place, a caller not converted, a
-limit that refuses valid input, a test that cannot fail, a name that does not
-say what the thing is, a case the design covers and the code does not. Fix
-the whole list, then read only what the fixes changed. Then verify. The
-author makes the work good; a separate reviewer is not the mechanism for
-that. "Review should not look for a single wrong thing, it should strive to
-list everything wrong. so that there is no forever loop of fixing and finding
-new issue" (operator, 2026-09-29, `cc:9ec284a7-6a6a-486b-949f-d8bbdb22ae1e:16cb3a25-318f-455b-82b5-bf0f6f732e30`).
+**Review before verification.** Read the coherent diff against the selected
+acceptance, owning design and predecessor behaviour. Fix unmet requirements,
+duplicated mechanisms, unconverted callers, invalid refusals and weak tests
+in one pass, then revisit the affected invariants.
 
 **Verify scoped to the change.** Commit first, so a result belongs to a
 commit. Run formatting, clippy for the crates you touched and the focused
@@ -201,11 +156,16 @@ yours, compare with the same test on current master (`gh run list -b
 master`). Note that in Sinex `-p` bounds what is compiled, unlike Polylogue,
 where selectors choose tests and never what is built.
 
-**Finish what the task names.** A task states its done condition before work
-starts, as behaviour on master and the tests that prove it. A defect inside
-the area that stops that condition from holding is fixed in the same work.
-Anything else found goes on a Bead with what was found, and the current work
-lands without it.
+**Finish the selected delivery.** The Bead owns its outcome, acceptance and
+actual prerequisites. Fix findings that invalidate that acceptance in the
+same work. Independent findings do not enlarge it: use an existing task, or
+file a concrete outcome with a finite completion condition when useful.
+Unselected designs and globally ready tasks are not implicit prerequisites.
+Source acceptance requires the tested change on master; runtime acceptance
+requires its named deployment, data and client observations. Keep one concise
+current-state note with evidence pointers; native task, Git, CI and job
+history retain the chronology. Leave unmet criteria open and name the next
+observation or external blocker that decides them.
 
 **Git and pull requests.** Work on a branch from `origin/master`; every pull
 request targets `master`, and stacked pull requests are not used. Commit with
@@ -291,8 +251,6 @@ rather than a bare-bones version to be replaced later. "Why build some sort of
 bare-bones features which will need to be replaced by actual full-fledged
 ones anyway?" (2026-10-27,
 `cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3c3dd59f-4560-4fee-95d4-5c43b6c94ca5`).
-When an area you are changing works but its design is wrong, redesign it as
-part of the task; an area you are not changing gets a Bead.
 
 **Use the predecessor's knowledge, not its mechanisms.** The earlier Sinex
 built much of the operator's design (the lifecycle, field-level privacy,

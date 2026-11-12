@@ -10,13 +10,24 @@ uses its bundled sanitizer runtime.
 primary nixpkgs snapshot predates devkit's minimum supported nextest. The
 project compiler and LLVM tools come from `rust-toolchain.toml`.
 
-```sh
-nix develop
-cargo xtask check
-cargo xtask test
-cargo xtask compile -p sinex-model
-nix build
-```
+| Command | Does |
+|---|---|
+| `cargo xtask check` | formatting, boundaries, workspace and reduced-capture Clippy against the schema database, including the fuzz harness |
+| `cargo xtask compile -p <crate> [--tests]` | compile selected packages, preparing the schema database when needed |
+| `cargo xtask test -p <crate> -E 'test(<name>)'` | selected Rust tests under nextest |
+| `cargo xtask test` | every Rust test and bounded fuzz-corpus replay |
+| `cargo xtask test --no-run` | build every test binary without running tests |
+| `cargo xtask warm` | build every test binary and run the workspace and fuzz Clippy without running tests |
+| `cargo xtask run --watch --output DIR` | an isolated development stack and watched rebuilds |
+| `cargo xtask vm --output DIR` | the module check and three exported NixOS VM scenarios |
+| `cargo xtask coverage --output DIR --format html -- -p <crate>` | LLVM coverage of selected tests |
+| `cargo xtask changed` | the nextest filter for packages changed since the merge base, and their dependents |
+| `cargo xtask db ensure` | build the database for the current schema and print its `DATABASE_URL`; `db exec` runs a command with it set |
+| `cargo xtask bench ...` | backfill and derivation on a fixed sample of real inputs |
+| `cargo xtask status`, `cargo xtask history ...` | what failed in this checkout's last run, and the recorded run history |
+| `nix build .#checks.x86_64-linux.vm-stack` | one NixOS VM test (`vm-stack`, `vm-topology`, `vm-restore`) |
+| `nix flake check` | the locked package plus Nix checks, including the VM tests |
+| `nix build` | the packages |
 
 Entering the shell configures `.githooks` when Git has no hooks path; its
 commit hook checks staged whitespace and formats staged Rust files. The
