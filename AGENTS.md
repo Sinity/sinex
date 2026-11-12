@@ -128,7 +128,7 @@ one machine; host tuning belongs in deployment configuration.
 ## How work is done here
 
 **Design first.** Before writing code, read the owning page in `docs/`, the
-pages it links to, the current code of the area, and the
+relevant linked pages, the current code of the area, and the
 predecessor's implementation and tests for what you are building (the
 earlier Sinex is in this repository's Git history, and its old Beads are its
 plans). Implement the selected behaviour completely, built on
@@ -251,8 +251,6 @@ rather than a bare-bones version to be replaced later. "Why build some sort of
 bare-bones features which will need to be replaced by actual full-fledged
 ones anyway?" (2026-10-27,
 `cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3c3dd59f-4560-4fee-95d4-5c43b6c94ca5`).
-When an area you are changing works but its design is wrong, redesign it as
-part of the task; an area you are not changing gets a Bead.
 
 **Use the predecessor's knowledge, not its mechanisms.** The earlier Sinex
 built much of the operator's design (the lifecycle, field-level privacy,
