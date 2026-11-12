@@ -1925,6 +1925,22 @@
             ]
           },
           "format": "journald"
+        },
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "credentials": [],
+            "locations": [
+              {
+                "path": "journal-json",
+                "root": "input"
+              }
+            ],
+            "owner": "system",
+            "streams": []
+          },
+          "format": "journal-json"
         }
       ],
       "eventTypes": [
@@ -1944,12 +1960,14 @@
       },
       "expiresAfterSeconds": null,
       "formats": [
-        "journald"
+        "journald",
+        "journal-json"
       ],
       "name": "machine.journald",
       "purpose": "machine timeline, service health, unit and boot intervals, and recall",
       "shapes": [
-        "live-stream"
+        "live-stream",
+        "export-archive"
       ]
     },
     {

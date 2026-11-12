@@ -70,6 +70,8 @@ Decided target (2026-11-01): `expect` and `expires_after` replace the separate h
 
 ### External formats
 
+A source reads data as an external service or program produces it: the vendor's export, the program's database, the protocol's bytes. A format the operator once invented to hold data in the meantime is not a source format; exceptions exist but are the exception. Sinex therefore never ingests a stand-in tool's database, CSVs or merged products, temporary capture envelopes as a permanent format, merged sleep, hand-filtered piles, title classifications or merged web-history ledgers; their purposes are served by derivations over the primary inputs. (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284). (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
+
 Journal JSON exports from `journalctl -o json --all` are staged with
 `stage --parser journal-json PATH`, or discovered under the `journal-json`
 directory of an input root. Each line is a complete vendor entry; a final
@@ -77,8 +79,6 @@ line without a newline is read at EOF. The export retains its original
 bytes and journal cursor and produces the same journal and systemd state
 readings as live capture. Live capture continues to read its timestamped
 spool through the separate `journald` format.
-
-A source reads data as an external service or program produces it: the vendor's export, the program's database, the protocol's bytes. A format the operator once invented to hold data in the meantime is not a source format; exceptions exist but are the exception. Sinex therefore never ingests a stand-in tool's database, CSVs or merged products, temporary capture envelopes as a permanent format, merged sleep, hand-filtered piles, title classifications or merged web-history ledgers; their purposes are served by derivations over the primary inputs. (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284). (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
 
 ### Window managers and terminals
 
