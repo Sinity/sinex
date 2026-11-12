@@ -58,7 +58,7 @@ Replay reads stored bytes again. It is a rescan of materials, not a procedure ov
 
 ### Transactions and resuming
 
-- Parsing and producer transport finish before replay takes the writer. Native replay prepares an immutable sequence in private, unlinked scratch storage, one batch at a time; an ingress replay passes its already prepared batches directly. A failed or cancelled preparation changes no readings. Sealed readings remain sealed in preparation, and the unlock is checked again before admission commits.
+- Parsing and producer transport finish before replay takes the writer. Native replay prepares an immutable sequence in private, unlinked scratch storage, one batch at a time; an ingress replay passes its already prepared batches directly. A failed or cancelled preparation changes no readings. Admission checks the selected materials' current lifecycle before replacement, so preparation cannot undo a concurrent archive or tombstone. Sealed readings remain sealed in preparation, and the unlock is checked again before admission commits.
 - Each transaction moves complete records with their chains, saves the parser carry and the operation's progress, and is bounded in duration, so live admission is served between transactions. A part is the normal unit, split only at record boundaries whose carry is saved.
 - After every commit each record has exactly one live reading.
 - A stopped replay **resumes** from its saved progress without redoing finished work. An indivisible record larger than the duration budget is processed whole, and its size and hold time are reported.

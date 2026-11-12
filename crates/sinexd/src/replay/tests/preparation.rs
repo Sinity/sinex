@@ -242,6 +242,56 @@ async fn cancelled_replay_preparation_keeps_all_old_readings_and_can_retry(
 }
 
 #[devkit::test]
+async fn archiving_a_material_during_preparation_refuses_the_late_replacement(
+    db: devkit::pg::TestDatabase,
+) {
+    let (_directory, mut context) = context(&db).await;
+    let (mut reader, scope) = reader(&mut context).await;
+    let materials: Vec<MaterialId> = reader.in_scope.iter().copied().map(MaterialId).collect();
+    let operation = reader.operation;
+    let (reached, release, _) = pause(&mut reader);
+    let writer = context.writer.clone();
+    let replaying =
+        tokio::spawn(async move { reader.replace(&writer, "test".into(), scope, false).await });
+    reached.await.unwrap();
+    let archived = crate::lifecycle::run(
+        &mut context.read_conn,
+        &context.writer,
+        sinex_model::lifecycle::Act::Archive,
+        "agent:test",
+        sinex_model::lifecycle::Scope::Materials {
+            materials: materials.clone(),
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(archived, crate::lifecycle::Answer::Done(_)));
+    let after_archive = live_ids(&mut context.read_conn).await;
+    assert!(after_archive.is_empty());
+    release.send(()).unwrap();
+    let error = replaying.await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("restore it before replaying it"));
+    assert_eq!(live_ids(&mut context.read_conn).await, after_archive);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.events WHERE run_id=$1")
+            .bind(operation.0)
+            .fetch_one(&mut context.read_conn)
+            .await
+            .unwrap(),
+        0,
+        "preparation cannot resurrect readings of an archived material"
+    );
+    let status: String = sqlx::query_scalar("SELECT status FROM raw.materials WHERE id=$1")
+        .bind(materials[0].0)
+        .fetch_one(&mut context.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(status, "archived");
+    context.close().await.unwrap();
+}
+
+#[devkit::test]
 async fn sealed_replay_preparation_preserves_ciphertext_and_requires_its_unlock(
     db: devkit::pg::TestDatabase,
 ) {

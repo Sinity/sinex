@@ -1,7 +1,7 @@
 use super::*;
 use sinex_model::{
     ArchiveRequest, Class, Event, MaterialId, OperationId, Origin, ReadingOrder, RecordLocation,
-    ReplayScope, TsOrig, event_types::HardwareState,
+    ReplayScope, TsOrig, event_types::telemetry::HardwareState,
 };
 
 #[test]
