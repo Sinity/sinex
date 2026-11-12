@@ -192,6 +192,7 @@ fn check_bytes(error: frame_bytes::Error) -> Check {
     match error {
         frame_bytes::Error::Invalid(reason) => Check::Malformed(reason),
         frame_bytes::Error::Mismatch(reason) => Check::Bytes(reason),
-        frame_bytes::Error::Storage(reason) => Check::Unavailable(reason),
+        frame_bytes::Error::Storage(error) => Check::Unavailable(error.to_string()),
+        frame_bytes::Error::Permissions(reason) => Check::Unavailable(reason),
     }
 }

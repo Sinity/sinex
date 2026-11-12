@@ -51,7 +51,7 @@ fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
     let private = shared.path().join("incoming");
     std::fs::create_dir(&private).unwrap();
     std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(
+    assert!(matches!(
         write(
             shared.path(),
             "node",
@@ -59,9 +59,9 @@ fn private_roots_keep_private_files_and_existing_directories_are_not_adopted() {
             &blob(),
             BODY.len() as u64,
             BODY
-        )
-        .is_err()
-    );
+        ),
+        Err(Error::Permissions(_))
+    ));
     assert_eq!(mode(&private), 0o700);
 }
 
@@ -73,7 +73,7 @@ fn existing_private_frame_files_are_refused_without_changing_their_bytes_or_mode
     let path = file(root.path(), "node");
     let original = std::fs::read(&path).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(
+    assert!(matches!(
         write(
             root.path(),
             "node",
@@ -81,9 +81,9 @@ fn existing_private_frame_files_are_refused_without_changing_their_bytes_or_mode
             &blob(),
             BODY.len() as u64,
             BODY
-        )
-        .is_err()
-    );
+        ),
+        Err(Error::Permissions(_))
+    ));
     assert_eq!(std::fs::read(&path).unwrap(), original);
     assert_eq!(mode(&path), 0o600);
 }
