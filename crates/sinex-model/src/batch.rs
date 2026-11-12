@@ -155,7 +155,7 @@ pub struct AdmissionCounts {
 }
 
 /// One framed record's result: its events, or why the parser could not read it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RecordOutcome {
     Events {
         location: Option<RecordLocation>,

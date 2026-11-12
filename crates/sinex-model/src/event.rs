@@ -34,7 +34,7 @@ pub enum RecordState {
 }
 
 /// Where an event came from: exactly one of a record location or parent events.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Origin {
     Record {
         location: RecordLocation,
@@ -61,7 +61,7 @@ pub enum BuildError {
 }
 
 /// An event ready for admission.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     pub id: EventId,
     pub event_type: String,
