@@ -152,6 +152,28 @@ fn column(a: &Answer, name: &str) -> Vec<serde_json::Value> {
     a.rows.iter().map(|r| r[name].clone()).collect()
 }
 
+/// A first page reads its declaration snapshot once, even though both the
+/// question identity and the bound query need that snapshot.
+#[devkit::test]
+async fn a_first_page_loads_the_current_declarations_once(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    async fn loads(conn: &mut PgConnection) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT coalesce(sum(generic_plans + custom_plans), 0)::bigint FROM pg_prepared_statements WHERE statement = $1",
+        )
+        .bind("SELECT name, version FROM registry.event_types ORDER BY name, version")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+    }
+    let before = loads(&mut conn).await;
+    let answer = run(&mut conn, "events", None, &ctx(), &Page::default())
+        .await
+        .unwrap();
+    assert_eq!(answer.total, 0);
+    assert_eq!(loads(&mut conn).await - before, 1);
+}
+
 async fn world(conn: &mut crate::AdmissionContext) -> Vec<(Uuid, Uuid)> {
     let ids = admit_commands(
         conn,

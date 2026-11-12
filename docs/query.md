@@ -28,6 +28,11 @@ sinexctl explain 'shell-sessions where cwds ^ /src/tide | sort by start desc'
 sinexctl find rate limit
 ```
 
+The bundled declaration snapshot is immutable for one executable, so its query
+field descriptions and definition hashes are prepared once and reused. Queries
+with a supplied declaration snapshot use that snapshot, including later changes
+to registered kinds, without copying or replacing it with the bundled catalog.
+
 ## Tables
 
 Source and binding are distinct identities in every table; a source's totals join
