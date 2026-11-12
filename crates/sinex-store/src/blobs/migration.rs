@@ -3,24 +3,33 @@
 use super::*;
 use sqlx::Connection;
 
-/// Prepare an exported stream under its existing name and length. Sealed
-/// exports are seekable memory or a repeatable pipe; plaintext never needs a file.
-pub fn prepare(
+/// Prepare a plain exported stream under its existing name and length.
+/// Decoded bytes stream into the encoder without a seekable plaintext file.
+pub fn prepare(scratch: &Path, name: &str, length: u64, reader: impl Read) -> Result<Prepared> {
+    let hash = parse(name)?;
+    verified(hash, length, Preparation::new(scratch)?.plain(reader, 3)?)
+}
+
+/// Sealed exports remain seekable so the encoder can bind their keyed identity.
+pub fn prepare_sealed(
     scratch: &Path,
     name: &str,
     length: u64,
     reader: impl Read + Seek,
-    key: Option<&sinex_sealing::DataKey>,
+    key: &sinex_sealing::DataKey,
 ) -> Result<Prepared> {
     let hash = parse(name)?;
-    let preparation = Preparation::new(scratch)?;
-    let prepared = match key {
-        Some(key) => preparation.sealed(reader, 3, key)?,
-        None => preparation.plain(reader, 3)?,
-    };
+    verified(
+        hash,
+        length,
+        Preparation::new(scratch)?.sealed(reader, 3, key)?,
+    )
+}
+
+fn verified(hash: Hash, length: u64, prepared: Prepared) -> Result<Prepared> {
     if prepared.hash() != hash || prepared.decoded_len() != length {
         return Err(crate::Error::Invalid(format!(
-            "predecessor export differs from catalog name or length for {name}"
+            "predecessor export differs from catalog name or length for {hash}"
         )));
     }
     Ok(prepared)

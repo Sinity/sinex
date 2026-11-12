@@ -1,7 +1,10 @@
 //! Explicit synthetic qualification. Run through `cargo xtask db exec` with a pinned exporter path.
 use hashed_blobs::{Extent, Hash};
 use serde::Deserialize;
-use sinex_store::{Blobs, blobs::migration::prepare};
+use sinex_store::{
+    Blobs,
+    blobs::migration::{prepare, prepare_sealed},
+};
 use sqlx::Connection;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -251,13 +254,17 @@ async fn qualify(helper: &Path, db: devkit::pg::TestDatabase) {
             key_ref: key_ref.clone(),
             key: [7; 32],
         });
-        let prepared = prepare(
-            &target.path().join("incoming"),
-            &name,
-            blob.len,
-            Exported::new(&helper, source.path(), &Hash(blob.hash)),
-            key.as_ref(),
-        )
+        let reader = Exported::new(&helper, source.path(), &Hash(blob.hash));
+        let prepared = match &key {
+            Some(key) => prepare_sealed(
+                &target.path().join("incoming"),
+                &name,
+                blob.len,
+                reader,
+                key,
+            ),
+            None => prepare(&target.path().join("incoming"), &name, blob.len, reader),
+        }
         .unwrap();
         blobs.convert_prepared(&mut conn, prepared).await.unwrap();
         let mut reader = match &key {
