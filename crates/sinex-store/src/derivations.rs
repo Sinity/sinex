@@ -910,9 +910,11 @@ pub(crate) async fn live_at(
 
 /// The largest stored reading order of this producer, before a new run.
 pub async fn latest_reading_order(conn: &mut PgConnection, producer: &str) -> Result<i64> {
+    // Admission and tombstoning keep runs.events equal to stored event rows.
+    // Empty runs therefore cannot affect the maximum or require history reads.
     Ok(sqlx::query_scalar!(
         r#"SELECT coalesce(max(e.reading_order), 0) AS "order!"
-           FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE r.name = $1"#,
+           FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE r.name = $1 AND r.events > 0"#,
         producer,
     )
     .fetch_one(conn)

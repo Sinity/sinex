@@ -16,7 +16,7 @@ use sinex_model::{
     ObservationFacts, Origin, ReadingOrder, RecordLocation, RecordOutcome, ReplayScope,
     RevisionChange, RunId, SourceProgress, Timestamp,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn reading(source: &str, key: u8, content: u8, material: MaterialId, anchor: u64) -> Event {
     let command = format!("cmd-{content}");
@@ -226,6 +226,245 @@ async fn assert_state_order(conn: &mut PgConnection) {
 
 async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(&mut *conn).await.unwrap()
+}
+
+#[devkit::test]
+async fn lifecycle_member_reads_follow_chain_keys_in_unrelated_history(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = context(&db).await;
+    let unrelated_root = reading("unrelated.root", 0, 0, MaterialId::new(), 0);
+    admit(&mut conn, &batch(vec![unrelated_root.clone()])).await;
+    let unrelated: Vec<_> = (0..8192)
+        .map(|index| {
+            let mut payload: CommandExecuted = serde_json::from_value(
+                reading("unrelated", 0, 0, MaterialId::new(), index).payload,
+            )
+            .unwrap();
+            payload.native_id = format!("unrelated-{index}");
+            payload.command = format!("synthetic-{index}");
+            Event::build(
+                &payload,
+                "unrelated",
+                Origin::Derived {
+                    parents: vec![unrelated_root.id],
+                },
+                ReadingOrder(1),
+                *blake3::hash(&index.to_le_bytes()).as_bytes(),
+                Class::Open,
+            )
+            .unwrap()
+        })
+        .collect();
+    admit(&mut conn, &batch(unrelated)).await;
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT count(*) FROM core.events WHERE source='unrelated'"
+        )
+        .await,
+        8192
+    );
+    assert_eq!(
+        count(&mut conn, "SELECT count(*) FROM core.event_children").await,
+        8192
+    );
+    let mut roots: Vec<_> = (0..=255)
+        .map(|key| reading("roots", key, key, MaterialId::new(), 0))
+        .collect();
+    // Exercise location membership as well as field-key membership, with a
+    // different type so the returned lifecycle metadata is checked too.
+    roots[0] = Event::build(
+        &sinex_model::event_types::operator::LogEntry {
+            written_at: None,
+            label: None,
+            text: "synthetic location reading".into(),
+        },
+        "roots.location",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(1),
+        [42; 32],
+        Class::Open,
+    )
+    .unwrap();
+    admit(&mut conn, &batch(roots.clone())).await;
+    let children: Vec<_> = roots
+        .iter()
+        .enumerate()
+        .map(|(key, root)| derived("children", key as u8, &[root]))
+        .collect();
+    admit(&mut conn, &batch(children.clone())).await;
+    let grandchildren: Vec<_> = children
+        .iter()
+        .enumerate()
+        .map(|(key, child)| derived("grandchildren", key as u8, &[child]))
+        .collect();
+    admit(&mut conn, &batch(grandchildren.clone())).await;
+    let expected: BTreeSet<_> = roots
+        .iter()
+        .chain(&children)
+        .chain(&grandchildren)
+        .map(|event| event.id.0)
+        .collect();
+    let ids: Vec<_> = roots.iter().map(|event| event.id.0).collect();
+    let expected_types: BTreeMap<_, _> = roots
+        .iter()
+        .chain(&children)
+        .chain(&grandchildren)
+        .map(|event| (event.id.0, event.event_type.as_str()))
+        .collect();
+    sqlx::raw_sql("ANALYZE core.events; ANALYZE core.event_children")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    // Count this backend's tuple work, including every event chunk. Parallel
+    // workers would have separate counters and hide a global history scan.
+    sqlx::query("SET LOCAL max_parallel_workers_per_gather=0")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    // Prefer whole-relation joins where legal, so the small fixture exercises
+    // the same cardinality risk as a long history. Keyed lateral lookups must
+    // retain their bound under that planner preference too.
+    sqlx::query("SET LOCAL enable_nestloop=off")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN (SELECT show_chunks('core.events'))";
+    let edge_work = "SELECT seq_tup_read+idx_tup_fetch FROM pg_stat_xact_user_tables WHERE relid='core.event_children'::regclass";
+    for phase in [Phase::Archive, Phase::ArchiveMadeLive, Phase::Tombstone] {
+        let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+        let edges_before: i64 = sqlx::query_scalar(edge_work)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        let planned = plan(&mut tx, phase, &ids, &HashSet::new()).await.unwrap();
+        let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+        let edges_after: i64 = sqlx::query_scalar(edge_work)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            planned
+                .members
+                .iter()
+                .map(|member| member.id)
+                .collect::<BTreeSet<_>>(),
+            expected
+        );
+        assert_eq!(
+            planned
+                .members
+                .iter()
+                .map(|member| (member.id, member.event_type.as_str()))
+                .collect::<BTreeMap<_, _>>(),
+            expected_types
+        );
+        if phase == Phase::Tombstone {
+            assert_eq!(
+                planned.refusals.len(),
+                expected.len(),
+                "live members refuse tombstoning"
+            );
+        } else {
+            assert!(planned.refusals.is_empty());
+            assert_eq!(after, before, "archive membership needs no event reads");
+        }
+        assert!(
+            after - before <= expected.len() as i64 * 4,
+            "chain of {} members visited {} event tuples",
+            expected.len(),
+            after - before
+        );
+        assert!(
+            edges_after - edges_before <= expected.len() as i64 * 4,
+            "chain of {} members visited {} edge tuples",
+            expected.len(),
+            edges_after - edges_before
+        );
+    }
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let original: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "WITH RECURSIVE chain(id) AS (
+           SELECT unnest($1::uuid[]) UNION
+           SELECT c.child FROM chain CROSS JOIN LATERAL core.event_children_of(chain.id)c)
+         SELECT e.id FROM chain JOIN core.events e ON e.id=chain.id
+         WHERE EXISTS(SELECT 1 FROM core.live_locations l WHERE l.event_id=e.id)
+            OR EXISTS(SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)",
+    )
+    .bind(&ids)
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(original.into_iter().collect::<BTreeSet<_>>(), expected);
+    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        after - before >= 8192,
+        "original SQL must read unrelated history for this work oracle"
+    );
+    tx.rollback().await.unwrap();
+    let archived = operate(
+        &mut conn,
+        Act::Archive,
+        events(&roots.iter().collect::<Vec<_>>()),
+        256,
+    )
+    .await;
+    assert!(matches!(archived, Ended::Ok { .. }));
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL enable_nestloop=off")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let edges_before: i64 = sqlx::query_scalar(edge_work)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let restored = plan(&mut tx, Phase::Restore, &ids, &HashSet::new())
+        .await
+        .unwrap();
+    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let edges_after: i64 = sqlx::query_scalar(edge_work)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        restored
+            .members
+            .iter()
+            .map(|member| member.id)
+            .collect::<BTreeSet<_>>(),
+        expected
+    );
+    assert!(restored.refusals.is_empty());
+    assert_eq!(
+        restored
+            .members
+            .iter()
+            .map(|member| (member.id, member.event_type.as_str()))
+            .collect::<BTreeMap<_, _>>(),
+        expected_types
+    );
+    assert!(restored.derived_again.is_empty());
+    assert!(
+        after - before <= expected.len() as i64 * 4,
+        "restore visited {} event tuples",
+        after - before
+    );
+    assert!(
+        edges_after - edges_before <= expected.len() as i64 * 4,
+        "restore visited {} edge tuples",
+        edges_after - edges_before
+    );
+    tx.rollback().await.unwrap();
 }
 
 #[devkit::test]
