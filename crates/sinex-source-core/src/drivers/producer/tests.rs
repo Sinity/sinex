@@ -543,7 +543,8 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
         &ProducerHello::default(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .upload_bytes(Store::open(&store.0).unwrap());
     let path = dir.path().join("000000000000.ndjson");
     let bytes = b"synthetic spool range\n";
     std::fs::write(&path, bytes).unwrap();
@@ -639,7 +640,8 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
         &ProducerHello::default(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .upload_bytes(Store::open(&store.0).unwrap());
     producer.max_message = 1;
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
@@ -762,7 +764,8 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
             &ProducerHello::default(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .upload_bytes(Store::open(&store.0).unwrap());
         if large {
             producer.max_message = 1;
         }
@@ -788,7 +791,8 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
             &ProducerHello::default(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .upload_bytes(Store::open(&store.0).unwrap());
         if large {
             producer.max_message = 1;
         }
