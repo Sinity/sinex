@@ -392,7 +392,8 @@ fn raw_journal_exports_keep_live_readings_and_unknown_vendor_fields() {
 #[cfg(feature = "full")]
 #[devkit::test]
 fn registered_journal_export_reads_exact_bytes_and_final_unterminated_record() {
-    use sinex_source_core::{MaterialSink, RecordOutcome};
+    use sinex_model::RecordOutcome;
+    use sinex_source_core::MaterialSink;
     #[derive(Default)]
     struct Sink(std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>);
     impl MaterialSink for Sink {
