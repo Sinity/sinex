@@ -782,7 +782,6 @@ async fn admit_with_checkpoint(
     }
     let checks_time = checks_started.elapsed();
     let begin_started = std::time::Instant::now();
-    let started = Instant::now();
     let mut tx = connection.begin().await?;
     let begin_time = begin_started.elapsed();
     let since = sinex_store::query::current_seq(&mut tx).await?;
@@ -1222,6 +1221,7 @@ async fn lifecycle_step(
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
 ) -> Result<LifecycleStep, WriteError> {
+    let started = Instant::now();
     let mut tx = connection.begin().await?;
     let since = sinex_store::query::current_seq(&mut tx).await?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
