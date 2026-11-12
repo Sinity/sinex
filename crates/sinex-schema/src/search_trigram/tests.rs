@@ -83,7 +83,7 @@ async fn bulk_copy_handles_every_predecessor_index_state_without_rewriting_words
         assert_eq!(
             apply(&mut conn).await.unwrap(),
             Applied::Upgraded {
-                from: VERSION - 1,
+                from: crate::version_before("search_trigram_text").unwrap(),
                 to: VERSION
             }
         );
@@ -141,7 +141,7 @@ async fn a_failure_after_bulk_index_build_rolls_back_and_restarts_the_whole_step
     assert_eq!(
         apply(&mut conn).await.unwrap(),
         Applied::Upgraded {
-            from: VERSION - 1,
+            from: crate::version_before("search_trigram_text").unwrap(),
             to: VERSION
         }
     );

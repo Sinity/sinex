@@ -20,7 +20,8 @@ async fn statement_wal(conn: &mut PgConnection, statement: &str) -> i64 {
 #[devkit::test]
 async fn commit_positions_compact_without_deleting_event_history(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    conn.execute("ALTER TABLE core.commit_log ADD COLUMN event_id uuid, ADD COLUMN event_type text;
+    conn.execute("ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete;
+        ALTER TABLE core.commit_log ADD COLUMN event_id uuid, ADD COLUMN event_type text;
         CREATE INDEX commit_log_type_seq ON core.commit_log(event_type,commit_seq);
         DROP INDEX core.events_record_location;
         CREATE INDEX events_ts_orig_idx ON core.events(ts_orig);
