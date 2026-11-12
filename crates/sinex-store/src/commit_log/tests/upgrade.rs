@@ -24,6 +24,10 @@ async fn other_rows(
     .unwrap();
     let mut rows = std::collections::BTreeMap::new();
     for (schema, table) in tables {
+        if schema == "core" && table == "search_trigram" {
+            continue;
+        }
+
         // The lifecycle upgrade drops the hidden records and excised digests.
         if matches!(table.as_str(), "hidden_records" | "excised_materials") {
             continue;

@@ -1,7 +1,6 @@
-//! Upgrade work the running daemon finishes after start. An upgrade adds only
-//! what new writes need; filling new tables from rows stored before it and
-//! building indexes over them happen here, in bounded steps that resume after
-//! a restart, so admission is stopped only for the upgrade itself.
+//! Publication keys, event indexes and stored parent edges are completed by
+//! the running daemon in bounded steps after the structural upgrade. Each
+//! task's readers remain correct while its work is incomplete.
 //!
 //! The work is an ordered list of tasks. Each task exists while its mark table
 //! in `sinex_schema` exists: the upgrade creates the mark, and the step that
@@ -14,9 +13,8 @@ use sqlx::PgConnection;
 mod event_children;
 mod event_indexes;
 mod published_key;
-mod search_text;
 
-/// Rows read per batch step (events with parents, search rows), each step
+/// Rows read per batch step (events with parents), each step
 /// one short transaction.
 pub const BATCH: i64 = 5_000;
 
@@ -34,18 +32,10 @@ pub enum Task {
     FeedIndex,
     /// The parent edges of events stored before the upgrade.
     EventChildren,
-    /// Search rows of kinds outside the trigram index leave it, and the index
-    /// is rebuilt over the rest.
-    SearchRewrite,
 }
 
 impl Task {
-    pub const ALL: [Task; 4] = [
-        Task::PublishedKey,
-        Task::FeedIndex,
-        Task::EventChildren,
-        Task::SearchRewrite,
-    ];
+    pub const ALL: [Task; 3] = [Task::PublishedKey, Task::FeedIndex, Task::EventChildren];
 
     /// The name status reports.
     pub fn name(self) -> &'static str {
@@ -53,7 +43,6 @@ impl Task {
             Task::PublishedKey => "published key",
             Task::FeedIndex => "feed index",
             Task::EventChildren => "event children",
-            Task::SearchRewrite => "search rewrite",
         }
     }
 
@@ -62,7 +51,6 @@ impl Task {
             Task::PublishedKey => "sinex_schema.published_key_pending",
             Task::FeedIndex => "sinex_schema.events_feed_pending",
             Task::EventChildren => "sinex_schema.event_children_fill",
-            Task::SearchRewrite => "sinex_schema.search_trigram_rewrite",
         }
     }
 }
@@ -141,11 +129,6 @@ async fn run(conn: &mut PgConnection, task: Task, batch: i64) -> Result<Progress
                 return Ok(Progress::Advanced { task, rows });
             }
         }
-        Task::SearchRewrite => {
-            if let Some(rows) = search_text::step(conn, batch).await? {
-                return Ok(Progress::Advanced { task, rows });
-            }
-        }
     }
     Ok(Progress::Finished { task })
 }
@@ -167,7 +150,6 @@ pub async fn finish(conn: &mut PgConnection) -> Result<(), Error> {
 pub(crate) fn begin(task: Task) -> Vec<String> {
     match task {
         Task::EventChildren => event_children::begin(),
-        Task::SearchRewrite => search_text::begin(),
         _ => vec![format!("CREATE TABLE {} ()", task.mark())],
     }
 }

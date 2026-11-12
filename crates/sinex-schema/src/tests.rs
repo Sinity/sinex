@@ -133,31 +133,17 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
             to: VERSION
         }
     );
-    let after: Vec<serde_json::Value> = sqlx::query_scalar(
-        "SELECT to_jsonb(s)-'trigram_indexed' FROM core.search_text s ORDER BY event_id",
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
+    let after: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT to_jsonb(s) FROM core.search_text s ORDER BY event_id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     assert_eq!(after, before);
-    // The upgrade rewrites no stored row and leaves the index over every row;
-    // both wait for the work after start.
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM core.search_text WHERE NOT trigram_indexed"
-        )
+    let copied: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_trigram")
         .fetch_one(&mut conn)
         .await
-        .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, String>("SELECT indexdef FROM pg_indexes WHERE schemaname='core' AND indexname='search_text_trigram'")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap(),
-        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)"
-    );
+        .unwrap();
+    assert_eq!(copied, 1);
     crate::online::finish(&mut conn).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, serde_json::Value>(
@@ -168,7 +154,7 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
         .unwrap(),
         events
     );
-    let policy: Vec<(String,bool)> = sqlx::query_as("SELECT e.event_type,s.trigram_indexed FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY e.event_type").fetch_all(&mut conn).await.unwrap();
+    let policy: Vec<(String,bool)> = sqlx::query_as("SELECT e.event_type,(t.event_id IS NOT NULL) FROM core.search_text s JOIN core.events e ON e.id=s.event_id LEFT JOIN core.search_trigram t ON t.event_id=s.event_id ORDER BY e.event_type").fetch_all(&mut conn).await.unwrap();
     assert_eq!(
         policy,
         [
@@ -176,14 +162,6 @@ async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::
             ("journal.entry".into(), false),
             ("lake.observed".into(), false)
         ]
-    );
-    assert!(
-        sqlx::query_scalar::<_, bool>(
-            "SELECT trigram_indexed FROM core.search_text WHERE text='orphan stays searchable'"
-        )
-        .fetch_one(&mut conn)
-        .await
-        .unwrap()
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT commit_seq FROM core.search_position")
@@ -338,7 +316,6 @@ async fn equivalence_key_encoding_round_trips_and_keeps_keys_distinct(
 }
 
 mod frame_outcomes;
-mod online;
 mod preservation;
 
 #[devkit::test]

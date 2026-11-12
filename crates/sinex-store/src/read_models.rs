@@ -44,7 +44,7 @@ pub async fn set_search_position(conn: &mut PgConnection, commit_seq: i64) -> Re
 pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) -> Result<()> {
     let mut ids = Vec::with_capacity(events.len());
     let mut texts = Vec::with_capacity(events.len());
-    let mut trigram_indexed = Vec::with_capacity(events.len());
+    let mut trigram = Vec::with_capacity(events.len());
     for e in events.iter().filter(|e| e.class != "sealed") {
         if e.search == sinex_model::kinds::Search::None {
             continue;
@@ -53,7 +53,14 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
         if !text.is_empty() {
             ids.push(e.id);
             texts.push(text);
-            trigram_indexed.push(e.search == sinex_model::kinds::Search::WordsAndTrigram);
+            // Bundled high-volume kinds retain their declared opt-out even
+            // for historical readings whose declaration predates that policy.
+            trigram.push(
+                e.search == sinex_model::kinds::Search::WordsAndTrigram
+                    && sinex_model::event_types::find(&e.event_type).is_none_or(|kind| {
+                        kind.search == sinex_model::kinds::Search::WordsAndTrigram
+                    }),
+            );
         }
     }
     if ids.is_empty() {
@@ -61,11 +68,11 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
     }
     // A tombstone deletes search rows before deleting events. Serialize with
     // that deletion so an already-read page cannot put tombstoned text back.
-    sqlx::query!("LOCK TABLE core.search_text IN SHARE ROW EXCLUSIVE MODE")
+    sqlx::query!("LOCK TABLE core.search_text, core.search_trigram IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *conn)
         .await?;
     let mut batch = conn.begin().await?;
-    match insert_search_rows(&mut batch, &ids, &texts, &trigram_indexed).await {
+    match insert_search_rows(&mut batch, &ids, &texts, &trigram).await {
         Ok(()) => batch.commit().await?,
         Err(_) => {
             batch.rollback().await?;
@@ -79,7 +86,7 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
                     &mut one,
                     &ids[row.clone()],
                     &texts[row.clone()],
-                    &trigram_indexed[row],
+                    &trigram[row],
                 )
                 .await
                 {
@@ -120,21 +127,27 @@ async fn insert_search_rows(
     conn: &mut PgConnection,
     ids: &[uuid::Uuid],
     texts: &[String],
-    trigram_indexed: &[bool],
+    trigram: &[bool],
 ) -> Result<()> {
     sqlx::query!(
-        r#"INSERT INTO core.search_text AS stored (event_id, text, trigram_indexed)
-           SELECT input.event_id, input.text, input.trigram_indexed
-           FROM unnest($1::uuid[], $2::text[], $3::boolean[])
-             AS input(event_id, text, trigram_indexed)
-           JOIN core.events e ON e.id = input.event_id
-           ON CONFLICT (event_id) DO UPDATE
-             SET text = EXCLUDED.text, trigram_indexed = EXCLUDED.trigram_indexed
-           WHERE (stored.text, stored.trigram_indexed)
-             IS DISTINCT FROM (EXCLUDED.text, EXCLUDED.trigram_indexed)"#,
+        r#"WITH input AS MATERIALIZED (
+             SELECT input.event_id, input.text, input.trigram
+             FROM unnest($1::uuid[], $2::text[], $3::boolean[]) AS input(event_id, text, trigram)
+             JOIN core.events e ON e.id=input.event_id
+           ), words AS (
+             INSERT INTO core.search_text AS stored (event_id, text)
+             SELECT event_id, text FROM input
+             ON CONFLICT (event_id) DO UPDATE SET text=EXCLUDED.text
+               WHERE stored.text IS DISTINCT FROM EXCLUDED.text
+           ), removed AS (
+             DELETE FROM core.search_trigram WHERE event_id IN (SELECT event_id FROM input WHERE NOT trigram)
+           ) INSERT INTO core.search_trigram AS stored (event_id, text)
+             SELECT event_id, text FROM input WHERE trigram
+             ON CONFLICT (event_id) DO UPDATE SET text=EXCLUDED.text
+               WHERE stored.text IS DISTINCT FROM EXCLUDED.text"#,
         ids,
         texts,
-        trigram_indexed
+        trigram
     )
     .execute(&mut *conn)
     .await?;

@@ -33,7 +33,7 @@ pub async fn require(conn: &mut PgConnection) -> Result<(), Error> {
         "SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname IN ('sinex_schema','core','audit','raw','registry','derivation','privacy')
           AND c.relkind IN ('r','p','v','m','f')
-          AND NOT (n.nspname='core' AND c.relname IN ('visible_events','visible_search_text','visible_embedding_vectors','counters','source_counts'))
+          AND NOT (n.nspname='core' AND c.relname IN ('visible_events','visible_search_text','visible_search_trigram','visible_embedding_vectors','counters','source_counts'))
           AND NOT (n.nspname='registry' AND c.relname IN ('sources','derivations','event_types','kind_prefixes','source_declarations'))
           AND has_any_column_privilege('sinex_reader',c.oid,'SELECT'))"
     ).fetch_one(conn).await?;

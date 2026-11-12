@@ -76,7 +76,7 @@ async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     assert_eq!(visible, 0);
-    let denied = sqlx::query("SELECT text, trigram_indexed FROM core.search_text")
+    let denied = sqlx::query("SELECT text FROM core.search_text")
         .execute(&mut conn)
         .await
         .unwrap_err();
@@ -87,14 +87,40 @@ async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn eligible_prefix_branch_can_use_partial_index(db: devkit::pg::TestDatabase) {
+async fn eligible_prefix_branch_can_use_its_trigram_index(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     crate::read_models::tests::admit_search_kinds(&mut conn, Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
-    // Tiny fixtures otherwise favor a sequential scan. Force index choice to
-    // distinguish an applicable partial predicate from an unusable index.
+    // A three-event fixture can legitimately start at the event primary key
+    // and probe the text primary key. Give the planner a selective prefix
+    // among unrelated readings, with real statistics for both sides.
+    sqlx::query(
+        "WITH events AS (
+           INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,
+             commit_seq,payload,reading_order,record_hash,class)
+           SELECT uuidv7(),'command.imported','synthetic-plan',uuidv7(),uuidv7(),n,'unknown',
+             1,'{}',1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,5000)n
+           RETURNING id
+         ), words AS (
+           INSERT INTO core.search_text(event_id,text)
+           SELECT id,'unrelated synthetic reading '||id::text FROM events
+         ) INSERT INTO core.search_trigram(event_id,text)
+           SELECT id,'unrelated synthetic reading '||id::text FROM events",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    // Match the upgrade's bulk-built index. Fixture inserts otherwise leave
+    // a GIN pending list whose scan cost can make a primary-key scan cheaper.
+    sqlx::raw_sql(
+        "REINDEX INDEX core.search_trigram_text;
+         ANALYZE core.events; ANALYZE core.search_text; ANALYZE core.search_trigram",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
     sqlx::query("SET enable_seqscan=off")
         .execute(&mut conn)
         .await
@@ -110,24 +136,25 @@ async fn eligible_prefix_branch_can_use_partial_index(db: devkit::pg::TestDataba
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert!(plan.to_string().contains("search_text_trigram"), "{plan}");
+    assert!(plan.to_string().contains("search_trigram_text"), "{plan}");
+    assert_eq!(ask(&mut conn, "events where car*").await.total, 3);
 }
 
 async fn flags(conn: &mut PgConnection) -> Vec<(String, bool)> {
     sqlx::query_as(
-        "SELECT e.event_type, s.trigram_indexed FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY 1",
+        "SELECT e.event_type, (t.event_id IS NOT NULL) FROM core.search_text s JOIN core.events e ON e.id=s.event_id LEFT JOIN core.search_trigram t ON t.event_id=s.event_id ORDER BY 1",
     )
     .fetch_all(conn)
     .await
     .unwrap()
 }
 
-/// The upgrade leaves stored search rows in the trigram index; the daemon
-/// rewrites them after start. Every answer and the search position read
-/// during the rewrite equal those of the fully rewritten store, and its flags
-/// equal those of a store indexed from the start.
+/// The bulk upgrade changes physical index placement without changing public
+/// search answers or the consumer's committed coverage.
 #[devkit::test]
-async fn search_answers_and_position_hold_while_trigram_rewrite_runs(db: devkit::pg::TestDatabase) {
+async fn search_answers_and_position_hold_across_bulk_trigram_upgrade(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -135,90 +162,46 @@ async fn search_answers_and_position_hold_while_trigram_rewrite_runs(db: devkit:
     crate::read_models::tests::admit_search_kinds(&mut conn, Class::Open).await;
     let position = catch_up_search_text(&mut conn).await.unwrap();
     let texts = [
-        "events where car*",
-        "events where cargo",
-        "events where \"cargo test\"",
-        "events where STRASSE",
-        "events where NOT car*",
-        "events where absent*",
+        r#"events where car*"#,
+        r#"events where cargo"#,
+        r#"events where "cargo test""#,
+        r#"events where STRASSE"#,
+        r#"events where NOT car*"#,
+        r#"events where absent*"#,
     ];
-    let mut totals = Vec::new();
+    let mut expected = Vec::new();
     for text in texts {
-        totals.push(ask(&mut conn, text).await.total);
+        let answer = ask(
+            &mut conn,
+            &format!("{text} | fields id,event_type,text | sort by id"),
+        )
+        .await;
+        expected.push((answer.total, answer.rows));
     }
-    assert_eq!(totals, [3, 3, 3, 3, 0, 0]);
-    let indexed_flags = flags(&mut conn).await;
-
+    let indexed = flags(&mut conn).await;
     crate::test_schema::downgrade(&mut conn).await;
     crate::test_schema::remove_version_4(&mut conn).await;
     sqlx::query("UPDATE sinex_schema.applied SET version=2")
         .execute(&mut conn)
         .await
         .unwrap();
-    assert_eq!(
-        sinex_schema::apply(&mut conn).await.unwrap(),
-        sinex_schema::Applied::Upgraded {
-            from: 2,
-            to: sinex_schema::VERSION
-        }
-    );
-    // The output projection is activated as at the daemon's start; nothing
-    // was committed since, so the search position stays at the head.
+    sinex_schema::apply(&mut conn).await.unwrap();
     assert_eq!(catch_up_search_text(&mut conn).await.unwrap(), position);
-    assert!(flags(&mut conn).await.iter().all(|(_, trigram)| *trigram));
-    let mut stages = Vec::new();
-    let mut search_steps = 0;
-    loop {
-        assert_eq!(current_seq(&mut conn).await.unwrap(), position);
-        assert_eq!(
-            crate::read_models::search_position(&mut conn)
-                .await
-                .unwrap(),
-            position,
-            "the rewrite never moves search coverage"
-        );
-        let mut answers = Vec::new();
-        for text in texts {
-            let answer = ask(&mut conn, text).await;
-            answers.push((answer.total, answer.rows));
-        }
-        stages.push(answers);
-        use sinex_schema::online::{Progress, Task};
-        match sinex_schema::online::step(&mut conn, 1).await.unwrap() {
-            Progress::Advanced {
-                task: Task::SearchRewrite,
-                ..
-            }
-            | Progress::Finished {
-                task: Task::SearchRewrite,
-            } => search_steps += 1,
-            Progress::Advanced { .. } | Progress::Finished { .. } => {}
-            Progress::Done => break,
-            Progress::Waiting => panic!("no other session holds the work"),
-        }
+    for (text, expected) in texts.iter().zip(expected) {
+        let answer = ask(
+            &mut conn,
+            &format!("{text} | fields id,event_type,text | sort by id"),
+        )
+        .await;
+        assert_eq!((answer.total, answer.rows), expected, "{text}");
     }
-    assert_eq!(search_steps, 4, "one search row per step, then the index");
-    assert_eq!(flags(&mut conn).await, indexed_flags);
-    let mut rewritten = Vec::new();
-    for text in texts {
-        let answer = ask(&mut conn, text).await;
-        rewritten.push((answer.total, answer.rows));
-    }
-    assert_eq!(
-        rewritten
-            .iter()
-            .map(|(total, _)| *total)
-            .collect::<Vec<_>>(),
-        totals
-    );
-    for (stage, answers) in stages.iter().enumerate() {
-        assert_eq!(answers, &rewritten, "answers before step {stage}");
-    }
+    assert_eq!(flags(&mut conn).await, indexed);
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(crate::test_schema::catalog(&mut conn).await, fresh);
 }
 
 #[devkit::test]
-async fn trigram_rewrite_visits_each_id_within_one_uuid_millisecond(db: devkit::pg::TestDatabase) {
+async fn bulk_trigram_copy_keeps_each_id_within_one_uuid_millisecond(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -298,13 +281,6 @@ async fn trigram_rewrite_visits_each_id_within_one_uuid_millisecond(db: devkit::
         .await
         .unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
-    loop {
-        use sinex_schema::online::Progress;
-        match sinex_schema::online::step(&mut conn, 1).await.unwrap() {
-            Progress::Done => break,
-            Progress::Waiting => panic!("the fixture owns the rewrite"),
-            Progress::Advanced { .. } | Progress::Finished { .. } => {}
-        }
-    }
+    sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(flags(&mut conn).await, expected);
 }

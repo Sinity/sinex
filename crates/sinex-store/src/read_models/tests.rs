@@ -118,7 +118,7 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
     admit_search_kinds(&mut conn, sinex_model::Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
     let before: Vec<(String, String, String, bool)> = sqlx::query_as(
-        "SELECT e.event_type, s.text, s.ctid::text, s.trigram_indexed FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY e.event_type")
+        "SELECT e.event_type, s.text, s.ctid::text, (t.event_id IS NOT NULL) FROM core.search_text s JOIN core.events e ON e.id=s.event_id LEFT JOIN core.search_trigram t ON t.event_id=s.event_id ORDER BY e.event_type")
         .fetch_all(&mut conn).await.unwrap();
     assert_eq!(
         before
@@ -143,14 +143,14 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
     apply_search_text(&mut tx, &page.events).await.unwrap();
     tx.commit().await.unwrap();
     let after: Vec<(String, String, String, bool)> = sqlx::query_as(
-        "SELECT e.event_type, s.text, s.ctid::text, s.trigram_indexed FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY e.event_type")
+        "SELECT e.event_type, s.text, s.ctid::text, (t.event_id IS NOT NULL) FROM core.search_text s JOIN core.events e ON e.id=s.event_id LEFT JOIN core.search_trigram t ON t.event_id=s.event_id ORDER BY e.event_type")
         .fetch_all(&mut conn).await.unwrap();
     assert_eq!(
         after, before,
         "recovery must leave unchanged heap rows in place"
     );
     // A policy change is meaningful even when normalized text is identical.
-    sqlx::query("UPDATE core.search_text SET trigram_indexed=true")
+    sqlx::query("INSERT INTO core.search_trigram(event_id,text) SELECT event_id,text FROM core.search_text ON CONFLICT DO NOTHING")
         .execute(&mut conn)
         .await
         .unwrap();
@@ -158,7 +158,7 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
     apply_search_text(&mut tx, &page.events).await.unwrap();
     tx.commit().await.unwrap();
     let excluded: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.search_text WHERE NOT trigram_indexed")
+        sqlx::query_scalar("SELECT count(*) FROM core.search_text s WHERE NOT EXISTS(SELECT 1 FROM core.search_trigram t WHERE t.event_id=s.event_id)")
             .fetch_one(&mut conn)
             .await
             .unwrap();

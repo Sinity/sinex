@@ -32,6 +32,12 @@ impl Description {
         }
     }
 
+    pub(crate) fn before_search_trigram() -> Self {
+        let mut description = Self::current();
+        crate::search_trigram::previous(&mut description.tables, &mut description.visibility);
+        description
+    }
+
     /// The description just before materials could be stored without a
     /// parser.
     pub(crate) fn before_stage_without_parser() -> Self {
@@ -53,7 +59,7 @@ impl Description {
 
     /// The description just before blobs could be stored as chunks.
     pub(crate) fn before_blob_chunks() -> Self {
-        let mut description = Self::current();
+        let mut description = Self::before_search_trigram();
         description
             .tables
             .retain(|statement| crate::blob_chunks::before(statement));

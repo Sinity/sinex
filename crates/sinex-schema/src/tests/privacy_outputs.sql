@@ -1,3 +1,12 @@
+-- Undo the separate trigram read model before the older synthetic downgrades.
+DROP VIEW core.visible_search_trigram;
+DROP TABLE core.search_trigram;
+DROP VIEW core.visible_search_text;
+ALTER TABLE core.search_text ADD COLUMN trigram_indexed boolean NOT NULL DEFAULT true;
+CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram_indexed;
+CREATE VIEW core.visible_search_text AS SELECT s.event_id,s.text,s.tsv,s.trigram_indexed
+FROM core.search_text s JOIN core.events e ON e.id=s.event_id WHERE core.class_visible(e.class);
+GRANT SELECT ON core.visible_search_text TO sinex_reader,sinex_writer;
 -- Undo the blob chunks upgrade.
 DROP FUNCTION core.blob_descriptors(text);
 DROP TABLE core.blob_chunks;

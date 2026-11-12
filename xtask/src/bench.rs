@@ -844,7 +844,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         "batch_limits": {"events": 10000, "bytes": 16777216},
         "wal_bytes": measurements::wal_delta(&before, &after),
         "wal_bytes_per_event": measurements::wal_delta(&before, &after).map(|b| b as f64 / events.max(1) as f64),
-        "search_trigram_bytes": measurements::relation_size(&after, "search_text_trigram", "bytes"),
+        "search_trigram_bytes": measurements::relation_size(&after, "search_trigram_text", "bytes"),
         "search_tsv_bytes": measurements::relation_size(&after, "search_text_tsv", "bytes"),
         "live_equivalence_bytes": measurements::relation_size(&after, "live_equivalence", "total_bytes"),
         "published_bytes": measurements::relation_size(&after, "published", "total_bytes"),

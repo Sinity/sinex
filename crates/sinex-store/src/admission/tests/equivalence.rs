@@ -77,6 +77,10 @@ async fn rows(conn: &mut PgConnection, predecessor: Option<&[Value]>) -> Vec<Val
         .bind(sinex_schema::schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut rows = Vec::new();
     for (schema, table) in tables {
+        if schema == "core" && table == "search_trigram" {
+            continue;
+        }
+
         // The lifecycle upgrade drops the hidden records and excised digests.
         if schema == "registry" || matches!(table.as_str(), "hidden_records" | "excised_materials")
         {
