@@ -55,7 +55,13 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -84,7 +90,13 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     let previous = instance(&js, &subjects).await;
     // This broker and database are owned by the synthetic test.
     js.delete_stream(subjects.confirmed_stream()).await.unwrap();
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let current = instance(&js, &subjects).await;
     assert_ne!(previous, current);
     publish(
@@ -97,12 +109,29 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     .unwrap()
     .await
     .unwrap();
+    let origin =
+        history_origin(&js.get_stream(subjects.confirmed_stream()).await.unwrap()).unwrap();
+    assert_eq!(
+        origin.position,
+        commit_log::latest(&mut conn).await.unwrap()
+    );
+    assert!(origin.requires_projection);
     assert_eq!(
         publish_pending(&mut conn, &js, &subjects)
             .await
             .unwrap()
             .events,
-        2
+        0
+    );
+    let later = executed("later", "echo later", 3, Class::Open);
+    let later_id = later.id;
+    admit(&mut conn, batch(vec![later])).await;
+    assert_eq!(
+        publish_pending(&mut conn, &js, &subjects)
+            .await
+            .unwrap()
+            .events,
+        1
     );
     assert_eq!(
         read_wire_all(&js, &subjects)
@@ -110,7 +139,7 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
             .iter()
             .filter_map(tuple)
             .collect::<Vec<_>>(),
-        expected
+        vec![(origin.position + 1, later_id, "event")]
     );
     // An old incarnation's sequence must never delete the unrelated new stream slot.
     sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class) VALUES($1,'atuin','command.executed',$2,5,1,'open')")
@@ -119,7 +148,7 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
         erase_tombstoned_in(&mut conn, &js, &subjects, &current)
             .await
             .unwrap(),
-        1
+        0
     );
     assert!(
         js.get_stream(subjects.confirmed_stream())
@@ -138,7 +167,13 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(&js, &subjects).await.unwrap();
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -241,11 +276,15 @@ async fn empty_database_is_ready_at_zero_and_nonempty_old_contract_is_refused(
         .await
         .unwrap();
     assert!(
-        ensure_stream(&js, &subjects)
-            .await
-            .unwrap_err()
-            .to_string()
-            .starts_with("confirmed_stream_contract_mismatch:")
+        ensure_stream(
+            &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+            &js,
+            &subjects
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .starts_with("confirmed_stream_contract_mismatch:")
     );
     assert_eq!(
         js.get_stream(subjects.confirmed_stream())
@@ -263,6 +302,13 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::p
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -330,6 +376,13 @@ async fn references_expose_no_source_key_and_route_by_stored_class(db: devkit::p
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
+    ensure_stream(
+        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
+        &js,
+        &subjects,
+    )
+    .await
+    .unwrap();
     let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();

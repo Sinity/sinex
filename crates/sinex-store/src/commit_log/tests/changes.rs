@@ -162,6 +162,10 @@ async fn pruning_retains_tombstone_order_and_unknown_history_is_a_named_gap(
             .collect::<Vec<_>>(),
         [1, 2, 3]
     );
+    sqlx::query("ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete")
+        .execute(&mut conn)
+        .await
+        .unwrap();
     sqlx::query("UPDATE core.event_tombstones SET original_commit_seq=NULL")
         .execute(&mut conn)
         .await

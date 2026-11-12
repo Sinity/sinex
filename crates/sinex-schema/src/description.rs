@@ -32,8 +32,14 @@ impl Description {
         }
     }
 
-    pub(crate) fn before_search_trigram() -> Self {
+    pub(crate) fn before_tombstone_history() -> Self {
         let mut description = Self::current();
+        crate::tombstone_history::previous(&mut description.after_tables);
+        description
+    }
+
+    pub(crate) fn before_search_trigram() -> Self {
+        let mut description = Self::before_tombstone_history();
         crate::search_trigram::previous(&mut description.tables, &mut description.visibility);
         description
     }

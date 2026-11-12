@@ -154,6 +154,7 @@ pub struct InputRow {
     pub commit_seq: i64,
     pub source: String,
     pub event_type: String,
+    pub class: String,
     pub kind_version: i64,
     pub source_version: Option<i64>,
     pub source_fingerprint: Option<String>,
@@ -174,13 +175,14 @@ pub async fn inputs(
         .iter()
         .map(|(kind, _)| kind.name.clone())
         .collect::<Vec<_>>();
-    Ok(sqlx::query_as("SELECT e.id,e.commit_seq,e.source,e.event_type,e.kind_version,e.source_version,e.source_fingerprint,e.producer_family,e.payload,coalesce(h.archived,false) AS archived,h.commit_seq AS lifecycle_position,(h.commit_seq IS NULL AND (EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id AND a.archived_seq<=$1) OR coalesce((SELECT NOT c.archived FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq>$1 ORDER BY c.commit_seq LIMIT 1),false))) AS history_unknown FROM core.events e LEFT JOIN LATERAL (SELECT c.archived,c.commit_seq FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq<=$1 ORDER BY c.commit_seq DESC LIMIT 1) h ON true WHERE e.event_type=ANY($2) AND e.commit_seq<=$1 AND ($3::bigint IS NULL OR (e.commit_seq,e.id)>($3,$4::uuid)) AND e.class=ANY($6) ORDER BY e.commit_seq,e.id LIMIT $5")
+    Ok(sqlx::query_as("SELECT e.id,e.commit_seq,e.source,e.event_type,e.class,e.kind_version,e.source_version,e.source_fingerprint,e.producer_family,e.payload,coalesce(h.archived,false) AS archived,h.commit_seq AS lifecycle_position,(h.commit_seq IS NULL AND (EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id AND a.archived_seq<=$1) OR coalesce((SELECT NOT c.archived FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq>$1 ORDER BY c.commit_seq LIMIT 1),false))) AS history_unknown FROM core.events e LEFT JOIN LATERAL (SELECT c.archived,c.commit_seq FROM audit.archive_changes c WHERE c.event_id=e.id AND c.commit_seq<=$1 ORDER BY c.commit_seq DESC LIMIT 1) h ON true WHERE e.event_type=ANY($2) AND e.commit_seq<=$1 AND ($3::bigint IS NULL OR (e.commit_seq,e.id)>($3,$4::uuid)) AND e.class=ANY($6) ORDER BY e.commit_seq,e.id LIMIT $5")
         .bind(claims.position).bind(names).bind(after.map(|after|after.0)).bind(after.map(|after|after.1)).bind(limit).bind(&claims.classes).fetch_all(conn).await?)
 }
 
-/// Complete scoped indexing and raw reducer eligibility are different claims.
-/// Never omit an unknown kind version inside the fixed catalog.
-pub async fn projection_contract(
+/// Check the immutable catalog binding. Each bounded projection page checks
+/// every selected row's version and availability before signing completion;
+/// a completed certificate need not enumerate the same immutable history again.
+pub async fn projection_catalog(
     conn: &mut PgConnection,
     claims: &Claims,
 ) -> std::result::Result<(), AuthorityError> {
@@ -198,30 +200,6 @@ pub async fn projection_contract(
         return Err(AuthorityError::Invalidated(
             "projection_kind_catalog_unknown_or_changed".into(),
         ));
-    }
-    let names = refs
-        .iter()
-        .map(|kind| kind.name.clone())
-        .collect::<Vec<_>>();
-    let rows: Vec<(String, i64, String)> = sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,e.class FROM core.events e WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
-        .bind(names).bind(claims.position).fetch_all(conn).await?;
-    for (name, version, class) in rows {
-        if !claims.classes.contains(&class) {
-            continue;
-        }
-        if class == "sealed" {
-            return Err(AuthorityError::Invalidated(
-                "projection_indexed_input_unavailable".into(),
-            ));
-        }
-        if !refs
-            .iter()
-            .any(|kind| kind.name == name && i64::try_from(kind.version).ok() == Some(version))
-        {
-            return Err(AuthorityError::Invalidated(
-                "projection_indexed_kind_version_unknown".into(),
-            ));
-        }
     }
     Ok(())
 }

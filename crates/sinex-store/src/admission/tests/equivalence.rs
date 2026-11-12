@@ -205,7 +205,7 @@ async fn populated_key_upgrade_preserves_all_rows_and_matches_fresh_schema(
     sqlx::query("INSERT INTO core.consumer_positions(consumer,commit_seq,change_seq) VALUES('test consumer',7,1)")
         .execute(&mut conn).await.unwrap();
     let removed = Uuid::now_v7();
-    sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id) VALUES($1,'s','command.executed',$2)")
+    sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class) VALUES($1,'s','command.executed',$2,2,1,'open')")
         .bind(removed).bind(Uuid::now_v7()).execute(&mut conn).await.unwrap();
     crate::commit_log::record_published(&mut conn, &[(events[1].id.0, 17), (removed, 29)])
         .await

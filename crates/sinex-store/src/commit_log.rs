@@ -17,10 +17,12 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 mod changes;
+mod origin;
 pub use changes::{
     Change, ChangeCursor, ChangePage, CommittedChange, HistoryGap, LifecycleChange, Tombstone,
-    changes_page,
+    changes_page, changes_page_after_origin,
 };
+pub use origin::HistoryOrigin;
 
 /// Take a lifecycle position while holding the same counter lock as admission.
 pub(crate) async fn allocate_position(conn: &mut PgConnection) -> Result<i64> {

@@ -1070,9 +1070,13 @@ tombstone_steps! {
 async fn publisher_survives(between_pages: bool) {
     let inputs = Inputs::publisher_pages();
     let target = Target::new(&inputs);
-    finish(&mut target.stage(&inputs));
     let nats = devkit::nats::test_nats().expect("run through `xtask test`");
     let subjects = sinex_protocol::Subjects::new(nats.prefix());
+    let mut origin_conn = target.connect().await;
+    let origin = sinex_store::commit_log::HistoryOrigin::establish(&mut origin_conn)
+        .await
+        .unwrap();
+    assert_eq!(origin.position, 0);
     let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
     // The fixture owns a fresh native stream before acquiring either fault
     // lock, so both barriers name the exact incarnation the daemon will use.
@@ -1084,8 +1088,13 @@ async fn publisher_survives(between_pages: bool) {
     };
     config
         .metadata
-        .insert("sinex_confirmed_contract".into(), "3".into());
+        .insert("sinex_confirmed_contract".into(), "4".into());
+    config.metadata.insert(
+        "sinex_history_origin".into(),
+        serde_json::to_string(&origin).unwrap(),
+    );
     let stream = js.create_stream(config).await.unwrap();
+    finish(&mut target.stage(&inputs));
     let consumer = format!(
         "publisher/{}/{}",
         stream.cached_info().config.name,

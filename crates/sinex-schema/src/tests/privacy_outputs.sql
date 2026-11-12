@@ -1,3 +1,4 @@
+ALTER TABLE core.event_tombstones DROP CONSTRAINT IF EXISTS tombstone_history_complete;
 -- Undo the separate trigram read model before the older synthetic downgrades.
 DROP VIEW core.visible_search_trigram;
 DROP TABLE core.search_trigram;

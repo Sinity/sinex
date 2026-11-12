@@ -10,7 +10,7 @@ use sinex_store::read_coverage::{self, Claims};
 mod delivery;
 
 #[derive(Debug, thiserror::Error)]
-enum Failure {
+pub(super) enum Failure {
     #[error("{0}")]
     Invalidated(String),
     #[error("{0}")]
@@ -222,7 +222,6 @@ async fn authorize_raw(
 }
 async fn instance(client: &async_nats::Client, subjects: &Subjects) -> Result<String> {
     let js = crate::publisher::context(client.clone());
-    crate::publisher::ensure_stream(&js, subjects).await?;
     let stream = js.get_stream(subjects.confirmed_stream()).await?;
     Ok(crate::publisher::stream_instance(&stream))
 }
@@ -357,7 +356,7 @@ impl Requests {
                 }
             };
             read_coverage::current(&mut tx, &cursor.claims).await?;
-            read_coverage::projection_contract(&mut tx, &cursor.claims).await?;
+            read_coverage::projection_catalog(&mut tx, &cursor.claims).await?;
             let mut rows =
                 read_coverage::inputs(&mut tx, &cursor.claims, cursor.after, PAGE + 1).await?;
             let more = rows.len() > PAGE as usize;
@@ -366,6 +365,11 @@ impl Requests {
             }
             let mut inputs = Vec::with_capacity(rows.len());
             for row in rows {
+                if row.class == "sealed" {
+                    return Err(Failure::Invalidated(
+                        "projection_indexed_input_unavailable".into(),
+                    ));
+                }
                 if row.history_unknown || row.archived && row.lifecycle_position.is_none() {
                     return Err(Failure::Invalidated(
                         "coverage_archived_position_unknown".into(),
@@ -675,7 +679,7 @@ impl Requests {
         cache: &str,
         after: i64,
         proof: &sinex_protocol::FullProjectionComplete,
-    ) -> Result<()> {
+    ) -> Result<(), Failure> {
         let mut conn = self.reads.acquire().await?;
         let claims = read_coverage::open(&mut conn, &proof.stamp).await?;
         let Contract {
@@ -695,7 +699,12 @@ impl Requests {
             || proof.position != claims.position
             || proof.scope != claims.scope
             || proof.catalog != claims.catalog
-            || after < claims.position
+        {
+            return Err(Failure::Unverified(
+                "invalid full-projection certificate".into(),
+            ));
+        }
+        if after < claims.position
             || !same(
                 &claims,
                 producer,
@@ -708,16 +717,16 @@ impl Requests {
                 &self.public_context.host,
             )
         {
-            return Err(Error::conflict("coverage_replay_basis_changed"));
+            return Err(Failure::Invalidated("coverage_replay_basis_changed".into()));
         }
         // A native resume after the certificate may include later ordinary
         // lifecycle changes. Its retained replay basis is still valid.
         let mut current = claims;
         current.position = after;
         read_coverage::current(&mut conn, &current).await?;
-        read_coverage::projection_contract(&mut conn, &current)
+        read_coverage::projection_catalog(&mut conn, &current)
             .await
-            .map_err(Error::from)
+            .map_err(Failure::from)
     }
 }
 

@@ -19,6 +19,115 @@ fn claims() -> Claims {
         replay_root: Some("completed-page-chain".into()),
     }
 }
+
+#[devkit::test]
+async fn projection_catalog_checks_do_not_reread_retained_event_history(
+    db: devkit::pg::TestDatabase,
+) {
+    use crate::{AdmissionContext, NoDerivations};
+    use sinex_model::{
+        Batch, BatchKind, Class, Event, KindDeclaration, MaterialId, Origin, ReadingOrder,
+        RecordLocation, RecordOutcome, RunId,
+    };
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let declaration = KindDeclaration::schemaless(
+        KindRef {
+            name: "synthetic.projection".into(),
+            version: 1,
+        },
+        "synthetic".into(),
+    );
+    sinex_schema::kinds::register(&mut conn, "synthetic", std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
+    let events = (0..8192)
+        .map(|n| {
+            Event::submitted(
+                declaration.kind.clone(),
+                serde_json::json!({"n":n}),
+                "synthetic".into(),
+                Origin::Record {
+                    location: RecordLocation {
+                        material: MaterialId::new(),
+                        anchor: 0,
+                    },
+                    output_index: 0,
+                },
+                ReadingOrder(1),
+                *blake3::hash(n.to_string().as_bytes()).as_bytes(),
+                if n == 0 { Class::Guarded } else { Class::Open },
+            )
+        })
+        .collect();
+    let batch = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Api {
+            actor: "synthetic".into(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events,
+        }],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    assert_eq!(
+        tx.admit(&batch, &NoDerivations).await.unwrap().admitted,
+        8192
+    );
+    tx.commit().await.unwrap();
+    let mut covered = claims();
+    covered.position = crate::query::current_seq(&mut conn).await.unwrap();
+    covered.indexed_kinds = vec![(declaration.kind.clone(), declaration.definition_hash())];
+    covered.classes = vec!["open".into(), "guarded".into()];
+
+    let mut probe = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut tx = probe.begin().await.unwrap();
+    sqlx::raw_sql(
+        "SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL enable_indexonlyscan=off",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN (SELECT show_chunks('core.events'))";
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    // Page continuations and status requests may check the same certificate
+    // repeatedly. Its immutable catalog check must not revisit any event row.
+    for _ in 0..8 {
+        projection_catalog(&mut tx, &covered).await.unwrap();
+    }
+    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    assert_eq!(
+        after - before,
+        0,
+        "catalog checks revisited retained event tuples"
+    );
+    let mut changed = covered.clone();
+    changed.indexed_kinds[0].1 = "0".repeat(64);
+    assert!(
+        matches!(projection_catalog(&mut tx, &changed).await, Err(AuthorityError::Invalidated(reason)) if reason == "projection_kind_catalog_unknown_or_changed")
+    );
+    changed.indexed_kinds[0].0.version = 2;
+    assert!(projection_catalog(&mut tx, &changed).await.is_err());
+
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let original: Vec<(String,i64,String)> = sqlx::query_as("SELECT DISTINCT e.event_type,e.kind_version,e.class FROM core.events e WHERE e.event_type=ANY($1) AND e.commit_seq<=$2")
+        .bind(vec![declaration.kind.name.clone()]).bind(covered.position).fetch_all(&mut *tx).await.unwrap();
+    assert_eq!(original.len(), 2);
+    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        after - before >= 8192,
+        "original history check visited only {} tuples",
+        after - before
+    );
+    let mut guarded = covered.clone();
+    guarded.classes = vec!["guarded".into()];
+    let selected = inputs(&mut tx, &guarded, None, 1).await.unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].class, "guarded");
+    assert_eq!(selected[0].payload, serde_json::json!({"n":0}));
+    tx.rollback().await.unwrap();
+}
 #[devkit::test]
 fn owner_proofs_reject_corruption_and_another_protocol_domain() {
     let key = [3; 32];

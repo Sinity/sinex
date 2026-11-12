@@ -88,6 +88,7 @@ pub(crate) const NAMED: &[&str] = &[
     "blob_chunks",
     "append_file_stat_metadata",
     "search_trigram_text",
+    "closed_tombstone_history",
 ];
 
 #[cfg(test)]
@@ -185,6 +186,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(crate::blob_chunks::statements());
     steps.push(source_cursors::statements());
     steps.push(crate::search_trigram::statements());
+    steps.push(crate::tombstone_history::statements());
     steps
 }
 

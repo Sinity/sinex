@@ -76,6 +76,27 @@ pub async fn changes_page(
     limit: i64,
     bytes: i64,
 ) -> Result<ChangePage> {
+    changes_page_from(conn, after, limit, bytes, None).await
+}
+
+/// Post-origin deltas are valid only after a complete certified projection.
+/// The schema excludes new incomplete tombstones; predecessor rows are closed.
+pub async fn changes_page_after_origin(
+    conn: &mut PgConnection,
+    after: ChangeCursor,
+    origin: &HistoryOrigin,
+    limit: i64,
+    bytes: i64,
+) -> Result<ChangePage> {
+    changes_page_from(conn, after, limit, bytes, Some(origin)).await
+}
+async fn changes_page_from(
+    conn: &mut PgConnection,
+    after: ChangeCursor,
+    limit: i64,
+    bytes: i64,
+    origin: Option<&HistoryOrigin>,
+) -> Result<ChangePage> {
     if limit <= 0 || bytes <= 0 {
         return Err(Error::Invalid(
             "commit change page budgets must be positive".into(),
@@ -85,7 +106,15 @@ pub async fn changes_page(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let page = read_page(&mut tx, after, limit, bytes).await?;
+    if let Some(origin) = origin {
+        origin.validate(&mut tx).await?;
+        if after.position < origin.position {
+            return Err(Error::Invalid(
+                "change cursor precedes confirmed stream origin".into(),
+            ));
+        }
+    }
+    let page = read_page(&mut tx, after, limit, bytes, origin.is_none()).await?;
     tx.commit().await?;
     Ok(page)
 }
@@ -94,8 +123,9 @@ async fn read_page(
     after: ChangeCursor,
     limit: i64,
     bytes: i64,
+    require_history: bool,
 ) -> Result<ChangePage> {
-    if let Some(row)=sqlx::query!("SELECT event_id,operation_id FROM core.event_tombstones WHERE commit_seq IS NULL OR original_commit_seq IS NULL OR class IS NULL ORDER BY event_id LIMIT 1")
+    if require_history && let Some(row)=sqlx::query!("SELECT event_id,operation_id FROM core.event_tombstones WHERE commit_seq IS NULL OR original_commit_seq IS NULL OR class IS NULL ORDER BY event_id LIMIT 1")
         .fetch_optional(&mut *conn).await?{
         return Ok(ChangePage{gap:Some(HistoryGap{event:row.event_id,operation:Some(row.operation_id),
             reason:format!("commit_history_position_unknown: tombstoned event {} lacks exact admission/lifecycle position or class metadata",row.event_id)}),..Default::default()})
