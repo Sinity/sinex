@@ -97,6 +97,61 @@ const RUNS: &str =
 const OPEN_RUNS: &str = "SELECT count(*) FROM core.runs WHERE name IN ('terminal.zsh-history','source.observation') AND ended_at IS NULL";
 
 #[devkit::test]
+async fn coverage_restart_keeps_guarded_state_and_client_masking(db: devkit::pg::TestDatabase) {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("history");
+    std::fs::write(&input, b"").unwrap();
+    let mut context = open(&db, root.path()).await;
+    let mut reader = zsh_reader(&input);
+    reader.binding.settings.class = Some(Class::Guarded);
+    let mut readers = vec![reader];
+    let mut rounds = crate::binding_reader::Rounds::default();
+    assert_eq!(
+        round(&mut context, &mut readers, &mut rounds).await,
+        [false]
+    );
+    rounds.end(&mut context.read_conn).await.unwrap();
+    let retained: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE event_type='source.coverage'")
+            .fetch_one(&mut context.read_conn)
+            .await
+            .unwrap();
+    context.close().await.unwrap();
+
+    for _ in 0..2 {
+        let mut context = open(&db, root.path()).await;
+        let mut reader = zsh_reader(&input);
+        reader.binding.settings.class = Some(Class::Guarded);
+        let mut readers = vec![reader];
+        let mut rounds = crate::binding_reader::Rounds::resume(&mut context.read_conn, "synthetic")
+            .await
+            .unwrap();
+        assert_eq!(
+            round(&mut context, &mut readers, &mut rounds).await,
+            [false]
+        );
+        assert_eq!(count(&mut context, COVERAGE_READINGS).await, 1);
+        let visible =
+            sinex_store::live::of_types(&mut context.read_conn, &["source.coverage".into()])
+                .await
+                .unwrap();
+        assert_eq!(
+            visible[0].payload,
+            Some(serde_json::json!({"withheld":"guarded"}))
+        );
+        let unchanged: serde_json::Value = sqlx::query_scalar(
+            "SELECT payload FROM core.events WHERE event_type='source.coverage'",
+        )
+        .fetch_one(&mut context.read_conn)
+        .await
+        .unwrap();
+        assert_eq!(unchanged, retained);
+        rounds.end(&mut context.read_conn).await.unwrap();
+        context.close().await.unwrap();
+    }
+}
+
+#[devkit::test]
 async fn coverage_restart_keeps_old_readings_and_resumes_current_state(
     db: devkit::pg::TestDatabase,
 ) {
@@ -142,7 +197,15 @@ async fn coverage_restart_keeps_old_readings_and_resumes_current_state(
             .await
             .unwrap();
     assert_eq!(retained, old_payload);
-    assert_eq!(count(&mut context, LIVE_COVERAGE).await, 1);
+    let current: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events e WHERE event_type='source.coverage' AND kind_version=$1
+         AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
+    )
+    .bind(SourceCoverage::VERSION as i64)
+    .fetch_one(&mut context.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(current, 1);
     rounds.end(&mut context.read_conn).await.unwrap();
     context.close().await.unwrap();
 

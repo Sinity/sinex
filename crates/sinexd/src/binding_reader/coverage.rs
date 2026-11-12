@@ -73,13 +73,20 @@ impl Coverage {
     /// Coverage that continues from the current readings stored for `host`, so
     /// a restarted reader writes nothing for a binding whose state is unchanged.
     pub(crate) async fn stored(conn: &mut PgConnection, host: &str) -> Result<Self> {
-        let events = sinex_store::live::of_types(conn, &["source.coverage".into()]).await?;
+        // This is the reader's own state; an output grant must not decide
+        // whether it can resume a guarded binding.
+        let payloads = sqlx::query_scalar!(
+            "SELECT e.payload FROM core.events e
+             WHERE e.event_type=$1 AND e.kind_version=$2
+               AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
+             ORDER BY e.commit_seq,e.id",
+            SourceCoverage::EVENT_TYPE,
+            SourceCoverage::VERSION as i64,
+        )
+        .fetch_all(conn)
+        .await?;
         let mut current = BTreeMap::new();
-        for payload in events
-            .into_iter()
-            .filter(|event| event.kind_version == SourceCoverage::VERSION as i64)
-            .filter_map(|event| event.payload)
-        {
+        for payload in payloads.into_iter().flatten() {
             let row: SourceCoverage = serde_json::from_value(payload)?;
             if row.host == host {
                 current.insert((row.binding, row.host), (row.state, row.reason));
