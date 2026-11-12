@@ -99,15 +99,22 @@ impl Builder {
         self.file.flush()?;
         let mut file = self.file.into_inner().map_err(|e| e.into_error())?;
         file.rewind()?;
+        let mut records = serde_json::Deserializer::from_reader(BufReader::new(file));
+        // These readings have already been built by the parser. Wrapping them
+        // in preparation must not impose a smaller payload nesting allowance.
+        records.disable_recursion_limit();
         Ok(Batches::Native(Box::new(Prepared {
             run: first.run,
             operation,
             first: Some(first),
             remaining: self.batches,
-            records: serde_json::Deserializer::from_reader(BufReader::new(file)).into_iter(),
+            records: records.into_iter(),
         })))
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 pub(crate) struct Prepared {
     run: RunId,
