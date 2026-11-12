@@ -20,6 +20,7 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 - Admission commits a derivation's outputs, the replacement of the key's previous output set, the derivation's saved position, its read ranges and the downstream dirty marks in one transaction.
 - A per-event pass that finds no event of its kinds up to the head it read at starts its next pass from that head, so an idle derivation reads only new commits. The saved position moves only with admitted outputs; after a restart, or when a version switch resets it, the next pass starts from the saved position. Compressed chunks wholly before a pass's start are skipped by their commit-position range.
 - Dirty keys are marked in the same transaction as the inputs that dirty them. There is no separate invalidation stream.
+- Matching existing output ranges loads each event by its selected output ID; unrelated event history is outside that lookup. Start and end boundaries remain inclusive, and a missing end or declared open interval retains its overlap meaning.
 - Recomputing a derivation is idempotent: the same live inputs give the same outputs by key and payload.
 
 ### When a key recomputes

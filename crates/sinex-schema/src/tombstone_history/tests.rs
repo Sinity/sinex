@@ -3,7 +3,7 @@ use crate::{Applied, VERSION, apply, catalog};
 use sqlx::{Connection, Executor, PgConnection};
 
 async fn predecessor(conn: &mut PgConnection) {
-    conn.execute("ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete")
+    conn.execute("DROP INDEX core.ingress_frames_material, core.ingress_frames_refused_at, core.ingress_frames_malformed_producer; ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete")
         .await
         .unwrap();
     sqlx::query("UPDATE sinex_schema.applied SET version=$1")

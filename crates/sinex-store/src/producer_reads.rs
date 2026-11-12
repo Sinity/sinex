@@ -98,3 +98,6 @@ pub async fn materials_registered_by(
     Ok(sqlx::query_scalar("SELECT material_id FROM core.ingress_frames WHERE producer=$1 AND material_id=ANY($2) AND refusal IS NULL")
         .bind(producer).bind(ids).fetch_all(conn).await?)
 }
+
+#[cfg(test)]
+mod tests;

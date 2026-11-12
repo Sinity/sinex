@@ -531,15 +531,21 @@ pub(crate) async fn mark_inputs_dirty(
             .iter()
             .map(|r| r.open_field.map(str::to_owned))
             .collect();
+        // Keep the payload lookup driven by output IDs even when compressed
+        // event cardinality estimates would favour a whole-history join.
         let selected = sqlx::query!(
             r#"SELECT DISTINCT o.derivation, o.key FROM
                  unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::timestamptz[], $6::timestamptz[], $7::text[])
                    AS r(derivation, event_type, start_field, end_field, start, finish, open_field)
                JOIN derivation.outputs o ON o.derivation = r.derivation
-               JOIN core.events e ON e.id = o.event_id AND e.event_type = r.event_type
+               CROSS JOIN LATERAL (
+                 SELECT e.payload FROM core.events e
+                 WHERE e.id = o.event_id AND e.event_type = r.event_type
+                 OFFSET 0
+               ) e
                WHERE (e.payload->>r.start_field)::timestamptz <= r.finish
                  AND ((e.payload->>r.end_field) IS NULL OR (e.payload->>r.end_field)::timestamptz >= r.start OR coalesce((e.payload->>r.open_field)::boolean, false))
-                 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)"#,
+                 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=o.event_id)"#,
             &names, &types, &starts, &ends, &from, &until, &open as &[Option<String>],
         ).fetch_all(&mut *conn).await?;
         dirty.extend(selected.into_iter().map(|row| (row.derivation, row.key)));

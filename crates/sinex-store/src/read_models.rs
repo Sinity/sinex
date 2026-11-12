@@ -133,7 +133,7 @@ async fn insert_search_rows(
         r#"WITH input AS MATERIALIZED (
              SELECT input.event_id, input.text, input.trigram
              FROM unnest($1::uuid[], $2::text[], $3::boolean[]) AS input(event_id, text, trigram)
-             JOIN core.events e ON e.id=input.event_id
+             CROSS JOIN LATERAL (SELECT e.id FROM core.events e WHERE e.id=input.event_id OFFSET 0) e
            ), words AS (
              INSERT INTO core.search_text AS stored (event_id, text)
              SELECT event_id, text FROM input

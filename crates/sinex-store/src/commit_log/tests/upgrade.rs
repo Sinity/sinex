@@ -285,11 +285,7 @@ async fn failed_pair_key_build_keeps_the_old_key_and_every_mapping(db: devkit::p
         .execute(&mut conn).await.unwrap();
     sinex_schema::apply(&mut conn).await.unwrap();
     let key = "SELECT conname || ' ' || pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'core.published'::regclass AND contype = 'p'";
-    assert!(
-        sinex_schema::online::step(&mut conn, sinex_schema::online::BATCH)
-            .await
-            .is_err()
-    );
+    assert!(sinex_schema::online::step(&mut conn).await.is_err());
     assert!(
         sinex_schema::online::pending(&mut conn, sinex_schema::online::Task::PublishedKey)
             .await

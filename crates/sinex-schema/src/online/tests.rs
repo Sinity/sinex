@@ -151,25 +151,26 @@ async fn work_after_start_resumes_in_order_and_walks_answer_as_filled(
     assert_eq!(walks(&mut conn).await, expected);
 
     assert_eq!(
-        step(&mut conn, 3).await.unwrap(),
+        step(&mut conn).await.unwrap(),
         Progress::Finished {
             task: Task::PublishedKey
         }
     );
     assert_eq!(
-        step(&mut conn, 3).await.unwrap(),
+        step(&mut conn).await.unwrap(),
         Progress::Finished {
             task: Task::FeedIndex
         }
     );
-    // Events 7, 8 and 9: edges 1-7, 2-7, 7-8, 3-9, 7-9.
-    assert_eq!(
-        step(&mut conn, 3).await.unwrap(),
-        Progress::Advanced {
-            task: Task::EventChildren,
-            rows: 5
-        }
-    );
+    // A preceding build committed edges through event 9. The replacement
+    // must honor that prefix, without changing fallback answers.
+    sqlx::query("INSERT INTO core.event_children(parent,child) SELECT p.parent,e.id FROM core.events e CROSS JOIN LATERAL unnest(e.parents) p(parent) WHERE e.id<=$1::text::uuid ON CONFLICT DO NOTHING")
+        .bind(&ids[8]).execute(&mut conn).await.unwrap();
+    sqlx::query("UPDATE sinex_schema.event_children_fill SET filled_through=$1::text::uuid")
+        .bind(&ids[8])
+        .execute(&mut conn)
+        .await
+        .unwrap();
     assert_eq!(walks(&mut conn).await, expected);
     assert_eq!(edges(&mut conn).await.len(), 5);
 
@@ -194,12 +195,12 @@ async fn work_after_start_resumes_in_order_and_walks_answer_as_filled(
     .await
     .unwrap();
     assert_eq!(walks(&mut conn).await, expected);
-    // Events 10, 11 and 12: edges 8-10, 9-10, 5-11, 11-12, 4-12, one already stored.
+    // The complete remaining set streams in one pass, including edges that
+    // admission already wrote.
     assert_eq!(
-        step(&mut conn, 3).await.unwrap(),
-        Progress::Advanced {
-            task: Task::EventChildren,
-            rows: 4
+        step(&mut conn).await.unwrap(),
+        Progress::Finished {
+            task: Task::EventChildren
         }
     );
     assert_eq!(walks(&mut conn).await, expected);
@@ -214,7 +215,7 @@ async fn work_after_start_resumes_in_order_and_walks_answer_as_filled(
     assert_eq!(edges(&mut conn).await, lineage);
     assert!(remaining(&mut conn).await.unwrap().is_empty());
     assert_eq!(catalog(&mut conn).await, fresh);
-    assert_eq!(step(&mut conn, 3).await.unwrap(), Progress::Done);
+    assert_eq!(step(&mut conn).await.unwrap(), Progress::Done);
 }
 
 async fn index_oid(conn: &mut PgConnection, name: &str) -> Option<i64> {
@@ -245,7 +246,7 @@ async fn interrupted_index_builds_are_rebuilt_and_finished_ones_kept(db: devkit:
     invalidate(&mut conn, "core.published_pairs_pkey").await;
     let invalid = index_oid(&mut conn, "core.published_pairs_pkey").await;
     assert_eq!(
-        step(&mut conn, BATCH).await.unwrap(),
+        step(&mut conn).await.unwrap(),
         Progress::Finished {
             task: Task::PublishedKey
         }
@@ -265,7 +266,7 @@ async fn interrupted_index_builds_are_rebuilt_and_finished_ones_kept(db: devkit:
     invalidate(&mut conn, "core.events_feed").await;
     let invalid = index_oid(&mut conn, "core.events_feed").await;
     assert_eq!(
-        step(&mut conn, BATCH).await.unwrap(),
+        step(&mut conn).await.unwrap(),
         Progress::Finished {
             task: Task::FeedIndex
         }
@@ -302,7 +303,7 @@ async fn a_step_waits_while_another_session_holds_the_work(db: devkit::pg::TestD
         .execute(&mut other)
         .await
         .unwrap();
-    assert_eq!(step(&mut conn, BATCH).await.unwrap(), Progress::Waiting);
+    assert_eq!(step(&mut conn).await.unwrap(), Progress::Waiting);
     assert_eq!(remaining(&mut conn).await.unwrap(), Task::ALL);
     drop(other);
     // The lock ends with the session.

@@ -32,8 +32,20 @@ impl Description {
         }
     }
 
-    pub(crate) fn before_tombstone_history() -> Self {
+    pub(crate) fn before_sparse_indexes() -> Self {
         let mut description = Self::current();
+        crate::sparse_indexes::previous(&mut description.after_tables);
+        description
+    }
+
+    pub(crate) fn before_receipt_indexes() -> Self {
+        let mut description = Self::before_sparse_indexes();
+        crate::receipt_indexes::previous(&mut description.tables);
+        description
+    }
+
+    pub(crate) fn before_tombstone_history() -> Self {
+        let mut description = Self::before_receipt_indexes();
         crate::tombstone_history::previous(&mut description.after_tables);
         description
     }

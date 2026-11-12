@@ -4,7 +4,7 @@ use sqlx::{Connection, Executor, PgConnection};
 
 async fn previous(conn: &mut PgConnection) {
     conn.execute(
-        "ALTER TABLE core.event_tombstones DROP CONSTRAINT IF EXISTS tombstone_history_complete",
+        "DROP INDEX core.ingress_frames_material, core.ingress_frames_refused_at, core.ingress_frames_malformed_producer; ALTER TABLE core.event_tombstones DROP CONSTRAINT IF EXISTS tombstone_history_complete",
     )
     .await
     .unwrap();

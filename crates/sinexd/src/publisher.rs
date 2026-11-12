@@ -211,8 +211,15 @@ pub(crate) async fn publish_pending_measured(
     let mut total = Published::default();
     total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
+        // A fresh stream can still publish its origin completion at the head.
+        // Debt waits for the native feed path without advancing its checkpoint.
+        if sinex_schema::online::pending(conn, sinex_schema::online::Task::FeedIndex).await?
+            && commit_log::latest(conn).await? > settled
+        {
+            return Ok(total);
+        }
         let started = Instant::now();
-        let page = commit_log::changes_page_after_origin(
+        let page = commit_log::references_after_origin(
             conn,
             cursor,
             &origin,
@@ -406,7 +413,7 @@ async fn publish_chunk(
     subjects: &Subjects,
     instance: &str,
     consumer: &str,
-    entries: &[commit_log::CommittedChange],
+    entries: &[commit_log::CommittedChange<commit_log::EventReference>],
     complete: Option<i64>,
     total: &mut Published,
 ) -> Result<(Duration, Duration, Duration)> {
