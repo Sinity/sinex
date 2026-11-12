@@ -251,9 +251,19 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
             e.id = sinex_model::EventId(
                 Uuid::parse_str(&format!("017f0001-0000-7000-8000-{n:012x}")).unwrap(),
             );
-            e.payload["native_id"] = json!(format!("history-{n}"));
-            e.equivalence_key = Some(sinex_model::EquivalenceKey(format!("history-{n}")));
-            e.record_hash = *blake3::hash(&n.to_le_bytes()).as_bytes();
+            let mut payload: CommandExecuted = serde_json::from_value(e.payload.clone()).unwrap();
+            payload.native_id = format!("history-{n}");
+            let id = e.id;
+            e = Event::build(
+                &payload,
+                "history",
+                e.origin,
+                ReadingOrder(1),
+                *blake3::hash(&n.to_le_bytes()).as_bytes(),
+                Class::Open,
+            )
+            .unwrap();
+            e.id = id;
             e
         })
         .collect();
@@ -271,7 +281,9 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     .await
     .unwrap();
     remove_live(&mut writer, &history_ids).await.unwrap();
-    let root = source_reading("selected-source", 1, "01800000-0000-7000-8000-");
+    let mut root = derived("selected-source", 2, &[&parent]);
+    root.id =
+        sinex_model::EventId(Uuid::parse_str("01800000-0000-7000-8000-000000000001").unwrap());
     admit(&mut writer, &batch(vec![root.clone()])).await;
     let child = derived("selected-child", 1, &[&root]);
     let child_id = child.id.0;
@@ -294,6 +306,11 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     .unwrap();
     let mut tx = writer.begin().await.unwrap();
     let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid IN ('audit.archived'::regclass,'core.event_children'::regclass)";
+    let event_work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))";
+    let events_before: i64 = sqlx::query_scalar(event_work)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
     let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
     let Step::Moved { counts, .. } = step(
         &mut tx,
@@ -310,6 +327,14 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     .unwrap() else {
         panic!("archive refused")
     };
+    let events_after: i64 = sqlx::query_scalar(event_work)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        events_after, events_before,
+        "unconsumed field-keyed chain must not read event history or payloads"
+    );
     let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
     assert!(
         after - before <= 16,
@@ -352,4 +377,61 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     );
     tx.commit().await.unwrap();
     assert_state_order(&mut writer).await;
+}
+
+struct TextKeys;
+impl crate::admission::DirtyKeys for TextKeys {
+    fn reads_type(&self, kind: &str) -> bool {
+        kind == "operator.log_entry"
+    }
+    fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)> {
+        assert_eq!(event.event_type, "operator.log_entry");
+        vec![(
+            "text-consumer".into(),
+            json!({"text": event.payload["text"]}),
+        )]
+    }
+}
+
+#[devkit::test]
+async fn archive_reads_consumed_payloads_and_marks_unconsumed_ownership(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut writer = context(&db).await;
+    sqlx::query("SELECT remove_compression_policy('core.events')")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let root = source_reading("selected-input", 1, "01800000-0000-7000-8000-");
+    admit(&mut writer, &batch(vec![root.clone()])).await;
+    let child = derived("selected-output", 1, &[&root]);
+    admit(&mut writer, &batch(vec![child.clone()])).await;
+    sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES('retained-owner','{\"scope\":1}',$1)")
+        .bind(child.id.0).execute(&mut *writer).await.unwrap();
+    sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let op = begin(&mut writer, Act::Archive, "agent:test", events(&[&root]))
+        .await
+        .unwrap();
+    assert!(matches!(
+        run_on(&mut writer, &op, Progress::default(), 16, &TextKeys)
+            .await
+            .unwrap(),
+        Ended::Ok { .. }
+    ));
+    let dirty: Vec<(String, Value)> =
+        sqlx::query_as("SELECT derivation,key FROM derivation.dirty ORDER BY derivation")
+            .fetch_all(&mut *writer)
+            .await
+            .unwrap();
+    assert_eq!(
+        dirty,
+        vec![
+            ("retained-owner".into(), json!({"scope":1})),
+            ("text-consumer".into(), json!({"text":"synthetic source 1"}))
+        ]
+    );
+    assert_eq!(state(&mut writer, &child).await, "archived");
 }
