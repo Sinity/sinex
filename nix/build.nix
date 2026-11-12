@@ -29,12 +29,15 @@ let
   );
   # Dependency builds use dummy sources. The real schema tool has no checked
   # queries and must provision the database before compiling the real store.
+  # Keep the runtime packages selected while filtering to the schema binary:
+  # Cargo then preserves their unified dependency features without compiling
+  # their SQLx-checked targets before the database exists.
   schema = craneLib.buildPackage (
     common
     // {
       pname = "sinex-schema";
       cargoArtifacts = dependencies;
-      cargoExtraArgs = "--locked -p sinex-schema";
+      cargoExtraArgs = "${packageArgs} -p sinex-schema --bin sinex-schema";
       doInstallCargoArtifacts = false;
     }
   );
