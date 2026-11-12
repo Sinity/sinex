@@ -1,6 +1,53 @@
 use super::*;
 
 #[devkit::test]
+async fn retirement_waits_for_online_child_edges_without_blocking_start(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::new(db).await;
+    let mut removed = zsh("synthetic removed output", 10, 1);
+    removed.source = "clipboard.fusion".into();
+    let id = removed.id;
+    w.admit(vec![removed]).await;
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO registry.derivations (name, kind, version, inputs, outputs)
+         VALUES ('clipboard.fusion', 'keyed', 1, '{clipboard.copied}', '{clipboard.fused}');
+         CREATE TABLE sinex_schema.event_children_fill (
+           id boolean PRIMARY KEY CHECK (id), filled_through uuid NOT NULL);
+         INSERT INTO sinex_schema.event_children_fill VALUES
+           (true, '00000000-0000-7000-8000-000000000000')",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let registered = "SELECT count(*) FROM registry.derivations WHERE name='clipboard.fusion'";
+    let operations = "SELECT count(*) FROM core.operations WHERE actor='sinex'";
+    let mut runner = w.driver_with(vec![], vec![]).await;
+    assert_eq!(w.count(operations).await, 0);
+    assert_eq!(runner.pass().await.unwrap(), 0);
+    assert_eq!(w.count(registered).await, 1);
+    assert_eq!(w.count(operations).await, 0);
+    // Restarting before the online worker finishes preserves the obligation.
+    drop(runner);
+    let mut runner = w.driver_with(vec![], vec![]).await;
+    sinex_schema::online::finish(&mut conn).await.unwrap();
+    runner.pass().await.unwrap();
+    assert_eq!(w.count(registered).await, 0);
+    assert_eq!(w.count(operations).await, 1);
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM audit.archived WHERE event_id='{}'",
+            id.0
+        ))
+        .await,
+        1
+    );
+    runner.pass().await.unwrap();
+    assert_eq!(w.count(operations).await, 1, "retire only once");
+}
+
+#[devkit::test]
 async fn outputs_of_removed_derivations_are_archived_once_through_the_lifecycle(
     db: devkit::pg::TestDatabase,
 ) {
