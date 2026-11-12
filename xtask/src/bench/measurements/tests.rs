@@ -82,7 +82,22 @@ fn query_probes_keep_results_across_search_upgrade() {
         .unwrap();
     let after = query_probes(&cluster, &root).unwrap();
     assert_eq!(after["partial_index"], true);
-    for result in [before, after] {
+    cluster
+        .psql(
+            "CREATE TABLE core.search_trigram(event_id uuid PRIMARY KEY,text text NOT NULL);
+             INSERT INTO core.search_trigram SELECT event_id,text FROM core.search_text WHERE trigram_indexed;
+             CREATE VIEW core.visible_search_trigram AS SELECT * FROM core.search_trigram;
+             GRANT SELECT ON core.visible_search_trigram TO sinex_reader;
+             DROP VIEW core.visible_search_text;
+             ALTER TABLE core.search_text DROP COLUMN trigram_indexed;
+             CREATE VIEW core.visible_search_text AS SELECT * FROM core.search_text;
+             GRANT SELECT ON core.visible_search_text TO sinex_reader;",
+        )
+        .unwrap();
+    let separate = query_probes(&cluster, &root).unwrap();
+    assert_eq!(separate["separate_trigram"], true);
+    assert_eq!(separate["partial_index"], false);
+    for result in [before, after, separate] {
         let observations = result["observations"].as_array().unwrap();
         assert_eq!(observations.len(), 4);
         for observation in observations {

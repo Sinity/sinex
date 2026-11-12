@@ -657,13 +657,13 @@ impl Compiler<'_> {
             let mut pattern = String::from("(^| )");
             let escaped: Vec<String> = w.words.iter().map(|x| regex_escape(x)).collect();
             pattern.push_str(&escaped.join(" "));
-            // Separate branches expose the partial index's literal predicate.
-            // Both read through the protected view, including excluded kinds.
+            // Eligible kinds read their own trigram table; words-only kinds
+            // retain prefix answers through the protected full-text view.
             out.push("(")
                 .append(id)
-                .push(" IN (SELECT s.event_id FROM core.visible_search_text s WHERE s.trigram_indexed AND s.text ~ ")
+                .push(" IN (SELECT s.event_id FROM core.visible_search_trigram s WHERE s.text ~ ")
                 .param(pattern.clone())
-                .push(" UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT s.trigram_indexed AND s.text ~ ")
+                .push(" UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT EXISTS (SELECT 1 FROM core.visible_search_trigram t WHERE t.event_id=s.event_id) AND s.text ~ ")
                 .param(pattern)
                 .push("))");
             return Ok(out);

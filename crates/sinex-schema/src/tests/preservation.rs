@@ -41,6 +41,10 @@ async fn stored_rows(conn: &mut PgConnection) -> Vec<serde_json::Value> {
         .bind(schemas()).fetch_all(&mut *conn).await.unwrap();
     let mut result = Vec::new();
     for (schema, table) in tables {
+        if schema == "core" && table == "search_trigram" {
+            continue;
+        }
+
         // The lifecycle upgrade drops the remembered hidden records: archived
         // readings are no longer kept out of replay and re-import.
         if table == "event_children"

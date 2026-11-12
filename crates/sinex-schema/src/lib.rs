@@ -25,6 +25,7 @@ mod owner_protocol;
 pub mod prepare;
 mod query_cursors;
 mod read_boundary;
+mod search_trigram;
 mod source_declarations;
 mod source_expectations;
 mod stage_without_parser;
@@ -211,6 +212,7 @@ fn visibility() -> Vec<String> {
     statements.extend([
         VISIBLE_EVENTS.into(),
         VISIBLE_SEARCH_TEXT.into(),
+        VISIBLE_SEARCH_TRIGRAM.into(),
         VISIBLE_EMBEDDING_VECTORS.into(),
     ]);
     statements
@@ -245,8 +247,13 @@ pub(crate) const VISIBLE_EVENTS: &str = "CREATE VIEW core.visible_events AS SELE
 FROM core.events e";
 
 pub(crate) const VISIBLE_SEARCH_TEXT: &str =
-    "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv, s.trigram_indexed
+    "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
 FROM core.search_text s JOIN core.events e ON e.id = s.event_id
+WHERE core.class_visible(e.class)";
+
+pub(crate) const VISIBLE_SEARCH_TRIGRAM: &str =
+    "CREATE VIEW core.visible_search_trigram AS SELECT s.event_id, s.text
+FROM core.search_trigram s JOIN core.events e ON e.id=s.event_id
 WHERE core.class_visible(e.class)";
 
 /// A vector is readable when both the embedding event and its target are.
@@ -271,7 +278,7 @@ pub(crate) fn visibility_before_producer_families() -> Vec<String> {
   e.reading_order, e.record_hash, e.record_state, e.class, e.kind_version, e.validation
 FROM core.events e"
             .to_string(),
-        VISIBLE_SEARCH_TEXT.into(),
+        crate::search_trigram::PREVIOUS_VIEW.into(),
     ]);
     statements
 }
@@ -366,6 +373,7 @@ fn grants(description: &description::Description) -> Vec<String> {
         &[
             "core.visible_events",
             "core.visible_search_text",
+            "core.visible_search_trigram",
             "core.visible_embedding_vectors",
             "core.counters",
             "core.source_counts",

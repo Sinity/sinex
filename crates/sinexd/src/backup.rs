@@ -129,8 +129,9 @@ fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command> 
 
 /// Tables whose rows are rebuilt from the events after a restore, left out of
 /// the main dump's data.
-pub(crate) const REBUILT_TABLES: [&str; 3] = [
+pub(crate) const REBUILT_TABLES: [&str; 4] = [
     "core.search_text",
+    "core.search_trigram",
     "core.search_refusals",
     "core.search_position",
 ];

@@ -60,6 +60,12 @@ pub(super) async fn tombstone_events(
     )
     .execute(&mut *conn)
     .await?;
+    sqlx::query!(
+        "DELETE FROM core.search_trigram WHERE event_id = ANY($1)",
+        events
+    )
+    .execute(&mut *conn)
+    .await?;
     // The embedding projection takes the same lock and checks the event, so
     // a page it already read cannot put a vector back.
     sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")

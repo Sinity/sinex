@@ -52,9 +52,8 @@ pub use shell::{CommandExecuted, CommandImported, CommandReported, ShellSession}
 /// A registered event type, as the schema registry stores it.
 #[derive(Clone, Debug)]
 pub struct RegisteredEventType {
-    /// Whether substring and prefix searches maintain trigram index entries.
-    /// Normalized text and full-text indexing are kept for every kind.
-    pub trigram_indexed: bool,
+    /// Search read models maintained for this bundled kind.
+    pub search: crate::kinds::Search,
     pub event_type: &'static str,
     /// Declared natural key; `build` applies the typed payload's per-record choice.
     pub key: crate::KeyKind,
@@ -83,7 +82,7 @@ pub type Build = fn(
 
 const fn info<P: EventPayload>() -> RegisteredEventType {
     RegisteredEventType {
-        trigram_indexed: matches!(P::SEARCH, crate::kinds::Search::WordsAndTrigram),
+        search: P::SEARCH,
         event_type: P::EVENT_TYPE,
         key: P::KEY,
         replace: P::REPLACE,

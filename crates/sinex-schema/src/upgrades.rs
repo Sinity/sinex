@@ -87,6 +87,7 @@ pub(crate) const NAMED: &[&str] = &[
     "frame_outcomes",
     "blob_chunks",
     "append_file_stat_metadata",
+    "search_trigram_text",
 ];
 
 #[cfg(test)]
@@ -183,6 +184,7 @@ pub(crate) fn upgrades_with(prepared: bool) -> Vec<Vec<String>> {
     steps.push(crate::frame_outcomes::statements());
     steps.push(crate::blob_chunks::statements());
     steps.push(source_cursors::statements());
+    steps.push(crate::search_trigram::statements());
     steps
 }
 
@@ -204,9 +206,8 @@ fn publication_pairs() -> Vec<String> {
     vec![]
 }
 
-/// Only what new writes need: the column, defaulting every stored row to the
-/// trigram index it is already in, and the rewrite's mark. Stored rows are
-/// rewritten and the index rebuilt after start (`online.rs`).
+/// The historical search-column step. The later trigram table transformation
+/// removes this column without rewriting the full-text heap.
 fn search_text() -> Vec<String> {
     vec![
         "ALTER TABLE core.search_text ADD COLUMN trigram_indexed boolean NOT NULL DEFAULT true"
@@ -217,9 +218,6 @@ fn search_text() -> Vec<String> {
          WHERE core.class_visible(e.class)"
             .into(),
     ]
-    .into_iter()
-    .chain(crate::online::begin(crate::online::Task::SearchRewrite))
-    .collect()
 }
 
 /// Move archive edges and counters into ordinary store tables without dropping captured telemetry.
@@ -254,7 +252,7 @@ fn segments() -> Vec<String> {
 fn remove_privacy_outputs_and_model_accounting() -> Vec<String> {
     vec![
         crate::VISIBLE_EVENTS.replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1),
-        crate::VISIBLE_SEARCH_TEXT.replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1),
+        crate::search_trigram::PREVIOUS_VIEW.replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1),
         crate::VISIBLE_EMBEDDING_VECTORS.replacen("CREATE VIEW", "CREATE OR REPLACE VIEW", 1),
         "DROP VIEW IF EXISTS core.derivation_events CASCADE".into(),
         "DROP TRIGGER IF EXISTS rules_policy_epoch ON privacy.rules".into(),

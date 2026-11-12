@@ -129,7 +129,7 @@ fn decoder_errors_name_fields_without_echoing_payload_values() {
 fn search_policy_keeps_full_text_for_high_volume_kinds() {
     let excluded: Vec<_> = ALL
         .iter()
-        .filter(|kind| !kind.trigram_indexed)
+        .filter(|kind| kind.search != crate::kinds::Search::WordsAndTrigram)
         .map(|kind| kind.event_type)
         .collect();
     assert_eq!(
@@ -153,7 +153,10 @@ fn search_policy_keeps_full_text_for_high_volume_kinds() {
             crate::kinds::Search::None
         );
     }
-    assert!(find("command.imported").unwrap().trigram_indexed);
+    assert_eq!(
+        find("command.imported").unwrap().search,
+        crate::kinds::Search::WordsAndTrigram
+    );
 }
 
 #[devkit::test]

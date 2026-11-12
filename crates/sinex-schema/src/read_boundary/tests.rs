@@ -65,6 +65,7 @@ async fn applying_current_revokes_private_table_and_column_grants(db: devkit::pg
         ("core.owner_protocol_key", "secret"),
         ("core.events", "payload"),
         ("core.search_text", "text"),
+        ("core.search_trigram", "text"),
         ("core.signal_checkpoints", "state"),
     ] {
         let permitted: bool =

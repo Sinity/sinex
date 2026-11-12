@@ -952,6 +952,12 @@ pub(super) fn stored_bytes(before: &Value, after: &Value, events: u64) -> Value 
 }
 
 pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, String> {
+    let separate = query(
+        cluster,
+        "SELECT to_jsonb(to_regclass('core.search_trigram') IS NOT NULL)",
+    )?
+    .as_bool()
+    .ok_or("missing trigram table presence")?;
     let partial = query(cluster, "SELECT to_jsonb(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='core' AND table_name='search_text' AND column_name='trigram_indexed'))")?.as_bool().ok_or("missing search policy")?;
     let mut observations = Vec::new();
     for (kind, shape, pattern) in [
@@ -960,7 +966,9 @@ pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, Strin
         ("command", "regex", "synthetic (12|34)[0-9]+$"),
         ("journal", "regex", "café record (12|34)[0-9]+ "),
     ] {
-        let from = if partial {
+        let from = if separate {
+            "SELECT s.event_id FROM core.visible_search_trigram s WHERE s.text ~ $1::text UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE s.text ~ $1::text AND NOT EXISTS (SELECT 1 FROM core.visible_search_trigram t WHERE t.event_id=s.event_id)"
+        } else if partial {
             "SELECT s.event_id FROM core.visible_search_text s WHERE s.trigram_indexed AND s.text ~ $1::text UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT s.trigram_indexed AND s.text ~ $1::text"
         } else {
             "SELECT s.event_id FROM core.visible_search_text s WHERE s.text ~ $1::text"
@@ -995,7 +1003,7 @@ pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, Strin
             "generic": generic, "custom": custom, "samples": samples}),
         );
     }
-    let result = json!({"partial_index": partial, "observations": observations,
+    let result = json!({"partial_index": partial, "separate_trigram": separate, "observations": observations,
         "scope": "Protected search-view prefix and regex branches after consumer completion; planning is non-executing and latency uses read-only execution plans."});
     save(out, "query-probes.json", &result)?;
     Ok(result)

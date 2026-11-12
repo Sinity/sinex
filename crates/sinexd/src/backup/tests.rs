@@ -754,6 +754,14 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         .into_iter()
         .filter(|(id, _)| at_cut.contains(id))
         .collect();
+    let indexed_trigram: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT event_id,text FROM core.search_trigram WHERE event_id=ANY($1) ORDER BY event_id",
+    )
+    .bind(&at_cut)
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert!(!indexed_trigram.is_empty());
     conn.close().await.unwrap();
     let listing = tokio::process::Command::new("pg_restore")
         .arg("--list")
@@ -810,6 +818,12 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         .unwrap();
     assert_eq!(events, at_cut);
     assert!(search_rows(&mut restored).await.is_empty());
+    let stored_trigram: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_trigram")
+        .fetch_one(&mut restored)
+        .await
+        .unwrap();
+    assert_eq!(stored_trigram, 0, "the dump omits the derived trigram rows");
+
     assert_eq!(
         sinex_store::read_models::search_position(&mut restored)
             .await
@@ -818,6 +832,13 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
     );
     index_search(&mut restored).await;
     assert_eq!(search_rows(&mut restored).await, indexed);
+    let rebuilt_trigram: Vec<(uuid::Uuid, String)> =
+        sqlx::query_as("SELECT event_id,text FROM core.search_trigram ORDER BY event_id")
+            .fetch_all(&mut restored)
+            .await
+            .unwrap();
+    assert_eq!(rebuilt_trigram, indexed_trigram);
+
     assert_eq!(
         sinex_store::read_models::search_position(&mut restored)
             .await
