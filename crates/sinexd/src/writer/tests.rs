@@ -728,3 +728,5 @@ fn a_moved_signal_checkpoint_is_a_stale_write() {
         WriteError::Refused(_)
     ));
 }
+
+mod lifecycle_work;

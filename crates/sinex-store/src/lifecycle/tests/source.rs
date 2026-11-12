@@ -32,7 +32,7 @@ async fn prepared_step(
     progress: Progress,
     ids: Vec<Uuid>,
     complete: bool,
-) -> (Progress, bool, i64) {
+) -> (Progress, bool) {
     let mut tx = conn.begin().await.unwrap();
     let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))";
     let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
@@ -44,7 +44,6 @@ async fn prepared_step(
         after, before,
         "current membership must not reread immutable event headers"
     );
-    let selected_count = ids.len();
     let Step::Moved { progress, done, .. } = step(
         &mut tx,
         op,
@@ -60,21 +59,8 @@ async fn prepared_step(
     .unwrap() else {
         panic!("source batch refused")
     };
-    let after_step: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    let whole_work = after_step - after;
-    eprintln!("compressed writer batch selected={selected_count} event_tuple_work={whole_work}");
     tx.commit().await.unwrap();
-    (progress, done, whole_work)
-}
-
-async fn selected_layout(conn: &mut AdmissionContext, chunk: &str, ids: &[Uuid]) -> Value {
-    sqlx::query_scalar(
-        "SELECT jsonb_build_object('relid',c.relid,'status',c.status,'compressed_relation',s.compress_relid,
-          'rowstore_bytes',pg_relation_size(c.relid),'compressed_bytes',pg_relation_size(s.compress_relid),
-          'rows',(SELECT count(*) FROM core.events WHERE id=ANY($2)),
-          'headers',(SELECT md5(string_agg(id::text||':'||commit_seq::text||':'||source,',' ORDER BY id)) FROM core.events WHERE id=ANY($2)))
-         FROM _timescaledb_catalog.chunk c JOIN _timescaledb_catalog.compression_settings s ON s.relid=c.relid WHERE c.relid=$1::regclass"
-    ).bind(chunk).bind(ids).fetch_one(&mut **conn).await.unwrap()
+    (progress, done)
 }
 
 #[devkit::test]
@@ -90,7 +76,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         .collect();
     admit(&mut writer, &batch(unrelated)).await;
     admit(&mut writer, &batch(roots.clone())).await;
-    let child = derived("other-child-source", 1, &[&roots[95]]);
+    let child = derived("other-child-source", 1, &[&roots[0]]);
     let child_id = child.id.0;
     admit(&mut writer, &batch(vec![child])).await;
     let archived = roots[64].id.0;
@@ -98,12 +84,6 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         operate(&mut writer, Act::Archive, events(&[&roots[64]]), 16).await,
         Ended::Ok { .. }
     ));
-    let selected_chunk: String =
-        sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id=$1")
-            .bind(roots[0].id.0)
-            .fetch_one(&mut *writer)
-            .await
-            .unwrap();
     sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
         .execute(&mut *writer)
         .await
@@ -120,25 +100,13 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     )
     .await
     .unwrap();
-    // This same-source reading is newer than the operation's fixed cut.
-    let new = source_reading("retired-source", 100, "01800000-0000-7000-8000-");
-    let new_id = new.id.0;
-    admit(&mut writer, &batch(vec![new])).await;
     let mut read = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut stream = source_roots(&mut read, &op, None).unwrap();
     let mut first = Vec::new();
     for _ in 0..16 {
         first.push(stream.try_next().await.unwrap().unwrap());
     }
-    let selected_ids: Vec<_> = roots
-        .iter()
-        .map(|e| e.id.0)
-        .chain(std::iter::once(new_id))
-        .collect();
-    let initial_layout = selected_layout(&mut writer, &selected_chunk, &selected_ids).await;
-    eprintln!("selected layout before pair {initial_layout}");
-    let (saved, done, first_work) =
-        prepared_step(&mut writer, &op, Progress::default(), first, false).await;
+    let (saved, done) = prepared_step(&mut writer, &op, Progress::default(), first, false).await;
     assert!(!done);
     assert_eq!(saved.after, Some(roots[15].id.0));
     drop(stream);
@@ -150,28 +118,14 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
             .unwrap(),
         1
     );
-    // Scale only unrelated compressed history between equally sized writer
-    // batches. The selected roots retain the same existing chunk/layout.
-    let more_unrelated: Vec<_> = (1..=8192)
-        .map(|n| source_reading("unrelated-source", n, "017e0000-0000-7000-8000-"))
-        .collect();
-    let added_id = more_unrelated[0].id.0;
-    admit(&mut writer, &batch(more_unrelated)).await;
-    let added_chunk: String =
-        sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id=$1")
-            .bind(added_id)
-            .fetch_one(&mut *writer)
-            .await
-            .unwrap();
-    sqlx::query("SELECT compress_chunk($1::regclass)")
-        .bind(added_chunk)
-        .execute(&mut *writer)
-        .await
-        .unwrap();
     let (reopened, mut progress) = stored(&mut writer, op.id).await.unwrap();
     assert_eq!(reopened.id, op.id);
     assert_eq!(reopened.start_seq, op.start_seq);
     assert_eq!(progress, saved);
+    // This same-source reading is newer than the operation's fixed cut.
+    let new = source_reading("retired-source", 100, "01800000-0000-7000-8000-");
+    let new_id = new.id.0;
+    admit(&mut writer, &batch(vec![new])).await;
     let mut read_tx = read.begin().await.unwrap();
     sqlx::query("SET LOCAL max_parallel_workers_per_gather=0")
         .execute(&mut *read_tx)
@@ -207,34 +161,22 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         operate(&mut writer, Act::Restore, events(&[&roots[64]]), 16).await,
         Ended::Ok { .. }
     ));
+    // Erasure after selection removes current membership; the source batch
+    // must skip it without trying to reconstruct its old immutable headers.
     let erased = roots[80].id.0;
+    assert!(matches!(
+        operate(&mut writer, Act::Archive, events(&[&roots[80]]), 16).await,
+        Ended::Ok { .. }
+    ));
+    assert!(matches!(
+        operate(&mut writer, Act::Tombstone, events(&[&roots[80]]), 16).await,
+        Ended::Ok { .. }
+    ));
     let mut batches = 0;
-    for chunk in prepared.chunks(16) {
+    for chunk in prepared.chunks(8) {
         let complete = chunk.last() == prepared.last();
-        if batches == 0 {
-            let layout = selected_layout(&mut writer, &selected_chunk, &selected_ids).await;
-            assert_eq!(
-                layout, initial_layout,
-                "selected compression and row state changed between work observations"
-            );
-        }
-        let (next, done, work) =
+        let (next, done) =
             prepared_step(&mut writer, &reopened, progress, chunk.to_vec(), complete).await;
-        if batches == 0 {
-            eprintln!(
-                "compressed writer work pair unrelated8192={first_work} unrelated16384={work}"
-            );
-            // Erasing after this pair keeps its selected chunk unchanged.
-            // The later batch must still skip the disappeared membership.
-            assert!(matches!(
-                operate(&mut writer, Act::Archive, events(&[&roots[80]]), 16).await,
-                Ended::Ok { .. }
-            ));
-            assert!(matches!(
-                operate(&mut writer, Act::Tombstone, events(&[&roots[80]]), 16).await,
-                Ended::Ok { .. }
-            ));
-        }
         progress = next;
         batches += 1;
         assert_eq!(done, complete);
@@ -248,7 +190,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         .await,
         1
     );
-    assert_eq!(count(&mut writer,"SELECT count(*) FROM core.live_locations l JOIN core.events e ON e.id=l.event_id WHERE e.source='unrelated-source'").await,16384);
+    assert_eq!(count(&mut writer,"SELECT count(*) FROM core.live_locations l JOIN core.events e ON e.id=l.event_id WHERE e.source='unrelated-source'").await,8192);
     assert_eq!(
         count(
             &mut writer,
