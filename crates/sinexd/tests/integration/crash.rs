@@ -1,9 +1,9 @@
 //! The crash harness: kill `sinexd` at every admission, replay and tombstone
 //! step, start it again, and check that nothing was lost or doubled.
 //!
-//! No hook in the product binary: the harness takes a lock on the table the
-//! step's statement needs, so `sinexd` blocks exactly there; once PostgreSQL
-//! shows its backend waiting on that lock, the harness kills the process,
+//! No hook in the product binary: the harness locks the statement's table,
+//! or uses an insert-only test trigger when updates must pass first. Once
+//! PostgreSQL shows the backend waiting there, the harness kills the process,
 //! ends the backend and releases the lock. A run started afterwards must end
 //! in the same state as a run that was never interrupted: the same live
 //! readings, no reading twice, every event live or archived, the commit log
@@ -488,8 +488,30 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     }
+    let extent_barrier = lock.contains("core.blob_extents");
+    if extent_barrier {
+        // Catalog transitions also update extent markers. Pause only the
+        // descriptor INSERT, after its segment bytes have been synced.
+        sqlx::raw_sql(
+            "CREATE FUNCTION core.pause_extent_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+               BEGIN
+                 PERFORM pg_advisory_xact_lock(hashtextextended('sinex.test.extent_insert',0));
+                 RETURN NULL;
+               END $$;
+             CREATE TRIGGER pause_extent_insert BEFORE INSERT ON core.blob_extents
+               FOR EACH STATEMENT EXECUTE FUNCTION core.pause_extent_insert();",
+        )
+        .execute(&mut harness)
+        .await
+        .unwrap();
+    }
     sqlx::query("BEGIN").execute(&mut harness).await.unwrap();
-    sqlx::query(lock).execute(&mut harness).await.unwrap();
+    let barrier = if extent_barrier {
+        "SELECT pg_advisory_xact_lock(hashtextextended('sinex.test.extent_insert',0))"
+    } else {
+        lock
+    };
+    sqlx::query(barrier).execute(&mut harness).await.unwrap();
     let mut child = child.unwrap_or_else(|| Process::start(command));
     let me: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut harness)
@@ -518,7 +540,7 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
     };
     child.kill().unwrap();
     child.wait().unwrap();
-    if lock.contains("core.blob_extents") {
+    if extent_barrier {
         assert!(
             blocked_query.starts_with("INSERT INTO core.blob_extents"),
             "extent barrier blocked another operation: {blocked_query}"
@@ -576,6 +598,15 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
             "killed writer did not release its session lock"
         );
         tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    if extent_barrier {
+        sqlx::raw_sql(
+            "DROP TRIGGER pause_extent_insert ON core.blob_extents;
+             DROP FUNCTION core.pause_extent_insert();",
+        )
+        .execute(&mut harness)
+        .await
+        .unwrap();
     }
 }
 
