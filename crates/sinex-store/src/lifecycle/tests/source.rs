@@ -237,6 +237,12 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     db: devkit::pg::TestDatabase,
 ) {
     let mut writer = context(&db).await;
+    // This fixture compresses its history explicitly after loading it.
+    // A scheduled compressor must not race the same historical chunk.
+    sqlx::query("SELECT remove_compression_policy('core.events')")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
     let parent = source_reading("history-parent", 1, "017f0000-0000-7000-8000-");
     admit(&mut writer, &batch(vec![parent.clone()])).await;
     let mut history: Vec<_> = (1u64..=8192)
