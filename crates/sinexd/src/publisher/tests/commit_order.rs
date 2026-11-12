@@ -488,3 +488,55 @@ async fn retained_inline_contract_two_is_refused_without_erasing_messages(
     assert_eq!(stream.cached_info().state.messages, 1);
     assert_eq!(stream.cached_info().config.metadata[CONTRACT_KEY], "2");
 }
+
+#[devkit::test]
+async fn pending_feed_path_keeps_origin_barrier_without_advancing_debt(
+    db: devkit::pg::TestDatabase,
+) {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let js = context(async_nats::connect(nats.url()).await.unwrap());
+    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE sinex_schema.events_feed_pending ()")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
+    assert!(matches!(
+        read_wire_all(&js, &subjects).await.as_slice(),
+        [Confirmed::PositionComplete { commit_seq: 0 }]
+    ));
+    let event = executed("after-origin", "pwd", 1, Class::Open);
+    let id = event.id;
+    admit(&mut conn, batch(vec![event])).await;
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
+    assert!(matches!(
+        read_wire_all(&js, &subjects).await.as_slice(),
+        [Confirmed::PositionComplete { commit_seq: 0 }]
+    ));
+    let instance = instance(&js, &subjects).await;
+    assert_eq!(
+        commit_log::consumer_position(&mut conn, &consumer_for(&instance))
+            .await
+            .unwrap()
+            .0,
+        0
+    );
+    sqlx::query("DROP TABLE sinex_schema.events_feed_pending")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    publish_pending(&mut conn, &js, &subjects).await.unwrap();
+    let messages = read_wire_all(&js, &subjects).await;
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message,Confirmed::EventReference{event,..} if *event==id))
+    );
+    assert!(matches!(
+        messages.last(),
+        Some(Confirmed::PositionComplete { commit_seq: 1 })
+    ));
+}

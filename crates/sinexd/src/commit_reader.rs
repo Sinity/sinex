@@ -65,6 +65,16 @@ pub(crate) async fn run(
             return Ok(());
         }
         commits.borrow_and_update();
+        // Wait for the native feed access paths rather than repeatedly scanning
+        // old compressed payloads while their batch metadata is being built.
+        if sinex_schema::online::pending(&mut conn, sinex_schema::online::Task::FeedIndex).await? {
+            tokio::select! {
+                _ = commits.changed() => {}
+                _ = tokio::time::sleep(RETRY) => {}
+                _ = stop.changed() => {}
+            }
+            continue;
+        }
         let from = positions.iter().copied().min().unwrap_or(0);
         let read_started = std::time::Instant::now();
         let page = commit_log::after(&mut conn, from, PAGE, sinex_store::PAGE_BYTES).await?;

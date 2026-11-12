@@ -1,5 +1,8 @@
 -- Select bounded scalar keys from each category before reading event payloads.
 -- The scalar head belongs to the reader's repeatable-read snapshot.
+-- Every category limit must be at least the final limit: if a category omits
+-- data at a position, its full prefix then keeps that position's terminal out
+-- of this page. Byte budgeting also keeps a prefix, including an oversized first row.
 WITH event_keys AS MATERIALIZED (
   SELECT e.commit_seq,0::smallint AS kind,0::bigint AS change_seq,e.id AS event_id
   FROM core.events e WHERE e.commit_seq >= $1 AND e.commit_seq <= $7
