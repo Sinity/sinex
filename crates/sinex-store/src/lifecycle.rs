@@ -350,7 +350,7 @@ pub async fn step(
                 if !planned.refusals.is_empty() {
                     return Ok(Step::Refused(planned.refusals));
                 }
-                let moved = apply(conn, op, phase, &found, &planned, seq, keys).await?;
+                let moved = apply(conn, op, phase, &planned, seq, keys).await?;
                 counts.add(&moved.counts);
                 remove.extend(moved.remove);
             }
@@ -390,7 +390,7 @@ pub async fn step(
         if !planned.refusals.is_empty() {
             return Ok(Step::Refused(planned.refusals));
         }
-        let moved = apply(conn, op, phase, &found, &planned, seq, keys).await?;
+        let moved = apply(conn, op, phase, &planned, seq, keys).await?;
         counts.add(&moved.counts);
         remove.extend(moved.remove);
         progress.after = found.last().copied();
@@ -847,7 +847,6 @@ async fn apply(
     conn: &mut PgConnection,
     op: &Operation,
     phase: Phase,
-    roots: &[Uuid],
     planned: &Plan,
     seq: i64,
     keys: &dyn DirtyKeys,

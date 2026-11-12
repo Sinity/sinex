@@ -239,12 +239,15 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     let mut writer = context(&db).await;
     let parent = source_reading("history-parent", 1, "017f0000-0000-7000-8000-");
     admit(&mut writer, &batch(vec![parent.clone()])).await;
-    let mut history: Vec<_> = (1..=8192)
+    let mut history: Vec<_> = (1u64..=8192)
         .map(|n| {
-            let mut e = source_reading("history", n, "017f0001-0000-7000-8000-");
-            e.origin = Origin::Derived {
-                parents: vec![parent.id],
-            };
+            let mut e = derived("history", 1, &[&parent]);
+            e.id = sinex_model::EventId(
+                Uuid::parse_str(&format!("017f0001-0000-7000-8000-{n:012x}")).unwrap(),
+            );
+            e.payload["native_id"] = json!(format!("history-{n}"));
+            e.equivalence_key = Some(sinex_model::EquivalenceKey(format!("history-{n}")));
+            e.record_hash = *blake3::hash(&n.to_le_bytes()).as_bytes();
             e
         })
         .collect();
