@@ -430,6 +430,14 @@ async fn extent_commit_does_not_visit_unrelated_catalog_or_extent_history(
         "extent commit visited {} old tuples for one new extent",
         after - before
     );
+    let unchanged: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents x JOIN core.blobs b ON b.hash=x.hash WHERE x.deleting IS DISTINCT FROM (b.status='deleting'))")
+        .fetch_one(&mut *tx).await.unwrap();
+    assert!(!unchanged);
+    let scanned: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        scanned - after >= 8192,
+        "the old global query must visit unrelated history for this oracle to discriminate"
+    );
     tx.commit().await.unwrap();
     blobs.acknowledge(receipt).unwrap();
 }

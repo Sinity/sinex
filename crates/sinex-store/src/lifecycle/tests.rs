@@ -1398,6 +1398,20 @@ async fn deletion_marker_is_atomic_with_catalog_transition_and_material_readmiss
     let mut tx = conn.begin().await.unwrap();
     bytes::mark_removing(&mut tx, &name).await.unwrap();
     tx.commit().await.unwrap();
+    let (removed, left) = remove_unreferenced(&mut conn, &blobs).await.unwrap();
+    assert!(
+        removed.is_empty() && left.is_empty(),
+        "a material still holds these bytes"
+    );
+    let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+        .bind(&name)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert!(!marked, "cancelling deletion clears its marker immediately");
+    let mut tx = conn.begin().await.unwrap();
+    bytes::mark_removing(&mut tx, &name).await.unwrap();
+    tx.commit().await.unwrap();
     // Admission restores an existing descriptor even when no new bytes were prepared.
     let id = MaterialId::new();
     admit(
@@ -1415,4 +1429,103 @@ async fn deletion_marker_is_atomic_with_catalog_transition_and_material_readmiss
     let reopened = crate::Blobs::open(dir.path()).unwrap();
     reopened.recover(&mut conn).await.unwrap();
     assert_eq!(reopened.read(&name).unwrap(), b"abc");
+}
+
+#[devkit::test]
+async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaims_them(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = context(&db).await;
+    let dir = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let blobs = crate::Blobs::open(dir.path()).unwrap();
+    let direct = blobs.put(b"abc").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,3,'present')")
+        .bind(&direct)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    crate::blobs::commit_pending_extents(&mut conn, &blobs)
+        .await
+        .unwrap();
+    // First mark the direct owner. Later admission of the chunked owner
+    // must clear the marker without appending those bytes again.
+    let mut tx = conn.begin().await.unwrap();
+    bytes::mark_removing(&mut tx, &direct).await.unwrap();
+    tx.commit().await.unwrap();
+    let parent = format!("blake3:{}", blake3::hash(b"abcxyz").to_hex());
+    let other = hashed_blobs::Preparation::new(scratch.path())
+        .unwrap()
+        .plain(b"xyz".as_slice(), 3)
+        .unwrap();
+    blobs
+        .put_chunks(
+            &parent,
+            6,
+            vec![
+                (direct.clone(), None),
+                (other.hash().to_string(), Some(other)),
+            ],
+        )
+        .unwrap();
+    let (removed, left) = remove_unreferenced(&mut conn, &blobs).await.unwrap();
+    assert_eq!(removed, [direct.clone()]);
+    assert!(left.is_empty());
+    assert_eq!(
+        blobs.read(&parent).unwrap(),
+        b"abcxyz",
+        "pending chunk references survive direct removal"
+    );
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,6,'present')")
+        .bind(&parent)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    crate::blobs::commit_pending_extents(&mut conn, &blobs)
+        .await
+        .unwrap();
+    let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
+        .bind(&direct)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert!(!marked);
+    // Repeating the lifecycle transition with an existing shared owner also
+    // preserves its physical read authority.
+    sqlx::query("UPDATE core.blobs SET status='present' WHERE hash=$1")
+        .bind(&direct)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    bytes::mark_removing(&mut tx, &direct).await.unwrap();
+    tx.commit().await.unwrap();
+    drop(blobs);
+    let blobs = crate::Blobs::open(dir.path()).unwrap();
+    blobs.recover(&mut conn).await.unwrap();
+    assert_eq!(blobs.read(&parent).unwrap(), b"abcxyz");
+    let (removed, left) = remove_unreferenced(&mut conn, &blobs).await.unwrap();
+    assert_eq!(removed, [direct.clone()]);
+    assert!(left.is_empty());
+    let status: String = sqlx::query_scalar("SELECT status FROM core.blobs WHERE hash=$1")
+        .bind(&direct)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(status, "removed");
+    drop(blobs);
+    let blobs = crate::Blobs::open(dir.path()).unwrap();
+    blobs.recover(&mut conn).await.unwrap();
+    assert_eq!(blobs.read(&parent).unwrap(), b"abcxyz");
+    let mut tx = conn.begin().await.unwrap();
+    bytes::mark_removing(&mut tx, &parent).await.unwrap();
+    tx.commit().await.unwrap();
+    let (removed, left) = remove_unreferenced(&mut conn, &blobs).await.unwrap();
+    assert_eq!(removed, [parent]);
+    assert!(left.is_empty());
+    let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM core.blob_extents")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0, "the final owner removal reclaims every chunk");
 }

@@ -115,7 +115,7 @@ impl Blobs {
             for extent in &group.extents {
                 let name = extent.hash.to_string();
                 let descriptor = extent.encode();
-                sqlx::query!("INSERT INTO core.blob_extents(hash,descriptor,deleting) VALUES($1,$2,COALESCE((SELECT status='deleting' FROM core.blobs WHERE hash=$1),false)) ON CONFLICT(hash) DO UPDATE SET descriptor=EXCLUDED.descriptor,deleting=EXCLUDED.deleting",name,descriptor).execute(&mut *conn).await?;
+                sqlx::query!("INSERT INTO core.blob_extents(hash,descriptor,deleting) VALUES($1,$2,COALESCE((SELECT status='deleting' FROM core.blobs WHERE hash=$1),false) AND NOT EXISTS(SELECT 1 FROM core.blob_chunks c JOIN core.blobs b ON b.hash=c.blob WHERE c.chunk=$1 AND c.blob<>$1 AND b.status<>'removed')) ON CONFLICT(hash) DO UPDATE SET descriptor=EXCLUDED.descriptor,deleting=EXCLUDED.deleting",name,descriptor).execute(&mut *conn).await?;
             }
             let end = i64::try_from(group.end)
                 .map_err(|_| crate::Error::Invalid("segment end exceeds i64".into()))?;
@@ -139,6 +139,14 @@ impl Blobs {
                  ON CONFLICT DO NOTHING",
                 blob.to_string(),
                 &chunks
+            )
+            .execute(&mut *conn)
+            .await?;
+            // A newly held blob can reuse an extent whose direct catalog
+            // owner was already marked for removal.
+            sqlx::query!(
+                "UPDATE core.blob_extents SET deleting=false WHERE hash=ANY($1) AND deleting",
+                &chunks,
             )
             .execute(&mut *conn)
             .await?;
