@@ -32,7 +32,7 @@ async fn prepared_step(
     progress: Progress,
     ids: Vec<Uuid>,
     complete: bool,
-) -> (Progress, bool) {
+) -> (Progress, bool, i64) {
     let mut tx = conn.begin().await.unwrap();
     let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))";
     let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
@@ -44,6 +44,7 @@ async fn prepared_step(
         after, before,
         "current membership must not reread immutable event headers"
     );
+    let selected_count = ids.len();
     let Step::Moved { progress, done, .. } = step(
         &mut tx,
         op,
@@ -59,8 +60,11 @@ async fn prepared_step(
     .unwrap() else {
         panic!("source batch refused")
     };
+    let after_step: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let whole_work = after_step - after;
+    eprintln!("compressed writer batch selected={selected_count} event_tuple_work={whole_work}");
     tx.commit().await.unwrap();
-    (progress, done)
+    (progress, done, whole_work)
 }
 
 #[devkit::test]
@@ -76,7 +80,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         .collect();
     admit(&mut writer, &batch(unrelated)).await;
     admit(&mut writer, &batch(roots.clone())).await;
-    let child = derived("other-child-source", 1, &[&roots[0]]);
+    let child = derived("other-child-source", 1, &[&roots[95]]);
     let child_id = child.id.0;
     admit(&mut writer, &batch(vec![child])).await;
     let archived = roots[64].id.0;
@@ -106,7 +110,8 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     for _ in 0..16 {
         first.push(stream.try_next().await.unwrap().unwrap());
     }
-    let (saved, done) = prepared_step(&mut writer, &op, Progress::default(), first, false).await;
+    let (saved, done, first_work) =
+        prepared_step(&mut writer, &op, Progress::default(), first, false).await;
     assert!(!done);
     assert_eq!(saved.after, Some(roots[15].id.0));
     drop(stream);
@@ -118,6 +123,13 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
             .unwrap(),
         1
     );
+    // Scale only unrelated compressed history between equally sized writer
+    // batches. The selected roots retain the same existing chunk/layout.
+    let more_unrelated: Vec<_> = (1..=8192)
+        .map(|n| source_reading("unrelated-source", n, "017e0000-0000-7000-8000-"))
+        .collect();
+    admit(&mut writer, &batch(more_unrelated)).await;
+    sqlx::query("SELECT compress_chunk(chunk,if_not_compressed=>true) FROM show_chunks('core.events') chunks(chunk)").execute(&mut *writer).await.unwrap();
     let (reopened, mut progress) = stored(&mut writer, op.id).await.unwrap();
     assert_eq!(reopened.id, op.id);
     assert_eq!(reopened.start_seq, op.start_seq);
@@ -173,10 +185,15 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         Ended::Ok { .. }
     ));
     let mut batches = 0;
-    for chunk in prepared.chunks(8) {
+    for chunk in prepared.chunks(16) {
         let complete = chunk.last() == prepared.last();
-        let (next, done) =
+        let (next, done, work) =
             prepared_step(&mut writer, &reopened, progress, chunk.to_vec(), complete).await;
+        if batches == 0 {
+            eprintln!(
+                "compressed writer work pair unrelated8192={first_work} unrelated16384={work}"
+            );
+        }
         progress = next;
         batches += 1;
         assert_eq!(done, complete);
@@ -190,7 +207,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         .await,
         1
     );
-    assert_eq!(count(&mut writer,"SELECT count(*) FROM core.live_locations l JOIN core.events e ON e.id=l.event_id WHERE e.source='unrelated-source'").await,8192);
+    assert_eq!(count(&mut writer,"SELECT count(*) FROM core.live_locations l JOIN core.events e ON e.id=l.event_id WHERE e.source='unrelated-source'").await,16384);
     assert_eq!(
         count(
             &mut writer,
