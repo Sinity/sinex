@@ -467,7 +467,7 @@ async fn synchronous_storage_does_not_stop_other_runtime_tasks() {
     assert_eq!(count, 1);
 }
 
-async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
+async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool, source_publication: bool) {
     use sqlx::Connection;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     let dir = tempfile::tempdir().unwrap();
@@ -514,8 +514,15 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
                     let queued = worker_queued.clone();
                     let first = std::mem::take(&mut first);
                     async move {
-                        let mut answer =
-                            Box::pin(writer.submit_checked(Priority::Bulk, batch, check));
+                        let mut answer = Box::pin(async move {
+                            if source_publication {
+                                writer
+                                    .submit_source(Priority::Bulk, batch, check, None)
+                                    .await
+                            } else {
+                                writer.submit_checked(Priority::Bulk, batch, check).await
+                            }
+                        });
                         if first {
                             // The empty queue accepts the batch; the writer has not started to answer it.
                             assert!(matches!(
@@ -535,6 +542,15 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
     })
     .await
     .unwrap();
+    let publication = writer.source_publication();
+    let mut pause = Box::pin(publication.pause());
+    // Queueing source work retains publication until the durable answer.
+    if source_publication {
+        assert!(matches!(
+            futures::poll!(pause.as_mut()),
+            std::task::Poll::Pending
+        ));
+    }
     if cancel {
         submission.abort();
         assert!((&mut submission).await.err().unwrap().is_cancelled());
@@ -546,6 +562,32 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
         Arc::new(sinex_store::NoDerivations),
         Some(blobs),
     ));
+    if source_publication {
+        let paused = tokio::time::timeout(std::time::Duration::from_secs(5), pause)
+            .await
+            .unwrap();
+        // The queued exclusive guard wins before another source batch. The
+        // writer must still serve the snapshot while that guard is held.
+        let mut snapshot = writer.backup_snapshot("synthetic-backup").await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+            .fetch_one(snapshot.connection())
+            .await
+            .unwrap();
+        assert_eq!(count, if cancel { 0 } else { 1 });
+        let cursor = sinex_store::positions::load(snapshot.connection(), "synthetic-queued")
+            .await
+            .unwrap();
+        assert_eq!(
+            cursor,
+            if cancel {
+                None
+            } else {
+                Some((Value::Null, Value::Null))
+            }
+        );
+        snapshot.close().await.unwrap();
+        drop(paused);
+    }
     if !cancel {
         assert_eq!(submission.await.unwrap().unwrap().outcome.admitted, 3);
     }
@@ -568,12 +610,26 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool) {
 
 #[devkit::test]
 async fn queued_batches_commit_in_order_after_the_writer_starts(db: devkit::pg::TestDatabase) {
-    queued_submission(db, false).await;
+    queued_submission(db, false, false).await;
 }
 
 #[devkit::test]
 async fn dropping_a_submission_refuses_its_queued_batch(db: devkit::pg::TestDatabase) {
-    queued_submission(db, true).await;
+    queued_submission(db, true, false).await;
+}
+
+#[devkit::test]
+async fn backup_pauses_between_source_batches_after_the_durable_answer(
+    db: devkit::pg::TestDatabase,
+) {
+    queued_submission(db, false, true).await;
+}
+
+#[devkit::test]
+async fn cancelled_queued_source_batch_does_not_advance_the_backup_cursor(
+    db: devkit::pg::TestDatabase,
+) {
+    queued_submission(db, true, true).await;
 }
 
 fn materials(blobs: Blobs) -> crate::material_access::MaterialAccess {

@@ -306,7 +306,7 @@ async fn exporter_loss_between_actual_dump_imports_refuses_the_second_dump(
 /// publication advanced and deleted the original segment. Resume must admit
 /// the retained pending record rather than skip it using the newer checkpoint.
 #[devkit::test]
-async fn restored_backup_resumes_source_spools_after_later_retirement(
+async fn backup_during_source_acquisition_restores_pending_spools_after_later_retirement(
     db: devkit::pg::TestDatabase,
 ) {
     use crate::{
@@ -364,23 +364,114 @@ async fn restored_backup_resumes_source_spools_after_later_retirement(
     .unwrap();
     assert_eq!(original_ids.len(), 1);
     append(&mut capture, "pending-cursor", "pending-before-hold");
-    let publication = context.writer.source_publication();
-    let paused = publication.pause().await;
-    let snapshot = context
-        .writer
-        .backup_snapshot("synthetic-backup")
-        .await
-        .unwrap();
-    create(&artifact).unwrap();
-    assert_private_roots(&artifact);
-    let local = local_sources(Ok(vec![binding.clone()]), &artifact).await;
-    assert_eq!(local.unavailable, None);
-    assert!(
-        !local.files.is_empty(),
-        "native source bytes must be acquired"
+    // Keep a real binding round in acquisition while backup takes its cut.
+    // Only the wrapper's first poll is stopped; the ordinary spool driver,
+    // admission, cursor and retirement paths remain in use.
+    struct PausedPoll {
+        inner: Box<dyn sinex_source_core::Reader>,
+        entered: Option<tokio::sync::oneshot::Sender<()>>,
+        release: std::sync::mpsc::Receiver<()>,
+    }
+    impl sinex_source_core::Reader for PausedPoll {
+        fn poll(
+            &mut self,
+            cursor: &serde_json::Value,
+        ) -> Result<sinex_source_core::drivers::Acquired, sinex_source_core::drivers::DriverError>
+        {
+            if let Some(entered) = self.entered.take() {
+                let _ = entered.send(());
+                self.release.recv().map_err(|error| {
+                    sinex_source_core::drivers::DriverError::Read(error.to_string())
+                })?;
+            }
+            self.inner.poll(cursor)
+        }
+        fn remove_passed(
+            &self,
+            cursor: &serde_json::Value,
+        ) -> Result<usize, sinex_source_core::drivers::DriverError> {
+            self.inner.remove_passed(cursor)
+        }
+    }
+    let sinex_source_core::Reading::Polled(inner) =
+        (journald::FORMAT.reader.unwrap())(&binding).unwrap()
+    else {
+        panic!("journald has a polled spool reader")
+    };
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    reader = vec![
+        BindingReader::with_reading(
+            &journald::FORMAT,
+            binding.clone(),
+            sinex_source_core::Reading::Polled(Box::new(PausedPoll {
+                inner,
+                entered: Some(entered),
+                release: resume,
+            })),
+        )
+        .unwrap(),
+    ];
+    let mut report = |_: &str, _: &Result<crate::stage::Totals>| {};
+    let reading = binding_reader::read(
+        &mut context.read_conn,
+        &context.blobs,
+        &context.writer,
+        &sink,
+        &mut reader,
+        &mut rounds,
+        stop.clone(),
+        Access::default(),
+        &mut report,
     );
-    assert_private_roots(&artifact);
-    drop(paused);
+    let copying = async {
+        waiting.await.unwrap();
+        let publication = context.writer.source_publication();
+        let copied = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let _paused = publication.pause().await;
+            let snapshot = context
+                .writer
+                .backup_snapshot("synthetic-backup")
+                .await
+                .unwrap();
+            create(&artifact).unwrap();
+            assert_private_roots(&artifact);
+            let local = local_sources(Ok(vec![binding.clone()]), &artifact).await;
+            assert_eq!(local.unavailable, None);
+            assert!(
+                !local.files.is_empty(),
+                "native source bytes must be acquired"
+            );
+            assert_private_roots(&artifact);
+            (snapshot, local)
+        })
+        .await;
+        let prepared = match copied {
+            Ok((snapshot, local)) => {
+                prepare(
+                    snapshot,
+                    &source,
+                    &artifact,
+                    stop.clone(),
+                    "synthetic-source-backup".into(),
+                    vec![local],
+                    Some(vec!["@daemon".into()]),
+                )
+                .await
+            }
+            Err(error) => Err(crate::Error::internal(format!(
+                "backup waited for unfinished acquisition: {error}"
+            ))),
+        };
+        // Keep acquisition unfinished through both real dumps and manifest
+        // publication, and release it even when preparation failed.
+        release.send(()).unwrap();
+        prepared.unwrap()
+    };
+    let (read, manifest) = tokio::join!(reading, copying);
+    for (_, result) in read {
+        result.unwrap();
+    }
     drop(capture);
     let mut next = SpoolWriter::open(&spool, Rotation::default()).unwrap();
     append(&mut next, "later-cursor", "after-hold-record");
@@ -409,17 +500,6 @@ async fn restored_backup_resumes_source_spools_after_later_retirement(
             .await
             .unwrap();
     assert_eq!(current, 3);
-    let manifest = prepare(
-        snapshot,
-        &source,
-        &artifact,
-        stop.clone(),
-        "synthetic-source-backup".into(),
-        vec![local],
-        Some(vec!["@daemon".into()]),
-    )
-    .await
-    .unwrap();
     assert!(manifest.producers_complete);
     assert_private_roots(&artifact);
     drop(next);

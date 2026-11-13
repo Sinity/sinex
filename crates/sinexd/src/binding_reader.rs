@@ -181,10 +181,6 @@ pub(crate) async fn read(
     access: Access<'_>,
     report: &mut (dyn FnMut(&str, &Result<Totals>) + Send),
 ) -> Vec<(String, Result<Totals>)> {
-    // Backup waits here before requesting writer P, so a reader waiting on its
-    // writer acknowledgment never deadlocks the snapshot job.
-    let publication = writer.source_publication();
-    let _publication = publication.enter().await;
     let Rounds {
         runs: native_runs,
         coverage,
@@ -351,14 +347,20 @@ pub(crate) async fn read(
             )
             .await;
             let result = match result {
-                Ok(totals) => match positions::load(conn, &b.binding.name).await {
-                    Ok(Some((cursor, _))) => reader
-                        .remove_passed(&cursor)
-                        .map(|_| totals)
-                        .map_err(Error::from),
-                    Ok(None) => Ok(totals),
-                    Err(e) => Err(e.into()),
-                },
+                Ok(totals) => {
+                    // A backup keeps its saved cursor and retained spools
+                    // together until the local copy is complete.
+                    let publication = writer.source_publication();
+                    let _publication = publication.enter().await;
+                    match positions::load(conn, &b.binding.name).await {
+                        Ok(Some((cursor, _))) => reader
+                            .remove_passed(&cursor)
+                            .map(|_| totals)
+                            .map_err(Error::from),
+                        Ok(None) => Ok(totals),
+                        Err(e) => Err(e.into()),
+                    }
+                }
                 Err(e) => Err(e),
             };
             b.settled = if result.is_ok() { facts } else { None };

@@ -256,6 +256,10 @@ impl WriterHandle {
         check: AdmissionCheck,
         stage: Option<StageCheckpoint>,
     ) -> Result<Outcome, WriteError> {
+        // Enter before queueing, never inside the writer: backup requests its
+        // snapshot while publication is paused. Acquisition and parsing do not
+        // hold this guard, so backup can pause between committed batches.
+        let _publication = self.source_publication.enter().await;
         match self
             .send(priority, WriterJob::Source(batch, check, stage))
             .await?
