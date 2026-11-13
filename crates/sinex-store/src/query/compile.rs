@@ -488,20 +488,34 @@ impl<'c> Compiler<'c> {
             snippet.push(format!(" AS {}", quote(&physical)));
             select.push(snippet);
         }
+        if self.indexed_words {
+            select.push(SqlFragment::text(Self::template(
+                &base,
+                "{t}._search_tsv AS \"_search_tsv\"",
+            )));
+        }
+        let words_for_rank = &words;
         let mut from = self.positioned(&base, fields::from(table));
         if let Some(words) = search {
             let hits = self.alias("words");
             let event = self.alias("event");
-            // Fetch only indexed candidate keys before reading event history.
-            // The complete predicate, visibility and as-of checks still run.
-            from = SqlFragment::text("(SELECT event_id FROM core.search_text WHERE tsv @@ ");
+            // This lateral boundary reads the event and authorizes its search
+            // tuple once. OFFSET keeps rank references in later page wrappers
+            // from expanding into repeated history lookups.
+            from = SqlFragment::text(
+                "(SELECT event_id, text, tsv FROM core.search_text WHERE tsv @@ ",
+            );
             from.push(if words.phrase {
                     "phraseto_tsquery('simple', "
                 } else {
                     "plainto_tsquery('simple', "
                 })
                 .param(words.words.join(" "))
-                .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT * FROM core.visible_events {event} WHERE {event}.id={hits}.event_id OFFSET 0) "))
+                .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT {event}.*, {hits}.tsv AS _search_tsv, ts_rank({hits}.tsv, plainto_tsquery('simple', "))
+                .param(words_for_rank.join(" "))
+                .push(format!(")) AS _search_rank, ts_headline('simple', {hits}.text, plainto_tsquery('simple', "))
+                .param(words_for_rank.join(" "))
+                .push(format!("), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') AS _search_snippet FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0) "))
                 .push(Self::template(&base, "{t}"));
         }
         let mut rel = SqlFragment::text("SELECT ");
@@ -536,6 +550,10 @@ impl<'c> Compiler<'c> {
         ];
         if ranked {
             internal.push("_rank".into());
+        }
+
+        if self.indexed_words {
+            internal.push("_search_tsv".into());
         }
 
         // Later stages wrap the relation.

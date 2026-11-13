@@ -219,7 +219,10 @@ outer read snapshot. `hour()` continues to name the local clock hour.
 Required word or phrase predicates before relation-changing stages select keys
 from the full-text index before fetching event rows. The full predicate and
 class visibility still apply to those rows, including historical visibility;
-ranking, snippets and final ordering use the same selected events. A word under
+ranking, snippets and final ordering use the same selected events. The indexed
+path authorizes each candidate once and carries its search tuple and computed
+rank through page evaluation, rather than repeating history lookups for the
+predicate, snippet and cursor keys. A word under
 `OR` or `NOT` alone cannot narrow the source, and filters after a limit or grouping
 keep their original position.
 
