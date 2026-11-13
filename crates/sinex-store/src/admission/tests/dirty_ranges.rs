@@ -202,3 +202,234 @@ async fn dirty_output_ranges_preserve_boundaries_without_scanning_unrelated_even
     );
     tx.rollback().await.unwrap();
 }
+
+#[devkit::test]
+async fn dirty_ranges_page_compressed_members_once_and_keep_distinct_keys(
+    db: devkit::pg::TestDatabase,
+) {
+    use sqlx::Executor;
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let mut competing = PgConnection::connect(&db.url(None)).await.unwrap();
+    assert!(!crate::writer_lock::try_claim(&mut competing).await.unwrap());
+    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+      SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,
+        CASE WHEN n=8793 THEN 'synthetic.other_interval' ELSE $1 END,
+        'synthetic-ranges',uuidv7(),uuidv7(),n,'unknown',1,
+        jsonb_build_object('start',$2::timestamptz,'end',$3::timestamptz,'open',false),
+        1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,8794)n")
+        .bind(KIND).bind(at(10).0).bind(at(20).0).execute(&mut *conn).await.unwrap();
+    sqlx::query(
+        "INSERT INTO derivation.outputs(derivation,key,event_id)
+      SELECT $1,jsonb_build_object('label',(n-8193)%300),
+        ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid
+      FROM generate_series(8193,8792)n",
+    )
+    .bind(NAME)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO derivation.outputs(derivation,key,event_id) VALUES
+      ($1,'{"label":1.5}','01800000-0000-7000-8000-000000002002'),
+      ($1,'{"wrong_kind":true}','01800000-0000-7000-8000-000000002259'),
+      ($1,'{"missing":true}','01800000-0000-7000-8000-00000000dead'),
+      ('fixture.other_ranges','{"other_owner":true}','01800000-0000-7000-8000-00000000225a')"#,
+    )
+    .bind(NAME)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO audit.archived(event_id,archived_seq,reason)
+      SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,2,'archive'
+      FROM unnest(ARRAY[8193,8493])n",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    conn.execute("SELECT compress_chunk(c) FROM show_chunks('core.events')c")
+        .await
+        .unwrap();
+    conn.execute("ANALYZE core.events; ANALYZE derivation.outputs; ANALYZE audit.archived")
+        .await
+        .unwrap();
+    let compressed: String = sqlx::query_scalar("SELECT compress_relid::regclass::text FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL")
+        .fetch_one(&mut *conn).await.unwrap();
+    let batches: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {compressed}"))
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert!(batches >= 8);
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
+    tx.execute("SET LOCAL plan_cache_mode=auto; SET LOCAL max_parallel_workers_per_gather=0")
+        .await
+        .unwrap();
+    let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL)";
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let payload = json!({});
+    let inputs: Vec<_> = (0..256)
+        .map(|_| KeyInput {
+            event_type: "synthetic.trigger",
+            ts_orig: None,
+            payload: &payload,
+        })
+        .collect();
+    for _ in 0..8 {
+        assert_eq!(
+            derived::mark_inputs_dirty(&mut tx, &inputs, 2, &Ranges)
+                .await
+                .unwrap(),
+            300
+        );
+        let keys: Vec<Value> =
+            sqlx::query_scalar("SELECT key FROM derivation.dirty WHERE derivation=$1 ORDER BY key")
+                .bind(NAME)
+                .fetch_all(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(
+            keys.into_iter().collect::<std::collections::HashSet<_>>(),
+            (1..300)
+                .map(|n| json!({"label":n}))
+                .chain([json!({"label":1.5})])
+                .collect()
+        );
+    }
+    let new_work = sqlx::query_scalar::<_, i64>(work)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap()
+        - before;
+    assert!(
+        new_work <= 8 * 3 * 4 * batches,
+        "paged payloads read {new_work} compressed metadata tuples for {batches} batches"
+    );
+    // Macro execution on another connection checks the same static SQL
+    // against the schema without seeding this writer's statement cache.
+    let mut checked = PgConnection::connect(&db.url(None)).await.unwrap();
+    let targets = vec![NAME.to_owned()];
+    let first = sqlx::query_file!(
+        "src/admission/affected_output_page.sql",
+        &targets,
+        None::<&str>,
+        None::<&Value>,
+        None::<Uuid>
+    )
+    .fetch_all(&mut checked)
+    .await
+    .unwrap();
+    assert_eq!(first.len(), 256);
+    let last = first.last().unwrap();
+    let second = sqlx::query_file!(
+        "src/admission/affected_output_page.sql",
+        &targets,
+        Some(last.derivation.as_str()),
+        Some(&last.key),
+        Some(last.event_id)
+    )
+    .fetch_all(&mut checked)
+    .await
+    .unwrap();
+    assert_eq!(second.len(), 256);
+    assert!(second.iter().all(|row| {
+        !first
+            .iter()
+            .any(|prior| prior.key == row.key && prior.event_id == row.event_id)
+    }));
+    let ids: Vec<_> = first.iter().map(|row| row.event_id).collect();
+    assert!(
+        ids.len()
+            > ids
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+        "duplicate event has distinct owners in one page"
+    );
+    let owners: Vec<_> = first.iter().map(|row| row.derivation.clone()).collect();
+    let page_keys: Vec<_> = first.iter().map(|row| row.key.clone()).collect();
+    let output_types = vec![KIND.to_owned()];
+    let names = vec![NAME.to_owned(); 2];
+    let types = vec![KIND.to_owned(); 2];
+    let starts = vec!["start".to_owned(); 2];
+    let ends = vec!["end".to_owned(); 2];
+    let from = vec![at(12).0; 2];
+    let until = vec![at(15).0; 2];
+    let open = vec![Some("open".to_owned()); 2];
+    let mut checked_tx = checked.begin().await.unwrap();
+    checked_tx.execute("SET LOCAL plan_cache_mode=force_generic_plan; SET LOCAL max_parallel_workers_per_gather=0").await.unwrap();
+    let before: i64 = sqlx::query_scalar(work)
+        .fetch_one(&mut *checked_tx)
+        .await
+        .unwrap();
+    let checked_keys = sqlx::query_file!(
+        "src/admission/affected_outputs.sql",
+        &ids,
+        &owners,
+        &page_keys,
+        &output_types,
+        &names,
+        &types,
+        &starts,
+        &ends,
+        &from,
+        &until,
+        &open as &[Option<String>]
+    )
+    .fetch_all(&mut *checked_tx)
+    .await
+    .unwrap();
+    assert!(checked_keys.iter().all(|row| row.derivation == NAME));
+    assert_eq!(
+        checked_keys
+            .into_iter()
+            .map(|row| row.key)
+            .collect::<std::collections::HashSet<_>>(),
+        page_keys.into_iter().collect()
+    );
+    let generic_work = sqlx::query_scalar::<_, i64>(work)
+        .fetch_one(&mut *checked_tx)
+        .await
+        .unwrap()
+        - before;
+    assert!(
+        generic_work >= batches,
+        "forced generic read only {generic_work} metadata tuples for {batches} batches"
+    );
+    checked_tx.rollback().await.unwrap();
+    checked.close().await.unwrap();
+    // The old per-range/per-ID path is a real work and result control. A
+    // forced generic plan is deliberately not claimed to support ID pruning.
+    tx.execute("SET LOCAL plan_cache_mode=force_generic_plan")
+        .await
+        .unwrap();
+    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
+    let old:Vec<Value>=sqlx::query_scalar("SELECT DISTINCT o.key FROM unnest($1::text[],$2::text[])r(derivation,event_type)
+      JOIN derivation.outputs o ON o.derivation=r.derivation
+      CROSS JOIN LATERAL(SELECT payload FROM core.events WHERE id=o.event_id AND event_type=r.event_type OFFSET 0)e
+      WHERE(e.payload->>'start')::timestamptz <= $4
+        AND((e.payload->>'end')IS NULL OR(e.payload->>'end')::timestamptz >= $3 OR coalesce((e.payload->>'open')::boolean,false))
+        AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=o.event_id)")
+        .bind(vec![NAME,NAME]).bind(vec![KIND,KIND]).bind(at(12).0).bind(at(15).0)
+        .persistent(false).fetch_all(&mut *tx).await.unwrap();
+    let old_work = sqlx::query_scalar::<_, i64>(work)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap()
+        - before;
+    assert_eq!(
+        old.into_iter().collect::<std::collections::HashSet<_>>(),
+        (1..300)
+            .map(|n| json!({"label":n}))
+            .chain([json!({"label":1.5})])
+            .collect()
+    );
+    assert!(
+        old_work >= 598 * batches,
+        "old per-ID control read only {old_work} compressed metadata tuples for {batches} batches"
+    );
+    assert!(!crate::writer_lock::try_claim(&mut competing).await.unwrap());
+    tx.rollback().await.unwrap();
+}

@@ -531,24 +531,72 @@ pub(crate) async fn mark_inputs_dirty(
             .iter()
             .map(|r| r.open_field.map(str::to_owned))
             .collect();
-        // Keep the payload lookup driven by output IDs even when compressed
-        // event cardinality estimates would favour a whole-history join.
-        let selected = sqlx::query!(
-            r#"SELECT DISTINCT o.derivation, o.key FROM
-                 unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::timestamptz[], $6::timestamptz[], $7::text[])
-                   AS r(derivation, event_type, start_field, end_field, start, finish, open_field)
-               JOIN derivation.outputs o ON o.derivation = r.derivation
-               CROSS JOIN LATERAL (
-                 SELECT e.payload FROM core.events e
-                 WHERE e.id = o.event_id AND e.event_type = r.event_type
-                 OFFSET 0
-               ) e
-               WHERE (e.payload->>r.start_field)::timestamptz <= r.finish
-                 AND ((e.payload->>r.end_field) IS NULL OR (e.payload->>r.end_field)::timestamptz >= r.start OR coalesce((e.payload->>r.open_field)::boolean, false))
-                 AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=o.event_id)"#,
-            &names, &types, &starts, &ends, &from, &until, &open as &[Option<String>],
-        ).fetch_all(&mut *conn).await?;
-        dirty.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
+        let targets: Vec<_> = names
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let output_types: Vec<_> = types
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        #[derive(sqlx::FromRow)]
+        struct Output {
+            derivation: String,
+            key: Value,
+            event_id: Uuid,
+        }
+        #[derive(sqlx::FromRow)]
+        struct AffectedKey {
+            #[sqlx(rename = "derivation!")]
+            derivation: String,
+            #[sqlx(rename = "key!")]
+            key: Value,
+        }
+        let mut after: Option<Output> = None;
+        let mut affected = std::collections::HashSet::new();
+        loop {
+            // Admission holds the session writer claim, excluding lifecycle and
+            // replacement writes between the metadata and payload statements.
+            // This is a transfer page, not a limit on the affected output set.
+            // Fresh parameter-aware plans keep both keyset seeks and compressed
+            // ID-array pruning after repeated executions on this connection.
+            let page = sqlx::query_as::<_, Output>(include_str!("affected_output_page.sql"))
+                .bind(&targets)
+                .bind(after.as_ref().map(|row| row.derivation.as_str()))
+                .bind(after.as_ref().map(|row| &row.key))
+                .bind(after.as_ref().map(|row| row.event_id))
+                .persistent(false)
+                .fetch_all(&mut *conn)
+                .await?;
+            if page.is_empty() {
+                break;
+            }
+            let ids: Vec<_> = page.iter().map(|row| row.event_id).collect();
+            let owners: Vec<_> = page.iter().map(|row| row.derivation.clone()).collect();
+            let output_keys: Vec<_> = page.iter().map(|row| row.key.clone()).collect();
+            let selected = sqlx::query_as::<_, AffectedKey>(include_str!("affected_outputs.sql"))
+                .bind(&ids)
+                .bind(&owners)
+                .bind(&output_keys)
+                .bind(&output_types)
+                .bind(&names)
+                .bind(&types)
+                .bind(&starts)
+                .bind(&ends)
+                .bind(&from)
+                .bind(&until)
+                .bind(&open)
+                .persistent(false)
+                .fetch_all(&mut *conn)
+                .await?;
+            affected.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
+            after = page.into_iter().last();
+        }
+        dirty.extend(affected);
     }
     // Outcome counts describe offered marks, including repeated input offers;
     // the affected-target union and its durable rows remain unchanged.
