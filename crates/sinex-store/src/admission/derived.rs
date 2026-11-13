@@ -543,10 +543,18 @@ pub(crate) async fn mark_inputs_dirty(
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
+        #[derive(sqlx::FromRow)]
         struct Output {
             derivation: String,
             key: Value,
             event_id: Uuid,
+        }
+        #[derive(sqlx::FromRow)]
+        struct AffectedKey {
+            #[sqlx(rename = "derivation!")]
+            derivation: String,
+            #[sqlx(rename = "key!")]
+            key: Value,
         }
         let mut after: Option<Output> = None;
         let mut affected = std::collections::HashSet::new();
@@ -556,43 +564,35 @@ pub(crate) async fn mark_inputs_dirty(
             // This is a transfer page, not a limit on the affected output set.
             // Fresh parameter-aware plans keep both keyset seeks and compressed
             // ID-array pruning after repeated executions on this connection.
-            let page = sqlx::query_as!(Output,
-                r#"SELECT o.derivation, o.key, o.event_id FROM derivation.outputs o
-                   LEFT JOIN LATERAL (
-                     SELECT event_id FROM audit.archived WHERE event_id=o.event_id OFFSET 0
-                   ) a ON true
-                   WHERE o.derivation=ANY($1)
-                     AND ($2::text IS NULL OR (o.derivation,o.key,o.event_id)>($2,$3::jsonb,$4::uuid))
-                     AND a.event_id IS NULL
-                   ORDER BY o.derivation,o.key,o.event_id LIMIT 256"#,
-                &targets,
-                after.as_ref().map(|row| row.derivation.as_str()),
-                after.as_ref().map(|row| &row.key),
-                after.as_ref().map(|row| row.event_id),
-            ).persistent(false).fetch_all(&mut *conn).await?;
+            let page = sqlx::query_as::<_, Output>(include_str!("affected_output_page.sql"))
+                .bind(&targets)
+                .bind(after.as_ref().map(|row| row.derivation.as_str()))
+                .bind(after.as_ref().map(|row| &row.key))
+                .bind(after.as_ref().map(|row| row.event_id))
+                .persistent(false)
+                .fetch_all(&mut *conn)
+                .await?;
             if page.is_empty() {
                 break;
             }
             let ids: Vec<_> = page.iter().map(|row| row.event_id).collect();
             let owners: Vec<_> = page.iter().map(|row| row.derivation.clone()).collect();
             let output_keys: Vec<_> = page.iter().map(|row| row.key.clone()).collect();
-            let selected = sqlx::query_file!(
-                "src/admission/affected_outputs.sql",
-                &ids,
-                &owners,
-                &output_keys,
-                &output_types,
-                &names,
-                &types,
-                &starts,
-                &ends,
-                &from,
-                &until,
-                &open as &[Option<String>],
-            )
-            .persistent(false)
-            .fetch_all(&mut *conn)
-            .await?;
+            let selected = sqlx::query_as::<_, AffectedKey>(include_str!("affected_outputs.sql"))
+                .bind(&ids)
+                .bind(&owners)
+                .bind(&output_keys)
+                .bind(&output_types)
+                .bind(&names)
+                .bind(&types)
+                .bind(&starts)
+                .bind(&ends)
+                .bind(&from)
+                .bind(&until)
+                .bind(&open)
+                .persistent(false)
+                .fetch_all(&mut *conn)
+                .await?;
             affected.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
             after = page.into_iter().last();
         }
