@@ -13,26 +13,27 @@ WITH eligible AS MATERIALIZED (
             SELECT 1 FROM unnest($1::text[], $2::jsonb[]) AS k(event_type, contains)
             WHERE k.event_type = e.event_type AND e.payload @> k.contains)
         AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
-), day_scopes AS MATERIALIZED (
-    SELECT DISTINCT scope FROM eligible WHERE ts_orig >= $3 AND ts_orig < $4
-), previous AS (
-    SELECT e.scope, max(e.ts_orig) AS ts_orig
-    FROM eligible e JOIN day_scopes d USING (scope)
-    WHERE e.ts_orig < $3
-    GROUP BY e.scope
-), latest AS MATERIALIZED (
-    SELECT DISTINCT ON (e.scope) e.scope, e.subject, e.known_scope
-    FROM eligible e JOIN day_scopes d USING (scope)
-    WHERE e.ts_orig < $4
-    ORDER BY e.scope, e.ts_orig DESC, e.commit_seq DESC
-), closers AS (
-    SELECT l.scope,
-        CASE WHEN NOT l.known_scope THEN $4
-             ELSE coalesce(min(e.ts_orig), $7) END AS finish
-    FROM latest l LEFT JOIN eligible e
-        ON l.known_scope AND e.scope = l.scope AND e.ts_orig >= $4
-        AND e.subject IS DISTINCT FROM l.subject
-    GROUP BY l.scope, l.known_scope
+), observations AS (
+    SELECT eligible.*,
+        bool_or(ts_orig >= $3 AND ts_orig < $4) OVER (PARTITION BY scope) AS touched,
+        first_value(subject) OVER latest AS latest_subject,
+        first_value(known_scope) OVER latest AS latest_scope_known
+    FROM eligible
+    -- Put the latest observation before the exclusive end first. Share that
+    -- state across the scope without joining every scope to the history.
+    WINDOW latest AS (
+        PARTITION BY scope
+        ORDER BY (ts_orig < $4) DESC, ts_orig DESC, commit_seq DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+), scopes AS (
+    SELECT scope, max(ts_orig) FILTER (WHERE ts_orig < $3) AS previous,
+        CASE WHEN NOT latest_scope_known THEN $4
+             ELSE coalesce(min(ts_orig) FILTER (
+                 WHERE ts_orig >= $4 AND subject IS DISTINCT FROM latest_subject), $7)
+        END AS finish
+    FROM observations
+    WHERE touched
+    GROUP BY scope, latest_scope_known
 )
-SELECT least($3, (SELECT min(ts_orig) FROM previous)) AS start,
-    greatest($4, (SELECT max(finish) FROM closers)) AS finish
+SELECT least($3, min(previous)) AS start, greatest($4, max(finish)) AS finish
+FROM scopes
