@@ -367,7 +367,7 @@ async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDat
     );
     assert!(
         before > after * 8.,
-        "per-scope scans must be discriminated: {plans:#}"
+        "per-scope scans must be discriminated: {plans:#?}"
     );
     assert_eq!(
         bounds(
