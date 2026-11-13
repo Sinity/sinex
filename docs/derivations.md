@@ -208,6 +208,11 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 - The `intervals` and `now` query aliases show an open end as unknown and the evidence's age separately.
 - Repairs of malformed source records (ActivityWatch heartbeats, for example) belong to the source's parser, not to this derivation.
 
+Adjacent-transition range reads evaluate eligible live transitions once, then
+find previous observations and future changed-state closers across the touched
+scopes together. Scope count does not multiply scans of the event history;
+same-state refreshes and arbitrarily late closers remain in reach.
+
 ## Documents and tags
 
 ### Documents and citable chunks
