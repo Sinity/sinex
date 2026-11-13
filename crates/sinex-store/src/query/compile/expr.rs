@@ -680,7 +680,9 @@ impl Compiler<'_> {
                 .param(w.words.join(" "))
                 .push(")");
         }
-        out.push(")");
+        // Keep the protected class lookup attached to this event key rather
+        // than scanning event history to construct a search semijoin.
+        out.push(" OFFSET 0)");
         Ok(out)
     }
 
