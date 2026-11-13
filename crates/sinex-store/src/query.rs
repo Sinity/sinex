@@ -665,14 +665,6 @@ async fn page_of(
     read: &ReadPage,
     recall: Option<Json>,
 ) -> Result<Answer> {
-    let total = match (rendered.total, &read.prior) {
-        (Some((sql, values)), _) => sql::bind_scalar(sqlx::query_scalar::<_, i64>(&sql), values)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(expression_error)?,
-        (None, Some(cursor)) => cursor.total,
-        _ => unreachable!("first page counts the result"),
-    };
     let (sql, values) = rendered.rows;
     let mut selected: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql), values)
         .fetch_all(&mut *tx)
@@ -682,6 +674,17 @@ async fn page_of(
     if more {
         selected.pop();
     }
+    let total = match &read.prior {
+        Some(cursor) => cursor.total,
+        None if !more => selected.len() as i64,
+        None => {
+            let (sql, values) = rendered.total.expect("first page has a total query");
+            sql::bind_scalar(sqlx::query_scalar::<_, i64>(&sql), values)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(expression_error)?
+        }
+    };
     let last = selected
         .last()
         .map(|row| -> Result<_> {
