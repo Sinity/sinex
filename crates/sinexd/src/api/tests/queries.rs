@@ -465,3 +465,33 @@ async fn nested_saved_query_literals_are_validated_before_admission(db: devkit::
     let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(listed["result"]["queries"].as_array().unwrap().len(), 1);
 }
+
+#[devkit::test]
+async fn indexed_word_candidates_obey_each_api_callers_grants(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let mut guarded = command("apiwordneedle guarded", 1);
+    guarded.class = Class::Guarded;
+    admit_events(
+        &w,
+        vec![
+            command("apiwordneedle open", 0),
+            guarded,
+            command("unrelated", 2),
+        ],
+    )
+    .await;
+    for (token, expected) in [(READ, 1), (AGENT, 1), (OPERATOR, 2)] {
+        let (_, answer) = call(
+            &w,
+            Some(token),
+            json!({"method":"query","query":"apiwordneedle"}),
+        )
+        .await;
+        assert_eq!(answer["outcome"], "ok", "{answer}");
+        assert_eq!(answer["result"]["total"], expected, "{answer}");
+        assert_eq!(
+            answer["result"]["rows"].as_array().unwrap().len(),
+            expected as usize
+        );
+    }
+}

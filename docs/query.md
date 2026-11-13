@@ -216,6 +216,13 @@ start; folds use the first shared boundary and gaps use the shared transition.
 The temporary relation holds calendar boundaries and is cleared before the next
 outer read snapshot. `hour()` continues to name the local clock hour.
 
+Required word or phrase predicates before relation-changing stages select keys
+from the full-text index before fetching event rows. The full predicate and
+class visibility still apply to those rows, including historical visibility;
+ranking, snippets and final ordering use the same selected events. A word under
+`or` or `not` alone cannot narrow the source, and filters after a limit or grouping
+keep their original position.
+
 ## Read context, paging and budgets
 
 - **An answer resolves once:** `now`, the zone, the day start, the query text and its

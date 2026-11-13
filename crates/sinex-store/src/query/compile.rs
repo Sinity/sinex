@@ -28,6 +28,19 @@ pub(crate) struct Compiled {
     pub keys: Vec<(String, bool)>,
 }
 
+// Only conjunctions make a word predicate necessary for every selected row.
+fn required_words(filter: &Expr) -> Option<&Words> {
+    let mut remaining = vec![filter];
+    while let Some(filter) = remaining.pop() {
+        match filter {
+            Expr::Words(words) if !words.prefix => return Some(words),
+            Expr::And(left, right) => remaining.extend([right.as_ref(), left.as_ref()]),
+            _ => {}
+        }
+    }
+    None
+}
+
 impl Compiled {
     /// SQL identifier of an output value in the private answer relation.
     pub(crate) fn output_column(&self, logical: &str) -> Result<String> {
@@ -457,10 +470,37 @@ impl<'c> Compiler<'c> {
             snippet.push(format!(" AS {}", quote(&physical)));
             select.push(snippet);
         }
+        let mut from = self.positioned(&base, fields::from(table));
+        if table == Table::Events {
+            let search = q.filter.as_ref().and_then(required_words).or_else(|| {
+                q.stages
+                    .iter()
+                    .take_while(|stage| matches!(stage, Stage::Where(_)))
+                    .find_map(|stage| match stage {
+                        Stage::Where(filter) => required_words(filter),
+                        _ => None,
+                    })
+            });
+            if let Some(words) = search {
+                let hits = self.alias("words");
+                let event = self.alias("event");
+                // Fetch only indexed candidate keys before reading event history.
+                // The complete predicate, visibility and as-of checks still run.
+                from = SqlFragment::text("(SELECT event_id FROM core.search_text WHERE tsv @@ ");
+                from.push(if words.phrase {
+                    "phraseto_tsquery('simple', "
+                } else {
+                    "plainto_tsquery('simple', "
+                })
+                .param(words.words.join(" "))
+                .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT * FROM core.visible_events {event} WHERE {event}.id={hits}.event_id OFFSET 0) "))
+                .push(Self::template(&base, "{t}"));
+            }
+        }
         let mut rel = SqlFragment::text("SELECT ");
         rel.append(SqlFragment::join(select, ", "))
             .push(" FROM ")
-            .append(self.positioned(&base, fields::from(table)));
+            .append(from);
         if table == Table::Gaps {
             rel.push(Self::template(&base, " {t}"));
         }
