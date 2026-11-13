@@ -301,10 +301,10 @@ async fn indexed_words_keep_boolean_stage_and_historical_visibility(db: devkit::
     .await;
     catch_up_search_text(&mut conn).await.unwrap();
     for (text, expected) in [
-        ("events where cargo and test", vec![ids[0]]),
-        ("events | where cargo and test", vec![ids[0]]),
-        ("events where cargo or ready", ids.clone()),
-        ("events where not cargo", vec![ids[2]]),
+        ("events where cargo AND test", vec![ids[0]]),
+        ("events | where cargo AND test", vec![ids[0]]),
+        ("events where cargo OR ready", ids.clone()),
+        ("events where NOT cargo", vec![ids[2]]),
         ("events | limit 1 | where ready", vec![]),
         ("events where \"cargo test\"", vec![ids[0]]),
     ] {
@@ -327,10 +327,10 @@ async fn indexed_words_keep_boolean_stage_and_historical_visibility(db: devkit::
         &NoDerivations,
     )
     .await;
-    assert_eq!(ask(&mut conn, "events where cargo and test").await.total, 0);
+    assert_eq!(ask(&mut conn, "events where cargo AND test").await.total, 0);
     let old = ask(
         &mut conn,
-        &format!("events where cargo and test | as of seq {before}"),
+        &format!("events where cargo AND test | as of seq {before}"),
     )
     .await;
     assert_eq!(old.total, 2);
@@ -341,7 +341,7 @@ async fn indexed_words_keep_boolean_stage_and_historical_visibility(db: devkit::
         &NoDerivations,
     )
     .await;
-    assert_eq!(ask(&mut conn, "events where cargo and test").await.total, 2);
+    assert_eq!(ask(&mut conn, "events where cargo AND test").await.total, 2);
 }
 
 #[devkit::test]

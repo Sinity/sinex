@@ -220,7 +220,7 @@ Required word or phrase predicates before relation-changing stages select keys
 from the full-text index before fetching event rows. The full predicate and
 class visibility still apply to those rows, including historical visibility;
 ranking, snippets and final ordering use the same selected events. A word under
-`or` or `not` alone cannot narrow the source, and filters after a limit or grouping
+`OR` or `NOT` alone cannot narrow the source, and filters after a limit or grouping
 keep their original position.
 
 ## Read context, paging and budgets
