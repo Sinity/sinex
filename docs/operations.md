@@ -48,6 +48,15 @@ Database source cursors upgrade with the schema. The append-file cursor upgrade 
 
 Before switching a producer whose saved state is plaintext, drain its pending frames through that installed build's producer client. Keep its original state frozen and select a fresh producer state directory for the current encoded checkpoints. Retain and stage any unread source bytes through their named input format; NDJSON capture segments remain ordinary supported source input.
 
+Daemon shutdown supervises startup and serving through the same writer boundary.
+Tasks first drain cooperatively. After the grace period, remaining tasks are
+cancelled and joined so their connections close. Writer sessions enable native
+closed-client checks; these cancel work after a disconnected client without
+limiting a connected query. Shutdown then reacquires the writer claim and flushes
+pending admitted extents before returning success. Failure to establish that
+boundary is a shutdown error. Uncommitted admission and receipts roll back;
+producers retain their saved frames and positions for exact retry.
+
 Activating a new version does not change the schema. When a version brings a schema upgrade, `sinexd` refuses to start and names the command ([admission.md](admission.md#schema-evolution)). With `sinexd` stopped, run `systemctl start sinex-schema-upgrade` (`sinexd admin upgrade` as the Sinex user), which returns when the one upgrade transaction commits or rolls back, then start `sinexd`. Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture.
 
 Before stopping the daemon, run `sinexd admin upgrade --prepare` from the new build as the Sinex user. It builds the work the upgrade can swap in while the old daemon serves, and returns when that work is complete; it is safe to run again after an interruption, and `sinexd admin upgrade --unprepare` removes it. Without it the upgrade still succeeds, but rewrites the equivalence keys while admission waits.

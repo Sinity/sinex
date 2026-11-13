@@ -41,6 +41,7 @@ struct ShutdownSummary {
     panicked: usize,
     abort_requested: usize,
     writer_joined: bool,
+    writer_released: bool,
     tasks: Vec<StoppedTask>,
 }
 
@@ -125,21 +126,49 @@ async fn connect(url: &str) -> Result<PgConnection> {
 }
 
 pub(crate) async fn run(o: Options) -> Result<()> {
-    let subjects = Subjects::new(o.subject_root.clone());
     let blobs = Blobs::open(&o.store)?;
+    let database = o.database.clone();
+    let (stop_tx, stop) = watch::channel(false);
+    let mut tasks = JoinSet::new();
+    let mut writer_connected = false;
+    // Supervise startup too: it can already own a writer transaction before
+    // the API and the complete task set are ready.
+    let outcome = tokio::select! {
+        biased;
+        _ = shutdown_signal() => Ok(()),
+        result = serve(o, blobs.clone(), stop, &mut tasks, &mut writer_connected) => result,
+    };
+    let _ = stop_tx.send(true);
+    let stopped = finish_tasks(
+        &mut tasks,
+        Duration::from_secs(10),
+        &database,
+        &blobs,
+        writer_connected,
+    )
+    .await;
+    outcome.and(stopped)
+}
+
+async fn serve(
+    o: Options,
+    blobs: Blobs,
+    stop: watch::Receiver<bool>,
+    tasks: &mut JoinSet<(&'static str, Result<()>)>,
+    writer_connected: &mut bool,
+) -> Result<()> {
+    let subjects = Subjects::new(o.subject_root.clone());
     let tokens = api::Tokens::load(&o.api.tokens).map_err(|e| Error::file(&o.api.tokens, e))?;
     let client = sinex_source_core::nats::connect(&o.nats, o.nats_password_file.as_deref())
         .await
         .map_err(Error::Nats)?;
     let js = publisher::context(client.clone());
 
-    let (stop_tx, stop) = watch::channel(false);
     let (commits_tx, commits) = watch::channel(0u64);
     let (read_models_tx, read_models) = watch::channel(());
     let (handle, queues) = writer::channels();
-    let mut tasks: JoinSet<(&'static str, Result<()>)> = JoinSet::new();
-
     let writer_conn = connect(&o.database).await?;
+    *writer_connected = true;
     let mut writer_conn = writer::claim(writer_conn).await?;
     blobs.recover(&mut writer_conn).await?;
     // Finish removing bytes a tombstone freed before sources resume.
@@ -462,42 +491,51 @@ pub(crate) async fn run(o: Options) -> Result<()> {
     // The writer stops when every handle is gone; the tasks above hold theirs.
     drop(handle);
 
-    let outcome = tokio::select! {
-        _ = shutdown_signal() => Ok(()),
-        Some(done) = tasks.join_next() => match done {
-            Ok((name, Ok(()))) => Err(Error::internal(format!("{name} stopped"))),
-            Ok((name, Err(error))) => Err(Error::internal(format!("{name}: {error}"))),
-            Err(error) => Err(Error::internal(format!("a task panicked: {error}"))),
-        },
-    };
-    let _ = stop_tx.send(true);
-    // JoinSet::len includes completed tasks whose results are not yet joined.
-    // No task is spawned after this snapshot.
+    match tasks.join_next().await {
+        Some(Ok((name, Ok(())))) => Err(Error::internal(format!("{name} stopped"))),
+        Some(Ok((name, Err(error)))) => Err(Error::internal(format!("{name}: {error}"))),
+        Some(Err(error)) => Err(Error::internal(format!("a task panicked: {error}"))),
+        None => Err(Error::internal("daemon has no running tasks")),
+    }
+}
+
+async fn finish_tasks(
+    tasks: &mut JoinSet<(&'static str, Result<()>)>,
+    grace: Duration,
+    database: &str,
+    blobs: &Blobs,
+    writer_connected: bool,
+) -> Result<()> {
     let mut shutdown = ShutdownSummary {
         requested: tasks.len(),
         ..Default::default()
     };
-    // Give tasks a moment to finish their current step, then stop the rest.
-    let drained = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    let _ = tokio::time::timeout(grace, async {
         while let Some(done) = tasks.join_next().await {
             shutdown.record(done);
         }
     })
-    .await
-    .is_ok();
+    .await;
     shutdown.abort_requested = tasks.len();
-    if shutdown.abort_requested != 0 {
-        tasks.abort_all();
+    tasks.abort_all();
+    // Joining releases the writer socket even when its future was interrupted
+    // inside SQL. PostgreSQL then notices the closed client and rolls back.
+    while let Some(done) = tasks.join_next().await {
+        shutdown.record(done);
     }
+    let released = if writer_connected {
+        // Reacquiring the same session lock proves that the preceding native
+        // writer released its transaction and claim, including after abort.
+        forget_admitted(database, blobs).await
+    } else {
+        Ok(())
+    };
+    shutdown.writer_released = released.is_ok();
     eprintln!(
         "sinexd: shutdown {}",
         serde_json::to_string(&shutdown).expect("shutdown result serializes")
     );
-    if drained && let Err(error) = forget_admitted(&o.database, &blobs).await {
-        eprintln!("sinexd: forgetting admitted blob names at shutdown: {error}");
-    }
-
-    outcome
+    released.map_err(|error| Error::internal(format!("writer shutdown did not finish: {error}")))
 }
 
 async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<()> {

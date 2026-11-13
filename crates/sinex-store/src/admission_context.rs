@@ -15,6 +15,12 @@ pub struct AdmissionContext {
 impl AdmissionContext {
     /// Claim the session before validating or initializing admission state.
     pub async fn claim(mut connection: PgConnection) -> Result<Self> {
+        // Closing an interrupted writer must cancel its server-side statement,
+        // not leave it running until the next response reaches the socket.
+        // This checks only disconnection; it does not limit connected queries.
+        sqlx::query("SET client_connection_check_interval = '1s'")
+            .execute(&mut connection)
+            .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if crate::writer_lock::try_claim(&mut connection).await? {
