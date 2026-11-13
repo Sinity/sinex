@@ -53,11 +53,14 @@ limit that compilation too:
 
 ```sh
 cargo xtask test -p sinex-store --lib -E 'test(query::)'
+# Store query behavior and the daemon API boundary together:
+cargo xtask test -p sinex-schema -p sinex-store -p sinexd --lib --bin sinexd -E 'test(query::tests::) or test(api::tests::queries::)'
 cargo xtask test -p sinex-model -p sinex-store -p sinex-sources -p sinexd --lib --bin sinexd -E 'test(query::) | test(sources::analysis::) | test(analysis::recall::)'
 ```
 
 The daemon's unit tests live in its binary target, so `--lib` alone omits
-them. The second command includes those tests while excluding integration
+them, even if `-E` names `api::tests`. Select `--bin sinexd` when checking
+the daemon API. The combined commands include those tests while excluding integration
 targets and their separately built executables. Integration tests that use
 `CARGO_BIN_EXE_*` still need their integration target selected; the full
 workspace run includes them. Database and NATS preparation stay with xtask.

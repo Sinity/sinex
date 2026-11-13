@@ -668,6 +668,21 @@ impl Compiler<'_> {
                 .push("))");
             return Ok(out);
         }
+        if self.indexed_words {
+            let tsv = match cols {
+                Cols::Base { .. } => Self::template(cols, "{t}._search_tsv"),
+                Cols::Named { r, .. } => format!("{r}.\"_search_tsv\""),
+            };
+            out.push(format!("{tsv} @@ "))
+                .push(if w.phrase {
+                    "phraseto_tsquery('simple', "
+                } else {
+                    "plainto_tsquery('simple', "
+                })
+                .param(w.words.join(" "))
+                .push(")");
+            return Ok(out);
+        }
         out.push("EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ")
             .append(id)
             .push(" AND ");
@@ -680,13 +695,7 @@ impl Compiler<'_> {
                 .param(w.words.join(" "))
                 .push(")");
         }
-        // Keep the protected class lookup attached to this event key rather
-        // than scanning event history to construct a search semijoin.
-        out.push(if self.indexed_words {
-            " OFFSET 0)"
-        } else {
-            ")"
-        });
+        out.push(")");
         Ok(out)
     }
 
@@ -1055,6 +1064,9 @@ impl Compiler<'_> {
     }
 
     pub(super) fn rank(&self, cols: &Cols, words: &[String]) -> SqlFragment {
+        if self.indexed_words {
+            return SqlFragment::text(Self::template(cols, "{t}._search_rank"));
+        }
         let mut f = SqlFragment::text(Self::template(
             cols,
             "(SELECT ts_rank(s.tsv, plainto_tsquery('simple', ",
@@ -1067,6 +1079,9 @@ impl Compiler<'_> {
     }
 
     pub(super) fn snippet(&self, cols: &Cols, words: &[String]) -> SqlFragment {
+        if self.indexed_words {
+            return SqlFragment::text(Self::template(cols, "{t}._search_snippet"));
+        }
         let mut f =
             SqlFragment::text("(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ");
         f.param(words.join(" ")).push(Self::template(

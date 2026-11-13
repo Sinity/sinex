@@ -455,3 +455,142 @@ async fn indexed_words_do_not_decompress_unrelated_history(db: devkit::pg::TestD
     );
     tx.rollback().await.unwrap();
 }
+
+#[devkit::test]
+async fn matching_compressed_search_rows_reuse_authorization_rank_and_snippet(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    sqlx::query("WITH inserted AS (
+        INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+        SELECT ((CASE WHEN n<=128 THEN '01800000-0000-7000-8000-' ELSE '01810000-0000-7000-8000-' END)||lpad(to_hex(n),12,'0'))::uuid,
+          'command.imported','synthetic-search-reuse',uuidv7(),uuidv7(),n,'unknown',1,'{}',1,decode(repeat('01',32),'hex'),
+          CASE WHEN n<=128 AND n%4=0 THEN 'guarded' ELSE 'open' END
+        FROM generate_series(1,8320)n RETURNING id,anchor
+      ) INSERT INTO core.search_text(event_id,text)
+        SELECT id,CASE WHEN anchor<=128 THEN 'matchingreuse common words' ELSE 'unrelated history' END FROM inserted")
+        .execute(&mut conn).await.unwrap();
+    sqlx::query("UPDATE core.counters SET value=greatest(value,1) WHERE name='commit_seq'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::raw_sql("ANALYZE core.events; ANALYZE core.search_text")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT relname FROM pg_class WHERE oid IN (
+        SELECT compress_relid FROM _timescaledb_catalog.compression_settings
+        WHERE relid IN (SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL)",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(names.len(), 2);
+    let first = ask(&mut conn, "matchingreuse").await;
+    assert_eq!(first.total, 96);
+    assert_eq!(first.rows.len(), 50);
+    assert!(
+        first
+            .rows
+            .iter()
+            .all(|r| r["snippet"].as_str().unwrap().contains("[matchingreuse]"))
+    );
+    let second = ask_page(
+        &mut conn,
+        "matchingreuse",
+        Page {
+            size: Some(50),
+            cursor: first.page.cursor.clone(),
+        },
+    )
+    .await;
+    assert_eq!(second.total, 96);
+    assert_eq!(second.rows.len(), 46);
+    assert!(second.page.cursor.is_none());
+    let ids: std::collections::BTreeSet<_> = first
+        .rows
+        .iter()
+        .chain(&second.rows)
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 96);
+    set_grants(&mut conn, "guarded").await.unwrap();
+    assert_eq!(ask(&mut conn, "matchingreuse").await.total, 128);
+    set_grants(&mut conn, "").await.unwrap();
+
+    let context = ctx();
+    let bound = bind("matchingreuse", &context).unwrap();
+    let seq = current_seq(&mut conn).await.unwrap();
+    let compiled = compile::Compiler::new(&context, seq)
+        .compile(&bound)
+        .unwrap();
+    let question = continuation::query_identity("matchingreuse", &context).unwrap();
+    let read = ReadPage {
+        question: String::new(),
+        question_id: continuation::identity("query", &question, "").unwrap(),
+        seal: continuation::seal_key(&mut conn).await.unwrap(),
+        ctx: context,
+        seq,
+        size: 50,
+        prior: None,
+        availability: json!(null),
+    };
+    let rendered = render_page(compiled, &read).unwrap();
+    let (statement, params) = rendered.rows;
+    let new_plan: serde_json::Value = sql::bind_scalar(
+        sqlx::query_scalar(&format!("EXPLAIN(ANALYZE,FORMAT JSON) {statement}")),
+        params,
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    // The previous page shape repeated protected event joins in its scalar
+    // rank/snippet/predicate expressions. Keep it as an actual-work control.
+    let old_plan:serde_json::Value=sqlx::query_scalar("EXPLAIN(ANALYZE,FORMAT JSON)
+        SELECT id,rank,snippet,rank AS page_rank,pg_typeof(rank)::text FROM (
+          SELECT e.id,e.ts_orig,
+            (SELECT ts_rank(s.tsv,plainto_tsquery('simple','matchingreuse')) FROM core.visible_search_text s WHERE s.event_id=e.id) rank,
+            (SELECT ts_headline('simple',s.text,plainto_tsquery('simple','matchingreuse'),'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') FROM core.visible_search_text s WHERE s.event_id=e.id) snippet
+          FROM (SELECT event_id FROM core.search_text WHERE tsv@@plainto_tsquery('simple','matchingreuse')) h
+          CROSS JOIN LATERAL(SELECT * FROM core.visible_events v WHERE v.id=h.event_id OFFSET 0)e
+          WHERE e.commit_seq<=1 AND NOT audit.is_archived_at(e.id,1)
+            AND EXISTS(SELECT 1 FROM core.visible_search_text s WHERE s.event_id=e.id AND s.tsv@@plainto_tsquery('simple','matchingreuse') OFFSET 0)
+        )q ORDER BY rank DESC NULLS LAST,ts_orig ASC NULLS LAST,id::text COLLATE \"C\" LIMIT 51")
+        .fetch_one(&mut conn).await.unwrap();
+    fn batches(v: &serde_json::Value, names: &[String]) -> f64 {
+        match v {
+            serde_json::Value::Object(o) => {
+                let own = o
+                    .get("Relation Name")
+                    .and_then(|v| v.as_str())
+                    .filter(|n| names.iter().any(|s| s == n))
+                    .map(|_| {
+                        o.get("Actual Rows").and_then(|n| n.as_f64()).unwrap_or(0.)
+                            * o.get("Actual Loops").and_then(|n| n.as_f64()).unwrap_or(0.)
+                    })
+                    .unwrap_or(0.);
+                own + o.values().map(|v| batches(v, names)).sum::<f64>()
+            }
+            serde_json::Value::Array(a) => a.iter().map(|v| batches(v, names)).sum(),
+            _ => 0.,
+        }
+    }
+    let old = batches(&old_plan, &names);
+    let new = batches(&new_plan, &names);
+    eprintln!("compressed search batch visits old={old} new={new}");
+    assert!(
+        new > 0.,
+        "matching compressed rows must execute: {new_plan}"
+    );
+    assert!(
+        old >= new * 2.,
+        "repeated authorization/rank work: old={old} new={new}; oldplan={old_plan}; newplan={new_plan}"
+    );
+}

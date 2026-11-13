@@ -48,7 +48,7 @@ cache = "none"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.focused]
-description = "Selected package/tests under nextest; pass -p PACKAGE and filters; full suites use bulk test"
+description = "Selected package/tests under nextest; pass -p PACKAGE and filters. Query/API: -p sinex-schema -p sinex-store -p sinexd --lib --bin sinexd -E 'test(query::tests::) or test(api::tests::queries::)'. --lib alone excludes daemon tests; full suites use bulk test"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 arguments = "required"
 pool = "compile"
