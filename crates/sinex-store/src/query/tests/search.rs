@@ -305,7 +305,7 @@ async fn indexed_words_keep_boolean_stage_and_historical_visibility(db: devkit::
         ("events | where cargo AND test", vec![ids[0]]),
         ("events where cargo OR ready", ids.clone()),
         ("events where NOT cargo", vec![ids[2]]),
-        ("events | limit 1 | where ready", vec![]),
+        ("events | sort by when | limit 1 | where ready", vec![]),
         ("events where \"cargo test\"", vec![ids[0]]),
     ] {
         let answer = ask(&mut conn, text).await;
