@@ -284,3 +284,174 @@ async fn bulk_trigram_copy_keeps_each_id_within_one_uuid_millisecond(db: devkit:
     sinex_schema::online::finish(&mut conn).await.unwrap();
     assert_eq!(flags(&mut conn).await, expected);
 }
+
+#[devkit::test]
+async fn indexed_words_keep_boolean_stage_and_historical_visibility(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = admit_commands(
+        &mut conn,
+        &[
+            ("cargo test", "/one"),
+            ("cargo build", "/two"),
+            ("echo ready", "/three"),
+        ],
+    )
+    .await;
+    catch_up_search_text(&mut conn).await.unwrap();
+    for (text, expected) in [
+        ("events where cargo AND test", vec![ids[0]]),
+        ("events | where cargo AND test", vec![ids[0]]),
+        ("events where cargo OR ready", ids.clone()),
+        ("events where NOT cargo", vec![ids[2]]),
+        ("events | sort by when | limit 1 | where ready", vec![]),
+        ("events where \"cargo test\"", vec![ids[0]]),
+    ] {
+        let answer = ask(&mut conn, text).await;
+        let actual: std::collections::BTreeSet<_> = answer
+            .rows
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .collect();
+        let expected: std::collections::BTreeSet<_> =
+            expected.into_iter().flat_map(|(a, b)| [a, b]).collect();
+        assert_eq!(actual, expected, "{text}");
+        assert_eq!(answer.total as usize, expected.len(), "{text}");
+    }
+    let before = current_seq(&mut conn).await.unwrap();
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![EventId(ids[0].1)],
+        &NoDerivations,
+    )
+    .await;
+    assert_eq!(ask(&mut conn, "events where cargo AND test").await.total, 0);
+    let old = ask(
+        &mut conn,
+        &format!("events where cargo AND test | as of seq {before}"),
+    )
+    .await;
+    assert_eq!(old.total, 2);
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Restore,
+        vec![EventId(ids[0].1)],
+        &NoDerivations,
+    )
+    .await;
+    assert_eq!(ask(&mut conn, "events where cargo AND test").await.total, 2);
+}
+
+#[devkit::test]
+async fn indexed_words_do_not_decompress_unrelated_history(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let selected = admit_commands(&mut conn, &[("specificsearchneedle", "/")]).await;
+    catch_up_search_text(&mut conn).await.unwrap();
+    sqlx::query("WITH events AS (
+        INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+        SELECT ((CASE WHEN n<=4096 THEN '01800000-0000-7000-8000-' ELSE '01810000-0000-7000-8000-' END)||lpad(to_hex(n),12,'0'))::uuid,
+          'command.imported','synthetic-search-history',uuidv7(),uuidv7(),n,'unknown',1,'{}',1,decode(repeat('01',32),'hex'),'open'
+        FROM generate_series(1,8192)n RETURNING id
+      ) INSERT INTO core.search_text(event_id,text) SELECT id,'unrelated synthetic history '||id::text FROM events")
+        .execute(&mut conn).await.unwrap();
+    sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)
+        WHERE chunk NOT IN (SELECT tableoid::regclass FROM core.events WHERE source IN ('terminal.atuin','derive.shell-fusion'))")
+        .execute(&mut conn).await.unwrap();
+    sqlx::raw_sql(
+        "REINDEX INDEX core.search_text_tsv; ANALYZE core.events; ANALYZE core.search_text",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT relname FROM pg_class WHERE oid IN (
+        SELECT compress_relid FROM _timescaledb_catalog.compression_settings
+        WHERE relid IN (SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL)",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(names.len(), 2);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM core.events WHERE source='synthetic-search-history'"
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap(),
+        8192
+    );
+    let answer = ask(&mut conn, "specificsearchneedle").await;
+    assert_eq!(answer.total, 2);
+    assert_eq!(
+        answer
+            .rows
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([selected[0].0, selected[0].1])
+    );
+    let context = ctx();
+    let bound = bind("specificsearchneedle", &context).unwrap();
+    let compiled = compile::Compiler::new(&context, current_seq(&mut conn).await.unwrap())
+        .compile(&bound)
+        .unwrap();
+    let (statement, params) = compiled.answer.render();
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL enable_nestloop=off")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let plan: serde_json::Value = sql::bind_scalar(
+        sqlx::query_scalar(&format!("EXPLAIN (ANALYZE,FORMAT JSON) {statement}")),
+        params,
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    fn batches(value: &serde_json::Value, names: &[String]) -> u64 {
+        match value {
+            serde_json::Value::Object(object) => {
+                let own = object
+                    .get("Relation Name")
+                    .and_then(|v| v.as_str())
+                    .filter(|name| names.iter().any(|n| n.as_str() == *name))
+                    .map(|_| {
+                        (object
+                            .get("Actual Rows")
+                            .and_then(|n| n.as_f64())
+                            .unwrap_or(0.0)
+                            * object
+                                .get("Actual Loops")
+                                .and_then(|n| n.as_f64())
+                                .unwrap_or(0.0))
+                        .ceil() as u64
+                    })
+                    .unwrap_or(0);
+                own + object.values().map(|v| batches(v, names)).sum::<u64>()
+            }
+            serde_json::Value::Array(values) => values.iter().map(|v| batches(v, names)).sum(),
+            _ => 0,
+        }
+    }
+    assert_eq!(
+        batches(&plan, &names),
+        0,
+        "indexed search decompressed unrelated history: {plan}"
+    );
+    // The predecessor's protected search semijoin reads the same unrelated
+    // compressed history even though the full-text index selects two events.
+    let original:serde_json::Value=sqlx::query_scalar("EXPLAIN (ANALYZE,FORMAT JSON) SELECT e.id FROM core.visible_events e WHERE EXISTS
+        (SELECT 1 FROM core.visible_search_text s WHERE s.event_id=e.id AND s.tsv @@ plainto_tsquery('simple','specificsearchneedle'))")
+        .fetch_one(&mut *tx).await.unwrap();
+    assert_eq!(original[0]["Plan"]["Actual Rows"].as_f64().unwrap(), 2.0);
+    assert!(
+        batches(&original, &names) >= 8,
+        "original search did not exercise unrelated compressed history: {original}"
+    );
+    tx.rollback().await.unwrap();
+}
