@@ -232,6 +232,7 @@ async fn dirty_ranges_page_compressed_members_once_and_keep_distinct_keys(
     .unwrap();
     sqlx::query(
         r#"INSERT INTO derivation.outputs(derivation,key,event_id) VALUES
+      ($1,'{"label":1.5}','01800000-0000-7000-8000-000000002002'),
       ($1,'{"wrong_kind":true}','01800000-0000-7000-8000-000000002259'),
       ($1,'{"missing":true}','01800000-0000-7000-8000-00000000dead'),
       ('fixture.other_ranges','{"other_owner":true}','01800000-0000-7000-8000-00000000225a')"#,
@@ -280,7 +281,7 @@ async fn dirty_ranges_page_compressed_members_once_and_keep_distinct_keys(
             derived::mark_inputs_dirty(&mut tx, &inputs, 2, &Ranges)
                 .await
                 .unwrap(),
-            299
+            300
         );
         let keys: Vec<Value> =
             sqlx::query_scalar("SELECT key FROM derivation.dirty WHERE derivation=$1 ORDER BY key")
@@ -290,7 +291,10 @@ async fn dirty_ranges_page_compressed_members_once_and_keep_distinct_keys(
                 .unwrap();
         assert_eq!(
             keys.into_iter().collect::<std::collections::HashSet<_>>(),
-            (1..300).map(|n| json!({"label":n})).collect()
+            (1..300)
+                .map(|n| json!({"label":n}))
+                .chain([json!({"label":1.5})])
+                .collect()
         );
     }
     let new_work = sqlx::query_scalar::<_, i64>(work)
@@ -302,6 +306,100 @@ async fn dirty_ranges_page_compressed_members_once_and_keep_distinct_keys(
         new_work <= 8 * 3 * 4 * batches,
         "paged payloads read {new_work} compressed metadata tuples for {batches} batches"
     );
+    // Macro execution on another connection checks the same static SQL
+    // against the schema without seeding this writer's statement cache.
+    let mut checked = PgConnection::connect(&db.url(None)).await.unwrap();
+    let targets = vec![NAME.to_owned()];
+    let first = sqlx::query_file!(
+        "src/admission/affected_output_page.sql",
+        &targets,
+        None::<&str>,
+        None::<&Value>,
+        None::<Uuid>
+    )
+    .fetch_all(&mut checked)
+    .await
+    .unwrap();
+    assert_eq!(first.len(), 256);
+    let last = first.last().unwrap();
+    let second = sqlx::query_file!(
+        "src/admission/affected_output_page.sql",
+        &targets,
+        Some(last.derivation.as_str()),
+        Some(&last.key),
+        Some(last.event_id)
+    )
+    .fetch_all(&mut checked)
+    .await
+    .unwrap();
+    assert_eq!(second.len(), 256);
+    assert!(second.iter().all(|row| {
+        !first
+            .iter()
+            .any(|prior| prior.key == row.key && prior.event_id == row.event_id)
+    }));
+    let ids: Vec<_> = first.iter().map(|row| row.event_id).collect();
+    assert!(
+        ids.len()
+            > ids
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+        "duplicate event has distinct owners in one page"
+    );
+    let owners: Vec<_> = first.iter().map(|row| row.derivation.clone()).collect();
+    let page_keys: Vec<_> = first.iter().map(|row| row.key.clone()).collect();
+    let output_types = vec![KIND.to_owned()];
+    let names = vec![NAME.to_owned(); 2];
+    let types = vec![KIND.to_owned(); 2];
+    let starts = vec!["start".to_owned(); 2];
+    let ends = vec!["end".to_owned(); 2];
+    let from = vec![at(12).0; 2];
+    let until = vec![at(15).0; 2];
+    let open = vec![Some("open".to_owned()); 2];
+    let mut checked_tx = checked.begin().await.unwrap();
+    checked_tx.execute("SET LOCAL plan_cache_mode=force_generic_plan; SET LOCAL max_parallel_workers_per_gather=0").await.unwrap();
+    let before: i64 = sqlx::query_scalar(work)
+        .fetch_one(&mut *checked_tx)
+        .await
+        .unwrap();
+    let checked_keys = sqlx::query_file!(
+        "src/admission/affected_outputs.sql",
+        &ids,
+        &owners,
+        &page_keys,
+        &output_types,
+        &names,
+        &types,
+        &starts,
+        &ends,
+        &from,
+        &until,
+        &open as &[Option<String>]
+    )
+    .fetch_all(&mut *checked_tx)
+    .await
+    .unwrap();
+    assert!(checked_keys.iter().all(|row| row.derivation == NAME));
+    assert_eq!(
+        checked_keys
+            .into_iter()
+            .map(|row| row.key)
+            .collect::<std::collections::HashSet<_>>(),
+        page_keys.into_iter().collect()
+    );
+    let generic_work = sqlx::query_scalar::<_, i64>(work)
+        .fetch_one(&mut *checked_tx)
+        .await
+        .unwrap()
+        - before;
+    assert!(
+        generic_work >= batches,
+        "forced generic read only {generic_work} metadata tuples for {batches} batches"
+    );
+    checked_tx.rollback().await.unwrap();
+    checked.close().await.unwrap();
     // The old per-range/per-ID path is a real work and result control. A
     // forced generic plan is deliberately not claimed to support ID pruning.
     tx.execute("SET LOCAL plan_cache_mode=force_generic_plan")
@@ -323,7 +421,10 @@ async fn dirty_ranges_page_compressed_members_once_and_keep_distinct_keys(
         - before;
     assert_eq!(
         old.into_iter().collect::<std::collections::HashSet<_>>(),
-        (1..300).map(|n| json!({"label":n})).collect()
+        (1..300)
+            .map(|n| json!({"label":n}))
+            .chain([json!({"label":1.5})])
+            .collect()
     );
     assert!(
         old_work >= 598 * batches,
