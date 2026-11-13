@@ -120,6 +120,7 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 - The stream carries reference-only contract version 4 metadata with its database origin, independently of the producer protocol version. Existing streams without that origin are refused and preserved; deployment selects a fresh namespace. A consumer, including status-only and restored-cache requests, needs a valid same-incarnation full-projection certificate when the origin requires it. A changed scope, catalog, incarnation or invalidated projection requests a new projection; unavailable owner evidence refuses without claiming a reset.
 - A NATS outage pauses the publisher, which resumes from its saved position; derivation inside the daemon continues.
 - **Identical post-origin sequences.** For any filter and positions after H, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences. They differ only in fields withheld or carried by reference under the consumer's grants.
+- Publication reads only the selected event and lifecycle routing headers in one exact-ID batch per page, under the page's existing snapshot. Missing live rows retain the tombstone fallback and named unknown-history refusal; batch lookup order never changes feed order or completion barriers.
 
 Producer protocol version 5 carries the actual completion receipt on consumer
 resume requests. Its fingerprint binds the stream instance, native sequence,
