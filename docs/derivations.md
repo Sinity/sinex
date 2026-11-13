@@ -62,6 +62,8 @@ A keyed derivation reads outward until its semantic stop: a genuine gap, a match
 - Before clearing a key, the runner checks for changes since the read in the key's newly computed ranges, not only its former ones. A dirty mark raised during a computation survives that computation's commit.
 - There is no fixed lookback, neighbour count, day edge, event count or maximum duration. A polling horizon may stop periodic refresh, but it never makes a later closer irrelevant: a closer arriving a month late still changes the key.
 
+Admission checks affected output ranges in the same transaction as the input change. Its session writer claim excludes concurrent lifecycle and output-replacement writes throughout the paged check. It traverses the selected derivations' existing output memberships in key order, excluding archived members by event identity. Each transfer page binds its exact event IDs before reading payloads; the payload read is prepared afresh so PostgreSQL can prune compressed batches using those IDs. A range is then tested against that retained payload once, with inclusive endpoints and the declaration's null and open-end rules. All transfer pages contribute to one distinct affected-key set; paging never limits which keys become dirty.
+
 ## Versions
 
 Every event records the producer version of the parser or derivation that made it ([producer versions](events.md#producer-versions-runs-and-manifests)). For derivations that version governs history as follows.
