@@ -85,6 +85,7 @@ pub(crate) struct Compiler<'c> {
     seq: i64,
     next: usize,
     calendar: Option<String>,
+    indexed_words: bool,
 }
 
 /// How field names resolve in a relation.
@@ -239,6 +240,7 @@ impl<'c> Compiler<'c> {
             seq,
             next: 0,
             calendar: None,
+            indexed_words: false,
         }
     }
 
@@ -248,6 +250,7 @@ impl<'c> Compiler<'c> {
             seq,
             next: 0,
             calendar: Some(calendar::setting(ctx)),
+            indexed_words: false,
         }
     }
 
@@ -315,6 +318,21 @@ impl<'c> Compiler<'c> {
             t,
             a,
         };
+
+        let search = (table == Table::Events)
+            .then(|| {
+                q.filter.as_ref().and_then(required_words).or_else(|| {
+                    q.stages
+                        .iter()
+                        .take_while(|stage| matches!(stage, Stage::Where(_)))
+                        .find_map(|stage| match stage {
+                            Stage::Where(filter) => required_words(filter),
+                            _ => None,
+                        })
+                })
+            })
+            .flatten();
+        self.indexed_words = search.is_some();
 
         // Words, for ranking and snippets.
         let mut words = Vec::new();
@@ -471,23 +489,13 @@ impl<'c> Compiler<'c> {
             select.push(snippet);
         }
         let mut from = self.positioned(&base, fields::from(table));
-        if table == Table::Events {
-            let search = q.filter.as_ref().and_then(required_words).or_else(|| {
-                q.stages
-                    .iter()
-                    .take_while(|stage| matches!(stage, Stage::Where(_)))
-                    .find_map(|stage| match stage {
-                        Stage::Where(filter) => required_words(filter),
-                        _ => None,
-                    })
-            });
-            if let Some(words) = search {
-                let hits = self.alias("words");
-                let event = self.alias("event");
-                // Fetch only indexed candidate keys before reading event history.
-                // The complete predicate, visibility and as-of checks still run.
-                from = SqlFragment::text("(SELECT event_id FROM core.search_text WHERE tsv @@ ");
-                from.push(if words.phrase {
+        if let Some(words) = search {
+            let hits = self.alias("words");
+            let event = self.alias("event");
+            // Fetch only indexed candidate keys before reading event history.
+            // The complete predicate, visibility and as-of checks still run.
+            from = SqlFragment::text("(SELECT event_id FROM core.search_text WHERE tsv @@ ");
+            from.push(if words.phrase {
                     "phraseto_tsquery('simple', "
                 } else {
                     "plainto_tsquery('simple', "
@@ -495,7 +503,6 @@ impl<'c> Compiler<'c> {
                 .param(words.words.join(" "))
                 .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT * FROM core.visible_events {event} WHERE {event}.id={hits}.event_id OFFSET 0) "))
                 .push(Self::template(&base, "{t}"));
-            }
         }
         let mut rel = SqlFragment::text("SELECT ");
         rel.append(SqlFragment::join(select, ", "))
