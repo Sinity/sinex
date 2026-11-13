@@ -112,22 +112,32 @@ impl EventProjection for EventReference {
     }
     async fn load(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Self>> {
         let rows = sqlx::query!(
-            "SELECT e.commit_seq,e.id,e.event_type,e.class FROM unnest($1::uuid[]) selected(id)
-            CROSS JOIN LATERAL (SELECT e.commit_seq,e.id,e.event_type,e.class FROM core.events e
-              WHERE e.id=selected.id OFFSET 0) e
-            WHERE NOT EXISTS(SELECT 1 FROM core.event_tombstones t WHERE t.event_id=e.id)",
+            "SELECT e.commit_seq,e.id,e.event_type,e.class FROM core.events e
+            WHERE e.id=ANY($1)
+              AND NOT EXISTS(SELECT 1 FROM core.event_tombstones t WHERE t.event_id=e.id)",
             ids
         )
         .fetch_all(conn)
         .await?;
-        Ok(rows
+        let headers: BTreeMap<_, _> = rows
             .into_iter()
-            .map(|row| Self {
-                commit_seq: row.commit_seq,
-                id: row.id,
-                event_type: row.event_type,
-                class: row.class,
+            .map(|row| {
+                (
+                    row.id,
+                    Self {
+                        commit_seq: row.commit_seq,
+                        id: row.id,
+                        event_type: row.event_type,
+                        class: row.class,
+                    },
+                )
             })
+            .collect();
+        // The batch lookup may reorder or deduplicate keys; callers retain
+        // their requested order and multiplicity, with missing rows omitted.
+        Ok(ids
+            .iter()
+            .filter_map(|id| headers.get(id).cloned())
             .collect())
     }
 }
@@ -231,11 +241,18 @@ async fn read_page<E: EventProjection>(
         .filter(|row| row.kind == 1)
         .map(|row| row.change_seq)
         .collect();
-    let archived_rows=sqlx::query!(r#"SELECT a.change_seq,a.event_id,a.commit_seq,a.archived,a.reason,a.replaced_by,a.operation_id,a.recorded_at,
-        coalesce(e.event_type,t.event_type) AS event_type,coalesce(e.class,t.class) AS class
-        FROM audit.archive_changes a LEFT JOIN LATERAL (SELECT e.event_type,e.class FROM core.events e WHERE e.id=a.event_id OFFSET 0) e ON true
-        LEFT JOIN core.event_tombstones t ON t.event_id=a.event_id WHERE a.change_seq=ANY($1)"#,&archive_ids)
-        .fetch_all(&mut *conn).await?;
+    let archive_events: Vec<_> = rows
+        .iter()
+        .filter(|row| row.kind == 1)
+        .map(|row| row.event_id)
+        .collect();
+    let archived_rows = sqlx::query_file!(
+        "src/commit_log/archive_headers.sql",
+        &archive_ids,
+        &archive_events
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     let mut archived = BTreeMap::new();
     for row in archived_rows {
         let (Some(event_type), Some(class)) = (row.event_type, row.class) else {
@@ -365,3 +382,6 @@ async fn load_events(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Commit
     }
     Ok(events)
 }
+
+#[cfg(test)]
+mod tests;
