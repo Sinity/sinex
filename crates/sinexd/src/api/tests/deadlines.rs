@@ -243,3 +243,43 @@ async fn disconnect_cancels_an_unbounded_read_backend(db: devkit::pg::TestDataba
     }
     sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
 }
+
+#[devkit::test]
+async fn a_first_sql_page_timeout_does_not_publish_an_unread_cursor(db: devkit::pg::TestDatabase) {
+    use age::secrecy::ExposeSecret;
+    let w = world(db).await;
+    let identity = sinex_sealing::Identity::generate();
+    let (_, unlocked) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"unlock", "identity":identity.to_string().expose_secret(), "minutes":5, "deadline":null}),
+    ).await;
+    assert_eq!(unlocked["outcome"], "ok", "{unlocked}");
+    let mut event = command("synthetic sealed page", 0);
+    sinex_sealing::seal_event(&mut event, &sinex_sealing::new_key().unwrap()).unwrap();
+    let statement = format!(
+        "SELECT '{}'::jsonb AS payload FROM generate_series(1,3)",
+        event.payload.to_string().replace('\'', "''")
+    );
+    let mut lock = sqlx::PgConnection::connect(&w._db.url(None)).await.unwrap();
+    sqlx::query("BEGIN").execute(&mut lock).await.unwrap();
+    sqlx::query("LOCK TABLE privacy.data_keys IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut lock)
+        .await
+        .unwrap();
+    let (_, reply) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"sql", "sql":statement, "page":1, "deadline":200}),
+    )
+    .await;
+    assert_eq!(reply["failure"]["kind"], "timeout", "{reply}");
+    let held: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name='sinex.api' AND state IN ('idle in transaction','idle in transaction (aborted)')")
+        .fetch_one(&mut lock).await.unwrap();
+    assert_eq!(
+        held, 0,
+        "a failed first page retained an unreachable cursor"
+    );
+    assert_eq!(active_readers(&mut lock).await, 0);
+    sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
+}

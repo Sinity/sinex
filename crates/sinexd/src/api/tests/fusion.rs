@@ -78,14 +78,14 @@ async fn duplicate_decisions_are_authored_records_citing_both_records(
     let w = world(db).await;
     admit_events(&w, vec![atuin_row("kestrel"), history_line("kestrel")]).await;
     let (row, line) = ids(&w).await;
-    let (status, _) = call(
+    let (status, _) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"distinct","a":row,"b":line}),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (_, first) = call(
+    let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"distinct","a":line,"b":row}),
@@ -103,7 +103,7 @@ async fn duplicate_decisions_are_authored_records_citing_both_records(
     assert_eq!(pair[0], "command.executed:synthetic-row");
 
     // The author's next decision on the pair revises the first.
-    let (_, second) = call(
+    let (_, second) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"same","a":row,"b":line}),
@@ -123,7 +123,7 @@ async fn duplicate_decisions_are_authored_records_citing_both_records(
     );
 
     // Withdrawing writes a record of its own that withdraws the decision.
-    let (_, withdrawn) = call(
+    let (_, withdrawn) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"withdraw-decision","a":row,"b":line}),
@@ -145,7 +145,7 @@ async fn duplicate_decisions_are_authored_records_citing_both_records(
             .all(|p| p["author"] == "operator" && p["via"] == "api")
     );
     // With nothing current, a second withdrawal has nothing to withdraw.
-    let (_, again) = call(
+    let (_, again) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"withdraw-decision","a":row,"b":line}),
@@ -163,7 +163,8 @@ async fn decisions_outside_a_family_or_across_scopes_are_refused(db: devkit::pg:
         ("same", &row, &row, "two different records"),
         ("same", &row, &line, "scopes"),
     ] {
-        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":method,"a":a,"b":b})).await;
+        let (_, answer) =
+            call_unbounded(&w, Some(OPERATOR), json!({"method":method,"a":a,"b":b})).await;
         assert_eq!(answer["outcome"], "failed", "{answer}");
         assert!(
             answer["failure"]["message"]
@@ -174,7 +175,7 @@ async fn decisions_outside_a_family_or_across_scopes_are_refused(db: devkit::pg:
         );
     }
     // Different hosts may still be decided distinct.
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"distinct","a":row,"b":line}),
@@ -187,7 +188,7 @@ async fn decisions_outside_a_family_or_across_scopes_are_refused(db: devkit::pg:
             .fetch_one(&w.reads)
             .await
             .unwrap();
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"same","a":row,"b":format!("sinex:ev/{other}")}),
@@ -234,7 +235,7 @@ async fn library_items_share_duplicate_decisions_without_becoming_one_item(
     admit_events(&w, vec![a, b]).await;
     let mut first_root = Value::Null;
     for method in ["same", "distinct", "withdraw-decision"] {
-        let (_, answer) = call(
+        let (_, answer) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":method,"a":references[0],"b":references[1]}),

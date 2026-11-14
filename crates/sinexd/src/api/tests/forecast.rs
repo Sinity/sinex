@@ -1,12 +1,12 @@
 use super::*;
 
 async fn issue(w: &World, p: &str) -> Value {
-    let (_,body)=call(w,Some(OPERATOR),json!({"method":"forecast-issue","target":"synthetic completion","probability":p,"criteria":"synthetic command observed","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
+    let (_,body)=call_unbounded(w,Some(OPERATOR),json!({"method":"forecast-issue","target":"synthetic completion","probability":p,"criteria":"synthetic command observed","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
     assert_eq!(body["outcome"], "ok", "{body}");
     body["result"].clone()
 }
 async fn score(w: &World, token: &str) -> Value {
-    let (_, body) = call(w, Some(token), json!({"method":"forecast-report"})).await;
+    let (_, body) = call_unbounded(w, Some(token), json!({"method":"forecast-report"})).await;
     assert_eq!(body["outcome"], "ok", "{body}");
     body["result"].clone()
 }
@@ -20,7 +20,7 @@ async fn forecast_public_workflow_withdraws_archived_and_tombstoned_inputs(
     assert!(empty["report"]["brier"].is_null());
     let issued = issue(&w, "0.8").await;
     let issued_ref = issued["citation"].as_str().unwrap();
-    let (_, shown) = call(
+    let (_, shown) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"show","reference":issued_ref}),
@@ -32,18 +32,18 @@ async fn forecast_public_workflow_withdraws_archived_and_tombstoned_inputs(
     let evidence = command("synthetic forecast evidence", 0);
     let evidence_id = evidence.id.0.to_string();
     admit_events(&w, vec![evidence]).await;
-    let (_,unknown)=call(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"unknown","evidence":[evidence_id]})).await;
+    let (_,unknown)=call_unbounded(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"unknown","evidence":[evidence_id]})).await;
     assert_eq!(unknown["outcome"], "ok", "{unknown}");
     assert!(score(&w, OPERATOR).await["report"]["brier"].is_null());
-    let (_,resolved)=call(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"true","evidence":[evidence_id]})).await;
+    let (_,resolved)=call_unbounded(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"true","evidence":[evidence_id]})).await;
     assert_eq!(resolved["outcome"], "ok", "{resolved}");
     let report = score(&w, OPERATOR).await;
     assert!((report["report"]["brier"].as_f64().unwrap() - 0.04).abs() < 1e-12);
     assert_eq!(report["report"]["calibration"][8]["outcome_frequency"], 1.0);
-    let (_,duplicate)=call(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"false","evidence":[evidence_id]})).await;
+    let (_,duplicate)=call_unbounded(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"false","evidence":[evidence_id]})).await;
     assert_eq!(duplicate["outcome"], "failed");
     let resolution = resolved["result"]["citation"].as_str().unwrap();
-    let (_, archived) = call(
+    let (_, archived) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"archive","target":resolution}),
@@ -51,14 +51,14 @@ async fn forecast_public_workflow_withdraws_archived_and_tombstoned_inputs(
     .await;
     assert_eq!(archived["outcome"], "ok", "{archived}");
     assert!(score(&w, OPERATOR).await["report"]["brier"].is_null());
-    let (_, restored) = call(
+    let (_, restored) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"restore","target":resolution}),
     )
     .await;
     assert_eq!(restored["outcome"], "ok", "{restored}");
-    let (_, archived_evidence) = call(
+    let (_, archived_evidence) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"archive","target":evidence_id}),
@@ -67,7 +67,7 @@ async fn forecast_public_workflow_withdraws_archived_and_tombstoned_inputs(
     assert_eq!(archived_evidence["outcome"], "ok", "{archived_evidence}");
     assert!(score(&w, OPERATOR).await["report"]["brier"].is_null());
     for method in ["archive", "tombstone"] {
-        let (_, removed) = call(
+        let (_, removed) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":method,"target":issued_ref}),
@@ -83,10 +83,10 @@ async fn forecast_public_commands_refuse_invalid_inputs_and_ungranted_authors(
 ) {
     let w = world(db).await;
     for p in ["NaN", "inf", "-0.1", "1.01"] {
-        let (_,body)=call(&w,Some(OPERATOR),json!({"method":"forecast-issue","target":"synthetic","probability":p,"criteria":"evidence","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
+        let (_,body)=call_unbounded(&w,Some(OPERATOR),json!({"method":"forecast-issue","target":"synthetic","probability":p,"criteria":"evidence","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
         assert_eq!(body["outcome"], "failed", "{body}");
     }
-    let (_,body)=call(&w,Some(AGENT),json!({"method":"forecast-issue","target":"synthetic","probability":"0.5","criteria":"evidence","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
+    let (_,body)=call_unbounded(&w,Some(AGENT),json!({"method":"forecast-issue","target":"synthetic","probability":"0.5","criteria":"evidence","horizon":"2099-01-01T00:00:00Z","cutoff":"2026-01-01T00:00:00Z"})).await;
     assert_eq!(body["outcome"], "failed", "{body}");
 }
 
@@ -97,7 +97,7 @@ async fn forecast_new_authoring_continues_after_an_unrelated_forecast_is_tombsto
     let w = world(db).await;
     let first = issue(&w, "0.2").await;
     for method in ["archive", "tombstone"] {
-        let (_, body) = call(
+        let (_, body) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":method,"target":first["citation"]}),
@@ -128,7 +128,7 @@ async fn forecast_commands_preserve_temporal_and_evidence_boundaries(db: devkit:
             .as_object_mut()
             .unwrap()
             .extend(change.as_object().unwrap().clone());
-        let (_, body) = call(&w, Some(OPERATOR), request).await;
+        let (_, body) = call_unbounded(&w, Some(OPERATOR), request).await;
         assert_eq!(body["outcome"], "failed", "{body}");
     }
     let issued = issue(&w, "0.8").await;
@@ -144,7 +144,7 @@ async fn forecast_commands_preserve_temporal_and_evidence_boundaries(db: devkit:
             .as_object_mut()
             .unwrap()
             .extend(change.as_object().unwrap().clone());
-        let (_, body) = call(&w, Some(OPERATOR), request).await;
+        let (_, body) = call_unbounded(&w, Some(OPERATOR), request).await;
         assert_eq!(body["outcome"], "failed", "{body}");
     }
     assert_eq!(score(&w, OPERATOR).await["report"]["unresolved"], 1);
@@ -188,7 +188,7 @@ async fn forecast_report_refuses_conflicting_visible_resolution_records(
         );
     }
     admit_events(&w, events).await;
-    let (_, body) = call(&w, Some(OPERATOR), json!({"method":"forecast-report"})).await;
+    let (_, body) = call_unbounded(&w, Some(OPERATOR), json!({"method":"forecast-report"})).await;
     assert_eq!(body["outcome"], "failed", "{body}");
     assert!(
         body["failure"]["message"]

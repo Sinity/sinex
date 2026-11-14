@@ -52,6 +52,12 @@ async fn cli_deadline_cancels_a_locked_read_and_none_waits_for_release() {
     let database = db.url(None);
     let nats = devkit::nats::test_nats().unwrap();
     let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("tokens")).unwrap();
+    std::fs::write(
+        root.path().join("tokens/read.token"),
+        "deadline-test-read-token",
+    )
+    .unwrap();
     let mut process = daemon::daemon(
         &binary,
         &database,

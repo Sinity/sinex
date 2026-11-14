@@ -16,9 +16,9 @@ async fn stage_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     std::fs::write(&history, ": 1600000000:0;synthetic staged command\n").unwrap();
     let staged = json!({"method": "stage", "path": [history], "follow": true});
 
-    let (status, _) = call(&w, Some(READ), staged.clone()).await;
+    let (status, _) = call_unbounded(&w, Some(READ), staged.clone()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, body) = call(&w, Some(AGENT), staged).await;
+    let (status, body) = call_unbounded(&w, Some(AGENT), staged).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["outcome"], "ok", "{body}");
     let result = &body["result"];
@@ -31,7 +31,7 @@ async fn stage_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     );
     let operation = result["operation"].as_str().unwrap().to_owned();
 
-    let (_, shown) = call(
+    let (_, shown) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "stage-show", "operation": operation}),
@@ -41,9 +41,9 @@ async fn stage_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     assert_eq!(shown["result"]["actor"], "agent");
     assert_eq!(shown["result"]["result"], "ok");
     assert_eq!(shown["result"]["inventory"], result["inventory"]);
-    let (_, listed) = call(&w, Some(READ), json!({"method": "stage-list"})).await;
+    let (_, listed) = call_unbounded(&w, Some(READ), json!({"method": "stage-list"})).await;
     assert_eq!(listed["result"]["stages"][0]["operation"], operation);
-    let (_, unfinished) = call(
+    let (_, unfinished) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "stage-list", "active": true}),
@@ -51,7 +51,7 @@ async fn stage_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     .await;
     assert_eq!(unfinished["result"]["stages"], json!([]));
     // An ended stage does not resume.
-    let (_, resumed) = call(
+    let (_, resumed) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "resume", "operation": operation}),
@@ -66,7 +66,7 @@ async fn a_stage_answers_with_its_inventory_before_it_reads(db: devkit::pg::Test
     let w = staging_from(db, dir.path()).await;
     let unknown = dir.path().join("unknown.bin");
     std::fs::write(&unknown, b"synthetic bytes no parser declares").unwrap();
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "stage", "path": [unknown]}),
@@ -82,7 +82,7 @@ async fn a_stage_answers_with_its_inventory_before_it_reads(db: devkit::pg::Test
     let operation = body["result"]["operation"].clone();
     let mut shown = Value::Null;
     for _ in 0..600 {
-        (_, shown) = call(
+        (_, shown) = call_unbounded(
             &w,
             Some(READ),
             json!({"method": "stage-show", "operation": operation}),
@@ -119,7 +119,7 @@ async fn a_stage_of_nothing_readable_is_refused(db: devkit::pg::TestDatabase) {
             "3 parsers for 2 paths",
         ),
     ] {
-        let (_, answer) = call(&w, Some(OPERATOR), body).await;
+        let (_, answer) = call_unbounded(&w, Some(OPERATOR), body).await;
         assert_eq!(answer["outcome"], "failed", "{answer}");
         assert!(
             answer["failure"]["message"]
@@ -129,7 +129,7 @@ async fn a_stage_of_nothing_readable_is_refused(db: devkit::pg::TestDatabase) {
             "{answer}"
         );
     }
-    let (_, missing) = call(
+    let (_, missing) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "stage-show", "operation": uuid::Uuid::now_v7()}),
@@ -157,7 +157,7 @@ async fn an_agent_stages_only_under_the_allowed_roots(db: devkit::pg::TestDataba
     let w = world_with_config(db, config).await;
 
     for refused in [secret.clone(), home.join(".ssh")] {
-        let (_, answer) = call(
+        let (_, answer) = call_unbounded(
             &w,
             Some(AGENT),
             json!({"method": "stage", "path": [refused], "follow": true}),
@@ -168,14 +168,14 @@ async fn an_agent_stages_only_under_the_allowed_roots(db: devkit::pg::TestDataba
         assert!(reason.contains("needs the operator"), "{reason}");
         assert!(reason.contains(&allowed.display().to_string()), "{reason}");
     }
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "stage", "path": [export], "follow": true}),
     )
     .await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method": "stage", "path": [secret], "follow": true}),

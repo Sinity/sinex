@@ -66,15 +66,13 @@ impl Serialize for Call {
 impl<'de> Deserialize<'de> for Call {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut args = Map::<String, Value>::deserialize(deserializer)?;
-        let deadline = args
-            .remove("deadline")
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(serde::de::Error::custom)?
-            .unwrap_or_default();
-        let request =
-            serde_json::from_value(Value::Object(args)).map_err(serde::de::Error::custom)?;
-        Ok(Self { request, deadline })
+        let method = args
+            .remove("method")
+            .ok_or_else(|| serde::de::Error::custom("missing method"))?;
+        let method = method
+            .as_str()
+            .ok_or_else(|| serde::de::Error::custom("method must be a string"))?;
+        Self::from_args(method, args).map_err(serde::de::Error::custom)
     }
 }
 
@@ -515,6 +513,14 @@ impl Request {
             Failure::new(FailureKind::BadRequest, format!("no command `{command}`"))
                 .with_candidates(names)
         })?;
+        for name in args.keys() {
+            if !spec.args.iter().any(|arg| arg.name == name) {
+                return Err(Failure::new(
+                    FailureKind::BadRequest,
+                    format!("`{command}` has no argument `{name}`"),
+                ));
+            }
+        }
         for arg in spec.args {
             if arg.required && args.get(arg.name).is_none_or(Value::is_null) {
                 return Err(Failure::new(

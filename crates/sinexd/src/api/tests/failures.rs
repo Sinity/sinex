@@ -19,7 +19,7 @@ fn failure_of(status: StatusCode, body: &Value, kind: FailureKind, exit: u8) -> 
 async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
 
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events where ("}),
@@ -29,7 +29,7 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
     let bad = failure_of(status, &body, FailureKind::InvalidQuery, 2);
     assert!(bad["caret"].as_str().unwrap().contains('^'), "{bad}");
 
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events where exit_cod = 1"}),
@@ -39,7 +39,7 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
     assert_eq!(unknown["position"]["offset"], 13, "{unknown}");
 
     let missing = uuid::Uuid::now_v7();
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "show", "reference": format!("sinex:ev/{missing}")}),
@@ -47,7 +47,7 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
     .await;
     failure_of(status, &body, FailureKind::NotFound, 4);
 
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "archive", "source": "terminal.atuin"}),
@@ -66,7 +66,7 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
     )
     .await;
     let held = busy.reads.acquire().await.unwrap();
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &busy,
         Some(READ),
         json!({"method": "query", "query": "events"}),
@@ -81,7 +81,7 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
     // another live reading stops early, naming what moved.
     let events: Vec<Event> = (0..600).map(|i| command(&format!("c{i}"), i)).collect();
     submit_events(&w, events).await;
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method": "archive", "source": "terminal.atuin"}),
@@ -90,7 +90,7 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
     assert_eq!(status, StatusCode::OK, "{body}");
     let operation = body["result"]["operation"].as_str().unwrap().to_owned();
     submit_events(&w, vec![command("another reading", 599)]).await;
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method": "restore", "operation": operation}),
@@ -106,7 +106,7 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
 
     // Last: with the read pool closed the database is unavailable.
     w.reads.close().await;
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events"}),

@@ -33,7 +33,7 @@ async fn no_rules_preserve_credential_shaped_payloads_for_equal_grant_callers(
     let expected: Vec<_> = events.iter().map(|event| event.payload.clone()).collect();
     admit_events(&w, events).await;
     for token in [READ, AGENT, OPERATOR] {
-        let (status, reply) = call(
+        let (status, reply) = call_unbounded(
             &w,
             Some(token),
             json!({"method":"query","query":"events | sort by when"}),
@@ -83,7 +83,7 @@ async fn no_rules_preserve_nested_keys_in_follow_and_cursor_pages(db: devkit::pg
     for (row, payload) in rows.iter().zip(&expected) {
         assert_eq!(&row["payload"], payload);
     }
-    let (_, first) = call(
+    let (_, first) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"events | sort by when","page":1}),
@@ -94,7 +94,7 @@ async fn no_rules_preserve_nested_keys_in_follow_and_cursor_pages(db: devkit::pg
     let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
     let next = json!({"method":"query","query":"events | sort by when","page":1,"cursor":cursor});
     for _ in 0..2 {
-        let (_, reply) = call(&w, Some(READ), next.clone()).await;
+        let (_, reply) = call_unbounded(&w, Some(READ), next.clone()).await;
         assert_eq!(reply["outcome"], "ok", "{reply}");
         assert_eq!(reply["result"]["rows"][0]["payload"], expected[1]);
         assert!(reply["result"]["page"]["cursor"].is_null());
@@ -107,7 +107,7 @@ async fn no_rules_preserve_credential_shaped_request_errors(db: devkit::pg::Test
     for quote in ['"', '\''] {
         let text =
             format!("--secret={quote}unfinished --token={quote}synthetic-error-value{quote} tail");
-        let (status, body) = call(
+        let (status, body) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":"recompute","derivation":"synthetic","from":text}),

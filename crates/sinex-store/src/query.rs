@@ -108,9 +108,21 @@ pub async fn set_request_deadline(
     conn: &mut PgConnection,
     remaining: Option<std::time::Duration>,
 ) -> Result<()> {
-    let milliseconds = remaining.map(|duration| duration.as_millis().max(1).to_string());
-    sqlx::query("SELECT set_config('sinex.request_deadline', CASE WHEN $1::text IS NULL THEN '' ELSE (extract(epoch FROM clock_timestamp()) * 1000 + $1::numeric)::text END, false), set_config('statement_timeout', CASE WHEN $1::text IS NULL OR $1::numeric > 2147483647 THEN '0' ELSE $1 END, false)")
-        .bind(milliseconds).execute(conn).await?;
+    let milliseconds = remaining.map(|duration| duration.as_millis().max(1));
+    let deadline: String = sqlx::query_scalar("SELECT CASE WHEN $1::text IS NULL THEN '' ELSE ceil(extract(epoch FROM clock_timestamp()) * 1000 + $1::numeric)::text END")
+        .bind(milliseconds.map(|value| value.to_string())).fetch_one(&mut *conn).await?;
+    // These values come only from numeric arithmetic above and our duration,
+    // never from SQL supplied by a reader. SET works under the read-only role;
+    // set_config remains unavailable to user SQL.
+    sqlx::query(&format!("SET sinex.request_deadline = '{deadline}'"))
+        .execute(&mut *conn)
+        .await?;
+    let timeout = milliseconds
+        .filter(|value| *value <= i32::MAX as u128)
+        .unwrap_or(0);
+    sqlx::query(&format!("SET statement_timeout = '{timeout}ms'"))
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
@@ -118,8 +130,13 @@ pub async fn set_request_deadline(
 /// earlier statements. PostgreSQL interprets zero as unlimited, so an expired
 /// finite budget is one millisecond and is also checked by the request owner.
 pub async fn local_request_deadline(conn: &mut PgConnection) -> Result<()> {
-    sqlx::query("SELECT set_config('statement_timeout', CASE WHEN remaining IS NULL OR remaining > 2147483647 THEN '0' ELSE greatest(1, ceil(remaining))::bigint::text END, true) FROM (SELECT nullif(current_setting('sinex.request_deadline', true), '')::numeric - extract(epoch FROM clock_timestamp()) * 1000 AS remaining) budget WHERE current_setting('sinex.request_deadline', true) IS NOT NULL")
-        .execute(conn).await?;
+    let remaining: Option<i32> = sqlx::query_scalar("SELECT CASE WHEN remaining IS NULL OR remaining > 2147483647 THEN 0 ELSE greatest(1, ceil(remaining))::int END FROM (SELECT nullif(current_setting('sinex.request_deadline', true), '')::numeric - extract(epoch FROM clock_timestamp()) * 1000 AS remaining) budget WHERE current_setting('sinex.request_deadline', true) IS NOT NULL")
+        .fetch_optional(&mut *conn).await?;
+    if let Some(remaining) = remaining {
+        sqlx::query(&format!("SET LOCAL statement_timeout = '{remaining}ms'"))
+            .execute(conn)
+            .await?;
+    }
     Ok(())
 }
 

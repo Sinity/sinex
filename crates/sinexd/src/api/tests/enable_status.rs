@@ -9,7 +9,7 @@ async fn status_lists_exclusions_and_reasons_without_source_runs(db: devkit::pg:
     }}))
     .unwrap();
     let world = world_with_config(db, config).await;
-    let (status, body) = call(&world, Some(READ), json!({"method":"status"})).await;
+    let (status, body) = call_unbounded(&world, Some(READ), json!({"method":"status"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let result = &body["result"];
     assert_eq!(
@@ -41,7 +41,8 @@ async fn sources_discover_dry_run_lists_states_reasons_and_the_census(
     }}))
     .unwrap();
     let world = world_with_config(db, config).await;
-    let (status, body) = call(&world, Some(READ), json!({"method":"sources-discover"})).await;
+    let (status, body) =
+        call_unbounded(&world, Some(READ), json!({"method":"sources-discover"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let inputs = body["result"]["inputs"].as_array().unwrap();
     assert!(
