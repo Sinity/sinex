@@ -42,8 +42,16 @@ impl Reader for PolledReader {
             .expect("reader state")
             .restore(cursor, material)
     }
-    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), drivers::DriverError> {
-        self.0.lock().expect("reader state").restore_memory(memory)
+    fn restore_memory(
+        &mut self,
+        memory: &[u8],
+        anchor: Option<&sinex_model::MaterialRef>,
+        admitted: Option<u64>,
+    ) -> Result<bool, drivers::DriverError> {
+        self.0
+            .lock()
+            .expect("reader state")
+            .restore_memory(memory, anchor, admitted)
     }
     fn restored(&mut self) -> Result<(), drivers::DriverError> {
         self.0.lock().expect("reader state").restored()
@@ -51,8 +59,8 @@ impl Reader for PolledReader {
     fn poll(&mut self, cursor: &Value) -> Result<drivers::Acquired, drivers::DriverError> {
         self.0.lock().expect("reader state").poll(cursor)
     }
-    fn remove_passed(&self, cursor: &Value) -> Result<usize, drivers::DriverError> {
-        self.0.lock().expect("reader state").remove_passed(cursor)
+    fn committed(&mut self, cursor: &Value) -> Result<usize, drivers::DriverError> {
+        self.0.lock().expect("reader state").committed(cursor)
     }
 }
 

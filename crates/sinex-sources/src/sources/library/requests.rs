@@ -209,6 +209,7 @@ pub fn request_material(
     let manifest = request_manifest(&writer, host, at, action);
     let order = i64::try_from(at.unix_ns()).unwrap_or(i64::MAX);
     Acquired {
+        memory: None,
         input: InputRef {
             kind: "operator".into(),
             locator: "library".into(),
@@ -235,7 +236,7 @@ pub fn request_material(
             }),
             aligned: false,
             removed: Vec::new(),
-            memory: None,
+
             owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,

@@ -201,6 +201,7 @@ pub(super) fn stored(acquired: &Acquired) -> (sinex_source_core::binding::Stored
     let length = m.records.last().unwrap().1;
     let bytes = m.record_bytes().record(0, length).unwrap().into_owned();
     let stored = sinex_source_core::binding::StoredMaterial {
+        admitted: Some(length as u64),
         reference: sinex_model::MaterialRef {
             id: m.id,
             input: None,
@@ -227,7 +228,7 @@ fn a_restarted_scan_keeps_item_keys_and_reads_only_changes() {
     let mut first = LibraryReader::new(scan(&root));
     let a = first.poll(&Value::Null).unwrap();
     let (part_a, cursor_a) = stored(&a);
-    let memory = a.material.as_ref().unwrap().memory.clone();
+    let memory = a.memory.as_ref().map(|memory| memory.bytes.clone());
     assert!(memory.is_some(), "the first part saves what the scan knows");
     assert!(first.poll(&cursor_a).unwrap().material.is_none());
 
@@ -247,7 +248,7 @@ fn a_restarted_scan_keeps_item_keys_and_reads_only_changes() {
     let (part_b, _) = stored(&b);
     let mut saved = LibraryReader::new(scan(&root));
     saved.restore(&cursor_b, part_b).unwrap();
-    saved.restore_memory(&memory.unwrap()).unwrap();
+    saved.restore_memory(&memory.unwrap(), None, None).unwrap();
     saved.restored().unwrap();
     std::fs::write(root.join("two.png"), png(30, 30)).unwrap();
     let c = saved.poll(&cursor_b).unwrap();
@@ -575,7 +576,7 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
     let mut reader = LibraryReader::new(scan(&root));
     let first = reader.poll(&Value::Null).unwrap();
     let (_, cursor) = stored(&first);
-    let memory = first.material.as_ref().unwrap().memory.clone().unwrap();
+    let memory = first.memory.as_ref().unwrap().bytes.clone();
     assert_eq!(read(&first, &ScanParser).len(), 2);
     assert_eq!(reader.files_hashed(), 2);
     for _ in 0..3 {
@@ -588,7 +589,7 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
     assert_eq!(reader.files_hashed(), 2);
 
     let mut restarted = LibraryReader::new(scan(&root));
-    restarted.restore_memory(&memory).unwrap();
+    restarted.restore_memory(&memory, None, None).unwrap();
     restarted.restored().unwrap();
     assert!(restarted.poll(&cursor).unwrap().material.is_none());
     assert_eq!(restarted.files_hashed(), 0);
@@ -687,7 +688,7 @@ fn completion_records_do_not_advance_the_file_memory_checkpoint() {
     }
     let mut reader = LibraryReader::new(scan(&root));
     let first = reader.poll(&Value::Null).unwrap();
-    assert!(first.material.as_ref().unwrap().memory.is_some());
+    assert!(first.memory.is_some());
     let (_, mut cursor) = stored(&first);
     for index in 0..3 {
         std::fs::write(
@@ -698,7 +699,7 @@ fn completion_records_do_not_advance_the_file_memory_checkpoint() {
         let acquired = reader.poll(&cursor).unwrap();
         assert_eq!(read(&acquired, &ScanParser).len(), 1);
         assert_eq!(
-            acquired.material.as_ref().unwrap().memory.is_some(),
+            acquired.memory.is_some(),
             index == 2,
             "save memory after a quarter of the twelve files changed"
         );

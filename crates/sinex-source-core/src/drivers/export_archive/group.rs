@@ -335,6 +335,7 @@ pub fn read_input(
         let state = &mut context.routes[index];
         state.cursor.done = true;
         let acquired = Acquired {
+            memory: None,
             input: state.driver.input(),
             observation: ObservationFacts {
                 changed: false,
@@ -376,6 +377,7 @@ impl Context<'_, '_> {
         let manifest = sinex_model::Manifest::from_json(json!({"role": "original-archive",
             "path": state.driver.path, "host": state.driver.host, "container": self.capture.container, "class": self.capture.class}));
         let acquired = Acquired {
+            memory: None,
             input: state.driver.input(),
             observation: self.facts.clone(),
             revision,
@@ -398,7 +400,7 @@ impl Context<'_, '_> {
                 }),
                 aligned: false,
                 removed: Vec::new(),
-                memory: None,
+
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
@@ -591,6 +593,7 @@ impl Context<'_, '_> {
                 "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base.saturating_add(i64::try_from(after.order_offset.saturating_add(part_offset)).unwrap_or(i64::MAX)),
                 "members": [{"path": path, "member_index": member, "member_duplicate": self.member_duplicate, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]}));
             let acquired = Acquired {
+                memory: None,
                 input: state.driver.input(),
                 observation: ObservationFacts {
                     changed: false,
@@ -622,7 +625,7 @@ impl Context<'_, '_> {
                     }),
                     aligned: false,
                     removed: Vec::new(),
-                    memory: None,
+
                     owned_files: Vec::new(),
                 }),
                 cursor_without_material: Value::Null,

@@ -20,7 +20,7 @@ pub struct HeldMaterial {
     cursor_at: CursorAt,
     aligned: bool,
     removed: Vec<RecordLocation>,
-    memory: Option<Arc<[u8]>>,
+    memory: Option<sinex_model::ReaderMemory>,
     owned_files: Vec<super::OwnedFile>,
     input: InputRef,
     observation: ObservationFacts,
@@ -79,7 +79,7 @@ impl HeldMaterial {
             cursor_at,
             aligned: m.aligned,
             removed: m.removed,
-            memory: m.memory,
+            memory: acquired.memory,
             owned_files: m.owned_files,
             input: acquired.input,
             observation: acquired.observation,
@@ -141,6 +141,7 @@ impl HeldMaterial {
         };
         let at = self.cursor_at.clone();
         Ok(Acquired {
+            memory: self.memory.clone(),
             input: self.input.clone(),
             observation,
             revision,
@@ -166,7 +167,6 @@ impl HeldMaterial {
                 } else {
                     Vec::new()
                 },
-                memory: self.memory.clone(),
                 owned_files: if through == 0 {
                     self.owned_files.clone()
                 } else {

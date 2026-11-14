@@ -238,6 +238,7 @@ pub fn material(
     let order =
         i64::try_from(at.unix_ns()).expect("current signal receipt clock fits reading order");
     Acquired {
+        memory: None,
         input: InputRef {
             kind: "signal".into(),
             locator: "host".into(),
@@ -263,7 +264,7 @@ pub fn material(
             cursor_at: Box::new(|_| Ok(Value::Null)),
             aligned: false,
             removed: vec![],
-            memory: None,
+
             owned_files: vec![],
         }),
         cursor_without_material: Value::Null,

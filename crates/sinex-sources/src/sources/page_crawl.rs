@@ -269,6 +269,7 @@ impl sinex_source_core::Reader for Crawl {
             };
             let size = body.len() as u64;
             return Ok(Acquired {
+                memory: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     observed_at: Some(fetched_at),
@@ -293,13 +294,14 @@ impl sinex_source_core::Reader for Crawl {
                     }),
                     aligned: false,
                     removed: Vec::new(),
-                    memory: None,
+
                     owned_files: Vec::new(),
                 }),
                 cursor_without_material: Value::Null,
             });
         }
         Ok(Acquired {
+            memory: None,
             input: self.input(),
             observation: ObservationFacts {
                 observed_at: Some(Timestamp::now()),

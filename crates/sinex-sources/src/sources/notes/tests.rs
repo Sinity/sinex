@@ -334,11 +334,9 @@ fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
     std::fs::write(directory.path().join("a%FF.md"), "same text").unwrap();
     let driver = driver(directory.path().to_owned(), "host".into());
     let mut state = DirState::default();
-    let material = driver
-        .poll(&Value::Null, &mut state)
-        .unwrap()
-        .material
-        .unwrap();
+    let acquired = driver.poll(&Value::Null, &mut state).unwrap();
+    let memory = acquired.memory.as_ref().unwrap().bytes.clone();
+    let material = acquired.material.unwrap();
     let cursor = (material.cursor_at)(material.records.last().unwrap().1).unwrap();
     let outputs = drain(
         &NotesParser,
@@ -385,7 +383,7 @@ fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
     };
     let mut restarted = DirState::default();
     restarted
-        .remember_saved(material.memory.as_deref().unwrap())
+        .remember_saved(&memory, None, cursor["through"].as_u64().unwrap())
         .unwrap();
     restarted.finish_remembering();
     std::fs::remove_file(directory.path().join(raw_name)).unwrap();

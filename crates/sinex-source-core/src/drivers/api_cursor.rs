@@ -60,6 +60,7 @@ impl<A: Api + Send> Reader for ApiCursor<A> {
                 ..previous
             };
             return Ok(Acquired {
+                memory: None,
                 input: self.api.input(),
                 observation,
                 revision: RevisionChange::Same,
@@ -106,6 +107,7 @@ impl<A: Api + Send> Reader for ApiCursor<A> {
             .expect("cursor serializes")
         };
         Ok(Acquired {
+            memory: None,
             input: self.api.input(),
             observation,
             revision: RevisionChange::Snapshot,
@@ -124,7 +126,7 @@ impl<A: Api + Send> Reader for ApiCursor<A> {
                 }),
                 aligned: false,
                 removed: Vec::new(),
-                memory: None,
+
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,

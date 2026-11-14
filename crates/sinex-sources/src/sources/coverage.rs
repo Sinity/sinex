@@ -66,6 +66,7 @@ pub fn observation_material(observation: SourceCoverage) -> Acquired {
     let length = bytes.len();
     let order = i64::try_from(at.unix_ns()).expect("current timestamp fits reading order");
     Acquired {
+        memory: None,
         input: InputRef {
             kind: "source-observation".into(),
             locator: binding,
@@ -92,7 +93,7 @@ pub fn observation_material(observation: SourceCoverage) -> Acquired {
             cursor_at: Box::new(|_| Ok(Value::Null)),
             aligned: false,
             removed: vec![],
-            memory: None,
+
             owned_files: vec![],
         }),
         cursor_without_material: Value::Null,

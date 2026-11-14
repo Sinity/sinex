@@ -460,3 +460,234 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
     assert_eq!(shown, json!({"withheld":"guarded"}));
     ctx.close().await.unwrap();
 }
+
+#[devkit::test]
+async fn predecessor_directory_checkpoint_upgrades_without_new_material_and_survives_restart(
+    db: devkit::pg::TestDatabase,
+) {
+    historical_checkpoint_roundtrip(db, false).await;
+}
+
+#[devkit::test]
+async fn predecessor_saved_memory_recovers_original_removal_locations_from_older_parts(
+    db: devkit::pg::TestDatabase,
+) {
+    historical_checkpoint_roundtrip(db, true).await;
+}
+
+async fn historical_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_source: bool) {
+    use sinex_model::{InputRef, MaterialId, ObservationFacts, ReaderMemory, RevisionChange};
+    use sinex_source_core::drivers::{Acquired, NewMaterial};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), b"alpha").unwrap();
+    std::fs::write(root.join("b.md"), b"beta").unwrap();
+    std::fs::write(root.join("c.md"), b"gamma").unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("UTC", 0, 0).unwrap(),
+    )
+    .await
+    .unwrap();
+    let sink = Sink(ctx.blobs.clone());
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let new_reader = || {
+        let mut reader = BindingReader::new(&notes::FORMAT, binding.clone()).unwrap();
+        if removed_at_source {
+            reader.reading = sinex_source_core::binding::walked(
+                sinex_source_core::drivers::dir_snapshot::DirSnapshot {
+                    root: root.clone(),
+                    host: "synthetic".into(),
+                    select: |name| name.ends_with(".md"),
+                    part_bytes: 4096,
+                    removed_at_source: true,
+                },
+            );
+        }
+        reader
+    };
+    let mut b = new_reader();
+    crate::stage::record(&mut ctx.read_conn, &binding)
+        .await
+        .unwrap();
+    let first_id = MaterialId::new();
+    let anchor_id = MaterialId::new();
+    let last_id = MaterialId::new();
+    let mut old_memory = Vec::new();
+    for (path, bytes) in [
+        (b"a.md", b"alpha".as_slice()),
+        (b"b.md", b"beta".as_slice()),
+    ] {
+        old_memory.extend(4u32.to_le_bytes());
+        old_memory.extend(path);
+        old_memory.push(1);
+        old_memory.extend((bytes.len() as u64).to_le_bytes());
+        old_memory.extend((-17i128).to_le_bytes());
+        old_memory.extend(blake3::hash(bytes).as_bytes());
+    }
+    for (index, id, path, text) in [
+        (0u32, first_id, "a.md", "alpha"),
+        (1, anchor_id, "b.md", "beta"),
+        (2, last_id, "c.md", "gamma"),
+    ] {
+        let mut bytes = vec![0];
+        bytes.extend(text.as_bytes());
+        let length = bytes.len();
+        let cursor = json!({"material":id,"through":length,"part_index":index,
+            "memory_part":1,"changed_since_memory":index.saturating_sub(1),"last_complete_scan_ns":1});
+        let acquired = Acquired {
+            memory: (index == 1).then(|| ReaderMemory {
+                material: id,
+                bytes: old_memory.clone().into(),
+            }),
+            input: InputRef {
+                kind: "directory".into(),
+                locator: root.display().to_string(),
+                host: "synthetic".into(),
+            },
+            observation: ObservationFacts {
+                changed: true,
+                ..Default::default()
+            },
+            revision: RevisionChange::Snapshot,
+            material: Some(NewMaterial {
+                id,
+                bytes,
+                stored: None,
+                records: vec![(1, length)],
+                part_index: index,
+                previous_part: match index {
+                    0 => None,
+                    1 => Some(first_id),
+                    _ => Some(anchor_id),
+                },
+                manifest: sinex_model::Manifest::from_json(
+                    json!({"media_type":"application/x-sinex-file-bundle",
+                    "path":root.display().to_string(),"host":"synthetic","scan_complete":false,
+                    "previous_through":match index {0=>None,1=>Some(6),_=>Some(5)},
+                    "members":[{"path":path,"stream_offset":1,"length":text.len(),"mtime_ns":"-17",
+                        "hash":blake3::hash(text.as_bytes()).to_hex().to_string()}],"records":[[1,length]]}),
+                ),
+                reading_order: Box::new(move |_| sinex_model::ReadingOrder(index as i64)),
+                cursor_at: Box::new(move |_| Ok(cursor.clone())),
+                aligned: false,
+                removed: Vec::new(),
+                owned_files: Vec::new(),
+            }),
+            cursor_without_material: Value::Null,
+        };
+        let prepared = drivers::prepare(
+            b.source.as_ref(),
+            &binding.name,
+            RunId::new(),
+            acquired,
+            Value::Null,
+            &sink,
+            Limits::default(),
+        )
+        .unwrap();
+        for batch in prepared.batches().unwrap() {
+            ctx.writer
+                .submit(crate::writer::Priority::Bulk, batch.unwrap())
+                .await
+                .unwrap();
+        }
+    }
+    let before = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    let before_materials: Vec<(uuid::Uuid, String, Value)> =
+        sqlx::query_as("SELECT id,blob,manifest FROM raw.materials ORDER BY id")
+            .fetch_all(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    let (_stop, stop) = watch::channel(false);
+    restore(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &mut b,
+        Access::default(),
+        &stop,
+    )
+    .await
+    .unwrap();
+    let acquired = polled(&mut b).poll(&before.0).unwrap();
+    assert!(acquired.material.is_none());
+    let checkpoint = acquired.memory.as_ref().unwrap().clone();
+    assert_eq!(checkpoint.material, last_id);
+    assert_eq!(
+        acquired.cursor_without_material["material"],
+        before.0["material"]
+    );
+    assert_eq!(
+        acquired.cursor_without_material["through"],
+        before.0["through"]
+    );
+    let prepared = drivers::prepare(
+        b.source.as_ref(),
+        &binding.name,
+        RunId::new(),
+        acquired,
+        before.1.clone(),
+        &sink,
+        Limits::default(),
+    )
+    .unwrap();
+    for batch in prepared.batches().unwrap() {
+        ctx.writer
+            .submit(crate::writer::Priority::Bulk, batch.unwrap())
+            .await
+            .unwrap();
+    }
+    drop(prepared);
+    // The database committed; simulate losing that ACK before notifying the reader.
+    assert!(polled(&mut b).poll(&before.0).unwrap().memory.is_some());
+    drop(b);
+    let saved = positions::reader_memory(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.material, last_id);
+    assert_eq!(saved.bytes.as_ref(), checkpoint.bytes.as_ref());
+    let mut readers = [new_reader()];
+    turn(&mut ctx, &mut readers, Access::default())
+        .await
+        .unwrap();
+    let after_materials: Vec<(uuid::Uuid, String, Value)> =
+        sqlx::query_as("SELECT id,blob,manifest FROM raw.materials ORDER BY id")
+            .fetch_all(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        after_materials, before_materials,
+        "equal bytes must not create or relabel material"
+    );
+    let after = positions::load(&mut ctx.read_conn, &readers[0].binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.0["material"], before.0["material"]);
+    assert_eq!(after.0["through"], before.0["through"]);
+    assert_eq!(after.1, before.1);
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    turn(&mut ctx, &mut readers, Access::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        note_states(&mut ctx.read_conn).await,
+        [
+            ("a.md".into(), "removed".into()),
+            ("b.md".into(), "present".into()),
+            ("c.md".into(), "present".into())
+        ]
+    );
+    if removed_at_source {
+        let removed: (uuid::Uuid, i64) = sqlx::query_as("SELECT material_id,anchor FROM core.events WHERE event_type='note.document' AND record_state='removed'")
+            .fetch_one(&mut ctx.read_conn).await.unwrap();
+        assert_eq!(removed, (first_id.0, 1));
+    }
+    ctx.close().await.unwrap();
+}

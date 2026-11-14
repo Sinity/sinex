@@ -32,11 +32,12 @@ fn reader(path: &Path) -> Box<dyn Reader> {
 }
 
 /// What the store would hold for the material `acquired` read.
-fn stored(acquired: &Acquired) -> StoredMaterial {
+fn stored(acquired: &Acquired, cursor: &Value) -> StoredMaterial {
     let m = acquired.material.as_ref().unwrap();
     let length = m.records.last().unwrap().1;
     let bytes = m.record_bytes().record(0, length).unwrap().into_owned();
     StoredMaterial {
+        admitted: super::super::cursor_material(cursor).and_then(|(_, through)| through),
         reference: MaterialRef {
             id: m.id,
             input: None,
@@ -85,7 +86,7 @@ fn a_restart_remembers_the_admitted_records_for_aligning_a_rewrite() {
     let m = acquired.material.as_ref().unwrap();
     let end = (m.cursor_at)(11).unwrap();
     let mut restarted = reader(&path);
-    assert!(restarted.restore(&end, stored(&acquired)).unwrap());
+    assert!(restarted.restore(&end, stored(&acquired, &end)).unwrap());
     restarted.restored().unwrap();
     std::fs::write(&path, b"beta\nalpha\nlater\n").unwrap();
     let rewritten = restarted.poll(&end).unwrap();
@@ -104,7 +105,11 @@ fn a_restart_inside_a_material_reads_on_from_the_file() {
     let m = acquired.material.as_ref().unwrap();
     let first = (m.cursor_at)(4).unwrap();
     let mut restarted = reader(&path);
-    assert!(restarted.restore(&first, stored(&acquired)).unwrap());
+    assert!(
+        restarted
+            .restore(&first, stored(&acquired, &first))
+            .unwrap()
+    );
     restarted.restored().unwrap();
     let next = restarted.poll(&first).unwrap();
     let next = next.material.unwrap();

@@ -72,6 +72,7 @@ impl Reader for Media {
         let now = Timestamp::now();
         let Some((stem, path)) = next else {
             return Ok(Acquired {
+                memory: None,
                 input: self.input.clone(),
                 observation: ObservationFacts {
                     observed_at: Some(now),
@@ -109,6 +110,7 @@ impl Reader for Media {
             part_index,
         };
         Ok(Acquired {
+            memory: None,
             input: self.input.clone(),
             observation: ObservationFacts {
                 observed_at: Some(now),
@@ -133,7 +135,7 @@ impl Reader for Media {
                 }),
                 aligned: false,
                 removed: Vec::new(),
-                memory: None,
+
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
@@ -142,7 +144,7 @@ impl Reader for Media {
 
     /// Delete segments up to the committed cursor: their bytes are in the
     /// content store.
-    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
+    fn committed(&mut self, committed: &Value) -> Result<usize, DriverError> {
         (|| -> std::io::Result<usize> {
             let Ok(Cursor {
                 last: Some(last), ..

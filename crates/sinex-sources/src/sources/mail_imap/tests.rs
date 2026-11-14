@@ -509,6 +509,7 @@ fn a_restart_remembers_from_saved_memory_and_later_materials() {
         .restore(
             &cursor,
             sinex_source_core::binding::StoredMaterial {
+                admitted: Some(10),
                 reference: sinex_model::MaterialRef {
                     id: newer,
                     input: None,
@@ -526,7 +527,7 @@ fn a_restart_remembers_from_saved_memory_and_later_materials() {
         )
         .unwrap();
     assert!(more);
-    reader.restore_memory(&memory).unwrap();
+    reader.restore_memory(&memory, None, None).unwrap();
     reader.restored().unwrap();
     let uids: Vec<u32> = reader.known.keys().copied().collect();
     // UID 6 lies past the admitted cursor; UID 2 was expunged later.

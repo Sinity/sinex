@@ -232,6 +232,7 @@ impl AppendFile {
             Ok(f) => f,
             Err(e) => {
                 return Ok(Acquired {
+                    memory: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some(format!("{}: {e}", self.path.display())),
@@ -259,6 +260,7 @@ impl AppendFile {
             && !cursor.is_null()
         {
             return Ok(Acquired {
+                memory: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     changed: false,
@@ -348,6 +350,7 @@ impl AppendFile {
                 };
             if !stable {
                 return Ok(Acquired {
+                    memory: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some("the file changed while it was read".into()),
@@ -401,6 +404,7 @@ impl AppendFile {
                 && previous.mtime_ns == mtime
                 && previous.inode == inode;
             return Ok(Acquired {
+                memory: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     changed: !same_file,
@@ -482,6 +486,7 @@ impl AppendFile {
             manifest.records = Some(records.clone());
         }
         Ok(Acquired {
+            memory: None,
             input: self.input(),
             observation: facts,
             revision,
@@ -500,7 +505,7 @@ impl AppendFile {
                 }),
                 aligned,
                 removed,
-                memory: None,
+
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
