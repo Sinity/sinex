@@ -208,11 +208,27 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 - The `intervals` and `now` query aliases show an open end as unknown and the evidence's age separately.
 - Repairs of malformed source records (ActivityWatch heartbeats, for example) belong to the source's parser, not to this derivation.
 
-Adjacent-transition range reads evaluate eligible live transitions once, then
-find previous observations and future changed-state closers across the touched
-scopes together. Scope count does not multiply scans of the event history;
-same-state refreshes and arbitrarily late closers remain in reach.
-An empty day returns its original range before unrelated history is normalized.
+Adjacent-transition range reads first find the day's touched scopes, then stream
+narrow observation metadata once in time order. Only one boundary state per
+touched scope is retained. Scope count does not multiply history scans; an empty
+day returns before history is streamed. The reader and fold share the same Rust
+scope, subject and stable record-key interpretation. Scope takes the first
+string `scope` or `bucket`, including an empty string, then the captured record
+identity. Focus uses a nonempty window ID or `class:` plus the class; workspace
+uses `workspace:` plus the first non-null ID or name, preserving literal strings
+and serialized non-string JSON. Missing subjects never count as same-state refreshes.
+AFK observations participate in the same scope-normalized range rather than a
+separate field-based neighbour lookup. Every refresh through the first actual
+closer remains in reach, including stored evidence whose clock is later than
+the runner's clock. All observations at the closing microsecond reach the fold,
+which applies recorded sequence and stable record ordering to their parents.
+
+This corrects input selection for the existing version 3 fold; its full-input
+output identities and semantic version are unchanged. Runs retain the new build
+identity. Dirty and waiting keys use ordinary replacement, retaining superseded
+readings as history. Closed historical keys require explicit selective
+recomputation; deploying this reader does not repair them automatically or retire
+unrelated interval families. Original observations and their material remain intact.
 
 ## Documents and tags
 

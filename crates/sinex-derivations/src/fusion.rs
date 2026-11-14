@@ -40,13 +40,14 @@
 //! inside it (and duplicate rows whose earlier side does), so each is emitted
 //! exactly once. Identifier matches are exact among the observations a key
 //! reads.
-use crate::derived_event::{derived_json, record_identity};
+use crate::derived_event::derived_json;
 use crate::{AnyKeyed, Computed, Env, InputQuery, KeyState, KeyView, Kind, Neighbour};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::duplicate::{Decision, Duplicate};
 use sinex_model::event_types::fused::{
     Basis, ConsideredPair, Joined, Member as FusedMember, PairState, StandingDecision, Strategy,
 };
+use sinex_model::record::identity as record_identity;
 use sinex_model::{Event, EventId, EventPayload, Origin, RecordState, Timestamp};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

@@ -1,12 +1,14 @@
 //! Delayed mark links use native record identities or exact session containment.
 //! A command record a fused command joins is linked through the fused one.
-use crate::activity::{evidence, stable};
-use crate::derived_event::{derived, record_identity};
+use crate::activity::evidence;
+use crate::derived_event::derived;
 use crate::fusion::commands;
 use crate::observed::FOCUS;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::portfolio::MarkLink;
+use sinex_model::record::identity as record_identity;
+use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 
 pub struct MarkLinks;

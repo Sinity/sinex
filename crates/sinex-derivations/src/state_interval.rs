@@ -25,6 +25,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use sinex_model::event_types::StateInterval;
+use sinex_model::state_transition::{self, SubjectField};
 use sinex_model::{Event, EventPayload, Origin, Timestamp};
 use std::collections::BTreeMap;
 
@@ -48,11 +49,12 @@ impl Interruption {
     }
 
     fn of(event_type: &str, payload: &Value) -> Option<Self> {
-        let field = |f: &str| payload.get(f).and_then(Value::as_str);
-        match event_type {
-            "presence.span" if field("status") == Some("afk") => Some(Self::Afk),
-            _ => None,
-        }
+        [Self::Afk].into_iter().find(|stop| {
+            stop.neighbour()
+                .kinds
+                .iter()
+                .any(|kind| kind.admits(event_type, payload))
+        })
     }
 }
 
@@ -71,7 +73,7 @@ pub struct IntervalRule {
     pub state_kind: &'static str,
     pub event_types: &'static [&'static str],
     pub shape: Shape,
-    pub subject: fn(&Value) -> Option<String>,
+    pub subject: &'static [SubjectField],
     pub label: fn(&Value) -> Option<String>,
     /// Payload fields copied into the interval's attributes.
     pub attributes: &'static [&'static str],
@@ -105,11 +107,16 @@ pub const RULES: &[IntervalRule] = &[
         state_kind: "desktop.focus",
         event_types: &["window.focused"],
         shape: Shape::AdjacentTransitions,
-        subject: |p| {
-            text(p, "window")
-                .map(str::to_owned)
-                .or_else(|| text(p, "class").map(|c| format!("class:{c}")))
-        },
+        subject: &[
+            SubjectField::Text {
+                field: "window",
+                prefix: "",
+            },
+            SubjectField::Text {
+                field: "class",
+                prefix: "class:",
+            },
+        ],
         label: |p| app_and_title(p, "class", "title"),
         attributes: &["window", "class", "title", "scope", "host"],
         ended_by: &[Interruption::Afk],
@@ -118,11 +125,16 @@ pub const RULES: &[IntervalRule] = &[
         state_kind: "desktop.workspace",
         event_types: &["workspace.switched"],
         shape: Shape::AdjacentTransitions,
-        subject: |p| {
-            scalar(p, "workspace_id")
-                .or_else(|| scalar(p, "workspace_name"))
-                .map(|w| format!("workspace:{w}"))
-        },
+        subject: &[
+            SubjectField::Scalar {
+                field: "workspace_id",
+                prefix: "workspace:",
+            },
+            SubjectField::Scalar {
+                field: "workspace_name",
+                prefix: "workspace:",
+            },
+        ],
         label: |p| {
             text(p, "workspace_name")
                 .map(str::to_owned)
@@ -135,7 +147,10 @@ pub const RULES: &[IntervalRule] = &[
         state_kind: "desktop.activitywatch.afk",
         event_types: &["presence.span"],
         shape: Shape::Span { end: "ended_at" },
-        subject: |p| text(p, "status").map(|s| format!("status:{s}")),
+        subject: &[SubjectField::Text {
+            field: "status",
+            prefix: "status:",
+        }],
         label: |p| text(p, "status").map(str::to_owned),
         attributes: &["bucket", "status", "scope", "host"],
         ended_by: &[],
@@ -175,7 +190,7 @@ impl<'a> Open<'a> {
         Self {
             start: event,
             at,
-            subject: (rule.subject)(p),
+            subject: state_transition::subject(rule.subject, p),
             label: (rule.label)(p),
             refreshes: Vec::new(),
             attributes: rule
@@ -279,8 +294,8 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
                 let current = Open::new(rule, e, at);
                 match &mut open {
                     None => open = Some(current),
-                    // A tie: the later-committed transition takes the state's
-                    // place; no zero-length interval.
+                    // A tie: the later transition in recorded/stable order takes
+                    // the state's place; no zero-length interval.
                     Some(o) if o.at == at => *o = current,
                     Some(o) if o.same_subject(&current) => o.refresh(&current),
                     Some(_) => {
@@ -339,18 +354,8 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
     out
 }
 
-fn captured_scope(event: &Event) -> String {
-    crate::activity::stable(event)
-}
-
 fn scope_key(event: &Event) -> String {
-    event
-        .payload
-        .get("scope")
-        .and_then(Value::as_str)
-        .or_else(|| event.payload.get("bucket").and_then(Value::as_str))
-        .map(str::to_owned)
-        .unwrap_or_else(|| captured_scope(event))
+    state_transition::scope(&event.payload, || sinex_model::record::stable(event))
 }
 
 fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a>> {
@@ -373,7 +378,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
             (
                 event.ts_orig.at,
                 event.reading_order,
-                crate::activity::stable(event),
+                sinex_model::record::stable(event),
             )
         });
         result.extend(fold_one(rule, &scoped));
@@ -446,18 +451,20 @@ impl Keyed for StateIntervals {
                     start,
                     end,
                     kinds: r.event_types.iter().map(|kind| Kind::all(kind)).collect(),
-                    scope_field: "scope",
-                    subject_fields: if r.state_kind == "desktop.focus" {
-                        vec!["window", "class"]
-                    } else {
-                        vec!["workspace_id", "workspace_name"]
-                    },
+                    subjects: r.subject,
+                    interruptions: r
+                        .ended_by
+                        .iter()
+                        .flat_map(|f| f.neighbour().kinds)
+                        .collect(),
                 })
             }
             Shape::Span { .. } => {}
         }
-        for f in r.ended_by {
-            q.after.push(f.neighbour());
+        if !matches!(r.shape, Shape::AdjacentTransitions) {
+            for f in r.ended_by {
+                q.after.push(f.neighbour());
+            }
         }
         Some(q)
     }

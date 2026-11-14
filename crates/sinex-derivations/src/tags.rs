@@ -1,11 +1,12 @@
 //! Declared rules attach tags to events, including events with unknown time.
 //! Every matching tag is an attributed derived record; rules never change
 //! the input payload. A rule change gives a new derivation version.
-use crate::derived_event::{derived, record_identity};
+use crate::derived_event::derived;
 use crate::{AnyPerEvent, Env, Input, Reads};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::event_types::TagApplied;
+use sinex_model::record::identity as record_identity;
 use sinex_model::{Event, EventPayload};
 use std::collections::BTreeMap;
 

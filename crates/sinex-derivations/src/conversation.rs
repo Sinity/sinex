@@ -169,7 +169,7 @@ impl Keyed for ConversationDays {
                         (
                             e.source.clone(),
                             e.equivalence_key.as_ref().map(|key| key.0.clone()),
-                            crate::derived_event::record_identity(e),
+                            sinex_model::record::identity(e),
                         ),
                     )
                 });

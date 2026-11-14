@@ -6,58 +6,6 @@
 use serde_json::Value;
 use sinex_model::{BuildError, Class, Event, EventId, EventPayload, Origin, ReadingOrder};
 
-/// A stable name for the record an event was read from: `<type>:<native id>`
-/// when the payload carries the source's own ID; for other captured events,
-/// `<source>:<type>:<equivalence key>` when the record has a key, so a re-read
-/// into a new material keeps it, and its record location otherwise;
-/// `<type>:<equivalence key>` for a derived event, whose ID changes with
-/// every recompute. It survives a replay, unlike the event ID.
-pub fn record_identity(event: &Event) -> String {
-    let location = match &event.origin {
-        Origin::Record {
-            location,
-            output_index,
-        } => Some((
-            location.material.to_string(),
-            location.anchor,
-            *output_index,
-        )),
-        Origin::Derived { .. } => None,
-    };
-    record_citation(
-        &event.event_type,
-        &event.source,
-        &event.payload,
-        location,
-        event.equivalence_key.as_ref().map(|key| key.0.as_str()),
-        &event.id.to_string(),
-    )
-}
-
-/// [`record_identity`] from an event's parts, for callers that read events
-/// as rows: its type, source and payload, its record location (material,
-/// anchor, output) when captured, its equivalence key, and its ID.
-pub fn record_citation(
-    event_type: &str,
-    source: &str,
-    payload: &Value,
-    location: Option<(String, u64, u64)>,
-    equivalence_key: Option<&str>,
-    id: &str,
-) -> String {
-    if let Some(native) = payload.get("native_id").and_then(Value::as_str) {
-        return format!("{event_type}:{native}");
-    }
-    match (location, equivalence_key) {
-        (Some(_), Some(key)) => format!("{source}:{event_type}:{key}"),
-        (Some((material, anchor, output_index)), None) => {
-            format!("{material}:{anchor}:{output_index}")
-        }
-        (None, Some(key)) => format!("{event_type}:{key}"),
-        (None, None) => id.to_owned(),
-    }
-}
-
 /// A derived event from `payload` with `inputs` as parents. The reading order
 /// is set by the driver when it submits the key's outputs.
 pub fn derived<'a, P: EventPayload>(

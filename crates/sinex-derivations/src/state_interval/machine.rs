@@ -1,6 +1,6 @@
 //! Native machine transitions share the state-interval product and admission path.
 use super::*;
-use crate::activity::stable;
+use sinex_model::record::stable;
 const UNIT: &[&str] = &["unit.started", "unit.stopped", "boot.started"];
 const SLEEP: &[&str] = &["sleep.started", "sleep.ended", "boot.started"];
 

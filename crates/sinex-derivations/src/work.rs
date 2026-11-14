@@ -1,11 +1,12 @@
 //! Work is keyed by recorded tasks, pull requests or repository branches. Session lifetimes do not
 //! create operator time; every act, episode and resume pack is a stored event.
-use crate::activity::{SECOND, evidence, stable, union_seconds};
+use crate::activity::{SECOND, evidence, union_seconds};
 use crate::derived_event::derived;
 use crate::observed::{REST, is_sleep, sleep_kinds};
 use crate::{AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::{activity::Agency, work::*};
+use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 

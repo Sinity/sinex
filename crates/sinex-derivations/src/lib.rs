@@ -156,8 +156,8 @@ pub enum InputRange {
         start: Timestamp,
         end: Timestamp,
         kinds: Vec<Kind>,
-        scope_field: &'static str,
-        subject_fields: Vec<&'static str>,
+        subjects: &'static [sinex_model::state_transition::SubjectField],
+        interruptions: Vec<Kind>,
     },
     /// From `start` until the next selected payload time, or `now` while open.
     UntilNext {
@@ -208,11 +208,14 @@ impl Kind {
     }
 
     pub fn admits(&self, event_type: &str, payload: &Value) -> bool {
-        self.event_type == event_type
-            && self
-                .equal
+        sinex_model::state_transition::matches(
+            &self.event_type,
+            self.equal
                 .iter()
-                .all(|(f, v)| payload.get(f).is_some_and(|p| p == v))
+                .map(|(field, value)| (field.as_str(), value)),
+            event_type,
+            payload,
+        )
     }
 }
 
