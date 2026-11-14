@@ -57,17 +57,19 @@ pub fn copy_escape(bytes: &[u8]) {
 async fn copy_escape_in(connection: &mut sqlx::PgConnection, text: &str) {
     use sqlx::Executor;
     connection.execute("TRUNCATE copy_input").await.unwrap();
-    let mut encoded = String::new();
-    sinex_store::copy_text::escape(&mut encoded, text);
-    encoded.push('\n');
-    let mut copy = connection
+    let copy = connection
         .copy_in_raw("COPY copy_input FROM STDIN")
         .await
         .unwrap();
-    copy.send(encoded.into_bytes()).await.unwrap();
+    let mut copy = sinex_store::copy_text::CopyText::new(copy);
+    copy.text(text).await.unwrap();
+    copy.end_row().await.unwrap();
     let result = copy.finish().await;
     if text.contains('\0') {
         let error = result.expect_err("PostgreSQL text refuses NUL");
+        let sinex_store::Error::Database(error) = error else {
+            panic!("expected PostgreSQL refusal: {error}");
+        };
         assert_eq!(
             error.as_database_error().and_then(|e| e.code()).as_deref(),
             Some("22021")

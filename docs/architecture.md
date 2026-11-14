@@ -100,7 +100,7 @@ No stage waits on another that has nothing to do with its data, and the one seri
 
 - **acquisition** of bytes from inputs, live inputs before bulk;
 - **parsing** on blocking workers with permits, at most one batch parsed ahead of the batch awaiting its answer, memory bounded by waiting;
-- **one writer**: one classification snapshot, one binary `COPY` and one commit per batch;
+- **one writer**: one classification snapshot, one text `COPY` and one commit per batch;
 - **bulk transactions bounded by duration**, with live batches served between them;
 - **consumers** (derivations, read models, publisher) each with their own position.
 

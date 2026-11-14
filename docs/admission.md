@@ -28,7 +28,7 @@ A producer is told success only after commit. Detector hits are not written here
 
 - **A session advisory lock** refuses a second writer. The counter row makes allocation order equal commit order for any number of writers, so a reader never skips a position even if two writers ever run.
 - **Priorities**: live before derived before bulk, decided at transaction boundaries. Bulk transactions are bounded by duration, with live batches served between them. Each binding reads a bounded turn, then yields. Turn and batch budgets schedule work and never cap input.
-- **Set-based writes**: one binary `COPY` into a staging table, one classification snapshot, a fixed number of set-based statements; round trips never grow with the number of rows replaced.
+- **Set-based writes**: one streaming text `COPY` into a staging table, one classification snapshot, a fixed number of set-based statements; round trips never grow with the number of rows replaced. COPY uses a fixed 64 KiB buffer and bounded JSON string fragments; payloads, string keys and other fields stream through it without a whole-batch or whole-field encoded copy. JSON keeps the same compact serialization and COPY escaping. Network backpressure yields within that stream while the same admission transaction remains atomic.
 - **Parsing** runs on blocking workers with permits, at most one batch parsed ahead of the batch awaiting its answer, so memory is bounded by waiting rather than by a cap on input.
 
 ## Failures and progress
