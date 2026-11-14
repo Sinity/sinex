@@ -10,7 +10,6 @@ use sinex_model::{
 use sqlx::{Connection, Executor};
 
 const INITIAL: &str = include_str!("input_state.sql");
-const CURRENT: &str = include_str!("is_current.sql");
 const OLD: &str = "SELECT (SELECT coalesce(max(commit_seq),0) FROM core.events WHERE event_type=ANY($1)),(SELECT coalesce(max(a.change_seq),0) FROM audit.archive_changes a JOIN core.events e ON e.id=a.event_id WHERE e.event_type=ANY($1)),(SELECT value FROM core.counters WHERE name='tombstoned')";
 fn kinds() -> Vec<String> {
     vec!["command.imported".into()]
@@ -254,7 +253,6 @@ async fn comparison_snapshot_survives_retry_and_keeps_exact_build_contract(
 }
 
 const INITIAL_OLD: &str = include_str!("predecessor_initial.sql");
-const INITIAL_CANDIDATE: &str = include_str!("candidate_initial.sql");
 async fn table_work(conn: &mut PgConnection) -> i64 {
     sqlx::query_scalar("SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid='audit.archive_changes'::regclass OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))")
         .fetch_one(conn).await.unwrap()
@@ -297,10 +295,6 @@ async fn comparison_initial_kind_first_and_suffix_work_avoid_unrelated_history(
     .fetch_one(&mut checked)
     .await
     .unwrap();
-    sqlx::query_file!("src/derivations/selection/candidate_initial.sql", &kinds())
-        .fetch_one(&mut checked)
-        .await
-        .unwrap();
     checked.close().await.unwrap();
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     // Old matching records precede a long unrelated hot tail. The planner's
@@ -331,7 +325,7 @@ async fn comparison_initial_kind_first_and_suffix_work_avoid_unrelated_history(
         let a = state_sql(&mut measured, INITIAL_OLD, &inputs).await;
         let old_work = table_work(&mut measured).await - before;
         let before = table_work(&mut measured).await;
-        let b = state_sql(&mut measured, INITIAL_CANDIDATE, &inputs).await;
+        let b = state_sql(&mut measured, INITIAL, &inputs).await;
         let kind_work = table_work(&mut measured).await - before;
         eprintln!("initial scope {inputs:?}: old={old_work}, kind-first={kind_work}");
         assert_eq!(a, b);
@@ -373,7 +367,7 @@ async fn comparison_initial_kind_first_and_suffix_work_avoid_unrelated_history(
     let baseline = state_sql(&mut tx, INITIAL_OLD, &kinds()).await;
     let old_work = table_work(&mut tx).await - before;
     let before = table_work(&mut tx).await;
-    let current = state_sql(&mut tx, INITIAL_CANDIDATE, &kinds()).await;
+    let current = state_sql(&mut tx, INITIAL, &kinds()).await;
     let new_work = table_work(&mut tx).await - before;
     eprintln!("initial fingerprint tuple visits: global-feed={old_work},kind-first={new_work}");
     assert_eq!(baseline, current);
@@ -391,7 +385,7 @@ async fn comparison_initial_kind_first_and_suffix_work_avoid_unrelated_history(
     ] {
         assert_eq!(
             state_sql(&mut tx, INITIAL_OLD, &inputs).await,
-            state_sql(&mut tx, INITIAL_CANDIDATE, &inputs).await
+            state_sql(&mut tx, INITIAL, &inputs).await
         );
     }
     tx.commit().await.unwrap();
