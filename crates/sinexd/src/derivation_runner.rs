@@ -878,7 +878,7 @@ impl DerivationRunner {
                 }
             }
         }
-        if derivations::selection::input_state(&mut self.read, &input_types).await? != input_state {
+        if !input_state.is_current(&mut self.read, &input_types).await? {
             return Err(Error::conflict(
                 "producer inputs changed during comparison; compare again",
             ));
@@ -1033,7 +1033,7 @@ impl DerivationRunner {
             }
         }
         // An input removed after the read cannot leave a comparison eligible to switch.
-        if derivations::selection::input_state(&mut self.read, &inputs).await? != snapshot {
+        if !snapshot.is_current(&mut self.read, &inputs).await? {
             return Err(Error::conflict(
                 "producer inputs changed during comparison; compare again",
             ));

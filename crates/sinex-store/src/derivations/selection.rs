@@ -3,24 +3,40 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct InputState {
     pub commit: i64,
     pub changes: i64,
     pub tombstoned: i64,
+    /// Native positions through which this statement saw committed rows.
+    /// They bound later reads; unrelated newer rows do not invalidate it.
+    pub through_commit: i64,
+    pub through_changes: i64,
 }
 
 pub async fn input_state(conn: &mut PgConnection, inputs: &[String]) -> Result<InputState> {
-    let (commit, changes, tombstoned): (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT coalesce(max(commit_seq),0) FROM core.events WHERE event_type=ANY($1)),
-          (SELECT coalesce(max(a.change_seq),0) FROM audit.archive_changes a JOIN core.events e ON e.id=a.event_id WHERE e.event_type=ANY($1)),
-          (SELECT value FROM core.counters WHERE name='tombstoned')")
-        .bind(inputs).fetch_one(conn).await?;
-    Ok(InputState {
-        commit,
-        changes,
-        tombstoned,
-    })
+    Ok(sqlx::query_as(include_str!("selection/input_state.sql"))
+        .bind(inputs)
+        .persistent(false)
+        .fetch_one(conn)
+        .await?)
+}
+
+impl InputState {
+    /// A committed input or visibility change after this snapshot invalidates
+    /// it. The one writer assigns new commit/change positions; tombstones are
+    /// the only operation that removes stored input rows and keep their
+    /// existing global counter check. Old timestamps and UUIDs are irrelevant.
+    pub async fn is_current(&self, conn: &mut PgConnection, inputs: &[String]) -> Result<bool> {
+        Ok(sqlx::query_scalar(include_str!("selection/is_current.sql"))
+            .bind(inputs)
+            .bind(self.through_commit)
+            .bind(self.through_changes)
+            .bind(self.tombstoned)
+            .persistent(false)
+            .fetch_one(conn)
+            .await?)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,10 +99,13 @@ pub(crate) async fn validate(
         context.get("inputs").cloned().unwrap_or_default(),
     )
     .map_err(|_| Error::Invalid("comparison has no input snapshot; compare again".into()))?;
-    if input_state(conn, &selected.inputs).await? != compared {
+    if !compared.is_current(conn, &selected.inputs).await? {
         return Err(Error::Invalid(
             "producer inputs changed after comparison; compare again".into(),
         ));
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
