@@ -1,3 +1,4 @@
+mod historical;
 mod restore_tar;
 
 use super::*;
@@ -356,11 +357,11 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
     restored
         .remember_members(&material.manifest, material.records[0].1 as u64)
         .unwrap();
-    let empty = Some((
-        0,
-        restored.files[Path::new("a.md")].unwrap().1,
-        *blake3::hash(b"").as_bytes(),
-    ));
+    let empty = Some(FileFacts {
+        size: 0,
+        hash: *blake3::hash(b"").as_bytes(),
+        ..restored.files[Path::new("a.md")].unwrap()
+    });
     assert_eq!(restored.files.get(Path::new("a.md")), Some(&empty));
     assert!(!restored.files.contains_key(Path::new("sub/b.md")));
     let mut malformed = material.manifest.clone();
@@ -377,7 +378,7 @@ fn a_restart_remembers_the_files_of_admitted_records_only() {
         .remember_members(&material.manifest, u64::MAX)
         .unwrap();
     assert_eq!(
-        restored.files[Path::new("sub/b.md")].map(|(size, _, hash)| (size, hash)),
+        restored.files[Path::new("sub/b.md")].map(|file| (file.size, file.hash)),
         Some((4, *blake3::hash(b"beta").as_bytes()))
     );
     assert!(
@@ -497,22 +498,22 @@ impl super::super::MaterialSink for FixtureSink {
 #[devkit::test]
 fn saved_memory_round_trips_and_newer_bundles_win() {
     let files: FileMemory = HashMap::from([
-        (PathBuf::from("a.md"), Some((5, -3, [1; 32]))),
+        (PathBuf::from("a.md"), Some(known(5, -3, [1; 32]))),
         (
             PathBuf::from("sub/é.md"),
-            Some((0, 1_700_000_000_000_000_000, [2; 32])),
+            Some(known(0, 1_700_000_000_000_000_000, [2; 32])),
         ),
         (PathBuf::from("unknown.md"), None),
     ]);
-    let memory = restore::memory_of(&files, &HashMap::new());
+    let memory = restore::memory_of(&files, &HashMap::new(), 0);
     let mut state = DirState::default();
     // A newer bundle already decided a.md.
     state.remembered.insert(PathBuf::from("a.md"));
     state
         .files
-        .insert(PathBuf::from("a.md"), Some((9, 9, [9; 32])));
-    state.remember_saved(&memory).unwrap();
-    assert_eq!(state.files[Path::new("a.md")], Some((9, 9, [9; 32])));
+        .insert(PathBuf::from("a.md"), Some(known(9, 9, [9; 32])));
+    state.remember_saved(&memory, None, 0).unwrap();
+    assert_eq!(state.files[Path::new("a.md")], Some(known(9, 9, [9; 32])));
     assert_eq!(
         state.files[Path::new("sub/é.md")],
         files[Path::new("sub/é.md")]
@@ -520,7 +521,7 @@ fn saved_memory_round_trips_and_newer_bundles_win() {
     assert_eq!(state.files[Path::new("unknown.md")], None);
     assert!(
         DirState::default()
-            .remember_saved(&memory[..memory.len() - 1])
+            .remember_saved(&memory[..memory.len() - 1], None, 0)
             .is_err()
     );
 }
@@ -543,6 +544,7 @@ fn native_names_survive_capture_restart_changes_and_removal() {
     }
     let d = driver(dir.path().to_owned(), 1 << 20);
     let first = d.poll(&Value::Null, &mut DirState::default()).unwrap();
+    let memory = first.memory.as_ref().unwrap().bytes.clone();
     let material = first.material.unwrap();
     assert_eq!(material.records.len(), names.len());
     let displays: HashSet<_> = material
@@ -576,7 +578,7 @@ fn native_names_survive_capture_restart_changes_and_removal() {
         let mut state = DirState::default();
         if saved {
             state
-                .remember_saved(material.memory.as_ref().unwrap())
+                .remember_saved(&memory, None, cursor["through"].as_u64().unwrap())
                 .unwrap();
         } else {
             state
@@ -591,7 +593,7 @@ fn native_names_survive_capture_restart_changes_and_removal() {
     }
     let mut state = DirState::default();
     state
-        .remember_saved(material.memory.as_ref().unwrap())
+        .remember_saved(&memory, None, cursor["through"].as_u64().unwrap())
         .unwrap();
     state.finish_remembering();
     std::fs::write(dir.path().join(&names[0]), "changed bytes").unwrap();
@@ -917,7 +919,7 @@ fn changing_files_retry_even_when_their_facts_return_to_the_cached_values() {
     let mut state = DirState::default();
     state.files.insert(
         PathBuf::from("a.md"),
-        Some((size, mtime, *blake3::hash(b"prior").as_bytes())),
+        Some(known(size, mtime, *blake3::hash(b"prior").as_bytes())),
     );
     let d = driver(dir.path().to_owned(), 1024);
     // Enumeration saw an intermediate size; capture sees the cached size again.
@@ -944,7 +946,7 @@ fn failed_files_retry_even_when_their_facts_match_the_cache() {
     let mut state = DirState::default();
     state.files.insert(
         PathBuf::from("a.md"),
-        Some((
+        Some(known(
             facts.len(),
             tar::change_time(&facts),
             *blake3::hash(b"prior").as_bytes(),
@@ -972,7 +974,7 @@ fn an_unstable_file_with_unchanged_content_retains_its_new_metadata() {
     let mut state = DirState::default();
     state.files.insert(
         PathBuf::from("a.md"),
-        Some((size, mtime, *blake3::hash(b"same").as_bytes())),
+        Some(known(size, mtime, *blake3::hash(b"same").as_bytes())),
     );
     let d = driver(dir.path().to_owned(), 1024);
     let changed = poll_entries(
@@ -990,4 +992,13 @@ fn an_unstable_file_with_unchanged_content_retains_its_new_metadata() {
     let cursor = final_cursor(&retry);
     assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
     assert!(state.retries.is_empty());
+}
+
+fn known(size: u64, changed_ns: i128, hash: [u8; 32]) -> FileFacts {
+    FileFacts {
+        size,
+        hash,
+        modified_ns: None,
+        changed_ns: Some(changed_ns),
+    }
 }

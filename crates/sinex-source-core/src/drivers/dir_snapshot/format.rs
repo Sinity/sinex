@@ -4,9 +4,25 @@ use sinex_model::Manifest;
 
 pub(crate) const MEDIA_TYPE: &str = "application/x-tar";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DirectoryFormat {
+    Tar,
+    FramedBundle,
+}
+
+pub(super) fn stored_format(manifest: &Manifest) -> Option<DirectoryFormat> {
+    if !manifest.details.contains_key("scan_complete") {
+        return None;
+    }
+    match manifest.media_type.as_deref() {
+        Some(MEDIA_TYPE) => Some(DirectoryFormat::Tar),
+        Some("application/x-sinex-file-bundle") => Some(DirectoryFormat::FramedBundle),
+        _ => None,
+    }
+}
+
 pub(crate) fn is_directory(manifest: &Manifest) -> bool {
-    manifest.media_type.as_deref() == Some(MEDIA_TYPE)
-        && manifest.details.contains_key("scan_complete")
+    stored_format(manifest).is_some()
 }
 
 /// Check that a tar's records are distinct, ordered and each exactly one
@@ -23,6 +39,7 @@ pub(crate) fn validate(manifest: &Manifest, records: &[(usize, usize)]) -> Resul
     if records.windows(2).any(|pair| pair[0].1 > pair[1].0) {
         return Err(RecordError::new("directory record ranges overlap"));
     }
+    let mut paths = std::collections::HashSet::new();
     for &(start, end) in records {
         if start > end {
             return Err(RecordError::new("invalid directory record range"));
@@ -30,6 +47,10 @@ pub(crate) fn validate(manifest: &Manifest, records: &[(usize, usize)]) -> Resul
         let member = manifest
             .member_at(start)
             .ok_or_else(|| RecordError::new("directory record has no unambiguous member"))?;
+        let path = super::paths::native(member).map_err(|e| RecordError::new(e.to_string()))?;
+        if !paths.insert(path) {
+            return Err(RecordError::new("directory capture repeats a member path"));
+        }
         if member.stream_offset != start as u64 || member.length != (end - start) as u64 {
             return Err(RecordError::new(
                 "directory record range differs from its member",

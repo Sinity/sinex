@@ -82,6 +82,7 @@ fn batches_are_drained_lazily() {
     let (framed, _) = lines(&bytes);
     let total = bytes.len();
     let acquired = Acquired {
+        memory: None,
         input: InputRef {
             kind: "file".into(),
             locator: "/t".into(),
@@ -104,7 +105,7 @@ fn batches_are_drained_lazily() {
             }),
             aligned: false,
             removed: vec![],
-            memory: None,
+
             owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,
@@ -284,6 +285,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
     let bytes = b"decoded\n".to_vec();
     let decoded_len = bytes.len();
     let acquired = Acquired {
+        memory: None,
         input: InputRef {
             kind: "file".into(),
             locator: "/t".into(),
@@ -310,7 +312,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
             }),
             aligned: false,
             removed: vec![],
-            memory: None,
+
             owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,
@@ -355,6 +357,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
         parser: Counting,
     };
     let acquired = Acquired {
+        memory: None,
         input: InputRef {
             kind: "file".into(),
             locator: "synthetic".into(),
@@ -375,7 +378,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             cursor_at: Box::new(|_| Err(DriverError::Read("synthetic cursor read failure".into()))),
             aligned: false,
             removed: Vec::new(),
-            memory: None,
+
             owned_files: Vec::new(),
         }),
     };

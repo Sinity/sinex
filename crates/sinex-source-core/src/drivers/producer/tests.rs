@@ -919,7 +919,7 @@ fn failed_spool_segments_survive_cleanup_and_native_paths_survive_position_resta
     let accepted = dir.path().join("000000000001.ndjson");
     std::fs::write(&failed, b"failed captured bytes\n").unwrap();
     std::fs::write(&accepted, b"stored captured bytes\n").unwrap();
-    let driver = super::super::live_stream::LiveStream {
+    let mut driver = super::super::live_stream::LiveStream {
         spool: dir.path().to_owned(),
         input: sinex_model::InputRef {
             kind: "socket".into(),
@@ -934,7 +934,7 @@ fn failed_spool_segments_survive_cleanup_and_native_paths_survive_position_resta
     .unwrap();
     let mut protected = cursor;
     protected["keep_files"] = json!([failed.as_os_str().as_bytes()]);
-    assert_eq!(driver.remove_passed(&protected).unwrap(), 1);
+    assert_eq!(driver.committed(&protected).unwrap(), 1);
     assert!(failed.exists());
     assert!(!accepted.exists());
 }

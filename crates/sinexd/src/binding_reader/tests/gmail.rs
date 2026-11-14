@@ -275,6 +275,7 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
         {
             let next = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
             Ok(sinex_source_core::drivers::Acquired {
+                memory: None,
                 input: sinex_model::InputRef {
                     kind: "synthetic".into(),
                     locator: "progress".into(),

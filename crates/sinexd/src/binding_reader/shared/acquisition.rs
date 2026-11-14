@@ -34,6 +34,7 @@ pub(super) async fn retain(
     });
     let file = std::fs::File::open(&acquisition.path)?;
     let acquired = drivers::Acquired {
+        memory: None,
         input: InputRef {
             kind: "export".into(),
             locator: acquisition.path.display().to_string(),
@@ -53,7 +54,7 @@ pub(super) async fn retain(
             cursor_at: Box::new(move |_| Ok(next.clone())),
             aligned: false,
             removed: Vec::new(),
-            memory: None,
+
             owned_files: Vec::new(),
         }),
         cursor_without_material: cursor,

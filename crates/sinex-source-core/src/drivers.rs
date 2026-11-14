@@ -85,6 +85,8 @@ impl DriverError {
 
 /// What one poll of an input produced.
 pub struct Acquired {
+    /// Reader cache committed with this poll, including a poll with no new material.
+    pub memory: Option<sinex_model::ReaderMemory>,
     pub input: InputRef,
     pub observation: ObservationFacts,
     pub revision: RevisionChange,
@@ -165,10 +167,6 @@ pub struct NewMaterial {
     /// Records the previous revision held that a rewrite dropped, by where
     /// they were read: each becomes a removed-at-source reading.
     pub removed: Vec<sinex_model::RecordLocation>,
-    /// What the reader remembers once this material is fully admitted, when
-    /// it saves its memory at this part ([`memory_due`]). It is committed
-    /// with the cursor at the material's end.
-    pub memory: Option<std::sync::Arc<[u8]>>,
     /// Files the material's events own (a library file's bytes), stored with
     /// the material.
     pub owned_files: Vec<OwnedFile>,
@@ -248,6 +246,7 @@ pub fn batches(
 
 /// One poll with its material stored, ready to be drained into batches.
 pub struct Prepared<'s> {
+    memory: Option<sinex_model::ReaderMemory>,
     source: &'s dyn Source,
     binding: String,
     host: Option<String>,
@@ -324,6 +323,7 @@ pub fn prepare<'s>(
         }
     };
     Ok(Prepared {
+        memory: acquired.memory,
         source,
         binding: binding.to_owned(),
         host: None,
@@ -392,7 +392,7 @@ impl Prepared<'_> {
                     self.carry.clone(),
                     self.observation.clone(),
                     self.revision,
-                    None,
+                    self.memory.clone(),
                 ),
                 records: vec![],
                 archive: vec![],
@@ -447,14 +447,7 @@ impl Prepared<'_> {
             } else {
                 chunk.end
             };
-            let memory =
-                m.memory
-                    .as_ref()
-                    .filter(|_| end == full)
-                    .map(|bytes| sinex_model::ReaderMemory {
-                        material: m.id,
-                        bytes: bytes.clone(),
-                    });
+            let memory = self.memory.as_ref().filter(|_| end == full).cloned();
             let (observation, revision) = if first {
                 (self.observation.clone(), self.revision)
             } else {

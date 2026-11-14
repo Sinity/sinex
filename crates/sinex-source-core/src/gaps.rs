@@ -64,6 +64,7 @@ pub fn material(
     bytes.push(b'\n');
     let length = bytes.len();
     crate::drivers::Acquired {
+        memory: None,
         input: InputRef {
             kind: "capture-gap".into(),
             locator: gap.stream.clone(),
@@ -89,7 +90,7 @@ pub fn material(
             cursor_at: Box::new(|_| Ok(serde_json::Value::Null)),
             aligned: false,
             removed: vec![],
-            memory: None,
+
             owned_files: vec![],
         }),
         cursor_without_material: serde_json::Value::Null,

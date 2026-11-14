@@ -386,11 +386,11 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
             }
             self.inner.poll(cursor)
         }
-        fn remove_passed(
-            &self,
+        fn committed(
+            &mut self,
             cursor: &serde_json::Value,
         ) -> Result<usize, sinex_source_core::drivers::DriverError> {
-            self.inner.remove_passed(cursor)
+            self.inner.committed(cursor)
         }
     }
     let sinex_source_core::Reading::Polled(inner) =

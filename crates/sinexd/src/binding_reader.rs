@@ -354,7 +354,7 @@ pub(crate) async fn read(
                     let _publication = publication.enter().await;
                     match positions::load(conn, &b.binding.name).await {
                         Ok(Some((cursor, _))) => reader
-                            .remove_passed(&cursor)
+                            .committed(&cursor)
                             .map(|_| totals)
                             .map_err(Error::from),
                         Ok(None) => Ok(totals),
@@ -457,6 +457,7 @@ pub(crate) async fn restore_reader(
         return Ok(Class::default());
     };
     let saved = positions::reader_memory(conn, binding).await?;
+    let mut admitted = drivers::cursor_material(&cursor).and_then(|(_, through)| through);
     let mut reached_saved = false;
     let mut floor = Class::default();
     let mut newest_revision = None;
@@ -473,6 +474,8 @@ pub(crate) async fn restore_reader(
             .last()
             .and_then(|(reference, _)| reference.previous_part);
         for (reference, revision) in page {
+            let through = admitted.take();
+            admitted = reference.manifest.previous_through;
             if *stop.borrow() {
                 return Err(Error::new(
                     command_surface::FailureKind::Cancelled,
@@ -481,7 +484,10 @@ pub(crate) async fn restore_reader(
             }
             if saved.as_ref().is_some_and(|m| m.material == reference.id) {
                 reached_saved = true;
-                break 'parts;
+                let memory = saved.as_ref().expect("matched saved memory");
+                if !reader.restore_memory(&memory.bytes, Some(&reference), through)? {
+                    break 'parts;
+                }
             }
             let bytes = crate::material_access::MaterialOnDemand::new(
                 conn,
@@ -494,6 +500,7 @@ pub(crate) async fn restore_reader(
             let more = reader.restore(
                 &cursor,
                 sinex_source_core::StoredMaterial {
+                    admitted: through,
                     reference,
                     bytes: Arc::new(bytes),
                     same_revision: revision == newest_revision,
@@ -504,9 +511,8 @@ pub(crate) async fn restore_reader(
             }
         }
     }
-    if let Some(saved) = saved.filter(|_| reached_saved) {
-        reader.restore_memory(&saved.bytes)?;
-        // The parts the saved memory stands for were not opened.
+    if reached_saved {
+        // The saved memory may stand for parts whose bytes were never opened.
         if sinex_store::positions::has_sealed_material(conn, binding).await? {
             floor = Class::Sealed;
         }
