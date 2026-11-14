@@ -638,12 +638,27 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
     };
     // First COPY row reaches a native lock; the escaped second row fills the
     // socket so task cancellation exercises the streaming encoder itself.
-    let mut large = events[0].clone();
-    large.id = sinex_model::EventId::new();
-    large.payload["command"] = serde_json::Value::String("\"\\\n🦀".repeat(2 << 20));
-    if let sinex_model::Origin::Record { location, .. } = &mut large.origin {
-        location.anchor = 1;
-    }
+    let large = {
+        let mut payload: sinex_model::event_types::CommandImported =
+            serde_json::from_value(events[0].payload.clone()).unwrap();
+        payload.command = [char::from(34), char::from(92), char::from(10), '🦀']
+            .into_iter()
+            .collect::<String>()
+            .repeat(2 << 20);
+        let mut origin = events[0].origin.clone();
+        if let sinex_model::Origin::Record { location, .. } = &mut origin {
+            location.anchor = 1;
+        }
+        sinex_model::Event::build(
+            &payload,
+            &events[0].source,
+            origin,
+            sinex_model::ReadingOrder(2),
+            *blake3::hash(payload.command.as_bytes()).as_bytes(),
+            events[0].class,
+        )
+        .unwrap()
+    };
     events.push(large);
     let material = match events[0].origin {
         sinex_model::Origin::Record { location, .. } => location.material,

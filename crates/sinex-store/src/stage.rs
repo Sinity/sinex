@@ -238,13 +238,11 @@ impl<'c> Encoder<'c> {
             ),
             None => Field::Null,
         };
-        let hash = format!(
-            "\\x{}",
-            e.record_hash
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-        );
+        use std::fmt::Write;
+        let mut hash = String::from("\\x");
+        for byte in e.record_hash {
+            let _ = write!(hash, "{byte:02x}");
+        }
         let fields = [
             Field::Small(ord.to_string()),
             Field::Small(e.id.0.to_string()),

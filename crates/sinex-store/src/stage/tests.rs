@@ -198,21 +198,23 @@ async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
     }
     let mut tx = conn.begin().await.unwrap();
     sqlx::raw_sql("CREATE TEMP TABLE copy_wire (LIKE core.admission_stage INCLUDING ALL); ALTER TABLE copy_wire ALTER COLUMN payload TYPE text USING payload::text").execute(&mut *tx).await.unwrap();
-    let copy = tx
-        .copy_in_raw(&format!("COPY copy_wire ({COLUMNS}) FROM STDIN"))
-        .await
-        .unwrap();
-    let mut encoder = Encoder::new(copy);
-    encoder.captured = Some(Vec::new());
-    for (i, e) in events.iter().enumerate() {
-        encoder.row(i as i64, e).await.unwrap();
+    {
+        let copy = tx
+            .copy_in_raw(&format!("COPY copy_wire ({COLUMNS}) FROM STDIN"))
+            .await
+            .unwrap();
+        let mut encoder = Encoder::new(copy);
+        encoder.captured = Some(Vec::new());
+        for (i, e) in events.iter().enumerate() {
+            encoder.row(i as i64, e).await.unwrap();
+        }
+        encoder.flush().await.unwrap();
+        assert_eq!(encoder.captured.take().unwrap(), expected.as_bytes());
+        assert_eq!(encoder.peak, COPY_BYTES);
+        assert_eq!(encoder.bytes.capacity(), COPY_BYTES);
+        assert!(encoder.fragment_peak <= 6 * JSON_STRING_BYTES + 2);
+        encoder.copy.finish().await.unwrap();
     }
-    encoder.flush().await.unwrap();
-    assert_eq!(encoder.captured.take().unwrap(), expected.as_bytes());
-    assert_eq!(encoder.peak, COPY_BYTES);
-    assert_eq!(encoder.bytes.capacity(), COPY_BYTES);
-    assert!(encoder.fragment_peak <= 6 * JSON_STRING_BYTES + 2);
-    encoder.copy.finish().await.unwrap();
     let rows=sqlx::query("SELECT ord,id,event_type,source,payload,equivalence_key,parents,record_hash FROM copy_wire ORDER BY ord")
         .fetch_all(&mut *tx).await.unwrap();
     for (i, (row, e)) in rows.iter().zip(&events).enumerate() {
@@ -262,20 +264,22 @@ async fn streaming_copy_bounds_scratch_for_one_huge_field_and_many_rows(
     );
     drop(predecessor);
     let mut tx = conn.begin().await.unwrap();
-    let copy = tx
-        .copy_in_raw(&format!("COPY core.admission_stage ({COLUMNS}) FROM STDIN"))
-        .await
-        .unwrap();
-    let mut encoder = Encoder::new(copy);
-    for (i, e) in events.iter().enumerate() {
-        encoder.row(i as i64, e).await.unwrap();
+    {
+        let copy = tx
+            .copy_in_raw(&format!("COPY core.admission_stage ({COLUMNS}) FROM STDIN"))
+            .await
+            .unwrap();
+        let mut encoder = Encoder::new(copy);
+        for (i, e) in events.iter().enumerate() {
+            encoder.row(i as i64, e).await.unwrap();
+        }
+        encoder.flush().await.unwrap();
+        assert_eq!(encoder.peak, COPY_BYTES);
+        assert_eq!(encoder.bytes.capacity(), COPY_BYTES);
+        assert!(encoder.fragment_peak <= 6 * JSON_STRING_BYTES + 2);
+        assert!(encoder.messages > 256);
+        encoder.copy.finish().await.unwrap();
     }
-    encoder.flush().await.unwrap();
-    assert_eq!(encoder.peak, COPY_BYTES);
-    assert_eq!(encoder.bytes.capacity(), COPY_BYTES);
-    assert!(encoder.fragment_peak <= 6 * JSON_STRING_BYTES + 2);
-    assert!(encoder.messages > 256);
-    encoder.copy.finish().await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.admission_stage")
             .fetch_one(&mut *tx)
