@@ -41,7 +41,7 @@ fn contents(computed: &Computed) -> Vec<IntervalContents> {
 async fn compare_full(conn: &mut PgConnection, state: &str) -> Computed {
     let env = environment();
     let key = key(state, &env);
-    let query = StateIntervals.inputs(&key, &env).unwrap();
+    let query = Keyed::inputs(&StateIntervals, &key, &env).unwrap();
     let bounded = sinex_store::derivations::read_window(conn, &to_window(&query, env.now))
         .await
         .unwrap();
@@ -55,12 +55,14 @@ async fn compare_full(conn: &mut PgConnection, state: &str) -> Computed {
     let full = sinex_store::derivations::read_window(conn, &full)
         .await
         .unwrap();
-    let expected = StateIntervals.compute(
+    let expected = Keyed::compute(
+        &StateIntervals,
         &key,
         &full.into_iter().map(|r| r.event).collect::<Vec<_>>(),
         &env,
     );
-    let actual = StateIntervals.compute(
+    let actual = Keyed::compute(
+        &StateIntervals,
         &key,
         &bounded.into_iter().map(|r| r.event).collect::<Vec<_>>(),
         &env,
@@ -189,7 +191,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     .unwrap();
     w.admit(vec![workspace.clone()]).await;
     let stop_template = Event::build(
-        &sinex_model::event_types::PresenceSpan {
+        &sinex_model::event_types::desktop::PresenceSpan {
             scope: None,
             host: None,
             bucket: "template".into(),
@@ -426,10 +428,10 @@ impl Keyed for MissingPrior {
     const INPUTS: &'static [&'static str] = <StateIntervals as Keyed>::INPUTS;
     const OUTPUTS: &'static [&'static str] = <StateIntervals as Keyed>::OUTPUTS;
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
-        StateIntervals.keys_for(input, env)
+        Keyed::keys_for(&StateIntervals, input, env)
     }
     fn inputs(&self, selected: &Value, env: &Env) -> Option<InputQuery> {
-        let mut query = StateIntervals.inputs(selected, env)?;
+        let mut query = Keyed::inputs(&StateIntervals, selected, env)?;
         if *selected == key("desktop.focus", env) {
             query.range = None;
             query.window = Some((
@@ -442,10 +444,10 @@ impl Keyed for MissingPrior {
         Some(query)
     }
     fn compute(&self, selected: &Value, inputs: &[Event], env: &Env) -> Computed {
-        StateIntervals.compute(selected, inputs, env)
+        Keyed::compute(&StateIntervals, selected, inputs, env)
     }
     fn key_state(&self, selected: &Value, env: &Env) -> KeyState {
-        StateIntervals.key_state(selected, env)
+        Keyed::key_state(&StateIntervals, selected, env)
     }
 }
 

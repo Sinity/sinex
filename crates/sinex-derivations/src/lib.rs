@@ -209,8 +209,10 @@ impl Kind {
 
     pub fn admits(&self, event_type: &str, payload: &Value) -> bool {
         sinex_model::state_transition::matches(
-            self.event_type,
-            self.equal.iter().map(|(field, value)| (*field, value)),
+            &self.event_type,
+            self.equal
+                .iter()
+                .map(|(field, value)| (field.as_str(), value)),
             event_type,
             payload,
         )
