@@ -10,9 +10,9 @@
 //! once for each. Time measured across sources is the union of their
 //! intervals, so overlapping records never count a second twice.
 use crate::Kind;
-use crate::derived_event::record_identity;
 use serde_json::{Map, Value, json};
 use sinex_model::clock::IntervalEnd;
+use sinex_model::record::identity as record_identity;
 use sinex_model::{Event, RecordState, Timestamp};
 
 /// One source kind of a family.

@@ -18,8 +18,10 @@ pub mod manifest;
 pub mod payload;
 pub mod privacy;
 pub mod query;
+pub mod record;
 pub mod source;
 pub mod stage;
+pub mod state_transition;
 pub mod time_settings;
 
 pub use accounting::Accounting;

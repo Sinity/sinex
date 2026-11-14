@@ -174,7 +174,7 @@ fn equal_time_messages_use_record_identity_instead_of_reading_ids() {
         chat("#same", "ann", 0, ChatLineKind::Message),
         chat("#same", "bob", 0, ChatLineKind::Message),
     ];
-    messages.sort_by_key(crate::derived_event::record_identity);
+    messages.sort_by_key(sinex_model::record::identity);
     let ids = [messages[0].id, messages[1].id];
     messages[0].id = *ids.iter().max().unwrap();
     messages[1].id = *ids.iter().min().unwrap();

@@ -3,11 +3,11 @@
 //! replay of either side. The fusion derivation reads decisions as inputs.
 use super::*;
 use crate::{Error, Result};
-use sinex_derivations::derived_event::record_citation;
 use sinex_derivations::fusion::{Family, families};
 use sinex_model::EventPayload;
 use sinex_model::Timestamp;
 use sinex_model::event_types::duplicate::{Decision, Duplicate};
+use sinex_model::record::citation as record_citation;
 
 /// One record a decision is about, as read for the caller.
 struct Side {

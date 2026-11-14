@@ -5,12 +5,13 @@
 //! Focus, plays, visits, copies and rest are read as each source recorded
 //! them ([`crate::observed`]); commands as fused commands plus the command
 //! records no fused command joins, so a command two shells saw counts once.
-use crate::derived_event::{derived, record_identity};
+use crate::derived_event::derived;
 use crate::observed::{FOCUS, PLAYS, REST};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::clock::IntervalEnd;
 use sinex_model::event_types::activity::{ActivityCounts, ActivityEvidence};
+use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 use std::collections::BTreeMap;
 
@@ -55,19 +56,6 @@ const INPUTS: &[&str] = &[
 
 pub(crate) fn timestamp(ns: i128) -> Timestamp {
     Timestamp::from_unix_ns(ns).expect("an instant within a recorded interval")
-}
-
-pub(crate) fn stable(event: &Event) -> String {
-    serde_json::to_string(&(
-        &event.source,
-        &event.event_type,
-        event
-            .equivalence_key
-            .as_ref()
-            .map(|key| key.0.clone())
-            .unwrap_or_else(|| record_identity(event)),
-    ))
-    .expect("record identity serializes")
 }
 
 pub(crate) fn evidence(event: &Event) -> ActivityEvidence {

@@ -199,7 +199,7 @@ impl DocumentText {
                     record: serde_json::to_string(&(
                         &copy_event.source,
                         &copy_event.event_type,
-                        sinex_derivations::derived_event::record_identity(copy_event),
+                        sinex_model::record::identity(copy_event),
                     ))
                     .expect("record identity serializes"),
                     content: copy.content.clone(),

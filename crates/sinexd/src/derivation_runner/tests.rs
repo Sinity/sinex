@@ -566,7 +566,7 @@ impl sinex_derivations::PerEvent for Echo {
         let c: CommandImported = input.payload_as().unwrap();
         Ok(vec![sinex_derivations::derived_event::derived(
             &CommandFused {
-                record: sinex_derivations::derived_event::record_identity(input),
+                record: sinex_model::record::identity(input),
                 command: c.command.to_uppercase(),
                 host: c.hostname,
                 started_at: c.started_at.expect("echo fixture has a zsh header"),

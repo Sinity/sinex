@@ -259,12 +259,15 @@ fn inputs_ask_for_the_transitions_after_the_day() {
         q.event_types().contains(&"presence.span".to_string()),
         "interruptions are inputs"
     );
-    assert_eq!(
-        q.after.len(),
-        1,
-        "AFK closer is separate from the structural next-state range"
+    let Some(InputRange::StateTransitions { interruptions, .. }) = q.range else {
+        panic!("structural transition range")
+    };
+    assert!(
+        interruptions
+            .iter()
+            .any(|kind| kind.admits("presence.span", &json!({"status":"afk"}))),
+        "scope-normalized interruptions bound the same range"
     );
-    assert!(matches!(q.range, Some(InputRange::StateTransitions { .. })));
 }
 
 #[devkit::test]

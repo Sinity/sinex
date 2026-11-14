@@ -1,11 +1,12 @@
 //! Exact project ownership from recorded acts and deployment-owned repository keys.
 //! Ambiguous owners conserve time as unallocated; titles never establish ownership.
-use crate::activity::{evidence, stable};
+use crate::activity::evidence;
 use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::activity::{ActivitySpan, Agency};
 use sinex_model::event_types::work::{ProjectShare, ProjectSpan, WorkAct};
+use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 use std::collections::BTreeSet;
 

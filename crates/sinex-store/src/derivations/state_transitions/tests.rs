@@ -1,4 +1,24 @@
 use super::*;
+const FOCUS: &[SubjectField] = &[
+    SubjectField::Text {
+        field: "window",
+        prefix: "",
+    },
+    SubjectField::Text {
+        field: "class",
+        prefix: "class:",
+    },
+];
+const WORKSPACE: &[SubjectField] = &[
+    SubjectField::Scalar {
+        field: "workspace_id",
+        prefix: "workspace:",
+    },
+    SubjectField::Scalar {
+        field: "workspace_name",
+        prefix: "workspace:",
+    },
+];
 use crate::{AdmissionContext, NoDerivations};
 use sinex_model::event_types::{
     desktop::{WindowFocused, WorkspaceSwitched},
@@ -63,34 +83,6 @@ fn kinds(scope: Option<&str>) -> Vec<Kind> {
         ),
     }]
 }
-async fn previous_bounds(
-    conn: &mut PgConnection,
-    kinds: &[Kind],
-    start: OffsetDateTime,
-    end: OffsetDateTime,
-    subjects: &[&str],
-    now: OffsetDateTime,
-) -> (OffsetDateTime, OffsetDateTime) {
-    let (types, contains) = kind_arrays(kinds);
-    let subjects: Vec<_> = subjects.iter().map(|field| field.to_string()).collect();
-    let (from, until): (Option<OffsetDateTime>, Option<OffsetDateTime>) =
-        sqlx::query_as(include_str!("previous.sql"))
-            .bind(types)
-            .bind(contains)
-            .bind(start)
-            .bind(end)
-            .bind("scope")
-            .bind(subjects)
-            .bind(now)
-            .fetch_one(conn)
-            .await
-            .unwrap();
-    (
-        from.unwrap_or(start),
-        until.unwrap_or(end) + time::Duration::microseconds(1),
-    )
-}
-
 #[devkit::test]
 async fn set_bounds_keep_prior_refreshes_late_closers_and_live_membership(
     db: devkit::pg::TestDatabase,
@@ -130,81 +122,51 @@ async fn set_bounds_keep_prior_refreshes_late_closers_and_live_membership(
         &NoDerivations,
     )
     .await;
-    // Commit order defines the predecessor SQL's equal-time latest row. The
-    // fold's recorded-sequence ordering is a separate correctness obligation.
-    admit(&mut conn, vec![focus(700, Some("tie"), Some("a"), None)]).await;
-    admit(&mut conn, vec![focus(700, Some("tie"), Some("b"), None)]).await;
+    // The recorded sequence wins over reversed commit order at one time.
+    let mut a = focus(700, Some("tie"), Some("a"), None);
+    a.reading_order = ReadingOrder(20);
+    let mut b = focus(700, Some("tie"), Some("b"), None);
+    b.reading_order = ReadingOrder(10);
+    admit(&mut conn, vec![a]).await;
+    admit(&mut conn, vec![b]).await;
     admit(
         &mut conn,
-        vec![focus(DAY + 5, Some("tie"), Some("a"), None)],
+        vec![
+            focus(DAY + 5, Some("tie"), Some("a"), None),
+            focus(DAY + 15, Some("tie"), Some("b"), None),
+        ],
     )
     .await;
     for (scope, from, until) in [
         (Some("alpha"), -10, 30 * DAY),
         (Some("beta"), -20, DAY + 200),
         (Some("no-subject"), 0, DAY + 50),
-        (Some("empty-window"), 0, 45 * DAY),
+        (Some("empty-window"), 0, DAY + 60),
         (Some("class-only"), 0, DAY + 70),
-        (Some("tie"), 0, DAY + 5),
+        (Some("tie"), 0, DAY + 15),
         (Some("absent"), 0, DAY),
         (Some("retracted"), 0, DAY),
-        (None, -20, 45 * DAY),
+        (None, -20, 30 * DAY),
     ] {
         let selected = kinds(scope);
         let expected = (at(from), at(until) + time::Duration::microseconds(1));
         assert_eq!(
-            previous_bounds(
-                &mut conn,
-                &selected,
-                at(0),
-                at(DAY),
-                &["window", "class"],
-                at(45 * DAY)
-            )
-            .await,
-            expected
-        );
-        assert_eq!(
-            bounds(
-                &mut conn,
-                &selected,
-                at(0),
-                at(DAY),
-                "scope",
-                &["window", "class"],
-                at(45 * DAY)
-            )
-            .await
-            .unwrap(),
+            bounds(&mut conn, &selected, at(0), at(DAY), FOCUS, &[])
+                .await
+                .unwrap(),
             expected
         );
     }
     let mut selected = kinds(None);
     selected.push(selected[0].clone());
     assert_eq!(
-        bounds(
-            &mut conn,
-            &selected,
-            at(0),
-            at(DAY),
-            "scope",
-            &["window", "class"],
-            at(45 * DAY)
-        )
-        .await
-        .unwrap(),
-        previous_bounds(
-            &mut conn,
-            &selected,
-            at(0),
-            at(DAY),
-            &["window", "class"],
-            at(45 * DAY)
-        )
-        .await
+        bounds(&mut conn, &selected, at(0), at(DAY), FOCUS, &[])
+            .await
+            .unwrap(),
+        (at(-20), at(30 * DAY) + time::Duration::microseconds(1))
     );
     assert_eq!(
-        bounds(&mut conn, &[], at(0), at(DAY), "scope", &[], at(45 * DAY))
+        bounds(&mut conn, &[], at(0), at(DAY), FOCUS, &[])
             .await
             .unwrap(),
         (at(0), at(DAY) + time::Duration::microseconds(1))
@@ -280,29 +242,9 @@ async fn set_bounds_keep_workspace_fallback_and_exclude_unknown_event_time(
     ];
     let expected = (at(0), at(DAY + 2) + time::Duration::microseconds(1));
     assert_eq!(
-        previous_bounds(
-            &mut conn,
-            &selected,
-            at(0),
-            at(DAY),
-            &["workspace_id", "workspace_name"],
-            at(10 * DAY)
-        )
-        .await,
-        expected
-    );
-    assert_eq!(
-        bounds(
-            &mut conn,
-            &selected,
-            at(0),
-            at(DAY),
-            "scope",
-            &["workspace_id", "workspace_name"],
-            at(10 * DAY)
-        )
-        .await
-        .unwrap(),
+        bounds(&mut conn, &selected, at(0), at(DAY), WORKSPACE, &[])
+            .await
+            .unwrap(),
         expected
     );
 }
@@ -329,16 +271,6 @@ fn scan_work(node: &Value) -> f64 {
             .sum::<f64>()
 }
 
-fn subplan<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
-    if node["Subplan Name"].as_str() == Some(name) {
-        return Some(node);
-    }
-    node["Plans"]
-        .as_array()?
-        .iter()
-        .find_map(|child| subplan(child, name))
-}
-
 #[devkit::test]
 async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDatabase) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
@@ -353,57 +285,68 @@ async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDat
     admit(&mut conn, events).await;
     let selected = kinds(None);
     let (types, contains) = kind_arrays(&selected);
+    let fields: Vec<String> = state_transition::payload_fields(FOCUS)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     for (start, end) in [(0, DAY), (2 * DAY, 3 * DAY)] {
-        let mut plans = Vec::new();
-        for sql in [
-            include_str!("previous.sql"),
-            include_str!("../sql/state_transition_bounds.sql"),
-        ] {
+        let old: Value = sqlx::query_scalar(&format!(
+            "EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {}",
+            include_str!("previous.sql")
+        ))
+        .bind(&types)
+        .bind(&contains)
+        .bind(at(start))
+        .bind(at(end))
+        .bind("scope")
+        .bind(vec!["window", "class"])
+        .bind(at(10 * DAY))
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let before = scan_work(&old[0]["Plan"]);
+        let mut after = 0.;
+        for day_only in [true, false] {
             let plan: Value = sqlx::query_scalar(&format!(
-                "EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {sql}"
+                "EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {}",
+                include_str!("../sql/state_transition_rows.sql")
             ))
             .bind(&types)
             .bind(&contains)
             .bind(at(start))
             .bind(at(end))
-            .bind("scope")
-            .bind(vec!["window", "class"])
-            .bind(at(10 * DAY))
+            .bind(&fields)
+            .bind(&types)
+            .bind(&contains)
+            .bind(day_only)
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-            plans.push(plan);
+            after += scan_work(&plan[0]["Plan"]);
+            if start != 0 {
+                assert_eq!(
+                    plan[0]["Plan"]["Actual Rows"].as_f64(),
+                    Some(0.),
+                    "empty day must not project history: {plan:#}"
+                );
+            }
         }
-        let before = scan_work(&plans[0][0]["Plan"]);
-        let after = scan_work(&plans[1][0]["Plan"]);
         println!(
-            "transition bounds start={start}, scan and join-filter tuple examinations: previous={before}, set-based={after}"
+            "transition metadata start={start}, scan and join-filter tuple examinations: previous={before}, two fixed passes={after}"
         );
         let expected = if start == 0 {
             assert!(
                 before > after * 8.,
-                "per-scope scans must be discriminated: {plans:#?}"
+                "scope count must not multiply history scans: before={before}, after={after}"
             );
             (at(-1), at(DAY + 1) + time::Duration::microseconds(1))
         } else {
-            // An empty result alone does not prove that unrelated history was
-            // not normalized first. Measure the eligible producer itself.
-            let producer = subplan(&plans[1][0]["Plan"], "CTE eligible").unwrap();
-            assert_eq!(producer["Actual Rows"].as_f64(), Some(0.0), "{plans:#?}");
             (at(start), at(end) + time::Duration::microseconds(1))
         };
         assert_eq!(
-            bounds(
-                &mut conn,
-                &selected,
-                at(start),
-                at(end),
-                "scope",
-                &["window", "class"],
-                at(10 * DAY)
-            )
-            .await
-            .unwrap(),
+            bounds(&mut conn, &selected, at(start), at(end), FOCUS, &[])
+                .await
+                .unwrap(),
             expected
         );
     }

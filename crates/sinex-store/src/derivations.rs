@@ -28,6 +28,19 @@ pub struct Kind {
     pub contains: Value,
 }
 
+impl Kind {
+    fn admits(&self, event_type: &str, payload: &Value) -> bool {
+        self.contains.as_object().is_some_and(|fields| {
+            sinex_model::state_transition::matches(
+                &self.event_type,
+                fields.iter().map(|(field, value)| (field.as_str(), value)),
+                event_type,
+                payload,
+            )
+        })
+    }
+}
+
 /// The parallel arrays the queries unnest: each kind's type and containment.
 fn kind_arrays(kinds: &[Kind]) -> (Vec<String>, Vec<Value>) {
     kinds
@@ -81,9 +94,8 @@ pub enum InputRange {
         start: OffsetDateTime,
         end: OffsetDateTime,
         kinds: Vec<Kind>,
-        scope_field: &'static str,
-        subject_fields: Vec<&'static str>,
-        now: OffsetDateTime,
+        subjects: &'static [sinex_model::state_transition::SubjectField],
+        interruptions: Vec<Kind>,
     },
     UntilNext {
         start: OffsetDateTime,
@@ -271,20 +283,12 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             start,
             end,
             kinds,
-            scope_field,
-            subject_fields,
-            now,
+            subjects,
+            interruptions,
         } => {
-            let (from, until) = state_transitions::bounds(
-                conn,
-                kinds,
-                *start,
-                *end,
-                scope_field,
-                subject_fields,
-                *now,
-            )
-            .await?;
+            let (from, until) =
+                state_transitions::bounds(conn, kinds, *start, *end, subjects, interruptions)
+                    .await?;
             resolved.start = Some(from);
             resolved.end = Some(until);
         }

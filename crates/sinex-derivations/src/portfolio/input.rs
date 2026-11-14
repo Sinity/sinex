@@ -1,9 +1,10 @@
 //! Physical input bouts and coverage-qualified daily workload.
-use crate::activity::{SECOND, stable, union_seconds};
+use crate::activity::{SECOND, union_seconds};
 use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::portfolio::{InputBout, InputWorkload};
+use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 
 const KINDS: &[&str] = &[
