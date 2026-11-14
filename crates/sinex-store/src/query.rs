@@ -102,6 +102,40 @@ pub async fn set_grants(conn: &mut PgConnection, grants: &str) -> sqlx::Result<(
     Ok(())
 }
 
+/// Identify the task owning a database connection, including after reconnect.
+pub async fn name_connection(conn: &mut PgConnection, task: &str) -> sqlx::Result<()> {
+    sqlx::query_scalar!("SELECT set_config('application_name', $1, false)", task)
+        .fetch_one(conn)
+        .await?;
+    Ok(())
+}
+
+/// The backend remains owned by its connection until cancellation completes.
+pub async fn backend_pid(conn: &mut PgConnection) -> sqlx::Result<i32> {
+    sqlx::query_scalar!(r#"SELECT pg_backend_pid() AS "pid!""#)
+        .fetch_one(conn)
+        .await
+}
+
+/// Cancel work on an independently owned read connection.
+pub async fn cancel_backend(conn: &mut PgConnection, pid: i32) -> sqlx::Result<()> {
+    sqlx::query!("SELECT pg_cancel_backend($1)", pid)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Return a healthy pooled reader without a prior request's budget.
+pub async fn reset_request_deadline(conn: &mut PgConnection) -> sqlx::Result<()> {
+    sqlx::query!("RESET statement_timeout")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!("RESET sinex.request_deadline")
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Carry a request's remaining budget on its connection. Other daemon tasks
 /// leave it unset; no product-wide statement cap is installed.
 pub async fn set_request_deadline(

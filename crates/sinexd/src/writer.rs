@@ -517,9 +517,7 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
 /// A writer that was just killed holds the lock until the server notices its
 /// backend is gone, so a restart waits up to five seconds before refusing.
 pub(crate) async fn claim(mut connection: PgConnection) -> Result<AdmissionContext> {
-    sqlx::query("SET application_name = 'sinex.writer'")
-        .execute(&mut connection)
-        .await?;
+    sinex_store::query::name_connection(&mut connection, "sinex.writer").await?;
     let mut context = AdmissionContext::claim(connection).await?;
     sinex_schema::kinds::require_bundled(&mut context).await?;
     Ok(context)

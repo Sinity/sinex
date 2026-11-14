@@ -243,10 +243,7 @@ impl Drop for ReadConnection {
                     {
                         // The target remains owned and detached until cancellation
                         // completes, so its PID cannot name a reused pool request.
-                        let _ = sqlx::query("SELECT pg_cancel_backend($1)")
-                            .bind(pid)
-                            .execute(&mut *cancel)
-                            .await;
+                        let _ = sinex_store::query::cancel_backend(&mut cancel, pid).await;
                     }
                     let _ = conn.close().await;
                 })
@@ -264,15 +261,10 @@ impl Drop for ReadConnection {
                 unreachable!()
             };
             let cleanup = tokio::spawn(async move {
-                let reset = tokio::time::timeout(Duration::from_millis(100), async {
-                    sqlx::query("RESET statement_timeout")
-                        .execute(&mut *conn)
-                        .await?;
-                    sqlx::query("RESET sinex.request_deadline")
-                        .execute(&mut *conn)
-                        .await?;
-                    Ok::<_, sqlx::Error>(())
-                })
+                let reset = tokio::time::timeout(
+                    Duration::from_millis(100),
+                    sinex_store::query::reset_request_deadline(&mut conn),
+                )
                 .await;
                 if !matches!(reset, Ok(Ok(_))) {
                     conn.close_on_drop();
@@ -299,10 +291,6 @@ pub(crate) async fn acquire(pool: &PgPool) -> Result<ReadConnection> {
         budget,
     };
     conn.prepare().await?;
-    conn.pid = Some(
-        sqlx::query_scalar("SELECT pg_backend_pid()")
-            .fetch_one(&mut *conn)
-            .await?,
-    );
+    conn.pid = Some(sinex_store::query::backend_pid(&mut conn).await?);
     Ok(conn)
 }
