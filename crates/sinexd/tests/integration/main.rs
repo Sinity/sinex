@@ -3,6 +3,7 @@ mod support;
 
 mod capture_client;
 mod crash;
+mod deadlines;
 mod diagnostics;
 mod documents;
 mod end_to_end;

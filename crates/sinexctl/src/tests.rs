@@ -189,3 +189,31 @@ fn schema_field_discovery_uses_the_shared_request_table() {
     assert!(sinex_protocol::command("fields").unwrap().mcp);
     assert!(sinex_protocol::command("kinds").unwrap().mcp);
 }
+
+#[devkit::test]
+fn read_deadline_is_global_and_typed_before_the_query_text() {
+    use command_surface::Deadline;
+    for (args, expected) in [
+        (
+            vec!["sinexctl", "--deadline", "200", "query", "events"],
+            Deadline::Milliseconds(200),
+        ),
+        (
+            vec!["sinexctl", "query", "--deadline", "none", "events"],
+            Deadline::None,
+        ),
+    ] {
+        let matches = cli().try_get_matches_from(args).unwrap();
+        assert_eq!(matches.get_one::<Deadline>("deadline"), Some(&expected));
+        let (name, sub) = matches.subcommand().unwrap();
+        let request =
+            Request::from_args(name, arguments(sinex_protocol::command(name).unwrap(), sub))
+                .unwrap();
+        assert!(matches!(request, Request::Query {query,..} if query=="events"));
+    }
+    assert!(
+        cli()
+            .try_get_matches_from(["sinexctl", "--deadline", "-1", "query", "events"])
+            .is_err()
+    );
+}

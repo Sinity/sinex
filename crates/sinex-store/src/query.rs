@@ -102,12 +102,34 @@ pub async fn set_grants(conn: &mut PgConnection, grants: &str) -> sqlx::Result<(
     Ok(())
 }
 
+/// Carry a request's remaining budget on its connection. Other daemon tasks
+/// leave it unset; no product-wide statement cap is installed.
+pub async fn set_request_deadline(
+    conn: &mut PgConnection,
+    remaining: Option<std::time::Duration>,
+) -> Result<()> {
+    let milliseconds = remaining.map(|duration| duration.as_millis().max(1).to_string());
+    sqlx::query("SELECT set_config('sinex.request_deadline', CASE WHEN $1::text IS NULL THEN '' ELSE (extract(epoch FROM clock_timestamp()) * 1000 + $1::numeric)::text END, false), set_config('statement_timeout', CASE WHEN $1::text IS NULL OR $1::numeric > 2147483647 THEN '0' ELSE $1 END, false)")
+        .bind(milliseconds).execute(conn).await?;
+    Ok(())
+}
+
+/// The transaction uses the same request budget, reduced by acquisition and
+/// earlier statements. PostgreSQL interprets zero as unlimited, so an expired
+/// finite budget is one millisecond and is also checked by the request owner.
+pub async fn local_request_deadline(conn: &mut PgConnection) -> Result<()> {
+    sqlx::query("SELECT set_config('statement_timeout', CASE WHEN remaining IS NULL OR remaining > 2147483647 THEN '0' ELSE greatest(1, ceil(remaining))::bigint::text END, true) FROM (SELECT nullif(current_setting('sinex.request_deadline', true), '')::numeric - extract(epoch FROM clock_timestamp()) * 1000 AS remaining) budget WHERE current_setting('sinex.request_deadline', true) IS NOT NULL")
+        .execute(conn).await?;
+    Ok(())
+}
+
 /// Make the transaction just begun on `conn` read-only, with every statement
 /// seeing the same snapshot.
 pub async fn read_one_snapshot(conn: &mut PgConnection) -> Result<()> {
     sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *conn)
         .await?;
+    local_request_deadline(conn).await?;
     Ok(())
 }
 

@@ -53,6 +53,9 @@ fn cli() -> Command {
                  so `sinexctl search ls -la` searches for `ls -la`.",
             )
             .version(env!("CARGO_PKG_VERSION"))
+            .arg(Arg::new("deadline").long("deadline").global(true)
+                .value_name("MS|none").value_parser(sinex_protocol::deadline)
+                .help("read execution budget in milliseconds; none waits without a deadline"))
             .arg(Arg::new("endpoint").long("endpoint").global(true).help(
                 "unix:/path/to/socket or http://127.0.0.1:PORT (default: $SINEX_ENDPOINT, else the daemon's socket)",
             ))
@@ -143,7 +146,14 @@ fn client(m: &ArgMatches) -> Result<Client, Failure> {
         })?
         .trim()
         .to_string();
-    Ok(Client { endpoint, token })
+    Ok(Client {
+        endpoint,
+        token,
+        deadline: m
+            .get_one::<command_surface::Deadline>("deadline")
+            .copied()
+            .unwrap_or_default(),
+    })
 }
 
 /// A failure as the terminal shows it: the message, the input line with a

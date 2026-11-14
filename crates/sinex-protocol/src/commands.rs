@@ -52,6 +52,33 @@ pub struct Command {
     pub mcp: bool,
 }
 
+impl Command {
+    /// The request's default execution class, shared by every transport.
+    pub fn latency(&self) -> command_surface::LatencyClass {
+        use command_surface::LatencyClass::*;
+        match self.name {
+            "status" => Status,
+            "query-complete" => Completion,
+            "search" | "recall" => Search,
+            "query" | "context" | "timeline" | "sql" | "brief" | "forecast-report"
+            | "analysis-run" | "analysis-panel" | "analysis-why" | "gaps" | "library-rank" => {
+                Aggregate
+            }
+            _ => Read,
+        }
+    }
+    pub fn default_deadline(&self) -> std::time::Duration {
+        use command_surface::LatencyClass::*;
+        std::time::Duration::from_millis(match self.latency() {
+            Local => 15,
+            Status | Read => 100,
+            Completion => 50,
+            Search => 250,
+            Aggregate => 400,
+        })
+    }
+}
+
 const fn pos(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
     Arg {
         name,

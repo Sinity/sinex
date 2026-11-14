@@ -67,6 +67,7 @@ impl Api {
                     .ok_or_else(|| Error::bad_request("backup prepare needs --output PATH"))?;
                 let output = std::path::PathBuf::from(output);
                 let revision = crate::build_identity::current()?;
+                crate::request_deadline::admit()?;
                 crate::backup::create(&output)?;
                 let source_publication = writer.source_publication();
                 let local_guard = source_publication.pause().await;

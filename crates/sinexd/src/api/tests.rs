@@ -1,6 +1,7 @@
 //! The API against a real database and the real writer.
 use crate::Result;
 mod backups;
+mod deadlines;
 mod exact_payloads;
 mod sql_boundary;
 mod versions;
@@ -175,7 +176,14 @@ async fn world_with_reads(
         Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),
     ));
-    let reads = reads.connect(&url).await.unwrap();
+    let reads = reads
+        .connect_with(
+            url.parse::<sqlx::postgres::PgConnectOptions>()
+                .unwrap()
+                .application_name("sinex.api"),
+        )
+        .await
+        .unwrap();
     let (stop, stopped) = watch::channel(false);
     let api = Api {
         backup_producers: None,
@@ -529,10 +537,11 @@ async fn sql_runs_under_a_statement_time_limit(db: devkit::pg::TestDatabase) {
     let (_, body) = call(
         &w,
         Some(READ),
-        json!({"method": "sql", "sql": "SELECT current_setting('statement_timeout') AS bound"}),
+        json!({"method": "sql", "deadline":2000, "sql": "SELECT extract(epoch FROM current_setting('statement_timeout')::interval)*1000 AS bound"}),
     )
     .await;
-    assert_eq!(body["result"]["rows"], json!([{"bound": "2min"}]), "{body}");
+    let bound = body["result"]["rows"][0]["bound"].as_f64().unwrap();
+    assert!(bound > 0. && bound <= 2000., "{body}");
 }
 
 /// Read the stream until `needle` appears, for at most ten seconds.

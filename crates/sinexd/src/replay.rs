@@ -257,6 +257,7 @@ pub(crate) async fn run(
         }
     };
     if !o.compare && prior_scope.is_none() {
+        crate::request_deadline::finish_read(read_conn).await?;
         writer
             .record_replay(operation, o.actor.clone(), saved_scope.clone(), vec![])
             .await?;

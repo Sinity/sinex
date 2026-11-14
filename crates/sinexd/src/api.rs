@@ -16,7 +16,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sinex_model::query::{self, Source, Stage, Table};
-use sinex_protocol::{Access, COMMANDS, DATA_NOTICE, Reply, Request};
+use sinex_protocol::{Access, COMMANDS, DATA_NOTICE, Reply};
 use sinex_store::query::Page;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -209,9 +209,9 @@ pub(crate) fn router(
 async fn call(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<Request>,
+    Json(request): Json<sinex_protocol::Call>,
 ) -> Response {
-    match authorize(&state, &headers, request.access()) {
+    match authorize(&state, &headers, request.request.access()) {
         Ok(granted) => respond(state.api.call(request, granted).await),
         Err(r) => r,
     }
@@ -227,6 +227,8 @@ async fn commands() -> Json<Value> {
                     "summary": c.summary,
                     "access": c.access,
                     "mcp": c.mcp,
+                    "latency": c.latency(),
+                    "default_deadline_ms": c.default_deadline().as_millis(),
                     "args": c.args.iter().map(|a| json!({
                         "name": a.name,
                         "kind": format!("{:?}", a.kind).to_lowercase(),
@@ -243,6 +245,7 @@ async fn commands() -> Json<Value> {
 #[derive(Deserialize)]
 struct FollowParams {
     query: String,
+    deadline: Option<String>,
 }
 
 /// New events matching a query, as they are committed: each row once, in
@@ -256,6 +259,20 @@ async fn follow(
         Ok(g) => g,
         Err(r) => return r,
     };
+    let deadline = match params
+        .deadline
+        .as_deref()
+        .map(sinex_protocol::deadline)
+        .transpose()
+    {
+        Ok(deadline) => deadline.unwrap_or_default(),
+        Err(failure) => return respond(Reply::failed(failure)),
+    };
+    let duration = deadline.duration(Some(
+        sinex_protocol::command("follow")
+            .expect("follow")
+            .default_deadline(),
+    ));
     let caller = state.api.caller(granted).await;
     let ctx = state.api.context();
     let bound = match query::bind(&params.query, &ctx) {
@@ -287,8 +304,12 @@ async fn follow(
     tokio::spawn(async move {
         // `commits` counts committed batches; the commit position is read here.
         let position = |api: Api| async move {
-            let mut conn = api.reads.acquire().await.ok()?;
-            sinex_store::query::current_seq(&mut conn).await.ok()
+            crate::request_deadline::run(duration, async move {
+                let mut conn = crate::request_deadline::acquire(&api.reads).await?;
+                Ok(sinex_store::query::current_seq(&mut conn).await?)
+            })
+            .await
+            .ok()
         };
         commits.borrow_and_update();
         read_models.borrow_and_update();
@@ -312,10 +333,13 @@ async fn follow(
             commits.borrow_and_update();
             read_models.borrow_and_update();
             let now = {
-                let Ok(mut conn) = api.reads.acquire().await else {
-                    return;
-                };
-                let Ok(now) = sinex_store::query::follow_position(&mut conn).await else {
+                let reads = api.reads.clone();
+                let Ok(now) = crate::request_deadline::run(duration, async move {
+                    let mut conn = crate::request_deadline::acquire(&reads).await?;
+                    Ok(sinex_store::query::follow_position(&mut conn).await?)
+                })
+                .await
+                else {
                     return;
                 };
                 now
@@ -329,19 +353,31 @@ async fn follow(
                 cursor: None,
             };
             loop {
-                let Ok(mut conn) = api.acquire(&caller).await else {
-                    return;
+                let (reader, caller, text, q, ctx, selected) = (
+                    api.clone(),
+                    caller.clone(),
+                    text.clone(),
+                    q.clone(),
+                    ctx.clone(),
+                    page.clone(),
+                );
+                let answer = match crate::request_deadline::run(duration, async move {
+                    let mut conn = reader.acquire(&caller).await?;
+                    Ok(
+                        sinex_store::query::run(&mut conn, &text, Some(&q), &ctx, &selected)
+                            .await?,
+                    )
+                })
+                .await
+                {
+                    Ok(answer) => answer,
+                    Err(error) => {
+                        let _ = tx
+                            .send(Ok(Event::default().event("error").data(error.to_string())))
+                            .await;
+                        return;
+                    }
                 };
-                let answer =
-                    match sinex_store::query::run(&mut conn, &text, Some(&q), &ctx, &page).await {
-                        Ok(a) => a,
-                        Err(e) => {
-                            let _ = tx
-                                .send(Ok(Event::default().event("error").data(e.to_string())))
-                                .await;
-                            return;
-                        }
-                    };
                 let rows = answer.rows;
                 for row in rows {
                     if tx

@@ -42,12 +42,7 @@ pub async fn begin(conn: &mut PgConnection, statement: &str) -> Result<()> {
         sqlx::query("SET LOCAL TimeZone = 'UTC'")
             .execute(&mut *conn)
             .await?;
-        // One statement may not occupy the database indefinitely: the server
-        // cancels each read of the cursor at this bound even after the caller
-        // has gone away.
-        sqlx::query("SET LOCAL statement_timeout = '120s'")
-            .execute(&mut *conn)
-            .await?;
+        super::local_request_deadline(conn).await?;
         // A cursor whose reader stops asking for pages is closed by the server
         // too, so an abandoned statement cannot hold its snapshot for ever.
         sqlx::query("SET LOCAL idle_in_transaction_session_timeout = '10min'")

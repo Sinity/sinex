@@ -32,6 +32,8 @@ pub(crate) enum Priority {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum WriteError {
+    #[error("the request read deadline passed before writer admission")]
+    ReadDeadline,
     #[error("admission refused the batch: {0}")]
     Refused(String),
     #[error("database unavailable: {0}")]
@@ -49,6 +51,7 @@ impl From<WriteError> for command_surface::Failure {
         use command_surface::{Failure, FailureKind};
         let message = error.to_string();
         match error {
+            WriteError::ReadDeadline => crate::request_deadline::timeout().into(),
             WriteError::Refused(_) => Failure::new(FailureKind::BadValue, message),
             WriteError::Unavailable(_) => {
                 Failure::new(FailureKind::NotRunning, message).with_code("database_unavailable")
@@ -461,14 +464,14 @@ impl WriterHandle {
             Priority::Derived => &self.derived,
             Priority::Bulk => &self.bulk,
         };
-        channel
-            .send(Job {
-                queued_at: std::time::Instant::now(),
-                work,
-                reply,
-            })
-            .await
-            .map_err(|_| WriteError::Stopped)?;
+        let queued_at = std::time::Instant::now();
+        let permit = channel.reserve().await.map_err(|_| WriteError::Stopped)?;
+        crate::request_deadline::admit().map_err(|_| WriteError::ReadDeadline)?;
+        permit.send(Job {
+            queued_at,
+            work,
+            reply,
+        });
         answer.await.map_err(|_| WriteError::Stopped)?
     }
 }
@@ -513,7 +516,10 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
 ///
 /// A writer that was just killed holds the lock until the server notices its
 /// backend is gone, so a restart waits up to five seconds before refusing.
-pub(crate) async fn claim(connection: PgConnection) -> Result<AdmissionContext> {
+pub(crate) async fn claim(mut connection: PgConnection) -> Result<AdmissionContext> {
+    sqlx::query("SET application_name = 'sinex.writer'")
+        .execute(&mut connection)
+        .await?;
     let mut context = AdmissionContext::claim(connection).await?;
     sinex_schema::kinds::require_bundled(&mut context).await?;
     Ok(context)

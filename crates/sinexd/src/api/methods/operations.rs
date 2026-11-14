@@ -212,7 +212,7 @@ impl Api {
         examples: usize,
     ) -> Result<Reply> {
         let writer = self.writer()?;
-        let conn = self.acquire(caller).await?.detach();
+        let conn = self.acquire(caller).await?;
         let mut driver = crate::derivation_runner::DerivationRunner::for_one(
             conn,
             writer.clone(),
@@ -368,6 +368,7 @@ impl Api {
         let stop = self.stop.clone();
         let actor = caller.actor.to_owned();
         let (begun, started) = tokio::sync::oneshot::channel();
+        crate::request_deadline::admit()?;
         let task = tokio::spawn(async move {
             let _claim = claim;
             let mut conn = reads.acquire().await?;

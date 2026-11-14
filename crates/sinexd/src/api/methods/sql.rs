@@ -19,7 +19,7 @@ pub(crate) type SqlCursors = Arc<tokio::sync::Mutex<HashMap<String, Held>>>;
 
 /// The connection holding an open cursor, and who may read it.
 pub(crate) struct Held {
-    conn: sqlx::PgConnection,
+    conn: crate::request_deadline::ReadConnection,
     statement: String,
     caller: (&'static str, String),
     used: Instant,
@@ -50,6 +50,8 @@ impl Api {
                 }
             }
         };
+        held.conn.prepare().await?;
+        sinex_store::query::local_request_deadline(&mut held.conn).await?;
         let page = match read_sql::fetch(&mut held.conn, rows).await {
             Ok(page) => page,
             Err(e) => {
