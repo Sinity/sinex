@@ -313,3 +313,281 @@ async fn shutdown_cannot_succeed_when_native_writer_cleanup_fails(db: devkit::pg
         .unwrap();
     fresh.close().await.unwrap();
 }
+
+#[devkit::test]
+async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::pg::TestDatabase) {
+    use futures::FutureExt;
+    use sinex_store::NoDerivations;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let url = db.url(None);
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(&root.path().join("store")).unwrap();
+    let original = b"synthetic retained source record\n";
+    let blob = blobs.put(original).unwrap();
+    let mut observer = connect(&url, "sinex.test").await.unwrap();
+    sqlx::raw_sql(
+        "CREATE TABLE public.backup_shutdown_probe(id uuid PRIMARY KEY);
+        CREATE FUNCTION public.hold_backup_shutdown() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN INSERT INTO public.backup_shutdown_probe VALUES(NEW.id);
+          PERFORM pg_advisory_xact_lock(927162); RETURN NEW; END $$;
+        CREATE TRIGGER hold_backup_shutdown AFTER INSERT ON core.events
+        FOR EACH ROW EXECUTE FUNCTION public.hold_backup_shutdown()",
+    )
+    .execute(&mut observer)
+    .await
+    .unwrap();
+    let mut blocker = connect(&url, "sinex.test").await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock(927162)")
+        .execute(&mut blocker)
+        .await
+        .unwrap();
+    let mut connection = writer::claim(connect(&url, "sinex.test").await.unwrap())
+        .await
+        .unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap();
+    let (handle, queues) = writer::channels();
+    let publication = handle.source_publication();
+    let mut tasks = JoinSet::new();
+    let database = url.clone();
+    let store = blobs.clone();
+    tasks.spawn(async move {
+        writer::run(
+            database,
+            connection,
+            queues,
+            Arc::new(NoDerivations),
+            Some(store),
+        )
+        .await;
+        ("writer", Ok(()))
+    });
+    let mut pending = shutdown_batch("held-publication");
+    let event = pending.records.first_mut().unwrap();
+    let sinex_model::RecordOutcome::Events { events, .. } = event else {
+        unreachable!()
+    };
+    let material = match events[0].origin {
+        sinex_model::Origin::Record { location, .. } => location.material,
+        _ => unreachable!(),
+    };
+    let progress = sinex_model::SourceProgress {
+        source: None,
+        host: None,
+        binding: "synthetic-backup-shutdown".into(),
+        data_keys: vec![],
+        input: sinex_model::InputRef {
+            kind: "file".into(),
+            locator: "synthetic".into(),
+            host: "synthetic".into(),
+        },
+        observation: Default::default(),
+        revision: sinex_model::RevisionChange::Appended,
+        material: Some(sinex_model::MaterialRef {
+            id: material,
+            input: None,
+            blob: blob.clone(),
+            length: original.len() as u64,
+            part_index: 0,
+            previous_part: None,
+            parser: "synthetic".into(),
+            parser_version: 1,
+            manifest: Default::default(),
+        }),
+        cursor: serde_json::json!({"offset": original.len()}),
+        carry: serde_json::Value::Null,
+        memory: None,
+    };
+    let sinex_model::BatchKind::Ingress(frame) = &mut pending.kind else {
+        unreachable!()
+    };
+    frame.material = Some(progress);
+    let submitted = pending.clone();
+    let source_handle = handle.clone();
+    let (source_done, source_result) = tokio::sync::oneshot::channel();
+    tasks.spawn(async move {
+        let result = source_handle
+            .submit_source(writer::Priority::Bulk, submitted, Arc::new(|| Ok(())), None)
+            .await;
+        let _ = source_done.send(result);
+        ("source", Ok(()))
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let held: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock')")
+                .bind(pid).fetch_one(&mut observer).await.unwrap();
+            if held { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("source owns an admitted writer and publication read guard");
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let subjects = sinex_protocol::Subjects::sinex();
+    let producer = broker.prefix().to_owned();
+    use futures::StreamExt;
+    let mut requests = client.subscribe(subjects.backup(&producer)).await.unwrap();
+    // An ordered broker response proves the subscription is installed.
+    async_nats::jetstream::new(client.clone())
+        .query_account()
+        .await
+        .unwrap();
+    let responder = tokio::spawn({
+        let client = client.clone();
+        async move {
+            let request = requests.next().await.unwrap();
+            client
+                .publish(
+                    request.reply.unwrap(),
+                    serde_json::to_vec(&sinex_protocol::backup::Reply::Unavailable {
+                        reason: "synthetic producer unavailable".into(),
+                    })
+                    .unwrap()
+                    .into(),
+                )
+                .await
+                .unwrap();
+        }
+    });
+    let reads = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .unwrap();
+    let (stop, stopped) = watch::channel(false);
+    let api = Api {
+        backup_producers: Some((client, subjects, vec![producer])),
+        source_config: Default::default(),
+        read_failures: Default::default(),
+        running_stages: Default::default(),
+        sql_cursors: Default::default(),
+        stop: stopped.clone(),
+        reads,
+        writer: Some(handle.clone()),
+        blobs: blobs.clone(),
+        zone: jiff::tz::TimeZone::get("UTC").unwrap(),
+        day_start: jiff::civil::Time::constant(4, 0, 0, 0),
+        derivations: Default::default(),
+        agent_grants: vec![],
+        unlock: Default::default(),
+        host: "synthetic".into(),
+        library_roots: vec![],
+    };
+    let socket = root.path().join("api.sock");
+    let config = api::Config {
+        socket: socket.clone(),
+        listen: None,
+        tokens: api::Tokens::new(None, None, Some("operator".into())),
+    };
+    let (_commits, commits) = watch::channel(0);
+    let (_models, models) = watch::channel(());
+    let mut api_stop = stopped;
+    tasks.spawn(async move {
+        (
+            "api",
+            api::serve(config, api, commits, models, async move {
+                let _ = api_stop.wait_for(|s| *s).await;
+            })
+            .await,
+        )
+    });
+    let mut request = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match tokio::net::UnixStream::connect(&socket).await {
+                Ok(stream) => break stream,
+                Err(_) => tokio::task::yield_now().await,
+            }
+        }
+    })
+    .await
+    .expect("real API listener");
+    let body = serde_json::json!({"method":"backup","action":"prepare",
+        "output":root.path().join("backup"),"deadline":null})
+    .to_string();
+    request.write_all(format!("POST /v1 HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer operator\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(),body).as_bytes()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            // This new reader can wait only once the backup's write guard is queued.
+            if publication.enter().now_or_never().is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("real admitted backup queued on source publication");
+    assert!(!root.path().join("backup/boundary.json").exists());
+    drop(handle);
+    stop.send_replace(true);
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT pg_cancel_backend($1)")
+            .bind(pid)
+            .fetch_one(&mut observer)
+            .await
+            .unwrap()
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        finish_tasks(&mut tasks, Duration::from_millis(100), &url, &blobs, true),
+    )
+    .await
+    .expect("shutdown must join source, writer and backup API")
+    .unwrap();
+    assert!(
+        source_result.await.unwrap().is_err(),
+        "no acknowledgment on canceled source"
+    );
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), request.read_to_end(&mut response))
+        .await
+        .expect("owned HTTP request released")
+        .unwrap();
+    responder.await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM public.backup_shutdown_probe")
+            .fetch_one(&mut observer)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM raw.positions WHERE binding='synthetic-backup-shutdown'"
+        )
+        .fetch_one(&mut observer)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM core.ingress_frames WHERE producer='synthetic-shutdown' AND frame='held-publication'")
+        .fetch_one(&mut observer).await.unwrap(), 0);
+    assert!(
+        !sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)"
+        )
+        .bind(pid)
+        .fetch_one(&mut observer)
+        .await
+        .unwrap()
+    );
+    sqlx::query("SELECT pg_advisory_unlock(927162)")
+        .execute(&mut blocker)
+        .await
+        .unwrap();
+    assert_eq!(
+        blobs.read(&blob).unwrap(),
+        original,
+        "pending native raw bytes remain available"
+    );
+    let mut fresh = writer::claim(connect(&url, "sinex.test").await.unwrap())
+        .await
+        .unwrap();
+    let mut tx = fresh.begin().await.unwrap();
+    let admitted = tx.admit(&pending, &NoDerivations).await.unwrap();
+    assert_eq!(admitted.admitted, 1);
+    let duplicate = tx.admit(&pending, &NoDerivations).await.unwrap();
+    assert_eq!(duplicate.commit_seq, admitted.commit_seq);
+    tx.commit().await.unwrap();
+    fresh.close().await.unwrap();
+}
