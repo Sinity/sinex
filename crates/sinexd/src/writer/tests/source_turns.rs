@@ -42,9 +42,12 @@ async fn native_live_stream_goes_before_derived_but_manual_stage_drains_in_bulk(
         let (handle, mut queues) = channels();
         let h = handle.clone();
         let derived = tokio::spawn(async move {
-            h.submit(Priority::Derived, batch("queued-derived"))
-                .await
-                .unwrap()
+            h.submit(
+                Priority::Derived,
+                batch(&format!("queued-derived-{mode:?}")),
+            )
+            .await
+            .unwrap()
         });
         let queued = queues.derived.recv().await.unwrap();
         handle.derived.send(queued).await.unwrap();
