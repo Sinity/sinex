@@ -315,6 +315,26 @@ pub(crate) async fn prepare(
     // This record survives failures and identifies the hold without claiming a complete artifact.
     record_boundary(output, &manifest.boundary)?;
     File::open(output).and_then(|f| f.sync_all())?;
+    if !producers_complete {
+        // Preserve the refusal and cut without presenting an incomplete copy
+        // as a manifest. Do this before either dump or any segment copying.
+        record(&output.join("producer-snapshots.json"), &manifest)?;
+        File::open(output).and_then(|f| f.sync_all())?;
+        let unavailable = manifest
+            .producer_snapshots
+            .iter()
+            .filter_map(|producer| {
+                producer
+                    .unavailable
+                    .as_ref()
+                    .map(|reason| format!("{}: {reason}", producer.producer))
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(Error::bad_request(format!(
+            "required producer snapshots are incomplete: {unavailable}"
+        )));
+    }
     dump(&snapshot, output, false, stop.clone()).await?;
     dump(&snapshot, output, true, stop.clone()).await?;
     let hold_id = snapshot.hold.id;

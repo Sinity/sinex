@@ -153,7 +153,18 @@ Worktrees, caches and scratch are outside backups. NATS state is not backed up: 
 
 Preparing a backup pauses publication and spool retirement, then takes the hold and the database snapshot. A source holds publication only from queueing an admission batch through its durable acknowledgment, and while loading its committed cursor and retiring passed spool files. Acquisition and parsing continue without this guard, so a backup can start between batches during a long source read. The writer never waits for this gate inside a job; it must remain able to take the backup snapshot while publication is paused.
 
-Preparation copies the daemon's retained source spools and the state of every configured producer with write access. Each producer snapshot keeps its checkpoint, its pending frames and the bytes needed to resume from that checkpoint. Capture continues while publication is paused; media generations in progress finish before their files are copied. The manifest names the required producers, each copied file and each producer that could not be copied; `producers_complete` is true only when every required producer was copied. A backup prepared without a known list of producers is incomplete. The hold protects segment prefixes; producer state is described by the manifest.
+Preparation copies the daemon's retained source spools and the state of every configured producer with write access. Each producer snapshot keeps its checkpoint, its pending frames and the bytes needed to resume from that checkpoint. Capture continues while publication is paused; media generations in progress finish before their files are copied. The manifest names the required producers and each copied file; `producers_complete` is true only when every required producer was copied. Preparation requires a known list of producers. The hold protects segment prefixes; producer state is described by the manifest.
+
+Input discovery finishes before producers are paused. Retained native bindings
+are selected by the parser at their committed material anchor; a source name
+shared with an imported file format does not turn that file into a spool.
+Configured native inputs that have not stored material yet keep their declared
+format when their position is absent, null or the driver's typed empty cursor.
+Missing or contradictory format evidence stops preparation. A missing producer
+list or a failed pause is refused before taking the core snapshot. Failed
+producer capture records `producer-snapshots.json` alongside the retained
+`boundary.json` and stops before either database dump or segment copying.
+Only a complete producer set can produce a published backup manifest.
 
 ### Holds and the boundary
 
