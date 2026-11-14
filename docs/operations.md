@@ -158,6 +158,8 @@ Preparation copies the daemon's retained source spools and the state of every co
 Input discovery finishes before producers are paused. Retained native bindings
 are selected by the parser at their committed material anchor; a source name
 shared with an imported file format does not turn that file into a spool.
+Configured native inputs that have not stored material yet keep their declared
+format when their position is absent, null or the driver's typed empty cursor.
 Missing or contradictory format evidence stops preparation. A missing producer
 list or a failed pause is refused before taking the core snapshot. Failed
 producer capture records `producer-snapshots.json` alongside the retained

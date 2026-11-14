@@ -191,9 +191,61 @@ pub(crate) async fn backup_bindings(
                         row.binding
                     ))
                 })?
-        } else if cursor.is_none()
-            && let Some(configured) = configured
-        {
+        } else if let Some(configured) = configured {
+            // An unchanged first poll still commits a position, even though
+            // no material exists yet. Only the driver's empty forms qualify;
+            // a malformed saved cursor cannot borrow the current parser.
+            let empty = cursor.as_ref().is_none_or(serde_json::Value::is_null)
+                || candidates.iter().any(|spec| {
+                    if spec.parser != configured.parser {
+                        return false;
+                    }
+                    match spec.origin {
+                        Origin::Input(Shape::LiveStream) => cursor
+                            .as_ref()
+                            .and_then(|cursor| {
+                                serde_json::from_value::<
+                                    sinex_source_core::drivers::live_stream::Cursor,
+                                >(cursor.clone())
+                                .ok()
+                            })
+                            .is_some_and(|cursor| {
+                                cursor.last_material.is_none()
+                                    && cursor.part_base == 0
+                                    && (cursor.inner.is_null()
+                                        || serde_json::from_value::<
+                                            sinex_source_core::drivers::append_file::Cursor,
+                                        >(cursor.inner)
+                                        .ok()
+                                        .is_some_and(|inner| {
+                                            inner.material.is_none()
+                                                && inner.offset == 0
+                                                && inner.size == 0
+                                                && inner.part_index == 0
+                                        }))
+                            }),
+                        Origin::Input(Shape::Media) => cursor
+                            .as_ref()
+                            .and_then(|cursor| {
+                                serde_json::from_value::<sinex_source_core::drivers::media::Cursor>(
+                                    cursor.clone(),
+                                )
+                                .ok()
+                            })
+                            .is_some_and(|cursor| {
+                                cursor.material.is_none()
+                                    && cursor.last.is_none()
+                                    && cursor.part_index == 0
+                            }),
+                        _ => false,
+                    }
+                });
+            if !empty {
+                return Err(Error::internal(format!(
+                    "saved binding {} has no material evidence identifying its input format",
+                    row.binding
+                )));
+            }
             configured.parser.clone()
         } else {
             return Err(Error::internal(format!(

@@ -51,6 +51,85 @@ async fn backup_binding_anchor(
 }
 
 #[devkit::test]
+async fn backup_keeps_configured_native_inputs_after_an_empty_poll(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    for (spec, empty, malformed) in [
+        (
+            &sources::clipboard::SPEC,
+            serde_json::to_value(sinex_source_core::drivers::live_stream::Cursor::default())
+                .unwrap(),
+            json!({"segment":0,"inner":{"offset":1},"part_base":0,"last_material":null}),
+        ),
+        (
+            &sources::media_capture::SPEC,
+            serde_json::to_value(sinex_source_core::drivers::media::Cursor::default()).unwrap(),
+            json!({"last":null,"material":null,"part_index":1}),
+        ),
+    ] {
+        let binding = Binding::of(
+            spec,
+            &root.path().join(spec.parser),
+            Settings::new("synthetic-host"),
+        );
+        sinex_store::bindings::save(
+            &mut conn,
+            &sinex_store::bindings::Stored {
+                binding: binding.name.clone(),
+                source: binding.source.clone(),
+                input: binding.input.to_str().unwrap().into(),
+                settings: serde_json::to_value(&binding.settings).unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
+                .await
+                .unwrap()
+                .contains(&binding)
+        );
+        sqlx::query("INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES($1,'null','{}',0)")
+            .bind(&binding.name).execute(&mut conn).await.unwrap();
+        assert!(
+            backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
+                .await
+                .unwrap()
+                .contains(&binding)
+        );
+        for (valid, cursor) in [(true, empty), (false, malformed)] {
+            sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
+                .bind(&binding.name)
+                .bind(&cursor)
+                .execute(&mut conn)
+                .await
+                .unwrap();
+            let result = backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host").await;
+            if !valid {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("no material evidence")
+                );
+            } else {
+                assert!(result.unwrap().contains(&binding));
+            }
+        }
+        sqlx::query("DELETE FROM raw.positions WHERE binding=$1")
+            .bind(&binding.name)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM raw.bindings WHERE binding=$1")
+            .bind(&binding.name)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+}
+
+#[devkit::test]
 async fn backup_keeps_same_named_native_spool_separate_from_historical_lake_file(
     db: devkit::pg::TestDatabase,
 ) {
