@@ -325,3 +325,5 @@ async fn rules_are_insert_only_versions(db: devkit::pg::TestDatabase) {
         "a rule that cannot be applied is never stored"
     );
 }
+
+mod parents;

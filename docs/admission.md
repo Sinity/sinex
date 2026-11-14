@@ -21,6 +21,14 @@ One transaction admits a batch:
 7. checks cancellation once more, then commits.
 
 A producer is told success only after commit. Detector hits are not written here: they are a [read model](#read-models).
+Derived-parent authority reads deduplicate the exact requested IDs before forming
+SQL arrays, then read class and current membership in transfer pages of 256.
+Every parent is still checked inside the same admission transaction and session
+writer claim. Missing or nonlive parents retain their existing refusal behavior;
+original parent order, duplicate references and event identities are preserved.
+Fresh parameter-aware reads bound compressed-columnar planning without limiting
+the admitted population or changing class inheritance.
+
 
 **Outcomes** returned to the caller, per row or per batch: `admitted`, `repeated`, `superseded`, `older`, `removed`, `failed`, `superseded_in_batch`, dropped outputs (`superseded_input`, an output whose parent was archived meanwhile), the dirty keys, the committed position, and the ID mapping a caller needs to cite what it sent.
 

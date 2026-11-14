@@ -375,6 +375,36 @@ pub(crate) async fn admit(
     Ok(outcome)
 }
 
+// A transfer page bounds native compressed-array planning, not the number
+// of authoritative parents. Keep the existing 256-ID admission page size.
+const PARENT_PAGE: usize = 256;
+
+#[derive(sqlx::FromRow)]
+struct ParentAuthority {
+    id: Uuid,
+    class: String,
+    #[sqlx(rename = "live!")]
+    live: bool,
+}
+
+fn parent_pages(events: &[Event]) -> impl Iterator<Item = Vec<Uuid>> {
+    // Deduplicate before building a SQL array. UUID order also groups nearby
+    // chunks; original parent lists are never changed.
+    let parents: std::collections::BTreeSet<Uuid> = events
+        .iter()
+        .filter_map(|event| match &event.origin {
+            Origin::Derived { parents } => Some(parents.iter().map(|id| id.0)),
+            Origin::Record { .. } => None,
+        })
+        .flatten()
+        .collect();
+    let mut parents = parents.into_iter();
+    std::iter::from_fn(move || {
+        let page: Vec<_> = parents.by_ref().take(PARENT_PAGE).collect();
+        (!page.is_empty()).then_some(page)
+    })
+}
+
 /// Apply the privacy rules to every event, once: reads never apply a rule
 /// again.
 async fn apply_privacy(
@@ -388,46 +418,36 @@ async fn apply_privacy(
     }
     // A derived event is never below the highest class of its parents, so
     // derivation cannot launder a class away.
-    let parents: Vec<Uuid> = events
-        .iter()
-        .filter_map(|e| match &e.origin {
-            Origin::Derived { parents } => Some(parents.iter().map(|p| p.0)),
-            Origin::Record { .. } => None,
-        })
-        .flatten()
-        .collect();
-    if !parents.is_empty() {
-        let classes: std::collections::HashMap<Uuid, Class> = sqlx::query!(
-            r#"SELECT e.id, e.class,
-                 (EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)
-                   OR EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id=e.id)) AS "live!"
-               FROM core.events e WHERE e.id = ANY($1)"#,
-            &parents
-        )
-        .fetch_all(&mut *conn)
-        .await?
-        .into_iter()
-        .map(|r| {
-            if !r.live {
+    // The admission context's session writer claim excludes lifecycle and
+    // replacement changes across these pages in this same transaction.
+    let mut classes = std::collections::HashMap::new();
+    for parents in parent_pages(events) {
+        for row in
+            sqlx::query_as::<_, ParentAuthority>(include_str!("admission/parent_authority.sql"))
+                .bind(&parents)
+                .persistent(false)
+                .fetch_all(&mut *conn)
+                .await?
+        {
+            if !row.live {
                 return Err(crate::Error::Invalid(format!(
                     "derived parent {} is not live",
-                    r.id
+                    row.id
                 )));
             }
-            Ok((r.id, privacy::parse_class(&r.class)?))
-        })
-        .collect::<Result<_>>()?;
-        for event in events.iter_mut() {
-            if let Origin::Derived { parents } = &event.origin {
-                for p in parents {
-                    let c = classes.get(&p.0).ok_or_else(|| {
-                        crate::Error::Invalid(format!(
-                            "derived parent {} is not a committed reading",
-                            p.0
-                        ))
-                    })?;
-                    event.class = event.class.max(*c);
-                }
+            classes.insert(row.id, privacy::parse_class(&row.class)?);
+        }
+    }
+    for event in events.iter_mut() {
+        if let Origin::Derived { parents } = &event.origin {
+            for p in parents {
+                let c = classes.get(&p.0).ok_or_else(|| {
+                    crate::Error::Invalid(format!(
+                        "derived parent {} is not a committed reading",
+                        p.0
+                    ))
+                })?;
+                event.class = event.class.max(*c);
             }
         }
     }
