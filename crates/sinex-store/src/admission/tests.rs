@@ -1154,3 +1154,5 @@ async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_repl
         .await
         .unwrap();
 }
+
+mod classification;
