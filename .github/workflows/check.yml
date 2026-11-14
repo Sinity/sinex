@@ -12,13 +12,13 @@ concurrency:
   group: check-${{ github.ref }}-${{ github.ref == 'refs/heads/master' && github.sha || 'latest' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
-# Master builds from scratch and saves its whole target directory, the exact
-# build of that commit; a pull request starts from it. Cargo decides freshness
-# by file times, and a fresh checkout makes every source newer than the saved
-# build, so every source is dated before the build and the files that differ
-# from the saved commit are dated now: Cargo rebuilds the packages those files
-# belong to and the ones depending on them, and reuses the rest. Pull requests
-# run the tests their changes can affect (devkit's selection); master runs all.
+# Master and pull requests restore the latest build for this toolchain and
+# flake. Check and test keep separate caches; only master publishes them.
+# Cargo decides freshness by file times, and a fresh checkout makes every
+# source newer than the saved build, so unchanged sources are dated before
+# that build and differing files are dated now. Cargo rebuilds their packages
+# and dependents while reusing the rest. This reuse does not select tests:
+# pull requests run affected tests and master runs the complete workspace.
 #
 # The development shell carries PostgreSQL 18 with the patched TimescaleDB and
 # pgvector that the compile-time query checks and database tests need.
@@ -35,7 +35,6 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - uses: DeterminateSystems/magic-nix-cache-action@v8
       - name: Restore master's build
-        if: github.event_name == 'pull_request'
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -45,7 +44,6 @@ jobs:
           key: check-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-${{ github.sha }}
           restore-keys: check-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-
       - name: Date sources against the restored build
-        if: github.event_name == 'pull_request'
         run: |
           built=$(cat target/source-commit 2>/dev/null) || exit 0
           git fetch --no-tags --depth=1 origin "$built" || exit 0
@@ -82,7 +80,6 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - uses: DeterminateSystems/magic-nix-cache-action@v8
       - name: Restore master's build
-        if: github.event_name == 'pull_request'
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -92,7 +89,6 @@ jobs:
           key: test-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-${{ github.sha }}
           restore-keys: test-${{ hashFiles('rust-toolchain.toml', 'flake.lock') }}-
       - name: Date sources against the restored build
-        if: github.event_name == 'pull_request'
         run: |
           built=$(cat target/source-commit 2>/dev/null) || exit 0
           git fetch --no-tags --depth=1 origin "$built" || exit 0
