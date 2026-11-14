@@ -69,6 +69,7 @@ async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
         &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;

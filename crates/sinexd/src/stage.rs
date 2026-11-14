@@ -438,6 +438,7 @@ impl Staging<'_> {
                     &mut rounds,
                     self.stop.clone(),
                     self.access,
+                    ReadMode::ToEnd,
                     &mut |_, _| {},
                 )
                 .await;
@@ -713,6 +714,25 @@ pub(crate) async fn record(read_conn: &mut PgConnection, b: &Binding) -> Result<
     .map_err(Error::from)
 }
 
+/// Normal reading shares turns; an explicit staging operation drains its input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReadMode {
+    Once,
+    ToEnd,
+}
+impl ReadMode {
+    fn priority(self, source: &dyn Source) -> writer::Priority {
+        if self == Self::Once
+            && source.spec().origin
+                == sinex_source_core::Origin::Input(sinex_source_core::Shape::LiveStream)
+        {
+            writer::Priority::Live
+        } else {
+            writer::Priority::Bulk
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn drive(
     read_conn: &mut PgConnection,
@@ -728,8 +748,10 @@ pub(crate) async fn drive(
     stop: tokio::sync::watch::Receiver<bool>,
     committed: Option<Committed>,
     batch_events: Option<u64>,
-) -> Result<Totals> {
+    mode: ReadMode,
+) -> Result<(Totals, bool)> {
     let mut totals = Totals::committed(committed);
+    let priority = mode.priority(source.as_ref());
     let started = Instant::now();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
@@ -754,7 +776,7 @@ pub(crate) async fn drive(
             }
             Ok(())
         });
-    loop {
+    let exhausted = loop {
         if *stop.borrow() {
             return Err(Error::new(
                 command_surface::FailureKind::Cancelled,
@@ -765,7 +787,7 @@ pub(crate) async fn drive(
             .await?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
         let poll_started = Instant::now();
-        let mut acquired = reader.acquire(cursor.clone()).await?;
+        let mut acquired = reader.acquire(cursor.clone(), priority).await?;
         totals.poll_time += poll_started.elapsed();
         drivers::note_previous_through(&cursor, &mut acquired);
         let carry = material.carry(read_conn, binding, carry, &acquired).await?;
@@ -785,19 +807,19 @@ pub(crate) async fn drive(
             run,
             material: material.clone(),
             check: check.clone(),
-            priority: crate::writer::Priority::Bulk,
+            priority,
             atomic: false,
             batch_events,
             registered,
         }
         .submit(acquired, carry, &mut totals)
         .await?;
-        if !had_material {
-            break;
+        if mode == ReadMode::Once || !had_material {
+            break !had_material;
         }
-    }
+    };
     totals.wall = started.elapsed();
-    Ok(totals)
+    Ok((totals, exhausted))
 }
 
 impl Totals {

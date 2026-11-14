@@ -67,7 +67,7 @@ impl BindingReader {
     }
 }
 
-/// Run ordinary bindings once, with a native run per source/version/host.
+/// Drain explicitly requested bindings, with a native run per source/version/host.
 pub(crate) async fn once(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -85,6 +85,7 @@ pub(crate) async fn once(
         &mut rounds,
         stop,
         Access::default(),
+        stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;
@@ -179,6 +180,7 @@ pub(crate) async fn read(
     rounds: &mut Rounds,
     stop: watch::Receiver<bool>,
     access: Access<'_>,
+    mode: stage::ReadMode,
     report: &mut (dyn FnMut(&str, &Result<Totals>) + Send),
 ) -> Vec<(String, Result<Totals>)> {
     let Rounds {
@@ -344,10 +346,13 @@ pub(crate) async fn read(
                 stop.clone(),
                 b.committed.clone(),
                 b.batch_events,
+                mode,
             )
             .await;
+            let mut exhausted = false;
             let result = match result {
-                Ok(totals) => {
+                Ok((totals, ended)) => {
+                    exhausted = ended;
                     // A backup keeps its saved cursor and retained spools
                     // together until the local copy is complete.
                     let publication = writer.source_publication();
@@ -363,7 +368,11 @@ pub(crate) async fn read(
                 }
                 Err(e) => Err(e),
             };
-            b.settled = if result.is_ok() { facts } else { None };
+            b.settled = if result.is_ok() && exhausted {
+                facts
+            } else {
+                None
+            };
             results.add(&b.binding, Some(run), result);
         }
     }

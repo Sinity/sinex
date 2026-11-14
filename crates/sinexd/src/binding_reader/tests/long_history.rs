@@ -20,6 +20,7 @@ async fn turn(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
         &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await

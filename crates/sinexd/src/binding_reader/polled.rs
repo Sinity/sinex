@@ -11,9 +11,13 @@ impl PolledReader {
         Self(Arc::new(Mutex::new(reader)))
     }
 
-    pub(crate) async fn acquire(&self, cursor: Value) -> Result<drivers::Acquired> {
+    pub(crate) async fn acquire(
+        &self,
+        cursor: Value,
+        priority: crate::writer::Priority,
+    ) -> Result<drivers::Acquired> {
         let reader = self.0.clone();
-        crate::intake::blocking::run(crate::writer::Priority::Bulk, move || {
+        crate::intake::blocking::run(priority, move || {
             reader
                 .lock()
                 .map_err(|_| Error::internal("the reader stopped in a panic"))?

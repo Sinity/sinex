@@ -36,6 +36,7 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut crate::binding_reader::Rounds::default(),
         stop.clone(),
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;
@@ -55,6 +56,7 @@ async fn restarted_directory_reader_observes_files_removed_after_its_committed_c
         &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;
@@ -378,6 +380,7 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
         &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;

@@ -135,6 +135,7 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         &mut crate::binding_reader::Rounds::default(),
         stop.clone(),
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;
@@ -173,6 +174,7 @@ async fn archive_acquisition_restart_replay_and_privacy_use_real_admission(
         &mut crate::binding_reader::Rounds::default(),
         stop.clone(),
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;
@@ -247,6 +249,7 @@ async fn archive_acquisition_separates_effective_privacy_classes(db: devkit::pg:
         &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await
@@ -293,6 +296,7 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
             &mut crate::binding_reader::Rounds::default(),
             stop,
             Access::default(),
+            crate::stage::ReadMode::ToEnd,
             &mut |_, _| {},
         ),
     )
@@ -310,6 +314,7 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up(db: devkit::pg::T
         &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await
@@ -402,6 +407,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 recipient: Some(&recipient),
                 unlock: None,
             },
+            crate::stage::ReadMode::ToEnd,
             &mut |_, _| {},
         )
         .await;
@@ -438,6 +444,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 recipient: Some(&recipient),
                 unlock: None,
             },
+            crate::stage::ReadMode::ToEnd,
             &mut |_, _| {},
         )
         .await;
@@ -472,6 +479,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 recipient: Some(&recipient),
                 unlock: Some(&unlock),
             },
+            crate::stage::ReadMode::ToEnd,
             &mut |_, _| {},
         )
         .await;
@@ -569,6 +577,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
             &mut crate::binding_reader::Rounds::default(),
             stop,
             Access::default(),
+            crate::stage::ReadMode::ToEnd,
             &mut |_, _| {},
         )
         .await;
@@ -600,6 +609,7 @@ async fn sealed_archive_restart_replay_and_class_changes_preserve_exact_material
                 recipient: Some(&recipient),
                 unlock: None,
             },
+            crate::stage::ReadMode::ToEnd,
             &mut |_, _| {},
         )
         .await;
@@ -656,6 +666,7 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
             recipient: Some(&recipient),
             unlock: None,
         },
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await
@@ -718,6 +729,7 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
             &mut crate::binding_reader::Rounds::default(),
             stop.clone(),
             Access::default(),
+            crate::stage::ReadMode::ToEnd,
             &mut |_, _| {},
         )
         .await
@@ -756,3 +768,5 @@ async fn an_unchanged_append_only_file_is_not_polled_again(db: devkit::pg::TestD
 mod gmail;
 
 mod kestrel;
+
+mod turns;

@@ -50,6 +50,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut crate::binding_reader::Rounds::default(),
         stop.clone(),
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;
@@ -86,6 +87,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
         &mut crate::binding_reader::Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await;

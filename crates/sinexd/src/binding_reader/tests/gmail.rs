@@ -246,6 +246,7 @@ async fn gmail_backfill_reads_past_baseline_and_empty_pages_in_one_invocation(
         stop,
         None,
         None,
+        crate::stage::ReadMode::ToEnd,
     )
     .await
     .unwrap();
@@ -325,6 +326,7 @@ async fn a_reader_that_changes_only_its_cursor_stops_after_one_poll(db: devkit::
         stop,
         None,
         None,
+        crate::stage::ReadMode::ToEnd,
     )
     .await
     .unwrap();

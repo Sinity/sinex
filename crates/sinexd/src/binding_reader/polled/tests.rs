@@ -30,7 +30,10 @@ async fn synchronous_poll_does_not_stop_other_runtime_tasks() {
         waiting.await.unwrap();
         release.send(()).unwrap();
     };
-    let (result, ()) = tokio::join!(reader.acquire(Value::Null), unrelated);
+    let (result, ()) = tokio::join!(
+        reader.acquire(Value::Null, crate::writer::Priority::Bulk),
+        unrelated
+    );
     assert!(
         result
             .err()

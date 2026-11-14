@@ -421,6 +421,7 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
         &mut rounds,
         stop.clone(),
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await
@@ -493,6 +494,7 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
         &mut rounds,
         stop.clone(),
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut report,
     );
     let copying = async {
@@ -555,6 +557,7 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
         &mut rounds,
         stop.clone(),
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await
@@ -657,6 +660,7 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
         &mut Rounds::default(),
         stop,
         Access::default(),
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await

@@ -525,6 +525,7 @@ pub(crate) async fn run(
             &mut rounds,
             stop.clone(),
             crate::material_access::Access::default(),
+            crate::stage::ReadMode::Once,
             &mut |binding, result| {
                 let key = format!("binding {binding}");
                 note(
