@@ -12,7 +12,13 @@ use std::time::{Duration, Instant};
 
 const TOKEN: &str = "synthetic-document-operator";
 
-fn call(socket: &Path, request: Value) -> Value {
+fn call(socket: &Path, mut request: Value) -> Value {
+    // These fixtures assert delivered facts, not the operation's latency.
+    request
+        .as_object_mut()
+        .unwrap()
+        .entry("deadline")
+        .or_insert(Value::Null);
     let body = serde_json::to_vec(&request).unwrap();
     let mut stream = UnixStream::connect(socket).unwrap();
     stream

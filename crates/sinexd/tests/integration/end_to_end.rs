@@ -92,7 +92,16 @@ impl Target {
 
     fn sinexd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
-        c.args(args)
+        c.args(args.get(..2).unwrap_or(args));
+        if args.first() == Some(&"admin")
+            && !args.contains(&"--deadline")
+            && args
+                .get(1)
+                .is_some_and(|name| sinex_protocol::command(name).is_some())
+        {
+            c.args(["--deadline", "none"]);
+        }
+        c.args(args.get(2..).unwrap_or_default())
             .args(["--database", &self.url, "--store"])
             .arg(&self.store)
             .stdout(Stdio::piped())
@@ -126,11 +135,19 @@ impl Target {
     /// event reference takes the rest of the line.
     fn lifecycle(&self, verb: &str, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
-        c.args(["admin", verb, "--database", &self.url, "--store"])
-            .arg(&self.store)
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        c.args([
+            "admin",
+            verb,
+            "--deadline",
+            "none",
+            "--database",
+            &self.url,
+            "--store",
+        ])
+        .arg(&self.store)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         c
     }
 
@@ -143,11 +160,19 @@ impl Target {
     /// of the line).
     fn query(&self, text: &str) -> serde_json::Value {
         let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
-        c.args(["admin", "query", "--database", &self.url, "--store"])
-            .arg(&self.store)
-            .args(["--page", "1000", text])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        c.args([
+            "admin",
+            "query",
+            "--deadline",
+            "none",
+            "--database",
+            &self.url,
+            "--store",
+        ])
+        .arg(&self.store)
+        .args(["--page", "1000", text])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         serde_json::from_str(&finish(&mut c)).unwrap()
     }
 

@@ -75,8 +75,17 @@ impl Drop for Process {
 
 pub(crate) fn run(binary: &Path, database: &str, store: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(binary);
+    command.args(args.get(..2).unwrap_or(args));
+    if args.first() == Some(&"admin")
+        && !args.contains(&"--deadline")
+        && args
+            .get(1)
+            .is_some_and(|name| sinex_protocol::command(name).is_some())
+    {
+        command.args(["--deadline", "none"]);
+    }
     command
-        .args(args)
+        .args(args.get(2..).unwrap_or_default())
         .args(["--database", database, "--store"])
         .arg(store);
     command
