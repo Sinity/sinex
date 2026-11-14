@@ -299,6 +299,7 @@ async fn request_inner(
     acquired: drivers::Acquired,
     admission: Admission,
 ) -> Result<Submission> {
+    crate::request_deadline::finish_read(conn).await?;
     let spec = source.spec();
     let version = spec.parser_version.to_string();
     let run = sinex_store::runs::start(

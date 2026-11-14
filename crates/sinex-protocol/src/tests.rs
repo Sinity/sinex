@@ -184,3 +184,45 @@ fn curation_writes_arrive_as_typed_acts_and_a_malformed_write_is_refused() {
         );
     }
 }
+
+#[devkit::test]
+fn deadlines_keep_absence_none_and_large_milliseconds_distinct() {
+    use command_surface::Deadline;
+    for (wire, expected) in [
+        (json!({"method":"status"}), Deadline::Default),
+        (json!({"method":"status","deadline":null}), Deadline::None),
+        (
+            json!({"method":"status","deadline":0}),
+            Deadline::Milliseconds(0),
+        ),
+        (
+            json!({"method":"status","deadline":u64::MAX}),
+            Deadline::Milliseconds(u64::MAX),
+        ),
+    ] {
+        let call: Call = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(call.deadline, expected);
+        assert_eq!(serde_json::to_value(call).unwrap(), wire);
+    }
+    for invalid in [json!(-1), json!(1.5), json!("none"), json!(true)] {
+        assert!(
+            serde_json::from_value::<Call>(json!({"method":"status","deadline":invalid})).is_err()
+        );
+    }
+    assert!(
+        serde_json::from_value::<Call>(json!({"method":"status","deadline":null,"unknown":true}))
+            .is_err()
+    );
+    let call = Call::from_args(
+        "query",
+        serde_json::from_value(json!({"query":"events","deadline":null})).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(call.deadline, Deadline::None);
+    assert_eq!(call.request.method(), "query");
+    assert_eq!(deadline("none").unwrap(), Deadline::None);
+    assert_eq!(
+        deadline(&u64::MAX.to_string()).unwrap(),
+        Deadline::Milliseconds(u64::MAX)
+    );
+}

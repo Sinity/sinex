@@ -1,6 +1,7 @@
 //! The API against a real database and the real writer.
 use crate::Result;
 mod backups;
+mod deadlines;
 mod exact_payloads;
 mod sql_boundary;
 mod versions;
@@ -184,7 +185,14 @@ async fn world_with_api(
         Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),
     ));
-    let reads = reads.connect(&url).await.unwrap();
+    let reads = reads
+        .connect_with(
+            url.parse::<sqlx::postgres::PgConnectOptions>()
+                .unwrap()
+                .application_name("sinex.api"),
+        )
+        .await
+        .unwrap();
     let (stop, stopped) = watch::channel(false);
     let mut api = Api {
         backup_producers: None,
@@ -261,17 +269,27 @@ async fn call(w: &World, token: Option<&str>, body: Value) -> (StatusCode, Value
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+// Functional fixtures exercise data semantics independently of latency defaults.
+async fn call_unbounded(w: &World, token: Option<&str>, mut body: Value) -> (StatusCode, Value) {
+    body.as_object_mut()
+        .unwrap()
+        .entry("deadline")
+        .or_insert(Value::Null);
+    call(w, token, body).await
+}
+
 #[devkit::test]
 async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (status, _) = call(&w, None, json!({"method": "status"})).await;
+    let (status, _) = call_unbounded(&w, None, json!({"method": "status"})).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (status, _) = call(&w, Some("wrong"), json!({"method": "status"})).await;
+    let (status, _) = call_unbounded(&w, Some("wrong"), json!({"method": "status"})).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (status, body) = call(&w, Some(READ), json!({"method": "status"})).await;
+    let (status, body) = call_unbounded(&w, Some(READ), json!({"method": "status"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], json!("ok"));
-    let (status, body) = call(&w, Some(READ), json!({"method": "archive", "target": "x"})).await;
+    let (status, body) =
+        call_unbounded(&w, Some(READ), json!({"method": "archive", "target": "x"})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(
         body["failure"]["message"]
@@ -279,7 +297,7 @@ async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
             .unwrap()
             .contains("needs agent")
     );
-    let (status, _) = call(
+    let (status, _) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "tombstone", "target": "x"}),
@@ -291,7 +309,7 @@ async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
 #[devkit::test]
 async fn bad_queries_are_refused_with_the_place(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events where exit_cod = 1"}),
@@ -300,7 +318,7 @@ async fn bad_queries_are_refused_with_the_place(db: devkit::pg::TestDatabase) {
     assert_eq!(body["outcome"], json!("failed"));
     assert_eq!(body["failure"]["kind"], json!("unknown_field"), "{body}");
     assert!(body["failure"]["caret"].as_str().unwrap().contains('^'));
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "related x"}),
@@ -313,7 +331,7 @@ async fn bad_queries_are_refused_with_the_place(db: devkit::pg::TestDatabase) {
 #[devkit::test]
 async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "replay", "binding": "nothing@here", "compare": true}),
@@ -323,7 +341,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     assert_eq!(body["result"]["sequences"], json!(0));
     assert_eq!(body["result"]["compare_only"], json!(true));
     for token in [AGENT, OPERATOR] {
-        let (_, body) = call(
+        let (_, body) = call_unbounded(
             &w,
             Some(token),
             json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
@@ -333,21 +351,21 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
     }
     let identity = sinex_sealing::Identity::generate();
     use age::secrecy::ExposeSecret;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"unlock","identity":identity.to_string().expose_secret()}),
     )
     .await;
     assert_eq!(body["outcome"], "ok", "{body}");
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
     )
     .await;
     assert_eq!(body["outcome"], "failed", "{body}");
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
@@ -360,7 +378,7 @@ async fn replay_is_offered_through_the_api(db: devkit::pg::TestDatabase) {
 async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["ls", "pwd"], 0).await;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events where ls"}),
@@ -376,7 +394,7 @@ async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase)
         .as_str()
         .unwrap()
         .to_string();
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "archive", "target": format!("sinex:ev/{id}")}),
@@ -384,18 +402,20 @@ async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase)
     .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     assert_eq!(body["result"]["actor"], json!("agent"), "{body}");
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events"}),
     )
     .await;
     assert_eq!(body["result"]["total"], json!(1));
-    let (_, body) = call(&w, Some(READ), json!({"method": "show", "reference": id})).await;
+    let (_, body) =
+        call_unbounded(&w, Some(READ), json!({"method": "show", "reference": id})).await;
     assert_eq!(body["result"]["event"]["state"], json!("archived"));
-    let (_, body) = call(&w, Some(AGENT), json!({"method": "restore", "target": id})).await;
+    let (_, body) =
+        call_unbounded(&w, Some(AGENT), json!({"method": "restore", "target": id})).await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events"}),
@@ -408,14 +428,14 @@ async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase)
 async fn sql_reads_as_the_reader_role(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["ls"], 0).await;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": "SELECT count(*) AS n FROM core.visible_events"}),
     )
     .await;
     assert_eq!(body["result"]["rows"], json!([{"n": 1}]), "{body}");
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method": "sql", "sql": "DELETE FROM core.events RETURNING id"}),
@@ -432,7 +452,7 @@ async fn sql_answers_a_page_at_a_time_and_every_row_is_reachable(db: devkit::pg:
     let mut seen = Vec::new();
     let mut pages = 0;
     loop {
-        let (_, body) = call(
+        let (_, body) = call_unbounded(
             &w,
             Some(READ),
             json!({"method": "sql", "sql": sql, "page": 3, "cursor": cursor}),
@@ -459,7 +479,7 @@ async fn sql_pages_end_early_once_they_hold_their_bytes(db: devkit::pg::TestData
     // Rows of 3 MiB each: an 8 MiB page holds three at most, whatever the
     // row count asked for, and the rest stay reachable.
     let sql = "SELECT repeat('x', 3 * 1024 * 1024) AS wide FROM generate_series(1, 5)";
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": sql, "page": 10}),
@@ -471,7 +491,7 @@ async fn sql_pages_end_early_once_they_hold_their_bytes(db: devkit::pg::TestData
         .as_str()
         .unwrap()
         .to_owned();
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": sql, "page": 10, "cursor": cursor}),
@@ -487,7 +507,7 @@ async fn sql_pages_end_early_once_they_hold_their_bytes(db: devkit::pg::TestData
 async fn an_sql_cursor_serves_only_its_statement_and_caller(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     let sql = "SELECT n FROM generate_series(1, 4) AS n";
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": sql, "page": 1}),
@@ -497,21 +517,21 @@ async fn an_sql_cursor_serves_only_its_statement_and_caller(db: devkit::pg::Test
         .as_str()
         .unwrap()
         .to_owned();
-    let (_, other) = call(
+    let (_, other) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method": "sql", "sql": sql, "page": 1, "cursor": cursor}),
     )
     .await;
     assert_eq!(other["outcome"], json!("failed"), "{other}");
-    let (_, other) = call(
+    let (_, other) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": "SELECT 1 AS n", "page": 1, "cursor": cursor}),
     )
     .await;
     assert_eq!(other["outcome"], json!("failed"), "{other}");
-    let (_, next) = call(
+    let (_, next) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": sql, "page": 1, "cursor": cursor}),
@@ -523,7 +543,7 @@ async fn an_sql_cursor_serves_only_its_statement_and_caller(db: devkit::pg::Test
 #[devkit::test]
 async fn sql_reads_a_column_named_like_the_row_alias(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "sql", "sql": "SELECT 1 AS q"}),
@@ -536,13 +556,14 @@ async fn sql_reads_a_column_named_like_the_row_alias(db: devkit::pg::TestDatabas
 async fn sql_runs_under_a_statement_time_limit(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["ls"], 0).await;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method": "sql", "sql": "SELECT current_setting('statement_timeout') AS bound"}),
+        json!({"method": "sql", "deadline":2000, "sql": "SELECT extract(epoch FROM current_setting('statement_timeout')::interval)*1000 AS bound"}),
     )
     .await;
-    assert_eq!(body["result"]["rows"], json!([{"bound": "2min"}]), "{body}");
+    let bound = body["result"]["rows"][0]["bound"].as_f64().unwrap();
+    assert!(bound > 0. && bound <= 2000., "{body}");
 }
 
 /// Read the stream until `needle` appears, for at most ten seconds.
@@ -564,7 +585,7 @@ async fn read_until(body: &mut Body, seen: &mut String, needle: &str) {
 async fn follow_streams_new_matching_events_once(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["before"], 0).await;
-    let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
+    let req = HttpRequest::get("/v1/follow?deadline=none&query=events%20where%20cargo")
         .header("authorization", format!("Bearer {READ}"))
         .body(Body::empty())
         .unwrap();
@@ -607,7 +628,7 @@ async fn follow_notice_waits_for_the_initial_cursor(db: devkit::pg::TestDatabase
         .unwrap();
     drop(snapshot);
 
-    let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
+    let req = HttpRequest::get("/v1/follow?deadline=none&query=events%20where%20cargo")
         .header("authorization", format!("Bearer {READ}"))
         .body(Body::empty())
         .unwrap();
@@ -673,7 +694,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
     .expect("read-model maintainer did not stop")
     .unwrap()
     .unwrap();
-    let req = HttpRequest::get("/v1/follow?query=events%20where%20cargo")
+    let req = HttpRequest::get("/v1/follow?deadline=none&query=events%20where%20cargo")
         .header("authorization", format!("Bearer {READ}"))
         .body(Body::empty())
         .unwrap();
@@ -755,7 +776,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
 async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     // An agent may raise a floor.
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "privacy-class", "source": "terminal.atuin", "class": "guarded"}),
@@ -765,7 +786,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
     admit(&w, &["ssh vault.internal"], 0).await;
     let rows = |body: &Value| body["result"]["rows"][0].to_string();
 
-    let (_, read) = call(
+    let (_, read) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "query", "query": "events"}),
@@ -776,7 +797,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
         !rows(&read).contains("vault"),
         "read token sees a guarded value: {read}"
     );
-    let (_, agent) = call(
+    let (_, agent) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "query", "query": "events"}),
@@ -786,7 +807,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
         !rows(&agent).contains("vault"),
         "agent without a grant: {agent}"
     );
-    let (_, op) = call(
+    let (_, op) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method": "query", "query": "events"}),
@@ -796,7 +817,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
         rows(&op).contains("vault"),
         "the operator token holds guarded: {op}"
     );
-    let (_, s) = call(
+    let (_, s) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "search", "words": "vault"}),
@@ -809,21 +830,21 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
     );
 
     // Lowering a floor weakens protection: the operator's alone.
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "privacy-class", "source": "terminal.atuin", "class": "open"}),
     )
     .await;
     assert_eq!(body["outcome"], json!("failed"), "{body}");
-    let (status, _) = call(
+    let (status, _) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "privacy-end", "name": "x"}),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
         json!({"method": "privacy-rule", "name": "pw", "source": "terminal.atuin",
@@ -831,7 +852,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
     )
     .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
-    let (_, body) = call(&w, Some(READ), json!({"method": "privacy-verify"})).await;
+    let (_, body) = call_unbounded(&w, Some(READ), json!({"method": "privacy-verify"})).await;
     assert_eq!(body["result"]["below_floor"], json!(0), "{body}");
 }
 
@@ -888,31 +909,32 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
 
     let first = |body: &Value| body["result"]["rows"][0].to_string();
     let query = json!({"method": "query", "query": "events"});
-    let (_, locked) = call(&w, Some(OPERATOR), query.clone()).await;
+    let (_, locked) = call_unbounded(&w, Some(OPERATOR), query.clone()).await;
     assert!(!first(&locked).contains("diary"), "locked: {locked}");
     use age::secrecy::ExposeSecret;
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method": "unlock", "identity": identity.to_string().expose_secret(), "minutes": 5}),
     )
     .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
-    let (_, open) = call(&w, Some(OPERATOR), query.clone()).await;
+    let (_, open) = call_unbounded(&w, Some(OPERATOR), query.clone()).await;
     assert!(first(&open).contains("diary"), "unlocked operator: {open}");
-    let (_, agent) = call(&w, Some(AGENT), query).await;
+    let (_, agent) = call_unbounded(&w, Some(AGENT), query).await;
     assert!(
         !first(&agent).contains("diary"),
         "the agent never reads sealed: {agent}"
     );
-    let (status, _) = call(&w, Some(AGENT), json!({"method": "lock"})).await;
+    let (status, _) = call_unbounded(&w, Some(AGENT), json!({"method": "lock"})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[devkit::test]
 async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (status, body) = call(&w, Some(READ), json!({"method": "analysis-catalog"})).await;
+    let (status, body) =
+        call_unbounded(&w, Some(READ), json!({"method": "analysis-catalog"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let commands = body["result"]["metrics"]
         .as_array()
@@ -924,14 +946,14 @@ async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDataba
     assert_eq!(commands["counts"][0]["event_type"], "command.fused");
 
     let run = json!({"method": "analysis-run", "recipe": "deviations", "from": "2026-09-01", "to": "2026-09-30"});
-    let (status, body) = call(&w, Some(READ), run).await;
+    let (status, body) = call_unbounded(&w, Some(READ), run).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body["result"]["tables"]["metrics"][0]["anomaly"]["status"], "not_estimable",
         "nothing observed: an answer, not a number"
     );
 
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "brief", "day": "2026-09-14"}),
@@ -944,7 +966,7 @@ async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDataba
         "{text}"
     );
 
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "analysis-run", "recipe": "astrology", "from": "2026-09-01", "to": "2026-09-02"}),
@@ -961,7 +983,7 @@ async fn analysis_calls_run_and_brief_through_the_api(db: devkit::pg::TestDataba
 #[devkit::test]
 async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "analysis-panel", "from": "2026-09-14", "to": "2026-09-15", "metric": ["shell.commands"]}),
@@ -981,7 +1003,7 @@ async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatab
             .contains("2026-09-14")
     );
 
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "analysis-why", "metric": "shell.commands", "day": "2026-09-14"}),
@@ -1003,7 +1025,7 @@ async fn analysis_panel_and_why_answer_through_the_api(db: devkit::pg::TestDatab
         "{body}"
     );
 
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method": "analysis-why", "metric": "astrology", "day": "2026-09-14"}),
@@ -1042,7 +1064,7 @@ async fn declaration_discovery_pages_through_the_public_commands(db: devkit::pg:
     let mut cursor: Option<String> = None;
     let mut names = std::collections::BTreeSet::new();
     loop {
-        let (status, body) = call(
+        let (status, body) = call_unbounded(
             &w,
             Some(READ),
             json!({"method":"kinds","page":7,"cursor":cursor}),
@@ -1061,7 +1083,7 @@ async fn declaration_discovery_pages_through_the_public_commands(db: devkit::pg:
         }
     }
     assert_eq!(names.len(), sinex_model::event_types::ALL.len());
-    let (status, body) = call(
+    let (status, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"fields","kind":"command.executed","page":1}),

@@ -102,12 +102,85 @@ pub async fn set_grants(conn: &mut PgConnection, grants: &str) -> sqlx::Result<(
     Ok(())
 }
 
+/// Identify the task owning a database connection, including after reconnect.
+pub async fn name_connection(conn: &mut PgConnection, task: &str) -> sqlx::Result<()> {
+    sqlx::query_scalar!("SELECT set_config('application_name', $1, false)", task)
+        .fetch_one(conn)
+        .await?;
+    Ok(())
+}
+
+/// The backend remains owned by its connection until cancellation completes.
+pub async fn backend_pid(conn: &mut PgConnection) -> sqlx::Result<i32> {
+    sqlx::query_scalar!(r#"SELECT pg_backend_pid() AS "pid!""#)
+        .fetch_one(conn)
+        .await
+}
+
+/// Cancel work on an independently owned read connection.
+pub async fn cancel_backend(conn: &mut PgConnection, pid: i32) -> sqlx::Result<()> {
+    sqlx::query!("SELECT pg_cancel_backend($1)", pid)
+        .fetch_one(conn)
+        .await?;
+    Ok(())
+}
+
+/// Return a healthy pooled reader without a prior request's budget.
+pub async fn reset_request_deadline(conn: &mut PgConnection) -> sqlx::Result<()> {
+    sqlx::query!("RESET statement_timeout")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!("RESET sinex.request_deadline")
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Carry a request's remaining budget on its connection. Other daemon tasks
+/// leave it unset; no product-wide statement cap is installed.
+pub async fn set_request_deadline(
+    conn: &mut PgConnection,
+    remaining: Option<std::time::Duration>,
+) -> Result<()> {
+    let milliseconds = remaining.map(|duration| duration.as_millis().max(1));
+    let deadline: String = sqlx::query_scalar("SELECT CASE WHEN $1::text IS NULL THEN '' ELSE ceil(extract(epoch FROM clock_timestamp()) * 1000 + $1::numeric)::text END")
+        .bind(milliseconds.map(|value| value.to_string())).fetch_one(&mut *conn).await?;
+    // These values come only from numeric arithmetic above and our duration,
+    // never from SQL supplied by a reader. SET works under the read-only role;
+    // set_config remains unavailable to user SQL.
+    sqlx::query(&format!("SET sinex.request_deadline = '{deadline}'"))
+        .execute(&mut *conn)
+        .await?;
+    let timeout = milliseconds
+        .filter(|value| *value <= i32::MAX as u128)
+        .unwrap_or(0);
+    sqlx::query(&format!("SET statement_timeout = '{timeout}ms'"))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// The transaction uses the same request budget, reduced by acquisition and
+/// earlier statements. PostgreSQL interprets zero as unlimited, so an expired
+/// finite budget is one millisecond and is also checked by the request owner.
+pub async fn local_request_deadline(conn: &mut PgConnection) -> Result<()> {
+    let remaining: Option<i32> = sqlx::query_scalar("SELECT CASE WHEN remaining IS NULL OR remaining > 2147483647 THEN 0 ELSE greatest(1, ceil(remaining))::int END FROM (SELECT nullif(current_setting('sinex.request_deadline', true), '')::numeric - extract(epoch FROM clock_timestamp()) * 1000 AS remaining) budget WHERE current_setting('sinex.request_deadline', true) IS NOT NULL")
+        .fetch_optional(&mut *conn).await?;
+    if let Some(remaining) = remaining {
+        sqlx::query(&format!("SET LOCAL statement_timeout = '{remaining}ms'"))
+            .execute(conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Make the transaction just begun on `conn` read-only, with every statement
 /// seeing the same snapshot.
 pub async fn read_one_snapshot(conn: &mut PgConnection) -> Result<()> {
     sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *conn)
         .await?;
+    local_request_deadline(conn).await?;
     Ok(())
 }
 

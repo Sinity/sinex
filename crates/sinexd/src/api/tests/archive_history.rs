@@ -1,7 +1,8 @@
 use super::*;
 
 async fn totals(w: &World, question: &str) -> u64 {
-    let (status, body) = call(w, Some(READ), json!({"method":"query","query":question})).await;
+    let (status, body) =
+        call_unbounded(w, Some(READ), json!({"method":"query","query":question})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body["result"]["total"].as_u64().unwrap()
 }
@@ -16,7 +17,7 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
         .await
         .unwrap();
     assert_eq!(before, 3);
-    let (_, body) = call(
+    let (_, body) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"events | sort by when"}),
@@ -37,7 +38,7 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
             .await
             .unwrap();
         let (status, body) =
-            call(&w, Some(AGENT), json!({"method":method,"target":reference})).await;
+            call_unbounded(&w, Some(AGENT), json!({"method":method,"target":reference})).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["outcome"], "ok", "{body}");
         let position = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())

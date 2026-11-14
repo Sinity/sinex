@@ -72,6 +72,7 @@ impl Api {
                     .ok_or_else(|| Error::bad_request("backup prepare needs --output PATH"))?;
                 let output = std::path::PathBuf::from(output);
                 let revision = crate::build_identity::current()?;
+                crate::request_deadline::admit()?;
                 crate::backup::create(&output)?;
                 // Discovery can walk historical input directories. Finish it
                 // before starting the producers' paused publication lifetime.

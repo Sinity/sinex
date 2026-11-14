@@ -312,7 +312,11 @@ impl Ingest {
         }
         match self.writer.submit(Priority::Live, batch).await {
             Ok(_) => {}
-            Err(error @ (WriteError::Unavailable(_) | WriteError::Stopped)) => {
+            Err(
+                error @ (WriteError::Unavailable(_)
+                | WriteError::Stopped
+                | WriteError::ReadDeadline),
+            ) => {
                 return Err(error.into());
             }
             // Only signal steps compute from inputs that can move under them.

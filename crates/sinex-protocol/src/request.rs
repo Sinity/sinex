@@ -5,6 +5,77 @@ use command_surface::{Failure, FailureKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// CLI and streaming spelling of the shared numeric-or-null wire budget.
+pub fn deadline(value: &str) -> Result<command_surface::Deadline, Failure> {
+    if value == "none" {
+        Ok(command_surface::Deadline::None)
+    } else {
+        value
+            .parse()
+            .map(command_surface::Deadline::Milliseconds)
+            .map_err(|_| {
+                Failure::new(
+                    FailureKind::BadRequest,
+                    "deadline must be milliseconds or none",
+                )
+            })
+    }
+}
+
+/// A command and its execution budget. The flat wire spelling stays the
+/// command's strict tagged object, with shared `deadline` metadata beside it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Call {
+    pub request: Request,
+    pub deadline: command_surface::Deadline,
+}
+impl From<Request> for Call {
+    fn from(request: Request) -> Self {
+        Self {
+            request,
+            deadline: command_surface::Deadline::Default,
+        }
+    }
+}
+impl Call {
+    pub fn from_args(command: &str, mut args: Map<String, Value>) -> Result<Self, Failure> {
+        let deadline = args
+            .remove("deadline")
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| Failure::new(FailureKind::BadRequest, format!("deadline: {error}")))?
+            .unwrap_or_default();
+        Ok(Self {
+            request: Request::from_args(command, args)?,
+            deadline,
+        })
+    }
+}
+impl Serialize for Call {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut value = serde_json::to_value(&self.request).map_err(serde::ser::Error::custom)?;
+        if self.deadline != command_surface::Deadline::Default {
+            value.as_object_mut().expect("request object").insert(
+                "deadline".into(),
+                serde_json::to_value(self.deadline).map_err(serde::ser::Error::custom)?,
+            );
+        }
+        value.serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for Call {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut args = Map::<String, Value>::deserialize(deserializer)?;
+        let method = args
+            .remove("method")
+            .ok_or_else(|| serde::de::Error::custom("missing method"))?;
+        let method = method
+            .as_str()
+            .ok_or_else(|| serde::de::Error::custom("method must be a string"))?;
+        Self::from_args(method, args).map_err(serde::de::Error::custom)
+    }
+}
+
 /// One call, as the API and MCP carry it. Built from a command's arguments
 /// with [`Request::from_args`], so every surface makes the same request.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -442,6 +513,14 @@ impl Request {
             Failure::new(FailureKind::BadRequest, format!("no command `{command}`"))
                 .with_candidates(names)
         })?;
+        for name in args.keys() {
+            if !spec.args.iter().any(|arg| arg.name == name) {
+                return Err(Failure::new(
+                    FailureKind::BadRequest,
+                    format!("`{command}` has no argument `{name}`"),
+                ));
+            }
+        }
         for arg in spec.args {
             if arg.required && args.get(arg.name).is_none_or(Value::is_null) {
                 return Err(Failure::new(

@@ -68,6 +68,7 @@ pub(crate) async fn run(
             "would_refuse": !refusals.is_empty(),
         })));
     }
+    crate::request_deadline::handoff_read(read).await?;
     let source = if matches!(op.scope, Scope::Source { .. }) {
         Some(lifecycle::source_roots(read, &op, None)?)
     } else {
@@ -102,6 +103,7 @@ pub(crate) async fn resume(
     operation: OperationId,
 ) -> Result<Answer> {
     let (op, progress) = lifecycle::stored(read, operation).await?;
+    crate::request_deadline::handoff_read(read).await?;
     let source = if matches!(op.scope, Scope::Source { .. }) && progress.phase == 0 {
         Some(lifecycle::source_roots(read, &op, progress.after)?)
     } else {

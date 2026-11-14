@@ -93,7 +93,7 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
     let mut all = first;
     all.extend(facts("box", &[(20, "/src/tidepool", None)], Class::Open));
     admit_events(&w, all).await;
-    let (_, listed) = call(
+    let (_, listed) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"shell-sessions | sort by start"}),
@@ -107,12 +107,13 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
         listed["result"]["rows"][0]["cwds"],
         json!(["/src/tide", "/src/other", "/src/tide/tools"])
     );
-    let (_, latest) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    let (_, latest) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(
         latest["result"]["recall"]["session"]["row"]["cwds"],
         json!(["/src/tidepool"])
     );
-    let (_, scoped) = call(
+    let (_, scoped) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"recall","around":"last","cwd":"/src/tide"}),
@@ -135,21 +136,21 @@ async fn recall_last_selects_recorded_groups_and_includes_the_observed_upper_poi
             .sum::<u64>(),
         expected.len() as u64
     );
-    let (_, query) = call(
+    let (_, query) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"recall last where cwds ^ /src/tide"}),
     )
     .await;
     assert_eq!(ids(&query), ids(&scoped));
-    let (_, during) = call(
+    let (_, during) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"commands where during (shell-sessions where cwds ^ /src/tide) at match.when"}),
     )
     .await;
     assert_eq!(during["result"]["total"], 3, "{during}");
-    let (_, containing) = call(&w,Some(READ),json!({"method":"query","query":"shell-sessions where containing (commands where cwd = /src/tide/tools) at match.when"})).await;
+    let (_, containing) = call_unbounded(&w,Some(READ),json!({"method":"query","query":"shell-sessions where containing (commands where cwd = /src/tide/tools) at match.when"})).await;
     assert_eq!(containing["result"]["total"], 1, "{containing}");
 }
 
@@ -175,13 +176,14 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         .min()
         .unwrap();
     admit_events(&w, events).await;
-    let (_, answer) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    let (_, answer) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(
         answer["result"]["recall"]["session"]["row"]["id"],
         expected_anchor
     );
     let expected = ids(&answer);
-    let (_, first) = call(
+    let (_, first) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"recall","around":"last","page":2}),
@@ -192,7 +194,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
     let mut cursor = first["result"]["page"]["cursor"].clone();
     admit_events(&w, facts("later", &[(20, "/src/later", None)], Class::Open)).await;
     while let Some(c) = cursor.as_str() {
-        let (_, page) = call(
+        let (_, page) = call_unbounded(
             &w,
             Some(READ),
             json!({"method":"recall","around":"last","page":2,"cursor":c}),
@@ -207,7 +209,8 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         cursor = page["result"]["page"]["cursor"].clone();
     }
     assert_eq!(collected, expected);
-    let (_, changed) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    let (_, changed) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_ne!(
         changed["result"]["recall"]["session"]["row"]["id"],
         expected_anchor
@@ -219,7 +222,7 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg
     let w = world(db).await;
     let path = "/src/tide (notes) \" where cwds = /else";
     admit_events(&w, facts("box", &[(0, path, None)], Class::Open)).await;
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"recall","around":"last","cwd":path}),
@@ -231,7 +234,7 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg
         json!([path])
     );
     for around in [None, Some("yesterday"), Some("2026-09-14T08:00:00Z")] {
-        let (_, body) = call(
+        let (_, body) = call_unbounded(
             &w,
             Some(READ),
             json!({"method":"recall","around":around,"cwd":path}),
@@ -245,7 +248,7 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg
                 .contains("only to recall last")
         );
     }
-    let (_, absent) = call(
+    let (_, absent) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"recall","around":"last","cwd":"/unmatched"}),
@@ -256,7 +259,7 @@ async fn recall_cwd_quotes_paths_and_rejects_incompatible_windows(db: devkit::pg
         "no_known_timed_shell_session"
     );
     assert!(absent["result"]["recall"]["no_data"].is_null());
-    let (_, relative) = call(
+    let (_, relative) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"recall","around":"last","cwd":"relative"}),
@@ -293,13 +296,14 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
     )
     .unwrap();
     admit_events(&w, vec![untimed]).await;
-    let (_, none) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    let (_, none) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(
         none["result"]["recall"]["status"],
         "no_known_timed_shell_session"
     );
     assert!(none["result"]["recall"]["by_source"].is_null());
-    let (_, counted) = call(
+    let (_, counted) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"recall last | count"}),
@@ -311,7 +315,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
         counted["result"]["recall"]["status"],
         "no_known_timed_shell_session"
     );
-    let (_, observations) = call(
+    let (_, observations) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"events where event_type = command.imported"}),
@@ -329,7 +333,8 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
         facts("private", &[(20, "/src/private", None)], Class::Guarded),
     )
     .await;
-    let (_, hidden) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    let (_, hidden) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(hidden["outcome"], "failed", "{hidden}");
     assert!(
         hidden["failure"]["message"]
@@ -338,7 +343,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
             .contains("unavailable")
     );
     assert!(!hidden.to_string().contains("/src/private"));
-    let (_, visible) = call(
+    let (_, visible) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"recall","around":"last"}),
@@ -382,7 +387,7 @@ async fn recall_does_not_write(db: devkit::pg::TestDatabase) {
         json!({"method":"recall"}),
         json!({"method":"query","query":"recall 2026-09-14T08:00:00Z"}),
     ] {
-        let (_, recall) = call(&w, Some(READ), request).await;
+        let (_, recall) = call_unbounded(&w, Some(READ), request).await;
         assert_eq!(recall["outcome"], "ok", "{recall}");
         assert!(recall["result"]["context_pack"].is_null(), "{recall}");
         assert!(recall["result"]["text"].is_string(), "{recall}");
@@ -405,9 +410,9 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
     );
     let activity_ids = activity.iter().map(|event| event.id).collect::<Vec<_>>();
     admit_events(&w, activity).await;
-    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"remember-tide","query":"recall last where cwds ^ /src/tide"})).await;
+    let (_,saved) = call_unbounded(&w,Some(OPERATOR),json!({"method":"query-save","name":"remember-tide","query":"recall last where cwds ^ /src/tide"})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
-    let (_, first) = call(
+    let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query","query":"query:remember-tide","page":1}),
@@ -416,7 +421,7 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
     assert_eq!(first["outcome"], "ok", "{first}");
     assert!(first["result"]["text"].is_string(), "{first}");
     let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
-    let (_, next) = call(
+    let (_, next) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query","query":"query:remember-tide","page":1,"cursor":cursor}),
@@ -433,21 +438,21 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
     let cursor = context["result"]["page"]["cursor"].as_str().unwrap();
     // A different window is a different question; naming the cursor's own
     // end explicitly is the same window and continues.
-    let (_, refused) = call(
+    let (_, refused) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"context","since":"2026-09-14T00:00:01Z","page":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(refused["outcome"], "failed", "{refused}");
-    let (_, same) = call(
+    let (_, same) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"context","since":"2026-09-14T00:00:00Z","until":context["result"]["recall"]["to"],"page":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(same["outcome"], "ok", "{same}");
-    let (_, changed_grants) = call(
+    let (_, changed_grants) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1,"cursor":cursor}),
@@ -465,7 +470,7 @@ async fn assert_activity_context(
     request: &Value,
     expected: &[EventId],
 ) -> Value {
-    let (_, first) = call(w, Some(caller), request.clone()).await;
+    let (_, first) = call_unbounded(w, Some(caller), request.clone()).await;
     assert_eq!(first["outcome"], "ok", "{first}");
     let mut actual = Vec::new();
     let mut page = first.clone();
@@ -483,7 +488,7 @@ async fn assert_activity_context(
         };
         let mut next = request.clone();
         next["cursor"] = json!(cursor);
-        page = call(w, Some(caller), next).await.1;
+        page = call_unbounded(w, Some(caller), next).await.1;
         assert_eq!(page["outcome"], "ok", "{page}");
     }
     actual.sort_unstable();
@@ -561,7 +566,7 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
         .map(|event| event.id.to_string())
         .collect::<std::collections::BTreeSet<_>>();
     admit_events(&w, definitions).await;
-    let (_, ordinary) = call(
+    let (_, ordinary) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"events where event_type = query.saved"}),
@@ -596,7 +601,7 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
     let private_ids = private.iter().map(|event| event.id).collect::<Vec<_>>();
     admit_events(&w, private).await;
     // A reader sees that guarded activity exists without its content.
-    let (_, hidden) = call(&w, Some(READ), request.clone()).await;
+    let (_, hidden) = call_unbounded(&w, Some(READ), request.clone()).await;
     assert_eq!(hidden["outcome"], "ok", "{hidden}");
     assert!(!hidden.to_string().contains("/src/private-activity"));
     let mut expected = activity_ids.clone();
@@ -617,7 +622,7 @@ async fn a_stored_recall_cursor_keeps_the_callers_grants(db: devkit::pg::TestDat
         ),
     )
     .await;
-    let (_, first) = call(
+    let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"recall","around":"last","page":1}),
@@ -625,7 +630,7 @@ async fn a_stored_recall_cursor_keeps_the_callers_grants(db: devkit::pg::TestDat
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
     let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
-    let (_, other) = call(
+    let (_, other) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"recall","around":"last","page":1,"cursor":cursor}),
@@ -652,10 +657,11 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
     let before = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
         .await
         .unwrap();
-    let (_, ordinary) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    let (_, ordinary) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(ordinary["outcome"], "ok", "{ordinary}");
     assert!(ordinary["result"]["historical_preview"].is_null());
-    let (_, archived) = call(
+    let (_, archived) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"archive","target":format!("sinex:ev/{original}")}),
@@ -667,7 +673,7 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
             .fetch_one(&w.reads)
             .await
             .unwrap();
-    let (_, historical) = call(
+    let (_, historical) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":format!("recall last | as of seq {before}"),"page":1}),
@@ -696,10 +702,11 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
         packs
     );
     let cursor = historical["result"]["page"]["cursor"].as_str().unwrap();
-    let (_,next) = call(&w,Some(READ),json!({"method":"query","query":format!("recall last | as of seq {before}"),"page":1,"cursor":cursor})).await;
+    let (_,next) = call_unbounded(&w,Some(READ),json!({"method":"query","query":format!("recall last | as of seq {before}"),"page":1,"cursor":cursor})).await;
     assert_eq!(next["outcome"], "ok", "{next}");
     assert_eq!(next["result"]["resolved"], historical["result"]["resolved"]);
-    let (_, current) = call(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
+    let (_, current) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(current["outcome"], "ok", "{current}");
     assert!(current["result"]["historical_preview"].is_null());
 }
@@ -745,7 +752,7 @@ async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomp
     );
     let citation = format!("sinex:ev/{}", pack.id);
     admit_events(&w, vec![pack]).await;
-    let (_, first) = call(&w, Some(READ), json!({"method":"brief","day":citation})).await;
+    let (_, first) = call_unbounded(&w, Some(READ), json!({"method":"brief","day":citation})).await;
     assert_eq!(first["outcome"], "ok", "{first}");
     assert_eq!(first["result"]["context_pack"], citation);
     assert_eq!(
@@ -762,7 +769,7 @@ async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomp
             .unwrap()
             .contains("Unresolved recorded check failure")
     );
-    let (_, second) = call(
+    let (_, second) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"brief","day":citation,"budget":10000}),

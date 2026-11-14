@@ -79,7 +79,7 @@ pub(crate) struct Caller {
     pub grants: String,
 }
 
-type Conn = sqlx::pool::PoolConnection<sqlx::Postgres>;
+type Conn = crate::request_deadline::ReadConnection;
 
 /// An RFC 3339 time argument.
 fn timestamp(s: &str) -> Result<sinex_model::Timestamp> {
@@ -131,8 +131,8 @@ impl Api {
 
     /// A read connection that sees only what `caller` may (the visibility
     /// views read `sinex.grants`).
-    pub(crate) async fn acquire(&self, caller: &Caller) -> Result<Conn, sqlx::Error> {
-        let mut conn = self.reads.acquire().await?;
+    pub(crate) async fn acquire(&self, caller: &Caller) -> Result<Conn> {
+        let mut conn = crate::request_deadline::acquire(&self.reads).await?;
         sinex_store::query::set_grants(&mut conn, &caller.grants).await?;
         Ok(conn)
     }
@@ -146,20 +146,35 @@ impl Api {
         Context::new(jiff::Timestamp::now(), self.zone.clone(), self.day_start)
     }
 
-    pub(crate) async fn call(&self, request: Request, access: Access) -> Reply {
-        let caller = self.caller(access).await;
-        match self.answer(request, &caller).await {
+    pub(crate) async fn call(
+        &self,
+        call: impl Into<sinex_protocol::Call>,
+        access: Access,
+    ) -> Reply {
+        let call = call.into();
+        let default = sinex_protocol::command(call.request.method())
+            .expect("declared command")
+            .default_deadline();
+        let duration = call.deadline.duration(Some(default));
+        let api = self.clone();
+        match crate::request_deadline::run(duration, async move {
+            let caller = api.caller(access).await;
+            api.answer(call.request, &caller).await
+        })
+        .await
+        {
             Ok(reply) => reply,
             Err(error) => Reply::failed(error),
         }
     }
 
     async fn answer(&self, request: Request, caller: &Caller) -> Result<Reply> {
+        let sql_page = matches!(&request, Request::Sql { .. });
         let reply = self.dispatch(request, caller).await?;
         // Sealed values are unsealed only for a caller holding the class.
         match reply {
             Reply::Ok { mut result } => {
-                if caller.grants.split(',').any(|g| g == "sealed") {
+                if !sql_page && caller.grants.split(',').any(|g| g == "sealed") {
                     self.unseal(&mut result).await?;
                 }
                 Ok(Reply::Ok { result })
@@ -181,7 +196,7 @@ impl Api {
             return Ok(());
         };
         s.unlock.check()?;
-        let mut conn = self.reads.acquire().await?;
+        let mut conn = crate::request_deadline::acquire(&self.reads).await?;
         for r in refs {
             if s.keys.contains_key(&r) {
                 continue;

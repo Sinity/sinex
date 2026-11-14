@@ -19,7 +19,7 @@ pub(crate) type SqlCursors = Arc<tokio::sync::Mutex<HashMap<String, Held>>>;
 
 /// The connection holding an open cursor, and who may read it.
 pub(crate) struct Held {
-    conn: sqlx::PgConnection,
+    conn: crate::request_deadline::ReadConnection,
     statement: String,
     caller: (&'static str, String),
     used: Instant,
@@ -50,6 +50,8 @@ impl Api {
                 }
             }
         };
+        held.conn.prepare().await?;
+        sinex_store::query::local_request_deadline(&mut held.conn).await?;
         let page = match read_sql::fetch(&mut held.conn, rows).await {
             Ok(page) => page,
             Err(e) => {
@@ -58,6 +60,12 @@ impl Api {
             }
         };
         let count = page.rows.len();
+        let mut result = json!({"rows": page.rows, "count": count});
+        // Do not publish a continuation whose first page could still fail or
+        // time out while unsealing. The local guard owns its reader until then.
+        if caller.grants.split(',').any(|grant| grant == "sealed") {
+            self.unseal(&mut result).await?;
+        }
         let next = if page.done {
             let _ = read_sql::end(&mut held.conn).await;
             None
@@ -67,11 +75,8 @@ impl Api {
             self.sql_cursors.lock().await.insert(token.clone(), held);
             Some(token)
         };
-        Ok(data(json!({
-            "rows": page.rows,
-            "count": count,
-            "page": { "size": rows, "cursor": next },
-        })))
+        result["page"] = json!({"size": rows, "cursor": next});
+        Ok(data(result))
     }
 
     /// The held cursor for `token`, if it is still open and belongs to this

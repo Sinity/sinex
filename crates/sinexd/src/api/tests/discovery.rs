@@ -33,9 +33,9 @@ async fn discovery_lists_implemented_commands_and_decisions_require_write_access
         json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
         json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
     ] {
-        let (status, _) = call(&w, Some(READ), value.clone()).await;
+        let (status, _) = call_unbounded(&w, Some(READ), value.clone()).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        let (status, body) = call(&w, Some(AGENT), value).await;
+        let (status, body) = call_unbounded(&w, Some(AGENT), value).await;
         // Decisions cite guarded records, which this agent token is not granted.
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(body["outcome"], "failed");
@@ -62,7 +62,7 @@ async fn recall_time_and_day_work_and_a_missing_mark_is_reported(db: devkit::pg:
     .await;
     for around in ["2026-09-14T08:00:00Z ±90s", "2026-09-14"] {
         let (status, body) =
-            call(&w, Some(READ), json!({"method":"recall", "around":around})).await;
+            call_unbounded(&w, Some(READ), json!({"method":"recall", "around":around})).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["outcome"], "ok", "{body}");
         assert_eq!(body["result"]["total"], 2, "{body}");
@@ -70,7 +70,8 @@ async fn recall_time_and_day_work_and_a_missing_mark_is_reported(db: devkit::pg:
         assert!(body["result"]["recall"].is_object());
     }
     for around in ["mark"] {
-        let (_, body) = call(&w, Some(READ), json!({"method":"recall", "around":around})).await;
+        let (_, body) =
+            call_unbounded(&w, Some(READ), json!({"method":"recall", "around":around})).await;
         assert_eq!(body["outcome"], "ok");
         assert_eq!(body["result"]["recall"]["status"], "no_known_moment_mark");
     }

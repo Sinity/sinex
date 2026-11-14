@@ -14,7 +14,13 @@ const TOKEN: &str = "synthetic-signal-operator";
 fn call(socket: &Path, request: Value) -> Value {
     call_as(socket, request, TOKEN)
 }
-fn call_as(socket: &Path, request: Value, token: &str) -> Value {
+fn call_as(socket: &Path, mut request: Value, token: &str) -> Value {
+    // These fixtures assert delivered facts, not the operation's latency.
+    request
+        .as_object_mut()
+        .unwrap()
+        .entry("deadline")
+        .or_insert(Value::Null);
     let body = serde_json::to_vec(&request).unwrap();
     let mut stream = UnixStream::connect(socket).unwrap();
     stream

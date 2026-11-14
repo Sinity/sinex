@@ -119,8 +119,11 @@ pub(crate) struct ApiOptions {
     pub day_start: jiff::civil::Time,
 }
 
-async fn connect(url: &str) -> Result<PgConnection> {
-    PgConnection::connect(url)
+pub(crate) async fn connect(url: &str, task: &str) -> Result<PgConnection> {
+    let options = url
+        .parse::<sqlx::postgres::PgConnectOptions>()?
+        .application_name(task);
+    PgConnection::connect_with(&options)
         .await
         .map_err(|e| Error::from(e).within("database"))
 }
@@ -167,7 +170,7 @@ async fn serve(
     let (commits_tx, commits) = watch::channel(0u64);
     let (read_models_tx, read_models) = watch::channel(());
     let (handle, queues) = writer::channels();
-    let writer_conn = connect(&o.database).await?;
+    let writer_conn = connect(&o.database, "sinex.writer").await?;
     *writer_connected = true;
     let mut writer_conn = writer::claim(writer_conn).await?;
     blobs.recover(&mut writer_conn).await?;
@@ -275,7 +278,7 @@ async fn serve(
     });
 
     let runner = derivation_runner::DerivationRunner::start(
-        connect(&o.database).await?,
+        connect(&o.database, "sinex.derivations").await?,
         handle.clone(),
         keyed,
         per_event,
@@ -302,7 +305,7 @@ async fn serve(
     for model in commit_reader::read_models() {
         consumers.push(Box::new(ReadModelRunner(model)));
     }
-    let reader_conn = connect(&o.database).await?;
+    let reader_conn = connect(&o.database, "sinex.read_models").await?;
     let (c, s) = (commits.clone(), stop.clone());
     tasks.spawn(async move {
         (
@@ -311,7 +314,7 @@ async fn serve(
         )
     });
 
-    let (online_conn, s) = (connect(&o.database).await?, stop.clone());
+    let (online_conn, s) = (connect(&o.database, "sinex.upgrade").await?, stop.clone());
     tasks.spawn(async move {
         (
             "upgrade work after start",
@@ -319,7 +322,7 @@ async fn serve(
         )
     });
 
-    let publisher_conn = connect(&o.database).await?;
+    let publisher_conn = connect(&o.database, "sinex.publisher").await?;
     let (c, s, sj) = (commits.clone(), stop.clone(), subjects.clone());
     tasks.spawn(async move {
         (
@@ -331,7 +334,11 @@ async fn serve(
     // Readers never use the writer's connection.
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(16)
-        .connect(&o.database)
+        .connect_with(
+            o.database
+                .parse::<sqlx::postgres::PgConnectOptions>()?
+                .application_name("sinex.api"),
+        )
         .await
         .map_err(|e| Error::from(e).within("read pool"))?;
     let read_failures = crate::binding_runner::ReadFailures::default();
@@ -422,7 +429,7 @@ async fn serve(
 
     // The daemon's own state, sampled into its telemetry spool.
     let (sample_conn, sample_database, s) = (
-        connect(&o.database).await?,
+        connect(&o.database, "sinex.telemetry").await?,
         o.database.clone(),
         stop.clone(),
     );
@@ -438,7 +445,7 @@ async fn serve(
     // stops the daemon here; the runner plans it again as files appear.
     binding_runner::plan(&sources, &o.host)?;
     let (read_conn, database, b, w, host, s) = (
-        connect(&o.database).await?,
+        connect(&o.database, "sinex.bindings").await?,
         o.database.clone(),
         blobs.clone(),
         handle.clone(),
@@ -476,7 +483,7 @@ async fn serve(
     let ingest = ingress::Ingest::new(
         subjects,
         handle.clone(),
-        connect(&o.database).await?,
+        connect(&o.database, "sinex.ingress").await?,
         blobs.clone(),
         o.host.clone(),
         producer_grants,
@@ -539,7 +546,7 @@ async fn finish_tasks(
 }
 
 async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<()> {
-    let mut conn = writer::claim(connect(database).await?).await?;
+    let mut conn = writer::claim(connect(database, "sinex.writer_shutdown").await?).await?;
     let result = sinex_store::blobs::commit_pending_extents(&mut conn, blobs)
         .await
         .map_err(Error::from);

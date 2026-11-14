@@ -2047,7 +2047,10 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     };
     let status = api
         .call(
-            sinex_protocol::Request::Status,
+            sinex_protocol::Call {
+                request: sinex_protocol::Request::Status,
+                deadline: command_surface::Deadline::None,
+            },
             sinex_protocol::Access::Read,
         )
         .await;
@@ -2076,7 +2079,10 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     sqlx::query("UPDATE core.ingress_frames SET received_at = now() - interval '48 hours' WHERE producer = 'unknown-node'").execute(&mut conn).await.unwrap();
     let sinex_protocol::Reply::Ok { result } = api
         .call(
-            sinex_protocol::Request::Status,
+            sinex_protocol::Call {
+                request: sinex_protocol::Request::Status,
+                deadline: command_surface::Deadline::None,
+            },
             sinex_protocol::Access::Read,
         )
         .await

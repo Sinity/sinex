@@ -268,6 +268,12 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
                 .long("identity-file")
                 .value_parser(value_parser!(PathBuf)),
         )
+        .arg(
+            Arg::new("deadline")
+                .long("deadline")
+                .value_name("MS|none")
+                .value_parser(sinex_protocol::deadline),
+        )
         .arg(Arg::new("host").long("host").default_value("localhost"))
         .arg(Arg::new("zone").long("zone"))
         .arg(
@@ -331,7 +337,11 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
     let (_running, stop) = tokio::sync::watch::channel(false);
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
-        .connect(database)
+        .connect_with(
+            database
+                .parse::<sqlx::postgres::PgConnectOptions>()?
+                .application_name("sinex.admin.api"),
+        )
         .await?;
     let local = api::Api {
         backup_producers: None,
@@ -366,7 +376,16 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
         ctx.close().await?;
         return Err(failure.into());
     }
-    let reply = local.call(request, sinex_protocol::Access::Operator).await;
+    let deadline = matches
+        .get_one::<command_surface::Deadline>("deadline")
+        .copied()
+        .unwrap_or_default();
+    let reply = local
+        .call(
+            sinex_protocol::Call { request, deadline },
+            sinex_protocol::Access::Operator,
+        )
+        .await;
     drop(local);
     ctx.close().await?;
     match reply {

@@ -304,7 +304,7 @@ one irreversible deletion; a refused material is read again by replay.
 - Long output on a terminal streams into `$PAGER`, fetching later pages only as the
   pager reads.
 - **Errors** are one line of what failed and what to do, positioned in the query, with a
-  runnable correction when one exists; with `--json`, an error object on stderr. An
+  runnable correction when one exists; with `--json`, an error object on stdout. An
   empty result says why: nothing matched, the source was not observed, or the rows are
   outside the caller's grants.
 - `--deadline` has no upper bound; `--deadline none` lifts it.
@@ -637,6 +637,29 @@ belongs to one class of the shared `command-surface` classes; Sinex's budgets pe
 | read | `REF read`, indexed lists | ≤ 100 ms to the first screen |
 | search | bare-word queries, `recall` | ≤ 250 ms to the first page |
 | aggregate | grouped and joined queries | ≤ 400 ms by default; a timeout names a narrower query; `--deadline none` lifts it |
+
+Requests carry the shared `deadline` beside their command arguments. Omitting it
+uses the operation's class default; a nonnegative integer is milliseconds and JSON
+null lifts the budget. The CLI and standalone `sinexd admin` spelling is
+`--deadline MS|none`, before the query text. MCP advertises the same typed argument.
+Status/read defaults are 100 ms, completion 50 ms, search/recall 250 ms, and programmable
+queries, SQL and grouped/analysis reads 400 ms. Local commands have a 15 ms budget.
+These are execution defaults, not bounds on valid questions or page sizes.
+
+The daemon resolves one read budget when it accepts a call. Pool acquisition and
+setup consume it. Each query snapshot sets transaction-local `statement_timeout`
+from the remaining budget; an explicitly lifted deadline clears a previous request's
+budget. SQL continuation pages receive the current call's budget. `follow` bounds
+each read, while its wait for a notification stays open. PostgreSQL's maximum
+statement timer does not impose an upper bound on a caller's millisecond deadline.
+
+An expired read returns retryable `timeout` (CLI exit 7), releases its backend and
+suggests narrowing the question or lifting the deadline. Closing a caller also
+cancels its unowned read. Once a mutation takes durable request, writer or preparation
+ownership, its read timer ends and its actual terminal result is awaited; a lost HTTP
+reader does not revoke that accepted work. Deadline changes do not alter producer
+backup custody or its own readiness protocol. Daemon database connections name their
+own task in `application_name`, including writer, publisher and API.
 
 Journey budgets on top:
 

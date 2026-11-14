@@ -1,4 +1,5 @@
 use super::*;
+use sinex_protocol::Request;
 
 #[devkit::test]
 fn tools_come_from_the_command_table() {

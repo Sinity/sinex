@@ -44,7 +44,7 @@ async fn backup_captures_producer_while_saved_binding_metadata_is_blocked(
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let artifact = root.path().join("capture-refused");
-    let request = call(
+    let request = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"prepare","output":artifact}),
@@ -112,7 +112,7 @@ async fn backup_discovers_inputs_before_pausing_producer_publication(db: devkit:
     .await;
     let root = tempfile::tempdir().unwrap();
     let artifact = root.path().join("discovery-refused");
-    let (_, result) = call(
+    let (_, result) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"prepare","output":artifact}),
@@ -127,7 +127,7 @@ async fn backup_discovers_inputs_before_pausing_producer_publication(db: devkit:
         requests.next().now_or_never().is_none(),
         "discovery must finish before Pause is sent"
     );
-    let (_, holds) = call(
+    let (_, holds) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"list"}),
@@ -143,10 +143,11 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
 ) {
     let w = world(db).await;
     for token in [READ, AGENT] {
-        let (status, _) = call(&w, Some(token), json!({"method":"backup","action":"hold"})).await;
+        let (status, _) =
+            call_unbounded(&w, Some(token), json!({"method":"backup","action":"hold"})).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
-    let (_, one) = call(
+    let (_, one) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"hold"}),
@@ -154,13 +155,13 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
     .await;
     assert_eq!(one["outcome"], "ok", "{one}");
     assert_eq!(one["result"]["hold"]["actor"], "operator");
-    let (_, two) = call(
+    let (_, two) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"hold"}),
     )
     .await;
-    let (_, first) = call(
+    let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"list","page":1}),
@@ -168,7 +169,7 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
     .await;
     assert_eq!(first["result"]["holds"].as_array().unwrap().len(), 1);
     let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
-    let (_, second) = call(
+    let (_, second) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"list","page":1,"cursor":cursor}),
@@ -179,11 +180,11 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
         first["result"]["holds"][0]["id"],
         second["result"]["holds"][0]["id"]
     );
-    let (_, status) = call(&w, Some(READ), json!({"method":"status"})).await;
+    let (_, status) = call_unbounded(&w, Some(READ), json!({"method":"status"})).await;
     assert_eq!(status["result"]["backup_holds"]["open"], 2);
     assert!(status["result"]["backup_holds"]["oldest"].is_string());
     for hold in [&one, &two] {
-        let (_, released) = call(
+        let (_, released) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":"backup","action":"release","hold":hold["result"]["hold"]["id"]}),
@@ -192,7 +193,7 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
         assert_eq!(released["outcome"], "ok", "{released}");
         assert!(!released["result"]["hold"]["released_at"].is_null());
     }
-    let (_, listed) = call(
+    let (_, listed) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"backup","action":"list"}),

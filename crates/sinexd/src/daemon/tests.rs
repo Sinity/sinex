@@ -43,7 +43,7 @@ async fn shutdown_cleanup_releases_the_writer_claim_even_on_failure(db: devkit::
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     forget_admitted(&url, &blobs).await.unwrap();
-    let mut conn = connect(&url).await.unwrap();
+    let mut conn = connect(&url, "sinex.test").await.unwrap();
     assert!(
         sinex_store::writer_lock::try_claim(&mut conn)
             .await
@@ -52,14 +52,14 @@ async fn shutdown_cleanup_releases_the_writer_claim_even_on_failure(db: devkit::
     conn.close().await.unwrap();
     // Exercise the real extent flush error, with bytes queued for shutdown.
     blobs.put(b"synthetic pending shutdown bytes").unwrap();
-    let mut fault = connect(&url).await.unwrap();
+    let mut fault = connect(&url, "sinex.test").await.unwrap();
     sqlx::query("DROP TABLE core.blob_extents")
         .execute(&mut fault)
         .await
         .unwrap();
     fault.close().await.unwrap();
     assert!(forget_admitted(&url, &blobs).await.is_err());
-    let mut conn = connect(&url).await.unwrap();
+    let mut conn = connect(&url, "sinex.test").await.unwrap();
     assert!(
         sinex_store::writer_lock::try_claim(&mut conn)
             .await
@@ -131,7 +131,7 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
     let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
-    let mut observer = connect(&url).await.unwrap();
+    let mut observer = connect(&url, "sinex.test").await.unwrap();
     sqlx::raw_sql(
         "CREATE TABLE public.shutdown_probe(id uuid PRIMARY KEY);
         CREATE FUNCTION public.hold_shutdown_insert() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -148,7 +148,9 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
     .await
     .unwrap();
     let committed = shutdown_batch("acknowledged");
-    let mut connection = writer::claim(connect(&url).await.unwrap()).await.unwrap();
+    let mut connection = writer::claim(connect(&url, "sinex.test").await.unwrap())
+        .await
+        .unwrap();
     let mut tx = connection.begin().await.unwrap();
     let acknowledged = tx.admit(&committed, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
@@ -156,12 +158,14 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
     let receipt:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(f) FROM core.ingress_frames f WHERE producer='synthetic-shutdown' AND frame='acknowledged'")
         .fetch_one(&mut observer).await.unwrap();
     for detects_disconnect in [false, true] {
-        let mut blocker = connect(&url).await.unwrap();
+        let mut blocker = connect(&url, "sinex.test").await.unwrap();
         sqlx::query("SELECT pg_advisory_lock(927161)")
             .execute(&mut blocker)
             .await
             .unwrap();
-        let mut connection = writer::claim(connect(&url).await.unwrap()).await.unwrap();
+        let mut connection = writer::claim(connect(&url, "sinex.test").await.unwrap())
+            .await
+            .unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, String>("SHOW client_connection_check_interval")
                 .fetch_one(&mut *connection)
@@ -271,7 +275,9 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
             .await
             .unwrap();
         blocker.close().await.unwrap();
-        let mut fresh = writer::claim(connect(&url).await.unwrap()).await.unwrap();
+        let mut fresh = writer::claim(connect(&url, "sinex.test").await.unwrap())
+            .await
+            .unwrap();
         let mut tx = fresh.begin().await.unwrap();
         let retried = tx.admit(&pending, &NoDerivations).await.unwrap();
         assert_eq!(retried.admitted, 1);
@@ -290,7 +296,7 @@ async fn shutdown_cannot_succeed_when_native_writer_cleanup_fails(db: devkit::pg
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     blobs.put(b"synthetic pending shutdown bytes").unwrap();
-    let mut conn = connect(&url).await.unwrap();
+    let mut conn = connect(&url, "sinex.test").await.unwrap();
     sqlx::query("DROP TABLE core.blob_extents")
         .execute(&mut conn)
         .await
@@ -302,6 +308,8 @@ async fn shutdown_cannot_succeed_when_native_writer_cleanup_fails(db: devkit::pg
             .await
             .is_err()
     );
-    let fresh = writer::claim(connect(&url).await.unwrap()).await.unwrap();
+    let fresh = writer::claim(connect(&url, "sinex.test").await.unwrap())
+        .await
+        .unwrap();
     fresh.close().await.unwrap();
 }

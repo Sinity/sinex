@@ -11,16 +11,18 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
         0,
     )
     .await;
-    let (_, denied) = call(&w, Some(READ), json!({"method":"mark","text":"synthetic"})).await;
+    let (_, denied) =
+        call_unbounded(&w, Some(READ), json!({"method":"mark","text":"synthetic"})).await;
     assert_eq!(denied["outcome"], "failed");
-    let (status, _) = call(&w, Some(AGENT), json!({"method":"mark","text":"synthetic"})).await;
+    let (status, _) =
+        call_unbounded(&w, Some(AGENT), json!({"method":"mark","text":"synthetic"})).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let mut citations = Vec::new();
     for (at, note) in [
         ("2026-09-14T08:00:00Z", "synthetic first mark"),
         ("2026-09-14T08:01:00Z", "synthetic second mark"),
     ] {
-        let (_, answer) = call(
+        let (_, answer) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":"mark","text":note,"at":at,"cwd":"/src/tide"}),
@@ -29,7 +31,7 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
         assert_eq!(answer["outcome"], "ok", "{answer}");
         citations.push(answer["result"]["citation"].clone());
     }
-    let (_, shown) = call(
+    let (_, shown) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"show","reference":citations[0]}),
@@ -41,7 +43,7 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
         ("mark", "synthetic second mark"),
         ("mark 2", "synthetic first mark"),
     ] {
-        let (_, answer) = call(
+        let (_, answer) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":"recall","around":around}),
@@ -50,14 +52,14 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
         assert_eq!(answer["outcome"], "ok", "{answer}");
         assert_eq!(answer["result"]["recall"]["mark"]["payload"]["text"], note);
     }
-    let (_, archived) = call(
+    let (_, archived) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"archive","target":citations[1]}),
     )
     .await;
     assert_eq!(archived["outcome"], "ok", "{archived}");
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"recall","around":"mark"}),
@@ -67,7 +69,8 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
         answer["result"]["recall"]["mark"]["payload"]["text"],
         "synthetic first mark"
     );
-    let (_, ungranted) = call(&w, Some(READ), json!({"method":"recall","around":"mark"})).await;
+    let (_, ungranted) =
+        call_unbounded(&w, Some(READ), json!({"method":"recall","around":"mark"})).await;
     assert_eq!(
         ungranted["result"]["recall"]["status"],
         "no_known_moment_mark"
@@ -80,9 +83,9 @@ async fn saved_queries_bind_parameters_and_replace_definitions_through_admission
 ) {
     let w = world(db).await;
     admit(&w, &["synthetic first", "synthetic second"], 0).await;
-    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where event_type = command.executed AND payload.cwd = $directory | count","parameter":["directory:text"]})).await;
+    let (_,answer) = call_unbounded(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where event_type = command.executed AND payload.cwd = $directory | count","parameter":["directory:text"]})).await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query","query":"query:in-directory(directory=\"/src/tide\")"}),
@@ -90,25 +93,25 @@ async fn saved_queries_bind_parameters_and_replace_definitions_through_admission
     .await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
     assert_eq!(answer["result"]["rows"][0]["count"], 2);
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query","query":"query:in-directory(directory=\"x or source exists\")"}),
     )
     .await;
     assert_eq!(answer["result"]["rows"][0]["count"], 0);
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"query","query":"query:in-directory(directory=x)"}),
     )
     .await;
     assert_eq!(answer["outcome"], "failed");
-    let (_,answer) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where source = $source | count","parameter":["source:text"]})).await;
+    let (_,answer) = call_unbounded(&w,Some(OPERATOR),json!({"method":"query-save","name":"in-directory","query":"events where source = $source | count","parameter":["source:text"]})).await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
-    let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    let (_, answer) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(answer["result"]["queries"].as_array().unwrap().len(), 1);
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query","query":"query:in-directory(source=terminal.atuin)"}),
@@ -129,7 +132,7 @@ async fn context_windows_count_back_from_the_end_and_timeline_uses_the_same_quer
     )
     .await;
     for since in ["60s", "2026-09-14T08:01:00Z"] {
-        let (_, answer) = call(
+        let (_, answer) = call_unbounded(
             &w,
             Some(READ),
             json!({"method":"context","since":since,"until":"2026-09-14T08:02:00Z"}),
@@ -147,11 +150,11 @@ async fn context_windows_count_back_from_the_end_and_timeline_uses_the_same_quer
             "synthetic within"
         );
     }
-    let (_,a) = call(&w,Some(READ),json!({"method":"timeline","query":"where source = terminal.atuin AND when >= 2026-09-14T08:01:00Z"})).await;
-    let (_,b) = call(&w,Some(READ),json!({"method":"query","query":"events where source = terminal.atuin AND when >= 2026-09-14T08:01:00Z"})).await;
+    let (_,a) = call_unbounded(&w,Some(READ),json!({"method":"timeline","query":"where source = terminal.atuin AND when >= 2026-09-14T08:01:00Z"})).await;
+    let (_,b) = call_unbounded(&w,Some(READ),json!({"method":"query","query":"events where source = terminal.atuin AND when >= 2026-09-14T08:01:00Z"})).await;
     assert_eq!(a["result"]["rows"], b["result"]["rows"]);
     assert_eq!(a["result"]["total"], 2);
-    let (_,completion) = call(&w,Some(READ),json!({"method":"query-complete","query":"events where event_type = command.executed AND payload.dur"})).await;
+    let (_,completion) = call_unbounded(&w,Some(READ),json!({"method":"query-complete","query":"events where event_type = command.executed AND payload.dur"})).await;
     assert_eq!(
         completion["result"]["fields"][0]["name"],
         "payload.duration_ns"
@@ -188,7 +191,7 @@ async fn time_citations_follow_replaced_spans_and_recall_includes_states_already
     let first_id = session.id;
     admit_events(&w, vec![parent, session.clone()]).await;
     let reference = "sinex:at/2026-09-14T08:30:00Z/shell.session";
-    let (_, shown) = call(
+    let (_, shown) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"show","reference":reference}),
@@ -196,7 +199,7 @@ async fn time_citations_follow_replaced_spans_and_recall_includes_states_already
     .await;
     assert_eq!(shown["outcome"], "ok", "{shown}");
     assert_eq!(shown["result"]["event"]["id"], first_id.to_string());
-    let (_, context) = call(
+    let (_, context) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"context","since":"2026-09-14T08:30:00Z","until":"2026-09-14T08:31:00Z"}),
@@ -210,7 +213,7 @@ async fn time_citations_follow_replaced_spans_and_recall_includes_states_already
     session.payload["ended_at"] = json!(Timestamp::from_unix_secs(1_789_380_000).unwrap());
     let second_id = session.id;
     admit_events(&w, vec![session]).await;
-    let (_, shown) = call(
+    let (_, shown) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"show","reference":reference}),
@@ -218,7 +221,7 @@ async fn time_citations_follow_replaced_spans_and_recall_includes_states_already
     .await;
     assert_eq!(shown["outcome"], "ok", "{shown}");
     assert_eq!(shown["result"]["event"]["id"], second_id.to_string());
-    let (_,window) = call(&w,Some(READ),json!({"method":"show","reference":"sinex:window/2026-09-14T08:30:00Z/2026-09-14T08:31:00Z"})).await;
+    let (_,window) = call_unbounded(&w,Some(READ),json!({"method":"show","reference":"sinex:window/2026-09-14T08:30:00Z/2026-09-14T08:31:00Z"})).await;
     assert_eq!(window["outcome"], "ok", "{window}");
     assert_eq!(window["result"]["total"], 1);
     assert_eq!(window["result"]["rows"][0]["id"], second_id.to_string());
@@ -235,9 +238,9 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
         0,
     )
     .await;
-    let (_,saved) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | fields id","parameter":["directory:text"]})).await;
+    let (_,saved) = call_unbounded(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | fields id","parameter":["directory:text"]})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
-    let (_, page) = call(
+    let (_, page) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1}),
@@ -246,9 +249,9 @@ async fn replacing_a_saved_definition_invalidates_its_previous_continuation(
     assert_eq!(page["outcome"], "ok", "{page}");
     let cursor = page["result"]["page"]["cursor"].clone();
     assert!(cursor.is_string());
-    let (_,changed) = call(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | sort by when desc | fields id","parameter":["directory:text"]})).await;
+    let (_,changed) = call_unbounded(&w,Some(OPERATOR),json!({"method":"query-save","name":"paged","query":"events where event_type = command.executed AND payload.cwd = $directory | sort by when desc | fields id","parameter":["directory:text"]})).await;
     assert_eq!(changed["outcome"], "ok", "{changed}");
-    let (_,continued) = call(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
+    let (_,continued) = call_unbounded(&w,Some(OPERATOR),json!({"method":"query","query":"query:paged(directory=\"/src/tide\")","page":1,"cursor":cursor})).await;
     assert_eq!(continued["outcome"], "failed", "{continued}");
 }
 
@@ -262,7 +265,7 @@ async fn context_digest_keeps_the_latest_observation_of_each_source_beyond_the_p
     other.source = "synthetic.other".into();
     let last = command("synthetic busy latest", 2);
     admit_events(&w, vec![first, other, last]).await;
-    let (_,answer) = call(&w,Some(READ),json!({"method":"context","since":"2026-09-14T08:00:00Z","until":"2026-09-14T08:03:00Z","page":1})).await;
+    let (_,answer) = call_unbounded(&w,Some(READ),json!({"method":"context","since":"2026-09-14T08:00:00Z","until":"2026-09-14T08:03:00Z","page":1})).await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
     assert_eq!(answer["result"]["rows"].as_array().unwrap().len(), 1);
     let digest = answer["result"]["recall"]["latest_by_source"]
@@ -301,7 +304,8 @@ async fn recall_digest_obeys_row_filters_and_limits(db: devkit::pg::TestDatabase
         let query = format!(
             "recall sinex:window/2026-09-14T08:00:00Z/2026-09-14T08:03:00Z where source = terminal.atuin{suffix}"
         );
-        let (_, answer) = call(&w, Some(READ), json!({"method":"query","query":query})).await;
+        let (_, answer) =
+            call_unbounded(&w, Some(READ), json!({"method":"query","query":query})).await;
         assert_eq!(answer["outcome"], "ok", "{answer}");
         let account = &answer["result"]["recall"];
         assert_eq!(account["by_source"].as_array().unwrap().len(), 1);
@@ -365,7 +369,7 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
             vec!["source:text"],
         ),
     ] {
-        let (_, answer) = call(
+        let (_, answer) = call_unbounded(
             &w,
             Some(OPERATOR),
             json!({"method":"query-save","name":name,"query":query,"parameter":parameters}),
@@ -381,7 +385,8 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         "query :usable",
         "query:indirect(source=terminal.atuin)",
     ] {
-        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query","query":query})).await;
+        let (_, answer) =
+            call_unbounded(&w, Some(OPERATOR), json!({"method":"query","query":query})).await;
         assert_eq!(answer["outcome"], "ok", "{answer}");
         assert_eq!(answer["result"]["rows"][0]["count"], 2);
     }
@@ -389,31 +394,32 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         "query:clash@operator",
         "query:\"clash@synthetic other author\"",
     ] {
-        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query", "query":query})).await;
+        let (_, answer) =
+            call_unbounded(&w, Some(OPERATOR), json!({"method":"query", "query":query})).await;
         assert_eq!(answer["outcome"], "ok", "{answer}");
     }
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query", "query":"query:clash@missing"}),
     )
     .await;
     assert_eq!(answer["outcome"], "failed", "{answer}");
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query-save", "name":"qualified", "query":"query:clash@operator"}),
     )
     .await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query", "query":"query:qualified"}),
     )
     .await;
     assert_eq!(answer["outcome"], "ok", "{answer}");
-    let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    let (_, listed) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(listed["outcome"], "ok", "{listed}");
     let clashes: Vec<_> = listed["result"]["queries"]
         .as_array()
@@ -423,7 +429,7 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         .collect();
     assert_eq!(clashes.len(), 2);
     assert_ne!(clashes[0]["by"], clashes[1]["by"]);
-    let (_, answer) = call(
+    let (_, answer) = call_unbounded(
         &w,
         Some(OPERATOR),
         json!({"method":"query","query":"query:clash"}),
@@ -448,21 +454,21 @@ async fn saving_parameterized_questions_refuses_invalid_fields_and_stages(
         "events where source = $source | fields missing",
         "events where source = $source | group by source | count | where missing > 0",
     ] {
-        let (_, answer) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid", "query":query, "parameter":["source:text"]})).await;
+        let (_, answer) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid", "query":query, "parameter":["source:text"]})).await;
         assert_eq!(answer["outcome"], "failed", "{answer}");
     }
-    let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    let (_, listed) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(listed["result"]["queries"], json!([]));
 }
 
 #[devkit::test]
 async fn nested_saved_query_literals_are_validated_before_admission(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (_, saved) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"by-class", "query":"events where class = $class | count", "parameter":["class:text"]})).await;
+    let (_, saved) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-save", "name":"by-class", "query":"events where class = $class | count", "parameter":["class:text"]})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
-    let (_, invalid) = call(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid-literal", "query":"query:by-class(class=unknown)"})).await;
+    let (_, invalid) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-save", "name":"invalid-literal", "query":"query:by-class(class=unknown)"})).await;
     assert_eq!(invalid["outcome"], "failed", "{invalid}");
-    let (_, listed) = call(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+    let (_, listed) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
     assert_eq!(listed["result"]["queries"].as_array().unwrap().len(), 1);
 }
 
@@ -481,7 +487,7 @@ async fn indexed_word_candidates_obey_each_api_callers_grants(db: devkit::pg::Te
     )
     .await;
     for (token, expected) in [(READ, 1), (AGENT, 1), (OPERATOR, 2)] {
-        let (_, answer) = call(
+        let (_, answer) = call_unbounded(
             &w,
             Some(token),
             json!({"method":"query","query":"apiwordneedle"}),

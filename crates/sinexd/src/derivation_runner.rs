@@ -363,7 +363,7 @@ impl DerivationRunner {
     /// comparison asked for through the command table. It registers nothing
     /// and starts one run, for that derivation.
     pub(crate) async fn for_one(
-        mut read: PgConnection,
+        mut read: crate::request_deadline::ReadConnection,
         writer: WriterHandle,
         name: &str,
         host: &str,
@@ -393,6 +393,8 @@ impl DerivationRunner {
             build: crate::build_identity::current()?,
             emits,
         };
+        crate::request_deadline::finish_read(&mut read).await?;
+        let mut read = read.into_detached();
         let run = runs::start(&mut read, &manifest, host).await?;
         let runs = BTreeMap::from([(name.to_owned(), run)]);
         Ok(Self {
@@ -1365,6 +1367,7 @@ pub(crate) async fn compute_now(
             .collect(),
     };
     let build = crate::build_identity::current()?;
+    crate::request_deadline::finish_read(conn).await?;
     registry::register_derivation(conn, &available, build).await?;
     if registry::selected(conn, derivation.name()).await?
         != Some((available.version, build.to_owned()))

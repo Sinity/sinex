@@ -13,7 +13,7 @@ use rmcp::model::{
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt};
 use serde_json::{Map, Value, json};
-use sinex_protocol::{ArgKind, COMMANDS, Command, DATA_NOTICE, Reply, Request};
+use sinex_protocol::{ArgKind, COMMANDS, Command, DATA_NOTICE, Reply};
 use std::sync::Arc;
 
 const PREFIX: &str = "sinex_";
@@ -41,6 +41,7 @@ fn schema(c: &Command) -> Map<String, Value> {
         };
         properties.insert(a.name.into(), property);
     }
+    properties.insert("deadline".into(), json!({"type":["integer","null"],"minimum":0,"description":"Read budget in milliseconds; null waits without a deadline. Omit for the operation default."}));
     let required: Vec<&str> = c
         .args
         .iter()
@@ -117,7 +118,7 @@ impl ServerHandler for Sinex {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let offered = request
             .name
@@ -130,11 +131,28 @@ impl ServerHandler for Sinex {
                     .with_candidates(tools);
             return Ok(failure_result(&failure, None).into());
         };
-        let call = match Request::from_args(name, request.arguments.unwrap_or_default()) {
-            Ok(r) => r,
-            Err(failure) => return Ok(failure_result(&failure, None).into()),
+        let call =
+            match sinex_protocol::Call::from_args(name, request.arguments.unwrap_or_default()) {
+                Ok(r) => r,
+                Err(failure) => return Ok(failure_result(&failure, None).into()),
+            };
+        let deadline = if call.deadline == command_surface::Deadline::Default {
+            self.client.deadline
+        } else {
+            call.deadline
         };
-        Ok(match self.client.call(&call).await {
+        let client = Client {
+            deadline,
+            ..self.client.clone()
+        };
+        let outcome = tokio::select! {
+            outcome = client.call(&call.request) => outcome,
+            _ = context.ct.cancelled() => {
+                let failure = Failure::new(FailureKind::Cancelled, "the caller stopped waiting for this request");
+                return Ok(failure_result(&failure, None).into());
+            }
+        };
+        Ok(match outcome {
             Ok((_, Reply::Ok { result })) => success_result(result),
             Ok((_, Reply::Failed { failure })) => failure_result(&failure, None),
             Ok((_, Reply::StoppedEarly { failure, result })) => {

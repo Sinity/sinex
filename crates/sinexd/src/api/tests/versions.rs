@@ -8,7 +8,7 @@ async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs
     let w = world(db).await;
     admit(&w, &["pwd"], 0).await;
     let compare = || json!({"method":"recompute","derivation":"tag.applier","compare":true});
-    let (status, body) = call(&w, Some(AGENT), compare()).await;
+    let (status, body) = call_unbounded(&w, Some(AGENT), compare()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let comparison = body["result"]["comparison"]
         .as_i64()
@@ -25,7 +25,7 @@ async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs
     );
     drop(conn);
     let switch = |id| json!({"method":"recompute","derivation":"tag.applier","switch":id});
-    let (_, body) = call(&w, Some(AGENT), switch(comparison)).await;
+    let (_, body) = call_unbounded(&w, Some(AGENT), switch(comparison)).await;
     assert_eq!(body["outcome"], "ok", "{body}");
     let (actor, scope): (String, Value) =
         sqlx::query_as("SELECT actor,scope FROM core.operations WHERE kind='producer_switch'")
@@ -35,7 +35,7 @@ async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs
     assert_eq!(actor, "agent");
     assert_eq!(scope["comparison"], comparison);
     assert!(scope["settings"].is_string());
-    let (_, body) = call(&w, Some(AGENT), switch(comparison)).await;
+    let (_, body) = call_unbounded(&w, Some(AGENT), switch(comparison)).await;
     assert_eq!(body["outcome"], "failed", "{body}");
     assert!(
         body["failure"]["message"]
@@ -44,12 +44,12 @@ async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs
             .contains("already selected"),
         "{body}"
     );
-    let (_, body) = call(&w, Some(AGENT), compare()).await;
+    let (_, body) = call_unbounded(&w, Some(AGENT), compare()).await;
     let stale = body["result"]["comparison"]
         .as_i64()
         .unwrap_or_else(|| panic!("{body}"));
     admit(&w, &["ls"], 1).await;
-    let (_, body) = call(&w, Some(AGENT), switch(stale)).await;
+    let (_, body) = call_unbounded(&w, Some(AGENT), switch(stale)).await;
     assert_eq!(body["outcome"], "failed", "{body}");
     assert!(
         body["failure"]["message"]

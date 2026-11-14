@@ -39,12 +39,14 @@ impl Api {
                     author: actor.to_string(),
                 };
                 let mut conn = self.acquire(caller).await?;
+                crate::request_deadline::finish_read(&mut conn).await?;
                 let seq = privacy::add_rule(&mut conn, &rule).await?;
                 json!({ "rule": rule.name, "seq": seq,
                     "applies": "to new readings; replay the source to apply it to stored readings" })
             }
             Request::PrivacyEnd { name } => {
                 let mut conn = self.acquire(caller).await?;
+                crate::request_deadline::finish_read(&mut conn).await?;
                 let seq = privacy::end_rule(&mut conn, &name, actor).await?;
                 json!({ "rule": name, "ended": true, "seq": seq })
             }
@@ -65,6 +67,7 @@ impl Api {
                         )));
                     }
                 }
+                crate::request_deadline::finish_read(&mut conn).await?;
                 let seq = privacy::set_source_class(&mut conn, &source, class, actor).await?;
                 json!({ "source": source, "class": privacy::class_name(class), "seq": seq,
                     "applies": "to new readings; replay the source to raise stored readings" })
@@ -79,14 +82,18 @@ impl Api {
                     identity,
                     std::time::Duration::from_secs(seconds),
                 )?;
-                *self.unlock.lock().await = Some(Unlocked {
+                let mut session = self.unlock.lock().await;
+                crate::request_deadline::admit()?;
+                *session = Some(Unlocked {
                     unlock,
                     keys: Default::default(),
                 });
                 json!({ "unlocked": "sealed", "minutes": minutes })
             }
             Request::Lock => {
-                let was = self.unlock.lock().await.take().is_some();
+                let mut session = self.unlock.lock().await;
+                crate::request_deadline::admit()?;
+                let was = session.take().is_some();
                 json!({ "locked": "sealed", "was_unlocked": was })
             }
             Request::PrivacyVerify => {

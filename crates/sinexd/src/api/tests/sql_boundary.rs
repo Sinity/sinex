@@ -17,7 +17,8 @@ async fn sql_cannot_change_grants_or_escape_its_role_through_nested_queries(
         "WITH changed AS MATERIALIZED (SELECT pg_catalog.set_config('role','none',true) AS value) SELECT query_to_xml('SELECT encode(hash_key,''hex'') FROM privacy.settings',true,false,changed.value) FROM changed",
         "WITH changed AS MATERIALIZED (SELECT pg_catalog.set_config('role','sinex_writer',true) AS value) SELECT query_to_xml('SELECT payload FROM core.events',true,false,changed.value) FROM changed",
     ] {
-        let (_, reply) = call(&w, Some(READ), json!({"method":"sql","sql":statement})).await;
+        let (_, reply) =
+            call_unbounded(&w, Some(READ), json!({"method":"sql","sql":statement})).await;
         assert_eq!(reply["outcome"], "failed", "{statement}: {reply}");
         let reason = reply["failure"]["message"].as_str().unwrap();
         assert!(
@@ -36,7 +37,8 @@ async fn sql_cannot_change_grants_or_escape_its_role_through_nested_queries(
         "SELECT secret FROM core.owner_protocol_key",
         "SELECT state FROM core.signal_checkpoints",
     ] {
-        let (_, reply) = call(&w, Some(READ), json!({"method":"sql","sql":statement})).await;
+        let (_, reply) =
+            call_unbounded(&w, Some(READ), json!({"method":"sql","sql":statement})).await;
         assert_eq!(reply["outcome"], "failed", "{statement}: {reply}");
         assert!(
             reply["failure"]["message"]
@@ -46,7 +48,7 @@ async fn sql_cannot_change_grants_or_escape_its_role_through_nested_queries(
             "{reply}"
         );
     }
-    let (_, reply) = call(
+    let (_, reply) = call_unbounded(
         &w,
         Some(READ),
         json!({"method":"sql","sql":"SELECT payload FROM core.visible_events ORDER BY commit_seq"}),
