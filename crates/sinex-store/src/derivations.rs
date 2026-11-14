@@ -1014,6 +1014,7 @@ pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> 
 }
 
 /// The current outputs citing one per-event input.
+/// Array containment uses the existing parent GIN index; scalar ANY does not.
 pub async fn children_outputs(
     conn: &mut PgConnection,
     derivation: &str,
@@ -1025,7 +1026,7 @@ pub async fn children_outputs(
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM core.events e
-           WHERE e.source=$1 AND $2=ANY(e.parents)
+           WHERE e.source=$1 AND e.parents IS NOT NULL AND e.parents @> ARRAY[$2]::uuid[]
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
            ORDER BY e.ts_orig,e.commit_seq"#, derivation,input.0)
         .fetch_all(conn).await?;
@@ -1180,3 +1181,6 @@ pub use exact::ExactInputs;
 
 #[cfg(test)]
 mod page_fetch_tests;
+
+#[cfg(test)]
+mod children_outputs_tests;
