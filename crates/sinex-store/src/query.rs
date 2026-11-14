@@ -120,7 +120,7 @@ pub async fn backend_pid(conn: &mut PgConnection) -> sqlx::Result<i32> {
 /// Cancel work on an independently owned read connection.
 pub async fn cancel_backend(conn: &mut PgConnection, pid: i32) -> sqlx::Result<()> {
     sqlx::query!("SELECT pg_cancel_backend($1)", pid)
-        .execute(conn)
+        .fetch_one(conn)
         .await?;
     Ok(())
 }
