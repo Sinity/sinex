@@ -6,6 +6,69 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 type Facts = Option<FileFacts>;
 
 impl DirState {
+    pub(crate) fn restore_part(
+        &mut self,
+        reference: &sinex_model::MaterialRef,
+        admitted: u64,
+        removed_at_source: bool,
+    ) -> Result<bool, DriverError> {
+        if !self.saved_memory {
+            self.remember_members(&reference.manifest, admitted)?;
+        }
+        if removed_at_source {
+            self.remember_locations(&reference.manifest, admitted, reference.id)?;
+        }
+        Ok(!self.saved_memory || self.check_locations().is_err())
+    }
+
+    pub(crate) fn restore_checkpoint(
+        &mut self,
+        memory: &[u8],
+        anchor: Option<&sinex_model::MaterialRef>,
+        admitted: Option<u64>,
+        removed_at_source: bool,
+    ) -> Result<bool, DriverError> {
+        let manifest = anchor.map(|anchor| &anchor.manifest);
+        let saved_through = crate::drivers::dir_snapshot::saved_through(memory, manifest)?;
+        let admitted = admitted.ok_or_else(|| {
+            DriverError::Cursor("directory memory has no admitted-prefix evidence".into())
+        })?;
+        if anchor.is_some_and(|anchor| admitted > anchor.length) {
+            return Err(DriverError::Cursor(
+                "directory memory has contradictory admitted-prefix evidence".into(),
+            ));
+        }
+        if saved_through > admitted {
+            return Err(DriverError::Cursor(
+                "directory checkpoint is beyond its admitted prefix".into(),
+            ));
+        }
+        if saved_through < admitted {
+            let anchor = anchor.ok_or_else(|| {
+                DriverError::Cursor("directory checkpoint suffix has no immutable material".into())
+            })?;
+            self.remember_members_after(&anchor.manifest, admitted, Some(saved_through))?;
+            if removed_at_source {
+                self.remember_locations_after(
+                    &anchor.manifest,
+                    admitted,
+                    anchor.id,
+                    Some(saved_through),
+                )?;
+            }
+        }
+        self.remember_saved(memory, manifest, saved_through)?;
+        self.saved_memory = true;
+        Ok(removed_at_source && self.check_locations().is_err())
+    }
+
+    pub(crate) fn committed(&mut self, cursor: &Value) {
+        if self.checkpoint_cursor.as_ref() == Some(cursor) {
+            self.checkpoint_pending = false;
+            self.checkpoint_cursor = None;
+        }
+    }
+
     /// Remember the files whose records in the bundle `manifest` end at or
     /// before `admitted`. Bundles are offered newest first; a path already
     /// decided by a newer bundle keeps that decision.

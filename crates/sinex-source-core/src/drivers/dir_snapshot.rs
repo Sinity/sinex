@@ -448,7 +448,11 @@ impl DirSnapshot {
                         scanned.changed_since_memory = 0;
                         Some(sinex_model::ReaderMemory {
                             material,
-                            bytes: restore::memory_of(&state.files, &state.locations, through),
+                            bytes: restore::memory_of(
+                                &state.files,
+                                &state.locations,
+                                through as u64,
+                            ),
                         })
                     }
                     None => None,

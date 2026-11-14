@@ -498,16 +498,9 @@ impl Reader for Walked {
     }
 
     fn restore(&mut self, _cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
-        let reference = &material.reference;
         let admitted = material.admitted_through()?;
-        if !self.state.saved_memory {
-            self.state.remember_members(&reference.manifest, admitted)?;
-        }
-        if self.driver.removed_at_source {
-            self.state
-                .remember_locations(&reference.manifest, admitted, reference.id)?;
-        }
-        Ok(!self.state.saved_memory || self.state.check_locations().is_err())
+        self.state
+            .restore_part(&material.reference, admitted, self.driver.removed_at_source)
     }
 
     fn restore_memory(
@@ -516,39 +509,8 @@ impl Reader for Walked {
         anchor: Option<&sinex_model::MaterialRef>,
         admitted: Option<u64>,
     ) -> Result<bool, DriverError> {
-        let manifest = anchor.map(|anchor| &anchor.manifest);
-        let saved_through = crate::drivers::dir_snapshot::saved_through(memory, manifest)?;
-        let admitted = admitted.ok_or_else(|| {
-            DriverError::Cursor("directory memory has no admitted-prefix evidence".into())
-        })?;
-        if anchor.is_some_and(|anchor| admitted > anchor.length) {
-            return Err(DriverError::Cursor(
-                "directory memory has contradictory admitted-prefix evidence".into(),
-            ));
-        }
-        if saved_through > admitted {
-            return Err(DriverError::Cursor(
-                "directory checkpoint is beyond its admitted prefix".into(),
-            ));
-        }
-        if saved_through < admitted {
-            let anchor = anchor.ok_or_else(|| {
-                DriverError::Cursor("directory checkpoint suffix has no immutable material".into())
-            })?;
-            self.state
-                .remember_members_after(&anchor.manifest, admitted, Some(saved_through))?;
-            if self.driver.removed_at_source {
-                self.state.remember_locations_after(
-                    &anchor.manifest,
-                    admitted,
-                    anchor.id,
-                    Some(saved_through),
-                )?;
-            }
-        }
-        self.state.remember_saved(memory, manifest, saved_through)?;
-        self.state.saved_memory = true;
-        Ok(self.driver.removed_at_source && self.state.check_locations().is_err())
+        self.state
+            .restore_checkpoint(memory, anchor, admitted, self.driver.removed_at_source)
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {
@@ -560,10 +522,7 @@ impl Reader for Walked {
     }
 
     fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
-        if self.state.checkpoint_cursor.as_ref() == Some(cursor) {
-            self.state.checkpoint_pending = false;
-            self.state.checkpoint_cursor = None;
-        }
+        self.state.committed(cursor);
         Ok(0)
     }
 
