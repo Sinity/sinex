@@ -264,11 +264,15 @@ impl Drop for ReadConnection {
                 unreachable!()
             };
             let cleanup = tokio::spawn(async move {
-                let reset = tokio::time::timeout(
-                    Duration::from_millis(100),
-                    sqlx::raw_sql("RESET statement_timeout; RESET sinex.request_deadline")
-                        .execute(&mut *conn),
-                )
+                let reset = tokio::time::timeout(Duration::from_millis(100), async {
+                    sqlx::query("RESET statement_timeout")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("RESET sinex.request_deadline")
+                        .execute(&mut *conn)
+                        .await?;
+                    Ok::<_, sqlx::Error>(())
+                })
                 .await;
                 if !matches!(reset, Ok(Ok(_))) {
                     conn.close_on_drop();

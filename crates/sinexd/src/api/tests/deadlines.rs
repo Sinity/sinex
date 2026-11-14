@@ -205,3 +205,41 @@ async fn large_finite_budget_keeps_pool_reuse_and_does_not_become_a_postgres_cap
         "a completed request left a budget on the pool connection"
     );
 }
+
+#[devkit::test]
+async fn disconnect_cancels_an_unbounded_read_backend(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let mut lock = locked(&w, "ACCESS EXCLUSIVE").await;
+    let app = w.app.clone();
+    let read = tokio::spawn(async move {
+        app.oneshot(
+            HttpRequest::post("/v1")
+                .header("authorization", format!("Bearer {READ}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"method":"query","query":"events","deadline":null}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    });
+    let limit = std::time::Instant::now() + Duration::from_secs(3);
+    while active_readers(&mut lock).await == 0 {
+        assert!(
+            std::time::Instant::now() < limit,
+            "unbounded read did not reach the locked query"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    read.abort();
+    let _ = read.await;
+    while active_readers(&mut lock).await != 0 {
+        assert!(
+            std::time::Instant::now() < limit,
+            "disconnect left its unbounded backend running"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
+}

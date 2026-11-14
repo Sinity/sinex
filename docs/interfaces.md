@@ -304,7 +304,7 @@ one irreversible deletion; a refused material is read again by replay.
 - Long output on a terminal streams into `$PAGER`, fetching later pages only as the
   pager reads.
 - **Errors** are one line of what failed and what to do, positioned in the query, with a
-  runnable correction when one exists; with `--json`, an error object on stderr. An
+  runnable correction when one exists; with `--json`, an error object on stdout. An
   empty result says why: nothing matched, the source was not observed, or the rows are
   outside the caller's grants.
 - `--deadline` has no upper bound; `--deadline none` lifts it.
