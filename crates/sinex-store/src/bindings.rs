@@ -16,6 +16,24 @@ pub struct Stored {
     pub settings: Value,
 }
 
+/// Identify the format actually stored at this binding's committed anchor.
+/// A same-named source may have both a native spool and an imported file format.
+pub async fn material_parser(
+    conn: &mut PgConnection,
+    binding: &str,
+    material: sinex_model::MaterialId,
+) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar!(
+        "SELECT m.parser FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id
+         WHERE m.id=$1 AND i.binding=$2",
+        material.0,
+        binding,
+    )
+    .fetch_optional(conn)
+    .await?
+    .flatten())
+}
+
 /// Retained live observations of an exact kind, for the reader's own state.
 /// Client output grants do not mask the state needed to resume a binding.
 pub async fn observations(conn: &mut PgConnection, kind: &KindRef) -> Result<Vec<Value>> {

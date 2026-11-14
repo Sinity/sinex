@@ -157,6 +157,15 @@ async fn world_with_reads(
     source_config: crate::binding_runner::Config,
     reads: PgPoolOptions,
 ) -> World {
+    world_with_api(db, source_config, reads, |_| {}).await
+}
+
+async fn world_with_api(
+    db: devkit::pg::TestDatabase,
+    source_config: crate::binding_runner::Config,
+    reads: PgPoolOptions,
+    configure: impl FnOnce(&mut Api),
+) -> World {
     let url = db.url(None);
     let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
         .await
@@ -177,7 +186,7 @@ async fn world_with_reads(
     ));
     let reads = reads.connect(&url).await.unwrap();
     let (stop, stopped) = watch::channel(false);
-    let api = Api {
+    let mut api = Api {
         backup_producers: None,
         source_config: Arc::new(source_config),
         read_failures: Default::default(),
@@ -195,6 +204,7 @@ async fn world_with_reads(
         host: "h".into(),
         library_roots: Vec::new(),
     };
+    configure(&mut api);
     let (commits, rx) = watch::channel(0u64);
     let (read_models_tx, read_models) = watch::channel(());
     let read_model_task =

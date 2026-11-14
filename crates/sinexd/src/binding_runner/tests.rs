@@ -5,6 +5,158 @@ fn config(json: Value) -> Config {
     serde_json::from_value(json).unwrap()
 }
 
+async fn backup_binding_anchor(
+    conn: &mut PgConnection,
+    binding: &Binding,
+    parser: &str,
+) -> sinex_model::MaterialId {
+    sinex_store::bindings::save(
+        conn,
+        &sinex_store::bindings::Stored {
+            binding: binding.name.clone(),
+            source: binding.source.clone(),
+            input: binding.input.to_str().unwrap().into(),
+            settings: serde_json::to_value(&binding.settings).unwrap(),
+        },
+    )
+    .await
+    .unwrap();
+    let input = uuid::Uuid::now_v7();
+    let material = sinex_model::MaterialId(uuid::Uuid::now_v7());
+    let hash = format!("blake3:{}", blake3::hash(material.0.as_bytes()).to_hex());
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,0,'present')")
+        .bind(&hash)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO raw.inputs(id,binding,kind,locator,host) VALUES($1,$2,'file',$3,$4)")
+        .bind(input)
+        .bind(&binding.name)
+        .bind(binding.input.to_str().unwrap())
+        .bind(&binding.settings.host)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO raw.materials(id,input_id,blob,length,manifest,parser,parser_version) VALUES($1,$2,$3,0,'{}',$4,1)")
+        .bind(material.0).bind(input).bind(hash).bind(parser).execute(&mut *conn).await.unwrap();
+    sqlx::query(
+        "INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES($1,$2,'{}',0)",
+    )
+    .bind(&binding.name)
+    .bind(json!({"material":material,"through":0}))
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    material
+}
+
+#[devkit::test]
+async fn backup_keeps_same_named_native_spool_separate_from_historical_lake_file(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let historical = root.path().join("retired.jsonl");
+    std::fs::write(&historical, b"original retired capture\n").unwrap();
+    let specs = sources::specs();
+    let lake = specs
+        .iter()
+        .find(|spec| spec.name == "desktop.clipboard" && spec.parser.starts_with("sinnix-lake:"))
+        .unwrap();
+    let live = &sources::clipboard::SPEC;
+    let old = Binding::of(lake, &historical, Settings::new("synthetic-host"));
+    backup_binding_anchor(&mut conn, &old, lake.parser).await;
+    let spool = root.path().join("native-spool");
+    std::fs::create_dir(&spool).unwrap();
+    let native = Binding::of(live, &spool, Settings::new("synthetic-host"));
+    let material = backup_binding_anchor(&mut conn, &native, live.parser).await;
+    sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
+        .bind(&native.name)
+        .bind(json!({"segment":0,"inner":{},"part_base":0,"last_material":material}))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let selected = backup_bindings(
+        &mut conn,
+        vec![native.clone(), old.clone()],
+        "synthetic-host",
+    )
+    .await
+    .unwrap();
+    assert_eq!(selected, vec![native.clone()]);
+    assert_eq!(
+        std::fs::read(&historical).unwrap(),
+        b"original retired capture\n"
+    );
+    // Retained native state remains an obligation even when no longer configured.
+    assert_eq!(
+        backup_bindings(&mut conn, vec![], "synthetic-host")
+            .await
+            .unwrap(),
+        vec![native]
+    );
+}
+
+#[devkit::test]
+async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let binding = Binding::of(
+        &sources::clipboard::SPEC,
+        root.path(),
+        Settings::new("synthetic-host"),
+    );
+    let material =
+        backup_binding_anchor(&mut conn, &binding, "sinnix-lake:desktop.clipboard").await;
+    assert!(
+        sinex_store::bindings::material_parser(&mut conn, "another-binding", material)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("disagrees")
+    );
+    sqlx::query("UPDATE raw.positions SET cursor='{}' WHERE binding=$1")
+        .bind(&binding.name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert!(
+        backup_bindings(&mut conn, vec![], "synthetic-host")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no material evidence")
+    );
+    assert!(
+        backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no material evidence")
+    );
+    sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
+        .bind(&binding.name)
+        .bind(json!({"material":uuid::Uuid::now_v7()}))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert!(
+        backup_bindings(&mut conn, vec![], "synthetic-host")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no parser evidence")
+    );
+}
+
 #[devkit::test]
 fn plans_present_inputs_without_source_enables() {
     let dir = tempfile::tempdir().unwrap();

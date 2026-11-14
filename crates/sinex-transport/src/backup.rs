@@ -75,6 +75,9 @@ impl BackupResponder {
                     Ok(Some(message)) => message,
                     Ok(None) => break,
                     Err(_) => {
+                        if paused.is_some() {
+                            eprintln!("backup producer {producer}: pause expired in run {run_id}");
+                        }
                         paused = None;
                         continue;
                     }
@@ -115,7 +118,11 @@ impl BackupResponder {
                                 let current = paused
                                     .as_mut()
                                     .filter(|c| c.token == token)
-                                    .ok_or("backup expired or the producer restarted")?;
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "backup pause is not active in producer run {run_id}"
+                                        )
+                                    })?;
                                 if let Some((previous, _)) = &current.captured {
                                     if previous != &boundary {
                                         return Err(

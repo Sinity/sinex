@@ -134,28 +134,89 @@ pub(crate) fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputFor
 /// whose acquired bytes have not yet produced a database checkpoint.
 pub(crate) async fn backup_bindings(
     conn: &mut PgConnection,
-    config: &Config,
+    mut bindings: Vec<Binding>,
     host: &str,
 ) -> Result<Vec<Binding>> {
     use sinex_source_core::registry::{Origin, Shape};
     let specs = sources::specs();
-    let mut bindings = plan(config, host)?
-        .into_iter()
-        .map(|(_, binding)| binding)
-        .collect::<Vec<_>>();
+    let native = |spec: &sinex_source_core::registry::SourceSpec| {
+        matches!(spec.origin, Origin::Input(Shape::LiveStream | Shape::Media))
+    };
+    bindings.retain(|binding| {
+        specs
+            .iter()
+            .filter(|spec| native(spec))
+            .any(|spec| spec.name == binding.source && spec.parser == binding.parser)
+    });
     for row in sinex_store::bindings::all(conn).await? {
         let settings: Settings = serde_json::from_value(row.settings)
             .map_err(|e| Error::internal(format!("saved binding {}: {e}", row.binding)))?;
         if settings.host != host {
             continue;
         }
-        if !specs.iter().any(|spec| spec.name == row.source) {
+        let candidates = specs
+            .iter()
+            .filter(|spec| spec.name == row.source)
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
             return Err(Error::internal(format!(
                 "saved native binding {} has unknown source {}",
                 row.binding, row.source
             )));
         }
-        for spec in specs.iter().filter(|spec| spec.name == row.source) {
+        if !candidates.iter().any(|spec| native(spec)) {
+            continue;
+        }
+        let configured = bindings.iter().find(|binding| binding.name == row.binding);
+        let cursor = sinex_store::positions::load(conn, &row.binding)
+            .await?
+            .map(|(cursor, _)| cursor);
+        let material = cursor.as_ref().and_then(|cursor| {
+            sinex_source_core::drivers::cursor_material(cursor)
+                .map(|(material, _)| material)
+                .or_else(|| {
+                    serde_json::from_value::<sinex_source_core::drivers::live_stream::Cursor>(
+                        cursor.clone(),
+                    )
+                    .ok()
+                    .and_then(|cursor| cursor.last_material)
+                })
+        });
+        let parser = if let Some(material) = material {
+            sinex_store::bindings::material_parser(conn, &row.binding, material)
+                .await?
+                .ok_or_else(|| {
+                    Error::internal(format!(
+                        "saved binding {} has no parser evidence at material {material}",
+                        row.binding
+                    ))
+                })?
+        } else if cursor.is_none()
+            && let Some(configured) = configured
+        {
+            configured.parser.clone()
+        } else {
+            return Err(Error::internal(format!(
+                "saved binding {} has no material evidence identifying its input format",
+                row.binding
+            )));
+        };
+        let spec = candidates
+            .iter()
+            .find(|spec| spec.parser == parser)
+            .ok_or_else(|| {
+                Error::internal(format!(
+                    "saved binding {} has unknown parser {parser}",
+                    row.binding
+                ))
+            })?;
+        if configured.is_some_and(|binding| binding.parser != parser) {
+            return Err(Error::internal(format!(
+                "saved binding {} disagrees with its configured parser",
+                row.binding
+            )));
+        }
+        if native(spec) {
             bindings.push(Binding {
                 name: row.binding.clone(),
                 source: row.source.clone(),
@@ -165,12 +226,6 @@ pub(crate) async fn backup_bindings(
             });
         }
     }
-    bindings.retain(|binding| {
-        specs.iter().any(|spec| {
-            spec.name == binding.source
-                && matches!(spec.origin, Origin::Input(Shape::LiveStream | Shape::Media))
-        })
-    });
     bindings.sort_by(|a, b| a.name.cmp(&b.name));
     bindings.dedup_by(|a, b| a.name == b.name);
     Ok(bindings)
