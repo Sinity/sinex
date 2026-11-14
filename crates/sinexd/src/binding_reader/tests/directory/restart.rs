@@ -605,7 +605,8 @@ async fn historical_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_a
         .unwrap()
         .unwrap();
     let before_materials: Vec<(uuid::Uuid, String, Value)> =
-        sqlx::query_as("SELECT id,blob,manifest FROM raw.materials ORDER BY id")
+        sqlx::query_as("SELECT id,blob,manifest FROM raw.materials WHERE parser=$1 ORDER BY id")
+            .bind(notes::SPEC.parser)
             .fetch_all(&mut ctx.read_conn)
             .await
             .unwrap();
@@ -662,13 +663,20 @@ async fn historical_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_a
         .await
         .unwrap();
     let after_materials: Vec<(uuid::Uuid, String, Value)> =
-        sqlx::query_as("SELECT id,blob,manifest FROM raw.materials ORDER BY id")
+        sqlx::query_as("SELECT id,blob,manifest FROM raw.materials WHERE parser=$1 ORDER BY id")
+            .bind(notes::SPEC.parser)
             .fetch_all(&mut ctx.read_conn)
             .await
             .unwrap();
     assert_eq!(
         after_materials, before_materials,
         "equal bytes must not create or relabel material"
+    );
+    let observations: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE manifest->>'media_type'='application/x-sinex-source-observation'")
+        .fetch_one(&mut ctx.read_conn).await.unwrap();
+    assert_eq!(
+        observations, 1,
+        "the ordinary read records its own source observation"
     );
     let after = positions::load(&mut ctx.read_conn, &readers[0].binding.name)
         .await
