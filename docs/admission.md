@@ -79,6 +79,7 @@ PostgreSQL with TimescaleDB is the one transactional store.
 
 - Two side tables are written in the event's transaction: one live reading per record coordinates, kind and output index; and one per `(source, kind, source record key)` for keyed kinds.
 - The live row is narrow: record key hash, reading ID, reading order and record hash. The record hash makes suppress-or-supersede one comparison; the narrow row keeps the live tables small enough for the classification snapshot.
+- Classification materializes only incoming metadata, encoding each logical record key once with the stored-key encoder. After ranking duplicates, each winning row probes the live table by its complete unique key. Payloads stay in the staging table, and live-key history is not joined into the incoming batch. The whole comparison uses the admission transaction's snapshot.
 - What the states mean and how operations move readings between them is [lifecycle.md](lifecycle.md).
 
 ### Read models

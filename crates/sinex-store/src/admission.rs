@@ -20,7 +20,7 @@
 //! The caller commits; events and progress are then durable together.
 use crate::{Result, privacy};
 use serde_json::Value;
-use sinex_model::{ArchiveRequest, Batch, BatchKind, Class, Event, EventId, Origin, ReadingOrder};
+use sinex_model::{ArchiveRequest, Batch, BatchKind, Event, EventId, Origin, ReadingOrder};
 use sqlx::PgConnection;
 use uuid::Uuid;
 

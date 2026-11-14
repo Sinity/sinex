@@ -146,6 +146,17 @@ async fn classification_exact_probes_preserve_rank_removal_and_location_semantic
         actual.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
         ["superseded", "superseded", "newer", "superseded", "newer"]
     );
+    let mut outcome = Outcome::default();
+    let classified = classify::stage_and_classify(&mut conn, &events, &mut outcome)
+        .await
+        .unwrap();
+    assert_eq!(classified.admit, [2, 4]);
+    assert_eq!(classified.replaced, [(2, live), (4, live)]);
+    assert_eq!(
+        classified.resolved,
+        [None, None, Some(events[2].id.0), None, Some(events[4].id.0)]
+    );
+    assert_eq!(outcome.superseded, 3);
 }
 
 #[devkit::test]

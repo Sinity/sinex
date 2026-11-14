@@ -9,6 +9,8 @@ WITH s AS MATERIALIZED (
            row_number() OVER (
                PARTITION BY st.source, st.event_type, st.equivalence_key IS NOT NULL,
                    coalesce(st.equivalence_key, st.material_id::text || ':' || st.anchor || ':' || st.output_index)
+               -- Equal orders use content hash, then offered ordinal, just as
+               -- the live comparison below: arrival cannot choose the content.
                ORDER BY st.reading_order DESC, st.record_hash DESC, st.ord DESC) AS rank
     FROM core.admission_stage st
 )
