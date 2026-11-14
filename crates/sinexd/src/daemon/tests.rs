@@ -591,3 +591,146 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
     tx.commit().await.unwrap();
     fresh.close().await.unwrap();
 }
+
+#[devkit::test]
+async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
+    db: devkit::pg::TestDatabase,
+) {
+    use sinex_store::NoDerivations;
+    let url = db.url(None);
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let original = b"synthetic pending source bytes\n";
+    let blob = blobs.put(original).unwrap();
+    let mut observer = connect(&url, "sinex.test").await.unwrap();
+    sqlx::raw_sql("CREATE TABLE public.source_copy_mutation(ord bigint); CREATE FUNCTION public.hold_source_copy() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO public.source_copy_mutation VALUES(NEW.ord); PERFORM pg_advisory_xact_lock(927164); RETURN NEW; END $$; CREATE TRIGGER hold_source_copy AFTER INSERT ON core.admission_stage FOR EACH ROW WHEN (NEW.ord=0) EXECUTE FUNCTION public.hold_source_copy()")
+        .execute(&mut observer).await.unwrap();
+    let mut blocker = connect(&url, "sinex.test").await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock(927164)")
+        .execute(&mut blocker)
+        .await
+        .unwrap();
+    let mut connection = writer::claim(connect(&url, "sinex.test").await.unwrap())
+        .await
+        .unwrap();
+    let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap();
+    let (handle, queues) = writer::channels();
+    let mut tasks = JoinSet::new();
+    let database = url.clone();
+    let store = blobs.clone();
+    tasks.spawn(async move {
+        writer::run(
+            database,
+            connection,
+            queues,
+            Arc::new(NoDerivations),
+            Some(store),
+        )
+        .await;
+        ("writer", Ok(()))
+    });
+    let mut pending = shutdown_batch("copy-pending");
+    let sinex_model::RecordOutcome::Events { events, .. } = &mut pending.records[0] else {
+        unreachable!()
+    };
+    // First COPY row reaches a native lock; the escaped second row fills the
+    // socket so task cancellation exercises the streaming encoder itself.
+    let mut large = events[0].clone();
+    large.id = sinex_model::EventId::new();
+    large.payload["command"] = serde_json::Value::String("\"\\\n🦀".repeat(2 << 20));
+    if let sinex_model::Origin::Record { location, .. } = &mut large.origin {
+        location.anchor = 1;
+    }
+    events.push(large);
+    let material = match events[0].origin {
+        sinex_model::Origin::Record { location, .. } => location.material,
+        _ => unreachable!(),
+    };
+    let sinex_model::BatchKind::Ingress(frame) = &mut pending.kind else {
+        unreachable!()
+    };
+    frame.material = Some(sinex_model::SourceProgress {
+        source: None,
+        host: None,
+        binding: "synthetic-copy-pending".into(),
+        data_keys: vec![],
+        input: sinex_model::InputRef {
+            kind: "file".into(),
+            locator: "synthetic".into(),
+            host: "synthetic".into(),
+        },
+        observation: Default::default(),
+        revision: sinex_model::RevisionChange::Appended,
+        material: Some(sinex_model::MaterialRef {
+            id: material,
+            input: None,
+            blob: blob.clone(),
+            length: original.len() as u64,
+            part_index: 0,
+            previous_part: None,
+            parser: "synthetic".into(),
+            parser_version: 1,
+            manifest: Default::default(),
+        }),
+        cursor: serde_json::json!({"offset":original.len()}),
+        carry: serde_json::Value::Null,
+        memory: None,
+    });
+    let offered = pending.clone();
+    let waiting = tokio::spawn(async move {
+        handle
+            .submit_source(writer::Priority::Bulk, offered, Arc::new(|| Ok(())), None)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5),async {loop {
+        let held=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND query LIKE 'COPY core.admission_stage%' AND wait_event_type='Lock')").bind(pid).fetch_one(&mut observer).await.unwrap();
+        if held {break;} tokio::task::yield_now().await;
+    }}).await.expect("real source COPY reached its held first row");
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        finish_tasks(&mut tasks, Duration::ZERO, &url, &blobs, true),
+    )
+    .await
+    .expect("streaming COPY yields to writer cancellation")
+    .unwrap();
+    assert!(
+        matches!(waiting.await.unwrap(), Err(writer::WriteError::Stopped)),
+        "aborted source has no final refusal or ACK"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM public.source_copy_mutation")
+            .fetch_one(&mut observer)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM raw.positions WHERE binding='synthetic-copy-pending'"
+        )
+        .fetch_one(&mut observer)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM core.ingress_frames WHERE producer='synthetic-shutdown' AND frame='copy-pending'").fetch_one(&mut observer).await.unwrap(),0);
+    assert_eq!(blobs.read(&blob).unwrap(), original);
+    sqlx::query("SELECT pg_advisory_unlock(927164)")
+        .execute(&mut blocker)
+        .await
+        .unwrap();
+    let mut fresh = writer::claim(connect(&url, "sinex.test").await.unwrap())
+        .await
+        .unwrap();
+    let mut tx = fresh.begin().await.unwrap();
+    let first = tx.admit(&pending, &NoDerivations).await.unwrap();
+    let repeated = tx.admit(&pending, &NoDerivations).await.unwrap();
+    assert_eq!(first.admitted, 2);
+    assert_eq!(first.commit_seq, repeated.commit_seq);
+    assert_eq!(first.admitted_ids, repeated.admitted_ids);
+    tx.commit().await.unwrap();
+    fresh.close().await.unwrap();
+}
