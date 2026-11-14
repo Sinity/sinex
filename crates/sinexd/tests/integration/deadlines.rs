@@ -93,9 +93,6 @@ async fn cli_deadline_cancels_a_locked_read_and_none_waits_for_release() {
     let unbounded = tokio::task::spawn_blocking(move || unbounded.output().unwrap());
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(!unbounded.is_finished());
-    sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
-    let answer = unbounded.await.unwrap();
-    assert!(answer.status.success(), "{answer:?}");
     let names: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT application_name FROM pg_stat_activity WHERE datname=current_database()",
     )
@@ -108,5 +105,8 @@ async fn cli_deadline_cancels_a_locked_read_and_none_waits_for_release() {
             "missing {name}: {names:?}"
         );
     }
+    sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
+    let answer = unbounded.await.unwrap();
+    assert!(answer.status.success(), "{answer:?}");
     process.stop().await;
 }

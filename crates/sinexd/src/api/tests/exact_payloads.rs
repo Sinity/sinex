@@ -62,10 +62,11 @@ async fn no_rules_preserve_credential_shaped_payloads_for_equal_grant_callers(
 #[devkit::test]
 async fn no_rules_preserve_nested_keys_in_follow_and_cursor_pages(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let request = HttpRequest::get("/v1/follow?query=events%20%7C%20sort%20by%20when")
-        .header("authorization", format!("Bearer {READ}"))
-        .body(Body::empty())
-        .unwrap();
+    let request =
+        HttpRequest::get("/v1/follow?deadline=none&query=events%20%7C%20sort%20by%20when")
+            .header("authorization", format!("Bearer {READ}"))
+            .body(Body::empty())
+            .unwrap();
     let response = w.app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let mut stream = response.into_body();
@@ -120,7 +121,7 @@ async fn no_rules_preserve_credential_shaped_request_errors(db: devkit::pg::Test
         assert!(reason.contains("not an RFC 3339 time"), "{body}");
         let query = format!("events where {text}");
         let encoded: String = query.bytes().map(|byte| format!("%{byte:02X}")).collect();
-        let request = HttpRequest::get(format!("/v1/follow?query={encoded}"))
+        let request = HttpRequest::get(format!("/v1/follow?deadline=none&query={encoded}"))
             .header("authorization", format!("Bearer {READ}"))
             .body(Body::empty())
             .unwrap();
