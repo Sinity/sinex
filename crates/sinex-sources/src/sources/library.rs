@@ -23,7 +23,7 @@ mod files;
 mod requests;
 mod scan;
 
-pub use files::{Digests, digest, dimensions};
+pub use files::{Digests, digest, dimensions, media_type_for_path};
 pub use requests::{
     RequestParser, RequestPayload, RequestWriter, request_material, request_source,
 };

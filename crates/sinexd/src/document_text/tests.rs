@@ -366,3 +366,41 @@ fn a_pdf_reader_that_does_not_finish_in_time_is_stopped() {
 fn the_pdf_time_limit_grows_with_the_document() {
     assert!(pdf_time(100 * 1024 * 1024) > pdf_time(1024 * 1024));
 }
+
+#[devkit::test]
+fn structured_formats_are_excluded_before_fetch_even_when_previously_plain_text() {
+    for path in [
+        "/library/a.json",
+        "/library/a.JSONL",
+        "/library/a.ndjson",
+        "/library/a.csv",
+        "/library/a.TSV",
+    ] {
+        assert!(!super::extract::reads_bytes("text/plain", path));
+        assert_eq!(format("text/plain", path, b"{}\n"), None);
+    }
+    for media in [
+        "application/json",
+        "application/x-ndjson",
+        "application/jsonl",
+        "text/csv",
+        "text/tab-separated-values",
+    ] {
+        assert!(!super::extract::reads_bytes(media, "/library/no-extension"));
+    }
+    for (media, path) in [
+        ("text/plain", "notes.txt"),
+        ("text/plain", "notes"),
+        ("text/markdown", "notes.md"),
+        ("text/html", "page.html"),
+        ("application/pdf", "book.pdf"),
+        ("application/zip", "book.zip"),
+        (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "book.docx",
+        ),
+        ("application/vnd.oasis.opendocument.text", "book.odt"),
+    ] {
+        assert!(super::extract::reads_bytes(media, path), "{media}: {path}");
+    }
+}

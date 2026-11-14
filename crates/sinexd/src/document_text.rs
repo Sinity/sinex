@@ -104,7 +104,7 @@ pub(crate) struct DocumentText {
 impl PerEvent for DocumentText {
     const NAME: &'static str = "document.text";
     /// Bump when the reading of a format changes.
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
     const INPUTS: &'static [&'static str] = &[FileCopy::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[DocumentTextPayload::EVENT_TYPE];
     const READS: Reads = Reads::Blob("content");
@@ -126,17 +126,7 @@ impl PerEvent for DocumentText {
         };
         if copy.stored
             && copy.vanished_at.is_none()
-            && matches!(
-                copy.media_type.as_str(),
-                "application/pdf"
-                    | "application/zip"
-                    | "text/plain"
-                    | "text/html"
-                    | "application/xhtml+xml"
-                    | "text/markdown"
-                    | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    | "application/vnd.oasis.opendocument.text"
-            )
+            && extract::reads_bytes(&copy.media_type, &copy.path)
         {
             Self::READS
         } else {

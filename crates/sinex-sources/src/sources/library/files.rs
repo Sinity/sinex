@@ -35,7 +35,7 @@ pub fn digest(path: &Path) -> std::io::Result<Digests> {
         sha.update(chunk);
         md.update(chunk);
     }
-    let media_type = sniff(&head).to_owned();
+    let media_type = media_type_for_path(sniff(&head), &path.to_string_lossy()).to_owned();
     Ok(Digests {
         blake3: b3.finalize().to_hex().to_string(),
         sha256: hex(&sha.finalize()),
@@ -54,8 +54,36 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
+/// Refine generic UTF-8 text by its declared structured-data extension.
+/// This also classifies older library copies captured as `text/plain`.
+/// A binary signature keeps precedence over the filename.
+pub fn media_type_for_path<'a>(media_type: &'a str, path: &str) -> &'a str {
+    if media_type != "text/plain" {
+        return media_type;
+    }
+    let extension = path
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .rsplit_once('.')
+        .map(|(_, extension)| extension);
+    match extension {
+        Some(extension) if extension.eq_ignore_ascii_case("json") => "application/json",
+        Some(extension)
+            if extension.eq_ignore_ascii_case("jsonl")
+                || extension.eq_ignore_ascii_case("ndjson") =>
+        {
+            "application/x-ndjson"
+        }
+        Some(extension) if extension.eq_ignore_ascii_case("csv") => "text/csv",
+        Some(extension) if extension.eq_ignore_ascii_case("tsv") => "text/tab-separated-values",
+        _ => media_type,
+    }
+}
+
 /// The media type from a file's first bytes. Names are never trusted: a
-/// `.jpg` that is a PNG is a PNG.
+/// `.jpg` that is a PNG is a PNG. Generic UTF-8 text is refined by
+/// [`media_type_for_path`] after sniffing.
 pub(super) fn sniff(head: &[u8]) -> &'static str {
     let starts = |magic: &[u8]| head.starts_with(magic);
     let at = |offset: usize, magic: &[u8]| head.get(offset..offset + magic.len()) == Some(magic);
@@ -210,4 +238,39 @@ pub(super) fn ffprobe(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u
         .and_then(|s| s.parse::<f64>().ok())
         .map(|s| (s * 1000.0).round() as u64);
     Some((dim("width"), dim("height"), duration))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[devkit::test]
+    fn structured_text_files_keep_their_media_type_and_original_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, expected) in [
+            ("records.JSON", "application/json"),
+            ("records.jsonl", "application/x-ndjson"),
+            ("records.NDJSON", "application/x-ndjson"),
+            ("records.csv", "text/csv"),
+            ("records.TSV", "text/tab-separated-values"),
+            ("notes.txt", "text/plain"),
+            ("notes.md", "text/plain"),
+        ] {
+            let path = directory.path().join(name);
+            let bytes = b"{\"text\":\"original\"}\n";
+            std::fs::write(&path, bytes).unwrap();
+            let result = digest(&path).unwrap();
+            assert_eq!(result.media_type, expected);
+            assert_eq!(result.blake3, blake3::hash(bytes).to_hex().as_str());
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+        assert_eq!(
+            media_type_for_path("application/pdf", "misnamed.jsonl"),
+            "application/pdf"
+        );
+        assert_eq!(
+            media_type_for_path("text/plain", "/folder.jsonl/notes"),
+            "text/plain"
+        );
+    }
 }

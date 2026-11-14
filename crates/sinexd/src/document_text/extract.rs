@@ -36,10 +36,27 @@ fn extension(path: &str) -> String {
 
 const ODT_MIMETYPE: &str = "application/vnd.oasis.opendocument.text";
 
+/// Decide eligibility from metadata before reading stored bytes. ZIP needs
+/// its bytes to distinguish DOCX/ODT from unrelated archives.
+pub(super) fn reads_bytes(media_type: &str, path: &str) -> bool {
+    matches!(
+        sinex_sources::sources::library::media_type_for_path(media_type, path),
+        "application/pdf"
+            | "application/zip"
+            | "text/plain"
+            | "text/html"
+            | "application/xhtml+xml"
+            | "text/markdown"
+            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "application/vnd.oasis.opendocument.text"
+    )
+}
+
 /// The document format of a copy, or `None` when it is not a document. The
-/// bytes decide; the extension only tells markup from plain text.
+/// bytes decide ZIP membership; text extensions distinguish document markup
+/// from structured data.
 pub(super) fn format(media_type: &str, path: &str, bytes: &[u8]) -> Option<Format> {
-    match media_type {
+    match sinex_sources::sources::library::media_type_for_path(media_type, path) {
         "application/pdf" => Some(Format::Pdf),
         "text/html" | "application/xhtml+xml" => Some(Format::Html),
         "text/markdown" => Some(Format::Markdown),
