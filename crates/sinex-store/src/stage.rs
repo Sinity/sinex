@@ -112,6 +112,50 @@ impl<'c> Encoder<'c> {
         self.text("\"").await
     }
 
+    async fn number(&mut self, value: &serde_json::Number) -> Result<()> {
+        use std::fmt::Write;
+        // Number's Display writes a borrowed digit string when arbitrary
+        // precision is enabled, and fixed-size primitive tokens otherwise.
+        // A formatting window handles both without a whole-number allocation.
+        struct Window {
+            skip: usize,
+            text: String,
+        }
+        impl std::fmt::Write for Window {
+            fn write_str(&mut self, text: &str) -> std::fmt::Result {
+                if self.skip >= text.len() {
+                    self.skip -= text.len();
+                    return Ok(());
+                }
+                let text = &text[self.skip..];
+                self.skip = 0;
+                let n = text.len().min(JSON_STRING_BYTES - self.text.len());
+                self.text.push_str(&text[..n]);
+                if n == text.len() {
+                    Ok(())
+                } else {
+                    Err(std::fmt::Error)
+                }
+            }
+        }
+        let mut offset = 0;
+        loop {
+            let mut window = Window {
+                skip: offset,
+                text: String::with_capacity(JSON_STRING_BYTES),
+            };
+            let complete = write!(&mut window, "{value}").is_ok();
+            if window.text.is_empty() && !complete {
+                return Err(Error::Invalid("number formatting made no progress".into()));
+            }
+            self.text(&window.text).await?;
+            offset += window.text.len();
+            if complete {
+                return Ok(());
+            }
+        }
+    }
+
     async fn json(&mut self, value: &serde_json::Value) -> Result<()> {
         enum Part<'a> {
             Value(&'a serde_json::Value),
@@ -125,7 +169,7 @@ impl<'c> Encoder<'c> {
                 Part::Value(serde_json::Value::Bool(v)) => {
                     self.text(if *v { "true" } else { "false" }).await?
                 }
-                Part::Value(serde_json::Value::Number(v)) => self.text(&v.to_string()).await?,
+                Part::Value(serde_json::Value::Number(v)) => self.number(v).await?,
                 Part::Value(serde_json::Value::String(v)) => self.string(v).await?,
                 Part::Value(serde_json::Value::Array(v)) => {
                     self.text("[").await?;

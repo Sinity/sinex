@@ -147,8 +147,11 @@ async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
         deep = serde_json::json!([deep]);
     }
     let edge = format!(
-        "{}ą🦀\"\\\t\n\r\u{0000}\u{0008}\u{001f}",
-        "x".repeat(JSON_STRING_BYTES - 1)
+        "{}ą🦀{}",
+        "x".repeat(JSON_STRING_BYTES - 1),
+        ['"', '\\', '\t', '\n', '\r', '\0', '\u{0008}', '\u{001f}']
+            .into_iter()
+            .collect::<String>()
     );
     let mut map = serde_json::Map::new();
     map.insert(
@@ -167,15 +170,25 @@ async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
         ]),
     );
     let mut first = event(1, serde_json::Value::Object(map));
-    first.source = "\\N\t\n\r\\🦀".repeat(20000);
+    first.source = format!(
+        "{}N{}{}{}{}🦀",
+        char::from(92),
+        char::from(9),
+        char::from(10),
+        char::from(13),
+        char::from(92)
+    )
+    .repeat(20000);
     first.event_type = format!("synthetic.{}", edge.repeat(4).replace('\0', ""));
-    first.equivalence_key = Some(sinex_model::EquivalenceKey("\\N\n🦀".repeat(20000)));
+    first.equivalence_key = Some(sinex_model::EquivalenceKey(
+        format!("{}N{}🦀", char::from(92), char::from(10)).repeat(20000),
+    ));
     first.origin = Origin::Derived {
         parents: (0..4097).map(|_| EventId(uuid::Uuid::now_v7())).collect(),
     };
     let mut second = event(
         2,
-        serde_json::json!({"literal":"\\N","empty":"","null":null}),
+        serde_json::json!({"literal":format!("{}N",char::from(92)),"empty":"","null":null}),
     );
     second.equivalence_key = None;
     let events = [first, second];
@@ -291,9 +304,9 @@ async fn streaming_copy_encoding_and_database_errors_rollback_and_retry(
         if invalid == 0 {
             bad.replace = None;
         } else if invalid == 1 {
-            bad.source = "invalid\u{0000}text".into();
+            bad.source = format!("invalid{}text", char::from(0));
         } else {
-            bad.payload = serde_json::json!({"nul":"\u{0000}"});
+            bad.payload = serde_json::json!({"nul":char::from(0).to_string()});
         }
         let mut tx = conn.begin().await.unwrap();
         let error = copy(&mut tx, &[(0, &good), (1, &bad)]).await.unwrap_err();
