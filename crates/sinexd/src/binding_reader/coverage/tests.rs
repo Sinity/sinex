@@ -409,7 +409,6 @@ async fn invalid_saved_binding_settings_do_not_publish_open_coverage(db: devkit:
         &context.blobs,
         &context.writer,
         Access::default(),
-        crate::stage::ReadMode::ToEnd,
         &mut std::collections::BTreeMap::new(),
         observation,
     )

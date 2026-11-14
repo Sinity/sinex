@@ -98,6 +98,7 @@ async fn turn(
         &mut crate::binding_reader::Rounds::default(),
         stop,
         access,
+        crate::stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )
     .await
