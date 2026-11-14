@@ -146,6 +146,11 @@ A directory capture (a notes vault selection, a document root, a device's file t
 
 Restart restoration also reads retained predecessor framed-directory materials by their immutable manifest format, preserving their IDs, bytes and record anchors. Their modification time remains a historical modification time; absent change time is unknown. Before treating an unchanged predecessor file as current, the reader hashes a stable current file observation and establishes its current change-time baseline only when the bytes match. Equal bytes create no new material. The cache uses one tagged current checkpoint encoding, including its exact admitted snapshot position; untagged saved memory requires its immutable anchor material to determine what its timestamps meant. Cache upgrades commit through ordinary admission even when no content changed, retaining the existing material and admitted byte boundary. A failed or lost acknowledgement leaves the upgrade pending until the checkpoint's committed cursor is acknowledged. Newer admitted records after a saved snapshot override its older facts. Metadata traversal may continue behind a predecessor snapshot to recover original removal locations for its saved files, without resurrecting removed files. Each part is bounded by the current cursor or the newer part's retained `previous_through`; missing or contradictory evidence is diagnosed. New directory capture continues to write PAX tar.
 
+History pages include the saved memory's anchor and stop there before fetching
+older manifests. If the reader still needs older original locations, it continues
+from that anchor's predecessor. A saved anchor outside the current chain does
+not shorten restoration.
+
 ## Capture survival
 
 Capture survives everything downstream of it: the broker, the database, admission and upgrades.

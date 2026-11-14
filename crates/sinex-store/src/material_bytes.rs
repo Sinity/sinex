@@ -72,10 +72,13 @@ fn unparsed(material: uuid::Uuid) -> crate::Error {
 /// it, each with the input revision it belongs to. The next page starts at the
 /// last part's `previous_part`. A part names its previous part only once that
 /// part is stored, and the link is never changed, so a sequence has no cycle.
+/// Include `through` itself but do not fetch older manifests in this page.
+/// Its previous part remains available when the reader needs older locations.
 pub async fn parts_from(
     conn: &mut PgConnection,
     newest: MaterialId,
     count: i32,
+    through: Option<MaterialId>,
 ) -> Result<Vec<(sinex_model::MaterialRef, Option<uuid::Uuid>)>> {
     let rows = sqlx::query!(
         r#"WITH RECURSIVE sequence AS (
@@ -83,13 +86,14 @@ pub async fn parts_from(
              UNION ALL
              SELECT m.id, m.previous_part_id, c.depth + 1
              FROM raw.materials m JOIN sequence c ON m.id = c.previous_part_id
-             WHERE c.depth < $2)
+             WHERE c.depth < $2 AND c.id IS DISTINCT FROM $3)
            SELECT m.id, m.input_id, m.revision_id, m.blob, m.length, m.part_index,
                   m.previous_part_id, m.parser, m.parser_version, m.manifest
            FROM sequence c JOIN raw.materials m ON m.id = c.id
            ORDER BY c.depth"#,
         newest.0,
         count,
+        through.map(|id| id.0),
     )
     .fetch_all(&mut *conn)
     .await?;

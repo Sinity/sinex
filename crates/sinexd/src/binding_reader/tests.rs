@@ -6,6 +6,8 @@ use sinex_source_core::Settings;
 use sinex_sources::sources::google_takeout::{self, fit, tasks};
 use std::io::Write;
 
+mod memory_cut;
+
 fn archive(path: &std::path::Path) -> usize {
     let fit = json!({"Data Points": (0..40).map(|i| json!({"dataTypeName":"synthetic.steps", "startTimeNanos":i+1,"endTimeNanos":i+2,"fitValue":[{"intVal":i}]})).collect::<Vec<_>>()});
     let tasks = json!({"items":[{"id":"list", "items":[{"id":"task", "title":"synthetic task"}]}]});
