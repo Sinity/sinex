@@ -203,7 +203,7 @@ async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
             .copy_in_raw(&format!("COPY copy_wire ({COLUMNS}) FROM STDIN"))
             .await
             .unwrap();
-        let mut encoder = Encoder::new(copy);
+        let mut encoder = CopyText::new(copy);
         encoder.captured = Some(Vec::new());
         for (i, e) in events.iter().enumerate() {
             encoder.row(i as i64, e).await.unwrap();
@@ -269,7 +269,7 @@ async fn streaming_copy_bounds_scratch_for_one_huge_field_and_many_rows(
             .copy_in_raw(&format!("COPY core.admission_stage ({COLUMNS}) FROM STDIN"))
             .await
             .unwrap();
-        let mut encoder = Encoder::new(copy);
+        let mut encoder = CopyText::new(copy);
         for (i, e) in events.iter().enumerate() {
             encoder.row(i as i64, e).await.unwrap();
         }

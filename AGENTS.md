@@ -117,7 +117,7 @@ appears (2026-10-18,
 
 **Performance is a product goal.** The pipeline overlaps every stage:
 acquisition, parsing on blocking workers, one writer that takes one
-classification snapshot and makes one binary COPY and one commit per batch,
+classification snapshot and makes one text COPY and one commit per batch,
 bulk transactions bounded by duration with live batches served between them,
 and consumers with their own positions. Measure with paired `cargo xtask
 bench` runs and report hardware-independent figures (bytes and WAL per

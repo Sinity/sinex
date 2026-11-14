@@ -11,6 +11,7 @@ pub mod backup;
 pub mod bindings;
 pub mod blobs;
 pub mod commit_log;
+pub mod copy_text;
 pub mod coverage;
 pub mod derivations;
 pub mod diagnostics;
