@@ -71,6 +71,14 @@ feature resolution. `sinex-sources` defaults to its full source set, and
 protocol support. Selecting different packages can produce a different
 feature build. The complete workspace run is what CI runs on master.
 
+CI restores the latest master build on both pull requests and master pushes.
+The check and test jobs keep separate caches, each scoped by the toolchain
+and flake lock. Sources unchanged from the restored `target/source-commit`
+are dated before that build; changed files receive the current time, so
+Cargo can reuse unchanged dependency and product artifacts. Only master
+publishes a cache and its exact source commit. Cache reuse does not narrow
+master's complete test selection.
+
 ## PostgreSQL provider
 
 `nix/postgresql.nix` constructs the PostgreSQL provider used by development
