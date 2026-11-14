@@ -389,7 +389,7 @@ async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDat
             // An empty result alone does not prove that unrelated history was
             // not normalized first. Measure the eligible producer itself.
             let producer = subplan(&plans[1][0]["Plan"], "CTE eligible").unwrap();
-            assert_eq!(producer["Actual Rows"].as_u64(), Some(0), "{plans:#?}");
+            assert_eq!(producer["Actual Rows"].as_f64(), Some(0.0), "{plans:#?}");
             (at(start), at(end) + time::Duration::microseconds(1))
         };
         assert_eq!(
