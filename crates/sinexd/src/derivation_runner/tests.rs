@@ -107,6 +107,14 @@ impl World {
 
     /// A world whose writer marks the keys of `keyed` dirty.
     async fn with_keys(db: devkit::pg::TestDatabase, keyed: Vec<Box<dyn AnyKeyed>>) -> Self {
+        Self::with_store(db, keyed, None).await
+    }
+
+    async fn with_store(
+        db: devkit::pg::TestDatabase,
+        keyed: Vec<Box<dyn AnyKeyed>>,
+        blobs: Option<Blobs>,
+    ) -> Self {
         let url = db.url(None);
         let connection = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
             .await
@@ -120,7 +128,7 @@ impl World {
                 keyed,
                 TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
             )),
-            None,
+            blobs,
         ));
         Self {
             _db: db,

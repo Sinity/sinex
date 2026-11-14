@@ -89,21 +89,21 @@ impl PerEvent for PreviousDocumentText {
 async fn structured_document_inputs_skip_blob_reads_and_version_replay_withdraws_projections(
     db: devkit::pg::TestDatabase,
 ) {
-    let w = World::new(db).await;
     let directory = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(directory.path()).unwrap();
+    let w = World::with_store(db, vec![], Some(blobs.clone())).await;
     let original = b"{\"text\":\"original structured content\"}\n";
     let structured_blob = blobs.put(original).unwrap();
     let plain = b"complete ordinary document";
     let plain_blob = blobs.put(plain).unwrap();
-    // There is deliberately no readable blob for this metadata-large input.
-    // Fetching it would fail; no large allocation is needed to test selection.
-    let absent = format!(
-        "blake3:{}",
-        blake3::hash(b"unreadable fixture blob").to_hex()
-    );
+    // The reader's store holds the supported document only. A structured
+    // content fetch would fail, while the authoritative store keeps its bytes.
+    let reader_directory = tempfile::tempdir().unwrap();
+    let reader_blobs = Blobs::open(reader_directory.path()).unwrap();
+    assert_eq!(reader_blobs.put(plain).unwrap(), plain_blob);
+    assert!(reader_blobs.read(&structured_blob).is_err());
     let events = vec![
-        copy("dataset.jsonl", &absent, 348_589_691, 0),
+        copy("dataset.jsonl", &structured_blob, 348_589_691, 0),
         copy("records.NDJSON", &structured_blob, original.len() as u64, 1),
         copy("notes.txt", &plain_blob, plain.len() as u64, 2),
     ];
@@ -122,7 +122,7 @@ async fn structured_document_inputs_skip_blob_reads_and_version_replay_withdraws
             })],
         )
         .await
-        .with_blobs(blobs.clone());
+        .with_blobs(reader_blobs);
     let comparison = current.compare("document.text", None, 10).await.unwrap();
     assert_eq!(comparison.removed, 2);
     current
