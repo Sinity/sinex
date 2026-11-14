@@ -91,6 +91,22 @@ async fn cli_deadline_cancels_a_locked_read_and_none_waits_for_release() {
     assert_eq!(active, 0, "the timed-out CLI read released its backend");
     let mut unbounded = cli(&client, root.path(), "none");
     let unbounded = tokio::task::spawn_blocking(move || unbounded.output().unwrap());
+    let limit = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        sqlx::query("SELECT pg_stat_clear_snapshot()")
+            .execute(&mut lock)
+            .await
+            .unwrap();
+        let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='sinex.api' AND state='active' AND wait_event_type='Lock')").fetch_one(&mut lock).await.unwrap();
+        if waiting {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < limit,
+            "unbounded CLI read did not reach the locked query"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(!unbounded.is_finished());
     let names: Vec<String> = sqlx::query_scalar(

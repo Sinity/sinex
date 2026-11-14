@@ -13,8 +13,25 @@ async fn locked(w: &World, mode: &str) -> sqlx::PgConnection {
     conn
 }
 async fn active_readers(conn: &mut sqlx::PgConnection) -> i64 {
+    // PostgreSQL caches current-query information within a transaction.
+    // The lock owner must discard that snapshot before observing a new phase.
+    sqlx::query("SELECT pg_stat_clear_snapshot()")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND application_name='sinex.api' AND state='active' AND wait_event_type='Lock' AND query NOT LIKE 'LOCK TABLE%'")
         .fetch_one(conn).await.unwrap()
+}
+
+async fn wait_for_reader(conn: &mut sqlx::PgConnection) {
+    let limit = std::time::Instant::now() + Duration::from_secs(3);
+    while active_readers(conn).await == 0 {
+        assert!(
+            std::time::Instant::now() < limit,
+            "unbounded read did not reach the locked query"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 #[devkit::test]
@@ -53,6 +70,9 @@ async fn deadline_none_waits_and_does_not_inherit_an_earlier_budget(db: devkit::
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
     let mut lock = locked(&w, "ACCESS EXCLUSIVE").await;
+    // Prime an empty activity snapshot before the request starts. Arrival
+    // must be observed from a later snapshot in this same lock transaction.
+    assert_eq!(active_readers(&mut lock).await, 0);
     let app = w.app.clone();
     let request = tokio::spawn(async move {
         let response = app
@@ -70,6 +90,7 @@ async fn deadline_none_waits_and_does_not_inherit_an_earlier_budget(db: devkit::
         serde_json::from_slice::<Value>(&response.into_body().collect().await.unwrap().to_bytes())
             .unwrap()
     });
+    wait_for_reader(&mut lock).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(
         !request.is_finished(),
@@ -210,6 +231,9 @@ async fn large_finite_budget_keeps_pool_reuse_and_does_not_become_a_postgres_cap
 async fn disconnect_cancels_an_unbounded_read_backend(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     let mut lock = locked(&w, "ACCESS EXCLUSIVE").await;
+    // Prime an empty activity snapshot before the request starts. Arrival
+    // must be observed from a later snapshot in this same lock transaction.
+    assert_eq!(active_readers(&mut lock).await, 0);
     let app = w.app.clone();
     let read = tokio::spawn(async move {
         app.oneshot(
@@ -225,13 +249,7 @@ async fn disconnect_cancels_an_unbounded_read_backend(db: devkit::pg::TestDataba
         .unwrap()
     });
     let limit = std::time::Instant::now() + Duration::from_secs(3);
-    while active_readers(&mut lock).await == 0 {
-        assert!(
-            std::time::Instant::now() < limit,
-            "unbounded read did not reach the locked query"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_for_reader(&mut lock).await;
     read.abort();
     let _ = read.await;
     while active_readers(&mut lock).await != 0 {
