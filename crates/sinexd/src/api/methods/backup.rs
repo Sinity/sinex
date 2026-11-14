@@ -63,12 +63,26 @@ impl Api {
                 })
             }
             "prepare" if hold.is_none() => {
+                if self.backup_producers.is_none() {
+                    return Err(Error::bad_request(
+                        "backup prepare needs the configured producer list",
+                    ));
+                }
                 let output = output
                     .ok_or_else(|| Error::bad_request("backup prepare needs --output PATH"))?;
                 let output = std::path::PathBuf::from(output);
                 let revision = crate::build_identity::current()?;
                 crate::request_deadline::admit()?;
                 crate::backup::create(&output)?;
+                // Discovery can walk historical input directories. Finish it
+                // before starting the producers' paused publication lifetime.
+                let config = self.source_config.clone();
+                let host = self.host.clone();
+                let configured = tokio::task::spawn_blocking(move || {
+                    crate::binding_runner::plan(&config, &host)
+                        .map(|bindings| bindings.into_iter().map(|(_, binding)| binding).collect())
+                })
+                .await??;
                 let source_publication = writer.source_publication();
                 let local_guard = source_publication.pause().await;
                 let mut paused = Vec::new();
@@ -101,6 +115,25 @@ impl Api {
                         }
                     }
                 }
+                if !producer_snapshots.is_empty() {
+                    for producer in &paused {
+                        let _ = producer.release().await;
+                    }
+                    return Err(Error::bad_request(format!(
+                        "required producers did not pause: {}",
+                        producer_snapshots
+                            .iter()
+                            .map(|snapshot| format!(
+                                "{}: {}",
+                                snapshot.producer,
+                                snapshot.unavailable.as_deref().unwrap_or("unavailable")
+                            ))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    )));
+                }
+                let paused_at = std::time::Instant::now();
+                eprintln!("sinexd backup: producers paused; taking core snapshot");
                 let mut snapshot = match writer.backup_snapshot(caller.actor).await {
                     Ok(snapshot) => snapshot,
                     Err(e) => {
@@ -111,19 +144,18 @@ impl Api {
                     }
                 };
                 let hold = snapshot.hold.id;
+                eprintln!(
+                    "sinexd backup {hold}: core snapshot ready after {:?}; acquiring producer files",
+                    paused_at.elapsed()
+                );
                 if let Err(error) = crate::backup::record_boundary(&output, &snapshot.hold) {
                     for producer in &paused {
                         let _ = producer.release().await;
                     }
                     return Err(error.with_note(format!("backup hold {hold} remains open")));
                 }
-                let local_bindings = crate::binding_runner::backup_bindings(
-                    snapshot.connection(),
-                    &self.source_config,
-                    &self.host,
-                )
-                .await;
-                let boundary = &snapshot.hold;
+                let boundary = snapshot.hold.clone();
+                let boundary = &boundary;
                 let output_root = &output;
                 let external =
                     futures::future::join_all(paused.into_iter().map(|producer| async move {
@@ -152,7 +184,15 @@ impl Api {
                             },
                         }
                     }));
-                let local = crate::backup::local_sources(local_bindings, output_root);
+                let local = async {
+                    let local_bindings = crate::binding_runner::backup_bindings(
+                        snapshot.connection(),
+                        configured,
+                        &self.host,
+                    )
+                    .await;
+                    crate::backup::local_sources(local_bindings, output_root).await
+                };
                 let (acquired, local) = futures::join!(external, local);
                 drop(local_guard);
                 producer_snapshots.extend(acquired);

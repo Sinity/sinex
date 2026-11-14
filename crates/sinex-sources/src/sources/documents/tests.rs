@@ -146,6 +146,8 @@ fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
         .restore(
             &progress.cursor,
             sinex_source_core::StoredMaterial {
+                admitted: sinex_source_core::drivers::cursor_material(&progress.cursor)
+                    .and_then(|(_, through)| through),
                 reference,
                 bytes: std::sync::Arc::new(Bytes(bytes)),
                 same_revision: true,

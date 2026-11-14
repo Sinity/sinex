@@ -33,11 +33,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 type EntryFacts = Result<(u64, i128), String>;
-type FileMemory = HashMap<PathBuf, Option<(u64, i128, [u8; 32])>>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileFacts {
+    size: u64,
+    hash: [u8; 32],
+    modified_ns: Option<i128>,
+    changed_ns: Option<i128>,
+}
+
+type FileMemory = HashMap<PathBuf, Option<FileFacts>>;
 
 mod format;
 mod paths;
 mod restore;
+pub(crate) use restore::saved_through;
 mod tar;
 pub(crate) use format::{decode as decode_record, is_directory, validate as validate_records};
 
@@ -74,6 +83,9 @@ pub struct Cursor {
 #[derive(Default)]
 pub struct DirState {
     files: FileMemory,
+    checkpoint_pending: bool,
+    saved_memory: bool,
+    checkpoint_cursor: Option<Value>,
     locations: HashMap<PathBuf, RecordLocation>,
     /// The newest bundle and the file facts it records once admitted.
     held: Option<HeldSnapshot>,
@@ -141,6 +153,7 @@ impl DirSnapshot {
             Ok(f) => f,
             Err(e) => {
                 return Ok(Acquired {
+                    memory: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some(format!("{}: {e}", self.root.display())),
@@ -224,6 +237,7 @@ impl DirSnapshot {
         let mut complete = true;
         let mut seen = HashSet::new();
         let mut files_read = false;
+        let mut observed_bytes = 0usize;
         for (relative, entry) in &found {
             seen.insert(relative.clone());
             let display = paths::display(relative);
@@ -246,20 +260,53 @@ impl DirSnapshot {
                     continue;
                 }
             };
-            if let Some(Some((s, m, _))) = state.files.get(relative)
-                && *s == *size
-                && *m == *changed
+            if let Some(Some(known)) = state.files.get(relative)
+                && known.size == *size
+                && known.changed_ns == Some(*changed)
                 && !state.failures.contains_key(relative)
                 && !state.retries.contains(relative)
             {
                 next_failures.remove(relative);
                 continue;
             }
-            if files_read
-                && (size.saturating_add(1) > self.part_bytes.saturating_sub(length) as u64)
+            if (files_read || observed_bytes != 0)
+                && (size.saturating_add(1)
+                    > self
+                        .part_bytes
+                        .saturating_sub(length.saturating_add(observed_bytes))
+                        as u64)
             {
                 complete = false;
                 break;
+            }
+            if let Some(Some(known)) = state.files.get(relative)
+                && known.changed_ns.is_none()
+                && known.size == *size
+                && !state.failures.contains_key(relative)
+                && !state.retries.contains(relative)
+            {
+                observed_bytes =
+                    observed_bytes.saturating_add(usize::try_from(*size).unwrap_or(usize::MAX));
+                match tar::observe_hash(&self.root.join(relative), *size, *changed) {
+                    Ok(Some(hash)) if hash == known.hash => {
+                        next_files.insert(
+                            relative.clone(),
+                            Some(FileFacts {
+                                changed_ns: Some(*changed),
+                                ..*known
+                            }),
+                        );
+                        state.checkpoint_pending = true;
+                        continue;
+                    }
+                    Ok(None) => {
+                        next_retries.insert(relative.clone());
+                        continue;
+                    }
+                    // A changed file follows ordinary TAR capture. That path
+                    // also records an entry failure if the current read fails.
+                    Ok(Some(_)) | Err(_) => {}
+                }
             }
             // Source failures leave this file's remembered facts unchanged, so
             // the next poll retries it. Bundle writes still fail the poll.
@@ -300,7 +347,12 @@ impl DirSnapshot {
             next_retries.remove(relative);
             next_files.insert(
                 relative.clone(),
-                Some((*size, *changed, captured.node.content_hash)),
+                Some(FileFacts {
+                    size: *size,
+                    hash: captured.node.content_hash,
+                    modified_ns: Some(captured.node.mtime_ns.parse().expect("captured time")),
+                    changed_ns: Some(*changed),
+                }),
             );
             let offset = captured.offset;
             let end = offset
@@ -384,12 +436,41 @@ impl DirSnapshot {
             state.failures = next_failures;
             state.retries = next_retries;
             facts.changed = false;
+            let memory = if state.checkpoint_pending {
+                match previous.material {
+                    Some(material) => {
+                        let through = previous.through.ok_or_else(|| {
+                            DriverError::Cursor(
+                                "directory checkpoint has no admitted-prefix evidence".into(),
+                            )
+                        })?;
+                        scanned.memory_part = Some(previous.part_index);
+                        scanned.changed_since_memory = 0;
+                        Some(sinex_model::ReaderMemory {
+                            material,
+                            bytes: restore::memory_of(
+                                &state.files,
+                                &state.locations,
+                                through as u64,
+                            ),
+                        })
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let next_cursor = serde_json::to_value(scanned).expect("cursor serializes");
+            if memory.is_some() {
+                state.checkpoint_cursor = Some(next_cursor.clone());
+            }
             return Ok(Acquired {
+                memory,
                 input: self.input(),
                 observation: facts,
                 revision: RevisionChange::Same,
                 material: None,
-                cursor_without_material: serde_json::to_value(scanned).expect("cursor serializes"),
+                cursor_without_material: next_cursor,
             });
         }
         // Every file read by one walk is as new as the walk; the records are
@@ -414,21 +495,23 @@ impl DirSnapshot {
         let changed = previous
             .changed_since_memory
             .saturating_add(members.len() as u64);
-        let due = super::memory_due(
-            part_index,
-            previous.memory_part,
-            changed,
-            next_files.len() as u64,
-        );
+        let due = state.checkpoint_pending
+            || super::memory_due(
+                part_index,
+                previous.memory_part,
+                changed,
+                next_files.len() as u64,
+            );
         scanned.memory_part = if due {
             Some(part_index)
         } else {
             previous.memory_part
         };
         scanned.changed_since_memory = if due { 0 } else { changed };
-        let memory = due.then(|| restore::memory_of(&next_files, &next_locations));
-        let previous_part = previous.material;
         let record_end = records.last().expect("records present").1;
+        let memory =
+            due.then(|| restore::memory_of(&next_files, &next_locations, record_end as u64));
+        let previous_part = previous.material;
         let cursor_at = move |end: usize| {
             let last = end >= record_end;
             let end = end.min(record_end);
@@ -454,7 +537,14 @@ impl DirSnapshot {
             })
             .expect("cursor serializes")
         };
+        if memory.is_some() {
+            state.checkpoint_cursor = Some(cursor_at(record_end));
+        }
         let acquired = Acquired {
+            memory: memory.map(|bytes| sinex_model::ReaderMemory {
+                material: id,
+                bytes,
+            }),
             input: self.input(),
             observation: facts,
             revision: RevisionChange::Snapshot,
@@ -472,7 +562,6 @@ impl DirSnapshot {
                 cursor_at: Box::new(move |end| Ok(cursor_at(end))),
                 aligned: false,
                 removed,
-                memory,
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,

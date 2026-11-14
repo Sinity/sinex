@@ -544,7 +544,7 @@ fn remove_passed(live: &mut Live, position: &Position) -> Result<(), Error> {
         )
         .expect("paths serialize");
     }
-    live.reader.remove_passed(&cursor)?;
+    live.reader.committed(&cursor)?;
     Ok(())
 }
 
@@ -622,7 +622,7 @@ pub async fn drain(
                 )
                 .expect("paths serialize");
             }
-            reader.remove_passed(&cursor).map_err(|e| e.to_string())?;
+            reader.committed(&cursor).map_err(|e| e.to_string())?;
             if !had_material {
                 break;
             }

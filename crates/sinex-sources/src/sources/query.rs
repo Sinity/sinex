@@ -113,6 +113,7 @@ pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timest
     let length = bytes.len();
     let order = i64::try_from(at.unix_ns()).expect("current timestamp fits reading order");
     Acquired {
+        memory: None,
         input: InputRef {
             kind: "query".into(),
             locator: "requests".into(),
@@ -138,7 +139,7 @@ pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timest
             cursor_at: Box::new(|_| Ok(Value::Null)),
             aligned: false,
             removed: vec![],
-            memory: None,
+
             owned_files: Vec::new(),
         }),
         cursor_without_material: Value::Null,

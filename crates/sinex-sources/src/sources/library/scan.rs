@@ -338,22 +338,22 @@ impl sinex_source_core::binding::Reader for LibraryReader {
 
     fn restore(
         &mut self,
-        cursor: &Value,
+        _cursor: &Value,
         material: sinex_source_core::binding::StoredMaterial,
     ) -> Result<bool, DriverError> {
-        let admitted = match sinex_source_core::drivers::cursor_material(cursor) {
-            Some((id, Some(through))) if id == material.reference.id => {
-                through.min(material.reference.length)
-            }
-            _ => material.reference.length,
-        };
+        let admitted = material.admitted_through()?;
         self.state
             .remember_part(&self.scan.root, material.bytes.as_ref(), admitted)?;
         Ok(true)
     }
 
-    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
-        self.state.remember_saved(memory)
+    fn restore_memory(
+        &mut self,
+        memory: &[u8],
+        _anchor: Option<&sinex_model::MaterialRef>,
+        _admitted: Option<u64>,
+    ) -> Result<bool, DriverError> {
+        self.state.remember_saved(memory).map(|()| false)
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {
@@ -639,6 +639,7 @@ impl LibraryScan {
             Err(e) => {
                 // An inaccessible root never means deletion.
                 return Ok(Acquired {
+                    memory: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some(format!("{}: {e}", self.root.display())),
@@ -905,6 +906,7 @@ impl LibraryScan {
         if records.is_empty() {
             facts.changed = false;
             return Ok(Acquired {
+                memory: None,
                 input: self.input(),
                 observation: facts,
                 revision: RevisionChange::Same,
@@ -948,6 +950,10 @@ impl LibraryScan {
             ..scanned.clone()
         };
         Ok(Acquired {
+            memory: memory.map(|bytes| sinex_model::ReaderMemory {
+                material: id,
+                bytes,
+            }),
             input: self.input(),
             observation: facts,
             revision: RevisionChange::Snapshot,
@@ -978,7 +984,6 @@ impl LibraryScan {
                 }),
                 aligned: false,
                 removed: Vec::new(),
-                memory,
                 owned_files,
             }),
             cursor_without_material: Value::Null,

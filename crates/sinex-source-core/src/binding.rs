@@ -134,12 +134,28 @@ impl Binding {
 /// A material the binding stored, offered to a reader rebuilding what it
 /// remembers after a restart.
 pub struct StoredMaterial {
+    /// Admitted prefix, proven by the current cursor or the newer part's
+    /// immutable previous_through. None means no such evidence was retained.
+    pub admitted: Option<u64>,
     pub reference: sinex_model::MaterialRef,
     /// Its bytes, read from the content store when asked for.
     pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
     /// Whether it belongs to the same revision of the input as the newest
     /// material offered.
     pub same_revision: bool,
+}
+
+impl StoredMaterial {
+    pub fn admitted_through(&self) -> Result<u64, DriverError> {
+        self.admitted
+            .filter(|through| *through <= self.reference.length)
+            .ok_or_else(|| {
+                DriverError::Cursor(format!(
+                    "stored material {} has missing or contradictory admitted-prefix evidence",
+                    self.reference.id
+                ))
+            })
+    }
 }
 
 /// A binding polled alone. A reader that remembers what it read rebuilds that
@@ -163,8 +179,14 @@ pub trait Reader: Send {
 
     /// The memory this reader saved at the end of an older part, offered
     /// after every part newer than it; what a newer part decided stays.
-    fn restore_memory(&mut self, _memory: &[u8]) -> Result<(), DriverError> {
-        Ok(())
+    /// Returns whether older metadata is still needed for original locations.
+    fn restore_memory(
+        &mut self,
+        _memory: &[u8],
+        _anchor: Option<&sinex_model::MaterialRef>,
+        _admitted: Option<u64>,
+    ) -> Result<bool, DriverError> {
+        Ok(false)
     }
 
     /// Called once the history has been offered.
@@ -174,8 +196,9 @@ pub trait Reader: Send {
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError>;
 
-    /// Spool readers drop the spool files a committed cursor has passed.
-    fn remove_passed(&self, _committed: &Value) -> Result<usize, DriverError> {
+    /// Apply admission acknowledgement to cached reader state and retire spool
+    /// files the committed cursor has passed.
+    fn committed(&mut self, _committed: &Value) -> Result<usize, DriverError> {
         Ok(0)
     }
 }
@@ -331,16 +354,13 @@ impl Reader for Appended {
         crate::drivers::cursor_material(cursor).map(|(material, _)| material)
     }
 
-    fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
+    fn restore(&mut self, _cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
         if !material.same_revision {
             return Ok(false);
         }
         let reference = &material.reference;
-        // Only the admitted part of the newest material counts as read.
-        let admitted = match crate::drivers::cursor_material(cursor) {
-            Some((id, Some(through))) if id == reference.id => through.min(reference.length),
-            _ => reference.length,
-        };
+        // Every restored part is bounded by its retained admission evidence.
+        let admitted = material.admitted_through()?;
         let (records, complete) =
             crate::drivers::tail_ranges(material.bytes.as_ref(), self.driver.framer, admitted)
                 .map_err(DriverError::from)?;
@@ -418,12 +438,8 @@ impl Reader for Rows {
         }
     }
 
-    fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
-        let reference = &material.reference;
-        let admitted = match crate::drivers::cursor_material(cursor) {
-            Some((id, Some(through))) if id == reference.id => through.min(reference.length),
-            _ => reference.length,
-        };
+    fn restore(&mut self, _cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
+        let admitted = material.admitted_through()?;
         let mut bytes = vec![
             0;
             usize::try_from(admitted).map_err(|_| {
@@ -438,8 +454,14 @@ impl Reader for Rows {
         Ok(true)
     }
 
-    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
-        self.state.remember_saved(memory)
+    fn restore_memory(
+        &mut self,
+        memory: &[u8],
+        anchor: Option<&sinex_model::MaterialRef>,
+        admitted: Option<u64>,
+    ) -> Result<bool, DriverError> {
+        let _ = (anchor, admitted);
+        self.state.remember_saved(memory).map(|()| false)
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
@@ -475,33 +497,33 @@ impl Reader for Walked {
         crate::drivers::cursor_material(cursor).map(|(material, _)| material)
     }
 
-    fn restore(&mut self, cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
-        let reference = &material.reference;
-        let admitted = match crate::drivers::cursor_material(cursor) {
-            Some((id, through)) if id == reference.id => through
-                .ok_or_else(|| DriverError::Cursor("directory cursor has no processed end".into()))?
-                .min(reference.length),
-            _ => reference.length,
-        };
-        self.state.remember_members(&reference.manifest, admitted)?;
-        if self.driver.removed_at_source {
-            self.state
-                .remember_locations(&reference.manifest, admitted, reference.id)?;
-        }
-        Ok(true)
+    fn restore(&mut self, _cursor: &Value, material: StoredMaterial) -> Result<bool, DriverError> {
+        let admitted = material.admitted_through()?;
+        self.state
+            .restore_part(&material.reference, admitted, self.driver.removed_at_source)
     }
 
-    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
-        self.state.remember_saved(memory)?;
-        if self.driver.removed_at_source {
-            self.state.check_locations()?;
-        }
-        Ok(())
+    fn restore_memory(
+        &mut self,
+        memory: &[u8],
+        anchor: Option<&sinex_model::MaterialRef>,
+        admitted: Option<u64>,
+    ) -> Result<bool, DriverError> {
+        self.state
+            .restore_checkpoint(memory, anchor, admitted, self.driver.removed_at_source)
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {
+        if self.driver.removed_at_source {
+            self.state.check_locations()?;
+        }
         self.state.finish_remembering();
         Ok(())
+    }
+
+    fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
+        self.state.committed(cursor);
+        Ok(0)
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {

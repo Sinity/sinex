@@ -215,6 +215,33 @@ pub(super) fn rewind(output: &mut Archive, at: usize) -> Result<(), DriverError>
     Ok(())
 }
 
+/// A current observation for a predecessor cache with no known change time.
+/// Neither the file nor its observed baseline is accepted if it changed while read.
+pub(super) fn observe_hash(
+    path: &Path,
+    size: u64,
+    changed: i128,
+) -> std::io::Result<Option<[u8; 32]>> {
+    let mut input = File::open(path)?;
+    let before = input.metadata()?;
+    if !before.is_file() || before.len() != size || change_time(&before) != changed {
+        return Ok(None);
+    }
+    let mut hash = blake3::Hasher::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = input.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    if !same_file(&before, &input.metadata()?) {
+        return Ok(None);
+    }
+    Ok(Some(*hash.finalize().as_bytes()))
+}
+
 fn header(
     length: u64,
     mode: u32,

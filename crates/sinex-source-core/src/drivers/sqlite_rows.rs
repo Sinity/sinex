@@ -212,6 +212,7 @@ impl SqliteRows {
             }
         }
         let unavailable = |reason: String| Acquired {
+            memory: None,
             input: self.input(),
             observation: ObservationFacts {
                 unavailable: Some(reason),
@@ -388,6 +389,7 @@ impl SqliteRows {
                 ..previous
             };
             return Ok(Acquired {
+                memory: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     changed: false,
@@ -482,6 +484,10 @@ impl SqliteRows {
             .expect("cursor serializes")
         };
         let acquired = Acquired {
+            memory: memory.map(|bytes| sinex_model::ReaderMemory {
+                material: id,
+                bytes,
+            }),
             input: self.input(),
             observation: facts,
             revision: RevisionChange::Snapshot,
@@ -497,7 +503,6 @@ impl SqliteRows {
                 cursor_at: Box::new(move |end| Ok(cursor_at(end))),
                 aligned: false,
                 removed: Vec::new(),
-                memory,
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,

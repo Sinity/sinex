@@ -32,6 +32,77 @@ async fn key(conn: &mut PgConnection, name: &str, bytes: &[u8]) {
         .bind(uuid::Uuid::now_v7()).bind(name).bind(bytes).execute(conn).await.unwrap();
 }
 
+#[devkit::test]
+async fn unavailable_producers_stop_before_dumps_or_segment_copy(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    for required in [None, Some(vec!["synthetic-producer".into()])] {
+        let (hold, _) = backup::hold(&mut conn, sinex_model::OperationId::new(), "test")
+            .await
+            .unwrap();
+        let snapshot = Snapshot::export(
+            PgConnection::connect(&url).await.unwrap(),
+            hold.clone(),
+            url.clone(),
+        )
+        .await
+        .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let artifact = output.path().join("incomplete");
+        create(&artifact).unwrap();
+        let (_sender, stop) = watch::channel(false);
+        let error = prepare(
+            snapshot,
+            Path::new("/nonexistent-synthetic-store"),
+            &artifact,
+            stop,
+            "synthetic".into(),
+            vec![sinex_model::backup::ProducerSnapshot {
+                producer: "synthetic-producer".into(),
+                run_id: Some("original-run".into()),
+                files: vec![],
+                unavailable: Some("original pause is no longer held".into()),
+            }],
+            required,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("required producer snapshots are incomplete")
+        );
+        for path in [
+            "main/sinex.dump",
+            "keys/data-keys.dump",
+            "main/segments",
+            "manifest.json",
+        ] {
+            assert!(
+                !artifact.join(path).exists(),
+                "unexpected bulk artifact {path}"
+            );
+        }
+        let recorded: Manifest =
+            serde_json::from_reader(File::open(artifact.join("producer-snapshots.json")).unwrap())
+                .unwrap();
+        assert_eq!(recorded.boundary, hold);
+        assert_eq!(
+            recorded.producer_snapshots[0].run_id.as_deref(),
+            Some("original-run")
+        );
+        assert!(!recorded.producers_complete);
+        assert!(
+            backup::get(&mut conn, hold.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .released_at
+                .is_none()
+        );
+    }
+}
+
 /// The two real pg_dump children import one still-live snapshot. Admission
 /// and wrapped keys changed after the hold are absent from both SQL dumps
 /// and the immutable byte prefix, without stopping the original writer.
@@ -98,13 +169,13 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
         stop,
         "synthetic-source-revision".into(),
         Vec::new(),
-        None,
+        Some(Vec::new()),
     )
     .await
     .unwrap();
     assert_private_roots(&artifact);
     assert_eq!(manifest.boundary.id, hold);
-    assert!(!manifest.producers_complete);
+    assert!(manifest.producers_complete);
     assert_eq!(
         std::fs::read(artifact.join("main/segments/current.hb")).unwrap(),
         original
@@ -195,7 +266,7 @@ async fn stopping_preparation_never_publishes_an_artifact(db: devkit::pg::TestDa
         stop,
         "synthetic".into(),
         Vec::new(),
-        None,
+        Some(Vec::new()),
     )
     .await;
     assert!(result.is_err());
@@ -386,11 +457,11 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
             }
             self.inner.poll(cursor)
         }
-        fn remove_passed(
-            &self,
+        fn committed(
+            &mut self,
             cursor: &serde_json::Value,
         ) -> Result<usize, sinex_source_core::drivers::DriverError> {
-            self.inner.remove_passed(cursor)
+            self.inner.committed(cursor)
         }
     }
     let sinex_source_core::Reading::Polled(inner) =
@@ -820,7 +891,7 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         stop,
         "synthetic-source-revision".into(),
         Vec::new(),
-        None,
+        Some(Vec::new()),
     )
     .await
     .unwrap();

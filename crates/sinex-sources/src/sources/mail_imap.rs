@@ -400,6 +400,7 @@ impl ImapMail {
                 ..previous
             };
             let acquired = Acquired {
+                memory: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     observed_at: Some(now),
@@ -504,6 +505,10 @@ impl ImapMail {
         let cursor_records = records.clone();
         let memory = save.then(|| memory_of(&remembered));
         let acquired = Acquired {
+            memory: memory.map(|bytes| sinex_model::ReaderMemory {
+                material: id,
+                bytes,
+            }),
             input: self.input(),
             observation: ObservationFacts {
                 observed_at: Some(now),
@@ -527,7 +532,6 @@ impl ImapMail {
                 }),
                 aligned: false,
                 removed,
-                memory,
                 owned_files: Vec::new(),
             }),
             cursor_without_material: Value::Null,
@@ -708,10 +712,7 @@ impl sinex_source_core::binding::Reader for ImapReader {
         if manifest.detail("uid_validity").as_u64() != cursor.uid_validity.map(u64::from) {
             return Ok(false);
         }
-        let admitted = match (cursor.material, cursor.through) {
-            (Some(id), Some(through)) if id == reference.id => through as u64,
-            _ => reference.length,
-        };
+        let admitted = material.admitted_through()?;
         let uids = |key: &str| -> Result<Vec<u32>, DriverError> {
             serde_json::from_value(manifest.detail(key).clone())
                 .map_err(|_| invalid("an IMAP material lists invalid UIDs"))
@@ -734,13 +735,18 @@ impl sinex_source_core::binding::Reader for ImapReader {
         Ok(true)
     }
 
-    fn restore_memory(&mut self, memory: &[u8]) -> Result<(), DriverError> {
+    fn restore_memory(
+        &mut self,
+        memory: &[u8],
+        _anchor: Option<&sinex_model::MaterialRef>,
+        _admitted: Option<u64>,
+    ) -> Result<bool, DriverError> {
         for (uid, location) in read_memory(memory)? {
             if self.decided.insert(uid) {
                 self.known.insert(uid, location);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {

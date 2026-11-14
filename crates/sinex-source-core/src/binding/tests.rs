@@ -60,7 +60,7 @@ fn settings_round_trip_and_keep_a_resolved_zone() {
 }
 
 #[devkit::test]
-fn removal_readers_require_record_locations_in_saved_memory() {
+fn removal_readers_require_original_locations_before_finishing_restore() {
     use crate::drivers::dir_snapshot::DirState;
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("note.md"), "synthetic note").unwrap();
@@ -74,16 +74,24 @@ fn removal_readers_require_record_locations_in_saved_memory() {
     let facts = driver(false)
         .poll(&Value::Null, &mut DirState::default())
         .unwrap()
-        .material
-        .unwrap()
         .memory
-        .unwrap();
+        .unwrap()
+        .bytes;
     let Reading::Polled(mut reader) = walked(driver(true)) else {
         panic!("directory reader")
     };
     assert!(
         reader
-            .restore_memory(&facts)
+            .restore_memory(
+                &facts,
+                None,
+                Some(crate::drivers::dir_snapshot::saved_through(&facts, None).unwrap())
+            )
+            .unwrap()
+    );
+    assert!(
+        reader
+            .restored()
             .unwrap_err()
             .to_string()
             .contains("removal locations")
@@ -91,14 +99,22 @@ fn removal_readers_require_record_locations_in_saved_memory() {
     let complete = driver(true)
         .poll(&Value::Null, &mut DirState::default())
         .unwrap()
-        .material
-        .unwrap()
         .memory
-        .unwrap();
+        .unwrap()
+        .bytes;
     let Reading::Polled(mut reader) = walked(driver(true)) else {
         panic!("directory reader")
     };
-    reader.restore_memory(&complete).unwrap();
+    assert!(
+        !reader
+            .restore_memory(
+                &complete,
+                None,
+                Some(crate::drivers::dir_snapshot::saved_through(&complete, None).unwrap())
+            )
+            .unwrap()
+    );
+    reader.restored().unwrap();
 }
 
 #[devkit::test]

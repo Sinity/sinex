@@ -350,8 +350,7 @@ fn an_appended_table_remembers_nothing_but_its_cursor() {
     let d = appended(path.clone());
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
-    let m = first.material.as_ref().unwrap();
-    assert!(m.memory.is_none(), "no row memory is saved");
+    assert!(first.memory.is_none(), "no row memory is saved");
     assert_eq!(lines(&first).len(), 2);
     let cursor = end_cursor(&first);
     assert_eq!(cursor["open"], Value::Null, "no row is open");

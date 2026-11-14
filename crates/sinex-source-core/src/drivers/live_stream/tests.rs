@@ -81,7 +81,7 @@ fn parts_continue_across_segments() {
     let cursor = end_cursor(&third);
     assert!(live.poll(&cursor).unwrap().material.is_none());
 
-    assert_eq!(live.remove_passed(&cursor).unwrap(), 2);
+    assert_eq!(live.committed(&cursor).unwrap(), 2);
     assert_eq!(segments(&spool).unwrap(), vec![2]);
 }
 

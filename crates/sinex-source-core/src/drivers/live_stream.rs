@@ -257,6 +257,7 @@ impl Reader for LiveStream {
         let Some(first) = present.first() else {
             // Capture has not written anything yet: an unchanged look.
             return Ok(Acquired {
+                memory: None,
                 input: self.input.clone(),
                 observation: sinex_model::ObservationFacts {
                     observed_at: Some(Timestamp::now()),
@@ -342,7 +343,7 @@ impl Reader for LiveStream {
     /// Remove closed segments that every committed cursor has passed. Called
     /// after the batch carrying `committed` is stored; the bytes are in the
     /// content store by then, so the spool copy is no longer needed.
-    fn remove_passed(&self, committed: &Value) -> Result<usize, DriverError> {
+    fn committed(&mut self, committed: &Value) -> Result<usize, DriverError> {
         (|| -> std::io::Result<usize> {
             let Ok(state) = serde_json::from_value::<Cursor>(committed.clone()) else {
                 return Ok(0);

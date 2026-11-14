@@ -36,7 +36,7 @@ fn segments_are_stored_one_per_poll_in_order_and_removed_after() {
             .material
             .is_none()
     );
-    assert_eq!(media.remove_passed(&cursor).unwrap(), 1);
+    assert_eq!(media.committed(&cursor).unwrap(), 1);
     assert_eq!(complete(&dir).unwrap().len(), 1);
     let _ = std::fs::remove_dir_all(dir);
 }
