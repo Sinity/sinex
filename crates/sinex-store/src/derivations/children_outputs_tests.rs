@@ -40,9 +40,9 @@ async fn fixture(conn: &mut PgConnection, a: EventId, b: EventId) -> (String, Ve
     // One old chunk and one hot chunk, with the same producer dominating
     // both. The selected parents are rare independently of the source.
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,parents,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class)
-      SELECT ('01700000-0000-7000-8000-'||lpad(to_hex(g),12,'0'))::uuid,'operator_log.entry','synthetic.comparison',uuidv7(),ARRAY[uuidv7()],'unknown',g,jsonb_build_object('text',repeat(md5(g::text),32)),g::text,g,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,8192)g;
+      SELECT ('01700000-0000-7000-8000-'||lpad(to_hex(g),12,'0'))::uuid,'synthetic.comparison_output','synthetic.comparison',uuidv7(),ARRAY[uuidv7()],'unknown',g,jsonb_build_object('text',repeat(md5(g::text),32)),g::text,g,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,8192)g;
       INSERT INTO core.events(id,event_type,source,run_id,parents,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class)
-      SELECT uuidv7(),'operator_log.entry','synthetic.comparison',uuidv7(),ARRAY[uuidv7()],'unknown',8192+g,jsonb_build_object('text',repeat(md5(g::text),32)),(8192+g)::text,8192+g,decode(repeat('02',32),'hex'),'open' FROM generate_series(1,8192)g").await.unwrap();
+      SELECT uuidv7(),'synthetic.comparison_output','synthetic.comparison',uuidv7(),ARRAY[uuidv7()],'unknown',8192+g,jsonb_build_object('text',repeat(md5(g::text),32)),(8192+g)::text,8192+g,decode(repeat('02',32),'hex'),'open' FROM generate_series(1,8192)g").await.unwrap();
     let ids = [
         Uuid::parse_str("01700000-0000-7000-8000-000000009001").unwrap(),
         Uuid::parse_str("01700000-0000-7000-8000-000000009002").unwrap(),
@@ -67,7 +67,7 @@ async fn fixture(conn: &mut PgConnection, a: EventId, b: EventId) -> (String, Ve
             _ => None,
         };
         sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,parents,ts_orig,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class,record_state)
-          VALUES($1,'operator_log.entry',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
+          VALUES($1,'synthetic.comparison_output',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
             .bind(id).bind(if i==4 {"synthetic.other"} else {SOURCE}).bind(Uuid::now_v7())
             .bind(parents).bind(at).bind(if at.is_some(){"intrinsic"}else{"unknown"})
             .bind(20_000+i as i64).bind(serde_json::json!({"text":format!("selected-{i}"),"label":null}))
@@ -84,7 +84,7 @@ async fn fixture(conn: &mut PgConnection, a: EventId, b: EventId) -> (String, Ve
     .unwrap();
     // Ordinary record events have NULL parents and cannot become outputs.
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
-      VALUES(uuidv7(),'operator_log.entry','synthetic.comparison',uuidv7(),uuidv7(),0,'unknown',30001,'{}',1,decode(repeat('03',32),'hex'),'open'); ANALYZE core.events").await.unwrap();
+      VALUES(uuidv7(),'synthetic.comparison_output','synthetic.comparison',uuidv7(),uuidv7(),0,'unknown',30001,'{}',1,decode(repeat('03',32),'hex'),'open'); ANALYZE core.events").await.unwrap();
     let chunk: String =
         sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id=$1")
             .bind(ids[0])
