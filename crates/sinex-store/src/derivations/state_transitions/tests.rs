@@ -97,12 +97,14 @@ async fn set_bounds_keep_prior_refreshes_late_closers_and_live_membership(
 ) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
     let archived = focus(DAY + 1, Some("alpha"), Some("changed"), None);
-    let archived_id = archived.id;
+    let retracted = focus(800, Some("retracted"), Some("a"), None);
+    let archived_ids = vec![archived.id, retracted.id];
     let mut events = vec![
         focus(-10_000, Some("alpha"), Some("a"), None),
         focus(-10, Some("alpha"), Some("a"), None),
         focus(100, Some("alpha"), Some("a"), None),
         archived,
+        retracted,
         focus(30 * DAY, Some("alpha"), Some("b"), None),
         focus(-20, Some("beta"), Some("c"), None),
         focus(200, Some("beta"), Some("d"), None),
@@ -124,7 +126,7 @@ async fn set_bounds_keep_prior_refreshes_late_closers_and_live_membership(
     crate::lifecycle::move_events(
         &mut conn,
         sinex_model::lifecycle::Act::Archive,
-        vec![archived_id],
+        archived_ids,
         &NoDerivations,
     )
     .await;
@@ -145,6 +147,7 @@ async fn set_bounds_keep_prior_refreshes_late_closers_and_live_membership(
         (Some("class-only"), 0, DAY + 70),
         (Some("tie"), 0, DAY + 5),
         (Some("absent"), 0, DAY),
+        (Some("retracted"), 0, DAY),
         (None, -20, 45 * DAY),
     ] {
         let selected = kinds(scope);
@@ -326,6 +329,16 @@ fn scan_work(node: &Value) -> f64 {
             .sum::<f64>()
 }
 
+fn subplan<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
+    if node["Subplan Name"].as_str() == Some(name) {
+        return Some(node);
+    }
+    node["Plans"]
+        .as_array()?
+        .iter()
+        .find_map(|child| subplan(child, name))
+}
+
 #[devkit::test]
 async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDatabase) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
@@ -340,47 +353,58 @@ async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDat
     admit(&mut conn, events).await;
     let selected = kinds(None);
     let (types, contains) = kind_arrays(&selected);
-    let mut plans = Vec::new();
-    for sql in [
-        include_str!("previous.sql"),
-        include_str!("../sql/state_transition_bounds.sql"),
-    ] {
-        let plan: Value = sqlx::query_scalar(&format!(
-            "EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {sql}"
-        ))
-        .bind(&types)
-        .bind(&contains)
-        .bind(at(0))
-        .bind(at(DAY))
-        .bind("scope")
-        .bind(vec!["window", "class"])
-        .bind(at(10 * DAY))
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        plans.push(plan);
+    for (start, end) in [(0, DAY), (2 * DAY, 3 * DAY)] {
+        let mut plans = Vec::new();
+        for sql in [
+            include_str!("previous.sql"),
+            include_str!("../sql/state_transition_bounds.sql"),
+        ] {
+            let plan: Value = sqlx::query_scalar(&format!(
+                "EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {sql}"
+            ))
+            .bind(&types)
+            .bind(&contains)
+            .bind(at(start))
+            .bind(at(end))
+            .bind("scope")
+            .bind(vec!["window", "class"])
+            .bind(at(10 * DAY))
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            plans.push(plan);
+        }
+        let before = scan_work(&plans[0][0]["Plan"]);
+        let after = scan_work(&plans[1][0]["Plan"]);
+        println!(
+            "transition bounds start={start}, scan and join-filter tuple examinations: previous={before}, set-based={after}"
+        );
+        let expected = if start == 0 {
+            assert!(
+                before > after * 8.,
+                "per-scope scans must be discriminated: {plans:#?}"
+            );
+            (at(-1), at(DAY + 1) + time::Duration::microseconds(1))
+        } else {
+            // An empty result alone does not prove that unrelated history was
+            // not normalized first. Measure the eligible producer itself.
+            let producer = subplan(&plans[1][0]["Plan"], "CTE eligible").unwrap();
+            assert_eq!(producer["Actual Rows"].as_u64(), Some(0), "{plans:#?}");
+            (at(start), at(end) + time::Duration::microseconds(1))
+        };
+        assert_eq!(
+            bounds(
+                &mut conn,
+                &selected,
+                at(start),
+                at(end),
+                "scope",
+                &["window", "class"],
+                at(10 * DAY)
+            )
+            .await
+            .unwrap(),
+            expected
+        );
     }
-    let before = scan_work(&plans[0][0]["Plan"]);
-    let after = scan_work(&plans[1][0]["Plan"]);
-    println!(
-        "transition bounds scan and join-filter tuple examinations: previous={before}, set-based={after}"
-    );
-    assert!(
-        before > after * 8.,
-        "per-scope scans must be discriminated: {plans:#?}"
-    );
-    assert_eq!(
-        bounds(
-            &mut conn,
-            &selected,
-            at(0),
-            at(DAY),
-            "scope",
-            &["window", "class"],
-            at(10 * DAY)
-        )
-        .await
-        .unwrap(),
-        (at(-1), at(DAY + 1) + time::Duration::microseconds(1))
-    );
 }

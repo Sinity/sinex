@@ -212,6 +212,7 @@ Adjacent-transition range reads evaluate eligible live transitions once, then
 find previous observations and future changed-state closers across the touched
 scopes together. Scope count does not multiply scans of the event history;
 same-state refreshes and arbitrarily late closers remain in reach.
+An empty day returns its original range before unrelated history is normalized.
 
 ## Documents and tags
 
