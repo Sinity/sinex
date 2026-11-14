@@ -494,19 +494,24 @@ async fn historical_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_a
     let sink = Sink(ctx.blobs.clone());
     let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
     let new_reader = || {
-        let mut reader = BindingReader::new(&notes::FORMAT, binding.clone()).unwrap();
         if removed_at_source {
-            reader.reading = sinex_source_core::binding::walked(
-                sinex_source_core::drivers::dir_snapshot::DirSnapshot {
-                    root: root.clone(),
-                    host: "synthetic".into(),
-                    select: |name| name.ends_with(".md"),
-                    part_bytes: 4096,
-                    removed_at_source: true,
-                },
-            );
+            BindingReader::with_reading(
+                &notes::FORMAT,
+                binding.clone(),
+                sinex_source_core::binding::walked(
+                    sinex_source_core::drivers::dir_snapshot::DirSnapshot {
+                        root: root.clone(),
+                        host: "synthetic".into(),
+                        select: |name| name.ends_with(".md"),
+                        part_bytes: 4096,
+                        removed_at_source: true,
+                    },
+                ),
+            )
+            .unwrap()
+        } else {
+            BindingReader::new(&notes::FORMAT, binding.clone()).unwrap()
         }
-        reader
     };
     let mut b = new_reader();
     crate::stage::record(&mut ctx.read_conn, &binding)

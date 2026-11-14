@@ -309,7 +309,8 @@ impl DirState {
             .any(|path| !self.locations.contains_key(path))
         {
             return Err(DriverError::Cursor(
-                "saved directory memory lacks removal locations; rebuild the reader memory from stored material history".into(),
+                "saved directory memory lacks removal locations in admitted material history"
+                    .into(),
             ));
         }
         Ok(())
