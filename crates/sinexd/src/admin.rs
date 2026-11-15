@@ -66,10 +66,10 @@ pub(crate) enum Admin {
     Table(Vec<String>),
 }
 
-async fn schema(database: &str, kind_prefixes: Vec<String>, upgrade: bool) -> Result<()> {
+async fn schema(database: &str, mappings: Vec<String>, upgrade: bool) -> Result<()> {
     use sqlx::Connection;
     let mut kind_prefixes = sinex_schema::kinds::KindPrefixes::default();
-    for mapping in kind_prefixes {
+    for mapping in mappings {
         let (prefix, producer) = mapping
             .split_once('=')
             .ok_or_else(|| Error::bad_request("--kind-prefix needs polylogue=PRODUCER"))?;
