@@ -224,6 +224,60 @@ fn payload_lookup_is_bounded(plan: &Value) {
     );
 }
 
+// Commit pages retain exact commit coordinates, so a bounded range scan and
+// pair-membership join replaces the UUID-only loader's nested-loop shape.
+fn commit_payload_lookup_is_bounded(plan: &Value) {
+    fn payload(node: &Value) -> Option<&Value> {
+        if node["Subplan Name"].as_str() == Some("CTE payload") {
+            return Some(node);
+        }
+        node["Plans"].as_array()?.iter().find_map(payload)
+    }
+    fn scans(node: &Value, excluding: bool, count: &mut usize) {
+        let excluding = excluding
+            || node["Runtime Exclusion"].as_bool() == Some(true)
+            || node["Startup Exclusion"].as_bool() == Some(true);
+        if node["Custom Plan Provider"].as_str() == Some("ColumnarScan") {
+            *count += 1;
+            let condition = node["Filter"].as_str().unwrap_or("");
+            assert!(
+                excluding
+                    && condition.contains("commit_seq >=")
+                    && condition.contains("commit_seq <="),
+                "payload must retain both native commit bounds: {node}"
+            );
+        }
+        if let Some(children) = node["Plans"].as_array() {
+            for child in children {
+                scans(child, excluding, count);
+            }
+        }
+    }
+    let payload = payload(&plan[0]["Plan"]).expect("plan exercises payload CTE");
+    // The membership join must use BOTH coordinates, not the range alone.
+    let conditions = ["Hash Cond", "Merge Cond", "Join Filter"]
+        .iter()
+        .map(|key| payload[*key].as_str().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let equalities = conditions
+        .split(['(', ')'])
+        .filter_map(|part| part.trim().split_once(" = "))
+        .collect::<Vec<_>>();
+    let pair = |left: &str, right: &str| {
+        equalities.iter().any(|(a, b)| {
+            (a.ends_with(left) && b.ends_with(right)) || (a.ends_with(right) && b.ends_with(left))
+        })
+    };
+    assert!(
+        pair(".id", "p.event_id") && pair(".commit_seq", "p.commit_seq"),
+        "payload join must retain exact commit/id pairs: {payload}"
+    );
+    let mut count = 0;
+    scans(payload, false, &mut count);
+    assert!(count > 0, "plan exercises compressed payload scans");
+}
+
 #[devkit::test]
 async fn bounded_payload_queries_keep_excluding_batch_plans_on_compressed_history(
     db: devkit::pg::TestDatabase,
@@ -287,8 +341,17 @@ async fn bounded_payload_queries_keep_excluding_batch_plans_on_compressed_histor
         ),
         explain!("../commit_log/page.sql", 0_i64, 2_i64, 1_i64),
     ];
-    for plan in plans {
-        payload_lookup_is_bounded(&plan);
+    let predecessor = explain!("../commit_log/tests/old_page.sql", 0_i64, 2_i64, 1_i64);
+    assert!(
+        std::panic::catch_unwind(|| commit_payload_lookup_is_bounded(&predecessor)).is_err(),
+        "UUID-only predecessor must fail the commit-coordinate plan control"
+    );
+    for (index, plan) in plans.into_iter().enumerate() {
+        if index == 4 {
+            commit_payload_lookup_is_bounded(&plan);
+        } else {
+            payload_lookup_is_bounded(&plan);
+        }
     }
 }
 
@@ -416,7 +479,11 @@ async fn bounded_payload_fetches_prune_compressed_row_groups(db: devkit::pg::Tes
         .into_iter()
         .zip(plans)
     {
-        payload_lookup_is_bounded(&plan);
+        if query == "commit_log" {
+            commit_payload_lookup_is_bounded(&plan);
+        } else {
+            payload_lookup_is_bounded(&plan);
+        }
         let (mut batches, mut rows) = (0.0, 0.0);
         work(
             &plan[0]["Plan"],
