@@ -149,13 +149,18 @@ pub enum StreamEvent {
     Open(Box<crate::confirmed::Row>),
     Header(EventHeader),
 }
-impl EventProjection for StreamEvent {
-    const PAYLOAD: bool = true;
-    fn id(&self) -> Uuid {
+impl StreamEvent {
+    pub fn id(&self) -> Uuid {
         match self {
             Self::Open(row) => row.id,
             Self::Header(header) => header.id,
         }
+    }
+}
+impl EventProjection for StreamEvent {
+    const PAYLOAD: bool = true;
+    fn id(&self) -> Uuid {
+        StreamEvent::id(self)
     }
     async fn load(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Self>> {
         let headers = EventHeader::load(conn, ids).await?;

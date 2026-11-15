@@ -264,7 +264,7 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
         assert_eq!(page.entries.len(), 1);
         let entry = &page.entries[0];
         match &entry.change {
-            Change::Event(e) => actual.push((entry.position, e.id, "event")),
+            Change::Event(e) => actual.push((entry.position, e.id(), "event")),
             Change::PositionComplete => last = entry.position,
             Change::Archive(change) => actual.push((
                 entry.position,

@@ -571,7 +571,7 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
     // covers byte failures in its JSON transfer.
     producer.max_message = 1;
     UnacknowledgedFrames {
-        frames: vec![logical, Ingress::Events { source:None,coverage:None,
+        frames: vec![logical, Ingress::Events { source:None,
 frame: "dependent".into(), events: vec![event(1)], failures: vec![] }],
         position: Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":4,"material":material,"part_index":0,"through":4}}), ..Position::default() },
         skip_position: Some(Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":bytes.len(),"material":material,"part_index":0,"through":bytes.len()}}), carry: json!({"after":"whole material"}), ..Position::default() }),
