@@ -466,20 +466,20 @@ async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowe
 }
 
 #[devkit::test]
-async fn predecessor_directory_checkpoint_upgrades_without_new_material_and_survives_restart(
+async fn bundle_directory_checkpoint_saves_change_times_without_new_material_and_survives_restart(
     db: devkit::pg::TestDatabase,
 ) {
-    historical_checkpoint_roundtrip(db, false).await;
+    bundle_checkpoint_roundtrip(db, false).await;
 }
 
 #[devkit::test]
-async fn predecessor_saved_memory_recovers_original_removal_locations_from_older_parts(
+async fn saved_memory_without_locations_recovers_removal_locations_from_older_parts(
     db: devkit::pg::TestDatabase,
 ) {
-    historical_checkpoint_roundtrip(db, true).await;
+    bundle_checkpoint_roundtrip(db, true).await;
 }
 
-async fn historical_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_source: bool) {
+async fn bundle_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_source: bool) {
     use sinex_model::{InputRef, MaterialId, ObservationFacts, ReaderMemory, RevisionChange};
     use sinex_source_core::drivers::{Acquired, NewMaterial};
     let dir = tempfile::tempdir().unwrap();
@@ -524,18 +524,26 @@ async fn historical_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_a
     let first_id = MaterialId::new();
     let anchor_id = MaterialId::new();
     let last_id = MaterialId::new();
-    let mut old_memory = Vec::new();
+    // Memory saved at the end of the second part (five bytes), with the
+    // modification times file-bundle members record and no change times or
+    // removal locations.
+    let mut bundle_memory = b"SXDIR\0\x01\0".to_vec();
+    bundle_memory.extend(5u64.to_le_bytes());
+    bundle_memory.extend(2u64.to_le_bytes());
     for (path, bytes) in [
         (b"a.md", b"alpha".as_slice()),
         (b"b.md", b"beta".as_slice()),
     ] {
-        old_memory.extend(4u32.to_le_bytes());
-        old_memory.extend(path);
-        old_memory.push(1);
-        old_memory.extend((bytes.len() as u64).to_le_bytes());
-        old_memory.extend((-17i128).to_le_bytes());
-        old_memory.extend(blake3::hash(bytes).as_bytes());
+        bundle_memory.extend(4u32.to_le_bytes());
+        bundle_memory.extend(path);
+        bundle_memory.push(1);
+        bundle_memory.extend((bytes.len() as u64).to_le_bytes());
+        bundle_memory.extend(blake3::hash(bytes).as_bytes());
+        bundle_memory.push(1);
+        bundle_memory.extend((-17i128).to_le_bytes());
+        bundle_memory.push(0);
     }
+    bundle_memory.extend(0u64.to_le_bytes());
     for (index, id, path, text) in [
         (0u32, first_id, "a.md", "alpha"),
         (1, anchor_id, "b.md", "beta"),
@@ -549,7 +557,7 @@ async fn historical_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_a
         let acquired = Acquired {
             memory: (index == 1).then(|| ReaderMemory {
                 material: id,
-                bytes: old_memory.clone().into(),
+                bytes: bundle_memory.clone().into(),
             }),
             input: InputRef {
                 kind: "directory".into(),
