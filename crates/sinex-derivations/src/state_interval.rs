@@ -332,10 +332,12 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
                     .get(end)
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
                 let observed = observed.map(|t| t.max(at));
-                // An interruption inside the span ends it there.
+                // An interruption inside the span ends it there: the first
+                // one after its start, if that is before its observed end.
+                let after = interruptions.partition_point(|(_, f)| *f <= at);
                 let interrupted = interruptions
-                    .iter()
-                    .find(|(_, f)| *f > at && observed.is_none_or(|o| *f < o));
+                    .get(after)
+                    .filter(|(_, f)| observed.is_none_or(|o| *f < o));
                 let (end, closers) = match interrupted {
                     Some(&(interruption, f)) => (
                         Some((f, interruption.event_type.as_str())),
@@ -359,21 +361,22 @@ fn scope_key(event: &Event) -> String {
 }
 
 fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a>> {
+    // Each event is classified and scoped once: a scope's events are its
+    // transitions and the interruptions in the same scope.
     let mut scopes = BTreeMap::<String, Vec<&Event>>::new();
-    for event in events
-        .iter()
-        .filter(|event| rule.event_types.contains(&event.event_type.as_str()))
-    {
-        scopes.entry(scope_key(event)).or_default().push(*event);
+    for &event in events {
+        if rule.event_types.contains(&event.event_type.as_str()) || interrupts(rule, event) {
+            scopes.entry(scope_key(event)).or_default().push(event);
+        }
     }
     let mut result = Vec::new();
-    for (scope, mut scoped) in scopes {
-        scoped.extend(
-            events
-                .iter()
-                .filter(|event| interrupts(rule, event) && scope_key(event) == scope)
-                .copied(),
-        );
+    for mut scoped in scopes.into_values() {
+        if !scoped
+            .iter()
+            .any(|event| rule.event_types.contains(&event.event_type.as_str()))
+        {
+            continue;
+        }
         scoped.sort_by_cached_key(|event| {
             (
                 event.ts_orig.at,

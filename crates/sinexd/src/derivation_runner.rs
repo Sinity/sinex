@@ -48,6 +48,9 @@ const EVENTS_PER_PASS: i64 = 2_000;
 const KEYS_PER_BATCH: usize = 256;
 /// Outputs per writer batch, whatever the number of keys.
 const OUTPUTS_PER_BATCH: usize = 20_000;
+/// Payload bytes per writer batch: outputs are held in memory until their
+/// batch is admitted, so large outputs (document text) end a batch early.
+const OUTPUT_BYTES_PER_BATCH: usize = 32 << 20;
 /// Input rows read per query: keys are computed as their rows complete, so
 /// memory holds a page and the keys still open, not every key's inputs.
 const ROWS_PER_PAGE: i64 = 10_000;
@@ -478,7 +481,8 @@ impl DerivationRunner {
         };
         let read = t.elapsed();
         let t = Instant::now();
-        let mut computed = self.keyed[index].compute(key, &inputs, env);
+        let derivation = self.keyed[index].as_ref();
+        let mut computed = off_worker(|| derivation.compute(key, &inputs, env));
         let position = derivations::head(&mut snapshot).await?;
         provenance::stamp(
             &mut snapshot,
@@ -639,44 +643,34 @@ impl DerivationRunner {
             .unwrap_or(0)
             .checked_add(head)
             .ok_or_else(|| Error::internal("derived reading order exhausted"))?;
-        let mut outputs = Vec::new();
-        let mut computed_inputs = Vec::new();
+        // Outputs go to the writer in batches of about one writer batch, each
+        // advancing the position to its last input: a pass over large outputs
+        // (document text) holds one batch in memory, never the whole pass.
+        let mut batch = PositionBatch::default();
         let mut failed = 0;
-        for c in &events {
+        for (i, c) in events.iter().enumerate() {
             let reads = self.per_event[index].reads(&c.event);
-            let bytes = match self.bytes_of(reads, &c.event).await {
-                Ok(bytes) => bytes,
-                Err(reason) => {
-                    eprintln!("{name}: event {}: {reason}", c.event.id);
-                    failed += 1;
-                    continue;
+            let derived = match self.bytes_of(reads, &c.event).await {
+                Ok(bytes) => {
+                    let input = Input {
+                        event: &c.event,
+                        bytes: bytes.as_deref(),
+                    };
+                    let d = &self.per_event[index];
+                    off_worker(|| d.derive(input, env))
                 }
-            };
-            let input = Input {
-                event: &c.event,
-                bytes: bytes.as_deref(),
-            };
-            let d = &self.per_event[index];
-            // A derivation that reads stored bytes runs a local tool (OCR, PDF
-            // text) and blocks for a while; keep it off the runtime's other
-            // tasks where the runtime allows.
-            let derived = if reads != Reads::Nothing
-                && tokio::runtime::Handle::current().runtime_flavor()
-                    == tokio::runtime::RuntimeFlavor::MultiThread
-            {
-                tokio::task::block_in_place(|| d.derive(input, env))
-            } else {
-                d.derive(input, env)
+                Err(reason) => Err(reason.to_string()),
             };
             match derived {
                 Ok(derived) => {
-                    computed_inputs.push(c.event.id.0);
+                    batch.inputs.push(c.event.id.0);
                     for mut e in derived {
                         // A new derivation version reads every input again; its
                         // outputs must be newer readings than the old version's.
                         hash_version(&mut e, name, version);
                         e.reading_order = ReadingOrder(reading_order);
-                        outputs.push(e);
+                        batch.bytes += payload_bytes(&e.payload);
+                        batch.outputs.push(e);
                     }
                 }
                 Err(reason) => {
@@ -684,38 +678,58 @@ impl DerivationRunner {
                     failed += 1;
                 }
             }
+            if batch.full() || i + 1 == events.len() {
+                let batch = std::mem::take(&mut batch);
+                self.submit_position(index, batch, c.commit_seq, read)
+                    .await?;
+            }
         }
-        let n = outputs.len();
-        let batch = Batch {
+        debug_assert_eq!(events.last().map(|c| c.commit_seq), Some(last));
+        let c = self.counts.entry(name.to_owned()).or_default();
+        c.inputs += events.len();
+        c.failed += failed;
+        Ok(events.len())
+    }
+
+    /// Admit one batch of a per-event pass, its position the commit sequence
+    /// of the last input it covers.
+    async fn submit_position(
+        &mut self,
+        index: usize,
+        batch: PositionBatch,
+        position: i64,
+        read: ReadMark,
+    ) -> Result<()> {
+        let name = self.per_event[index].name();
+        let n = batch.outputs.len();
+        let submitted = Batch {
             run: self.run_of(name)?,
             kind: BatchKind::Derived {
                 derivation: name.to_owned(),
                 scope: DerivedScope::Position {
-                    inputs: computed_inputs,
-                    position: last,
+                    inputs: batch.inputs,
+                    position,
                     read,
                 }
                 .to_value(),
             },
             records: vec![RecordOutcome::Events {
                 location: None,
-                events: outputs,
+                events: batch.outputs,
             }],
             archive: vec![],
         };
         let out = self
             .writer
-            .submit(Priority::Derived, batch)
+            .submit(Priority::Derived, submitted)
             .await
             .map_err(|e| Error::from(e).within(name))?;
         let c = self.counts.entry(name.to_owned()).or_default();
-        c.inputs += events.len();
-        c.failed += failed;
         c.outputs += n;
         c.admitted += out.admitted;
         c.repeats += out.repeats;
         c.superseded_input += out.superseded_input;
-        Ok(events.len())
+        Ok(())
     }
 
     /// The stored bytes a derivation that `reads` them reads for `event`.
@@ -989,15 +1003,12 @@ impl DerivationRunner {
             for row in page {
                 let reads = self.per_event[index].reads(&row.event);
                 let bytes = self.bytes_of(reads, &row.event).await?;
-                let new = self.per_event[index]
-                    .derive(
-                        Input {
-                            event: &row.event,
-                            bytes: bytes.as_deref(),
-                        },
-                        &env,
-                    )
-                    .map_err(Error::internal)?;
+                let d = &self.per_event[index];
+                let input = Input {
+                    event: &row.event,
+                    bytes: bytes.as_deref(),
+                };
+                let new = off_worker(|| d.derive(input, &env)).map_err(Error::internal)?;
                 let old = derivations::children_outputs(&mut self.read, name, row.event.id).await?;
                 compare_outputs(
                     &mut cmp,
@@ -1162,6 +1173,8 @@ struct Segment {
     scopes: Vec<ComputedKey>,
     records: Vec<RecordOutcome>,
     outputs: usize,
+    /// Payload bytes of the outputs.
+    bytes: usize,
     read: ReadMark,
     /// The commit head the snapshot saw.
     position: i64,
@@ -1169,7 +1182,54 @@ struct Segment {
 
 impl Segment {
     fn full(&self) -> bool {
-        self.scopes.len() >= KEYS_PER_BATCH || self.outputs >= OUTPUTS_PER_BATCH
+        self.scopes.len() >= KEYS_PER_BATCH
+            || self.outputs >= OUTPUTS_PER_BATCH
+            || self.bytes >= OUTPUT_BYTES_PER_BATCH
+    }
+}
+
+/// Outputs of a per-event pass not yet submitted, and the inputs computed for
+/// them.
+#[derive(Default)]
+struct PositionBatch {
+    inputs: Vec<uuid::Uuid>,
+    outputs: Vec<Event>,
+    bytes: usize,
+}
+
+impl PositionBatch {
+    fn full(&self) -> bool {
+        self.outputs.len() >= OUTPUTS_PER_BATCH || self.bytes >= OUTPUT_BYTES_PER_BATCH
+    }
+}
+
+/// About how many bytes `payload` takes stored: its strings, keys and a word
+/// per scalar. Counted without serializing.
+fn payload_bytes(payload: &Value) -> usize {
+    match payload {
+        Value::String(s) => s.len() + 2,
+        Value::Array(items) => 2 + items.iter().map(payload_bytes).sum::<usize>(),
+        Value::Object(fields) => {
+            2 + fields
+                .iter()
+                .map(|(k, v)| k.len() + 3 + payload_bytes(v))
+                .sum::<usize>()
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => 8,
+    }
+}
+
+/// Run a derivation's computation off the runtime's worker threads. One
+/// computation can take minutes; on a worker it would also hold the task that
+/// worker runs next (the writer's, the read models'), which no other worker
+/// takes over, so admission would wait for the computation.
+fn off_worker<T>(compute: impl FnOnce() -> T) -> T {
+    if tokio::runtime::Handle::current().runtime_flavor()
+        == tokio::runtime::RuntimeFlavor::MultiThread
+    {
+        tokio::task::block_in_place(compute)
+    } else {
+        compute()
     }
 }
 
@@ -1289,6 +1349,7 @@ async fn compute_segment(
         scopes: Vec::new(),
         records: Vec::new(),
         outputs: 0,
+        bytes: 0,
         read: ReadMark::now(&mut *conn).await?,
         position: derivations::head(&mut *conn).await?,
     };
@@ -1366,7 +1427,7 @@ async fn compute_one(
     let t = Instant::now();
     let input_count = inputs.as_ref().map_or(0, Vec::len);
     let mut computed = match &inputs {
-        Some(inputs) => derivation.compute(key, inputs, env),
+        Some(inputs) => off_worker(|| derivation.compute(key, inputs, env)),
         None => sinex_derivations::Computed::default(),
     };
     provenance::stamp(&mut *conn, derivation, key, segment.position, &mut computed).await?;
@@ -1376,6 +1437,11 @@ async fn compute_one(
     counts.compute += t.elapsed();
     counts.inputs += input_count;
     segment.outputs += computed.outputs.len();
+    segment.bytes += computed
+        .outputs
+        .iter()
+        .map(|e| payload_bytes(&e.payload))
+        .sum::<usize>();
     segment.computed.push(index);
     segment.scopes.push(ComputedKey {
         key: key.clone(),
