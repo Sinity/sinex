@@ -34,7 +34,7 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
     // native UUID time dimension requires the version-7 envelope. All rows share
     // a time chunk; timestamps retain the ordinary compression ordering.
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,reading_order,record_hash,class)
-      SELECT ('01800000-0000-7000-'||substr(md5(n::text),1,4)||'-'||substr(md5(n::text),5,12))::uuid,
+      SELECT ('01800000-0000-7000-8'||substr(md5(n::text),1,3)||'-'||substr(md5(n::text),5,12))::uuid,
         'synthetic.page','synthetic.page', '01800000-0000-4000-8000-000000000001'::uuid,
         '01800000-0000-4000-8000-000000000002'::uuid,n,n%3,
         ARRAY['01800000-0000-4000-8000-000000000003'::uuid],
