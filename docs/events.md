@@ -22,7 +22,7 @@ Output indices are zero-based unsigned 64-bit integers on public interfaces. Sto
 | `ts_coided` | computed from `id`: when Sinex made this reading |
 | `ts_persisted` | when the row was written |
 | `run` | the run that produced it, which names the producer and its version ([runs](#producer-versions-runs-and-manifests)) |
-| `commit_seq` | the commit position of its transaction |
+| `commit_seq` | its position in commit order: a transaction's events take consecutive positions, one each |
 | `source_record_key` | per the kind's declaration, or none ([identity](#identity)) |
 | `reading_order` | which of two readings of a record is newer ([reading order](#reading-order)) |
 | `record_hash` | fingerprint compared on re-observation ([record hash](#record-hash)) |

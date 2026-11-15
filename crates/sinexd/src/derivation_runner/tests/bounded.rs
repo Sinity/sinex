@@ -89,7 +89,7 @@ impl sinex_derivations::PerEvent for Large {
 }
 
 /// A pass whose outputs exceed one batch's bytes submits them in several
-/// batches, each its own commit, instead of holding the whole pass; every
+/// batches, each its own transaction, instead of holding the whole pass; every
 /// output is admitted once and the position reaches the last input.
 #[devkit::test]
 async fn a_per_event_pass_submits_large_outputs_in_bounded_batches(db: devkit::pg::TestDatabase) {
@@ -108,9 +108,10 @@ async fn a_per_event_pass_submits_large_outputs_in_bounded_batches(db: devkit::p
             .await,
         4
     );
-    // Three outputs reach the batch's bytes; the fourth goes in the next batch.
+    // Three outputs reach the batch's bytes; the fourth goes in the next
+    // batch. Each batch is its own transaction, so its rows share an xmin.
     assert_eq!(
-        w.count("SELECT count(DISTINCT commit_seq) FROM core.events WHERE source = 'test.large'")
+        w.count("SELECT count(DISTINCT xmin::text) FROM core.events WHERE source = 'test.large'")
             .await,
         2
     );
