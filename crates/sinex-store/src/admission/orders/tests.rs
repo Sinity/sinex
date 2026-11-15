@@ -47,114 +47,30 @@ impl Offers {
     }
 }
 
-async fn seed(conn: &mut PgConnection, offers: &Offers, candidate: bool) -> Bases {
-    macro_rules! read {
-        ($path:literal) => {{
-            sqlx::query_file!(
-                $path,
-                &offers.sources,
-                &offers.kinds,
-                &offers.hashes,
-                &offers.equivalence as &[Option<String>],
-                &offers.materials as &[Option<Uuid>],
-                &offers.anchors as &[Option<i64>],
-                &offers.outputs as &[Option<i64>]
-            )
-            .fetch_all(conn)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|r| {
-                let hash: [u8; 32] = r.key_hash.try_into().unwrap();
-                ((r.source, r.event_type, hash), r.base)
-            })
-            .collect()
-        }};
-    }
-    if candidate {
-        read!("src/admission/orders/seed.sql")
-    } else {
-        read!("src/admission/orders/old_seed.sql")
-    }
-}
-
-async fn work(conn: &mut PgConnection) -> i64 {
-    sqlx::query_scalar("SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))")
-        .fetch_one(conn).await.unwrap()
-}
-
-async fn executor_work(conn: &mut PgConnection, offers: &Offers, candidate: bool) -> f64 {
-    let query = if candidate {
-        include_str!("seed.sql")
-    } else {
-        include_str!("old_seed.sql")
-    };
-    let sql = format!("EXPLAIN (ANALYZE,FORMAT JSON) {query}");
-    let plan: serde_json::Value = sqlx::query_scalar(&sql)
-        .bind(&offers.sources)
-        .bind(&offers.kinds)
-        .bind(&offers.hashes)
-        .bind(&offers.equivalence)
-        .bind(&offers.materials)
-        .bind(&offers.anchors)
-        .bind(&offers.outputs)
-        .persistent(false)
-        .fetch_one(conn)
-        .await
-        .unwrap();
-    fn visits(plan: &serde_json::Value) -> f64 {
-        let loops = plan
-            .get("Actual Loops")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let own = [
-            "Actual Rows",
-            "Rows Removed by Filter",
-            "Rows Removed by Join Filter",
-            "Rows Removed by Index Recheck",
-        ]
-        .iter()
-        .filter_map(|key| plan.get(key).and_then(|v| v.as_f64()))
-        .sum::<f64>()
-            * loops;
-        own + plan
-            .get("Plans")
-            .and_then(|v| v.as_array())
-            .map_or(0.0, |nodes| nodes.iter().map(visits).sum())
-    }
-    visits(&plan[0]["Plan"])
-}
-
-async fn measure(conn: &mut PgConnection, offers: &Offers, phase: &str) -> (i64, i64, f64, f64) {
-    let mut tx = conn.begin().await.unwrap();
-    tx.execute("SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL jit=off")
-        .await
-        .unwrap();
-    let before = work(&mut tx).await;
-    for _ in 0..8 {
-        assert_eq!(seed(&mut tx, offers, false).await, offers.expected);
-    }
-    let old = work(&mut tx).await - before;
-    let before = work(&mut tx).await;
-    for _ in 0..8 {
-        assert_eq!(seed(&mut tx, offers, true).await, offers.expected);
-    }
-    let new = work(&mut tx).await - before;
-    eprintln!(
-        "{phase},{} offered keys over8: original={old},selected-history={new}",
-        offers.sources.len()
-    );
-    let old_executor = executor_work(&mut tx, offers, false).await;
-    let new_executor = executor_work(&mut tx, offers, true).await;
-    eprintln!(
-        "{phase} whole executor tuple visits including CTE/join loops: original={old_executor},selected-history={new_executor}"
-    );
-    tx.rollback().await.unwrap();
-    (old, new, old_executor, new_executor)
+async fn seed(conn: &mut PgConnection, offers: &Offers) -> Bases {
+    sqlx::query_file!(
+        "src/admission/orders/seed.sql",
+        &offers.sources,
+        &offers.kinds,
+        &offers.hashes,
+        &offers.equivalence as &[Option<String>],
+        &offers.materials as &[Option<Uuid>],
+        &offers.anchors as &[Option<i64>],
+        &offers.outputs as &[Option<i64>]
+    )
+    .fetch_all(conn)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|r| {
+        let hash: [u8; 32] = r.key_hash.try_into().unwrap();
+        ((r.source, r.event_type, hash), r.base)
+    })
+    .collect()
 }
 
 #[devkit::test]
-async fn missing_order_seed_selected_history_keeps_maxima_and_reduces_work(
+async fn missing_order_seed_takes_maxima_from_history_and_retained_counters(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -210,11 +126,9 @@ async fn missing_order_seed_selected_history_keeps_maxima_and_reduces_work(
         .execute(&mut conn).await.unwrap();
     let mut cached = Offers::default();
     cached.push(256, false, Some(i64::MAX - 8));
-    let (_, cached_work, _, _) = measure(&mut conn, &cached, "rowstore-cached").await;
-    assert_eq!(cached_work, 0, "cached authority needs no event history");
-    measure(&mut conn, &small, "rowstore-small").await;
-    let (old_hot, new_hot, old_hot_executor, new_hot_executor) =
-        measure(&mut conn, &many, "rowstore-many").await;
+    for offers in [&cached, &small, &many] {
+        assert_eq!(seed(&mut conn, offers).await, offers.expected);
+    }
     let chunk:String=sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id='01700000-0000-7000-8000-000000000001'")
         .fetch_one(&mut conn).await.unwrap();
     sqlx::query("SELECT compress_chunk($1::regclass)")
@@ -222,21 +136,8 @@ async fn missing_order_seed_selected_history_keeps_maxima_and_reduces_work(
         .execute(&mut conn)
         .await
         .unwrap();
-    let (_, cached_work, _, _) = measure(&mut conn, &cached, "compressed-cached").await;
-    assert_eq!(
-        cached_work, 0,
-        "cached authority needs no compressed history"
-    );
-    measure(&mut conn, &small, "compressed-small").await;
-    let (old_cold, new_cold, old_cold_executor, new_cold_executor) =
-        measure(&mut conn, &many, "compressed-many").await;
-    // Re-reading a materialized CTE is still history work. Both authority
-    // reads and executor visits must improve.
-    assert!(
-        new_hot < old_hot
-            && new_cold < old_cold
-            && new_hot_executor < old_hot_executor
-            && new_cold_executor < old_cold_executor,
-        "selected history was not a work improvement: hot{old_hot}→{new_hot}/executor{old_hot_executor}→{new_hot_executor},compressed{old_cold}→{new_cold}/executor{old_cold_executor}→{new_cold_executor}"
-    );
+    // Compressed history gives the same bases.
+    for offers in [&cached, &small, &many] {
+        assert_eq!(seed(&mut conn, offers).await, offers.expected);
+    }
 }

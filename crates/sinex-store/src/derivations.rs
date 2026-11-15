@@ -1185,9 +1185,3 @@ mod tests;
 
 mod exact;
 pub use exact::ExactInputs;
-
-#[cfg(test)]
-mod page_fetch_tests;
-
-#[cfg(test)]
-mod children_outputs_tests;

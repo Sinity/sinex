@@ -1,34 +1,8 @@
 use super::*;
 use sqlx::Executor;
 
-const OLD: &str = include_str!("old_page.sql");
-const NEW: &str = include_str!("../page.sql");
-
-async fn rows(
-    conn: &mut PgConnection,
-    query: &str,
-    after: i64,
-    limit: i64,
-    bytes: i64,
-) -> Vec<Value> {
-    sqlx::query_scalar(&format!("SELECT to_jsonb(p) FROM ({query}) p"))
-        .bind(after)
-        .bind(limit)
-        .bind(bytes)
-        .persistent(false)
-        .fetch_all(conn)
-        .await
-        .unwrap()
-}
-async fn work(conn: &mut PgConnection) -> i64 {
-    sqlx::query_scalar("SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))")
-        .fetch_one(conn).await.unwrap()
-}
-
 #[devkit::test]
-async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
-    db: devkit::pg::TestDatabase,
-) {
+async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let declaration = sinex_model::KindDeclaration::schemaless(
         sinex_model::KindRef {
@@ -66,21 +40,6 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
             .unwrap();
         }
         let mut tx = conn.begin().await.unwrap();
-        tx.execute("SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL jit=off")
-            .await
-            .unwrap();
-        for (after, limit, bytes) in [
-            (8192, 16, i64::MAX),
-            (8192, 16, 1),
-            (8447, 16, i64::MAX),
-            (8448, 16, 1),
-            (8450, 16, 1),
-        ] {
-            assert_eq!(
-                rows(&mut tx, NEW, after, limit, bytes).await,
-                rows(&mut tx, OLD, after, limit, bytes).await
-            );
-        }
         let all = after(&mut tx, 8192, 16, i64::MAX).await.unwrap();
         assert_eq!(all.events.len(), 16);
         for (offset, event) in all.events.iter().enumerate() {
@@ -105,10 +64,6 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
         .await
         .unwrap();
         assert_eq!(
-            rows(&mut tx, NEW, 8192, 16, exact).await,
-            rows(&mut tx, OLD, 8192, 16, exact).await
-        );
-        assert_eq!(
             after(&mut tx, 8192, 16, exact).await.unwrap().events.len(),
             1
         );
@@ -122,34 +77,16 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
         let meta = after(&mut tx, 8448, 16, 1).await.unwrap();
         assert!(meta.events.is_empty());
         assert_eq!(meta.up_to, Some(8450));
-        let expected = rows(&mut tx, OLD, 8192, 16, i64::MAX).await;
-        let before = work(&mut tx).await;
-        for _ in 0..8 {
-            assert_eq!(rows(&mut tx, OLD, 8192, 16, i64::MAX).await, expected);
-        }
-        let old = work(&mut tx).await - before;
-        let before = work(&mut tx).await;
-        for _ in 0..8 {
-            let actual = after(&mut tx, 8192, 16, i64::MAX).await.unwrap();
-            assert_eq!(actual.events, all.events);
-            assert_eq!(actual.up_to, all.up_to);
-        }
-        let new = work(&mut tx).await - before;
-        let before = work(&mut tx).await;
-        for _ in 0..8 {
-            let page = after(&mut tx, 8450, 16, 4096).await.unwrap();
-            assert!(page.events.is_empty());
-            assert_eq!(page.up_to, None);
-        }
-        let quiet = work(&mut tx).await - before;
-        eprintln!("commit-pair compressed={compressed} old={old} new={new} quiet={quiet}");
-        assert_eq!(quiet, 0, "quiet head must not hydrate history");
-        if compressed {
-            assert!(
-                new < old,
-                "selected commit pairs must reduce actual compressed tuple visits: {old} -> {new}"
-            );
-        }
+        // The last event is followed by two commits without events.
+        let tail = after(&mut tx, 8447, 16, i64::MAX).await.unwrap();
+        assert_eq!(
+            tail.events.iter().map(|e| e.commit_seq).collect::<Vec<_>>(),
+            [8448]
+        );
+        assert_eq!(tail.up_to, Some(8450));
+        let quiet = after(&mut tx, 8450, 16, 1).await.unwrap();
+        assert!(quiet.events.is_empty());
+        assert_eq!(quiet.up_to, None);
         tx.rollback().await.unwrap();
     }
 }

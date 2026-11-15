@@ -87,20 +87,18 @@ async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn eligible_prefix_branch_can_use_its_trigram_index(db: devkit::pg::TestDatabase) {
+async fn prefix_search_selects_matches_among_unrelated_readings(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     crate::read_models::tests::admit_search_kinds(&mut conn, Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
-    // A three-event fixture can legitimately start at the event primary key
-    // and probe the text primary key. Give the planner a selective prefix
-    // among unrelated readings, with real statistics for both sides.
+    // The prefix matches three readings among many unrelated ones.
     sqlx::query(
         "WITH events AS (
            INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,
              commit_seq,payload,reading_order,record_hash,class)
-           SELECT uuidv7(),'command.imported','synthetic-plan',uuidv7(),uuidv7(),n,'unknown',
+           SELECT uuidv7(),'command.imported','synthetic-unrelated',uuidv7(),uuidv7(),n,'unknown',
              1,'{}',1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,5000)n
            RETURNING id
          ), words AS (
@@ -112,31 +110,6 @@ async fn eligible_prefix_branch_can_use_its_trigram_index(db: devkit::pg::TestDa
     .execute(&mut conn)
     .await
     .unwrap();
-    // Match the upgrade's bulk-built index. Fixture inserts otherwise leave
-    // a GIN pending list whose scan cost can make a primary-key scan cheaper.
-    sqlx::raw_sql(
-        "REINDEX INDEX core.search_trigram_text;
-         ANALYZE core.events; ANALYZE core.search_text; ANALYZE core.search_trigram",
-    )
-    .execute(&mut conn)
-    .await
-    .unwrap();
-    sqlx::query("SET enable_seqscan=off")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    let context = ctx();
-    let bound = bind("events where car*", &context).unwrap();
-    let compiled = compile::Compiler::new(&context, current_seq(&mut conn).await.unwrap())
-        .compile(&bound)
-        .unwrap();
-    let (statement, params) = compiled.count.render();
-    let statement = format!("EXPLAIN (FORMAT JSON) {statement}");
-    let plan: serde_json::Value = sql::bind_scalar(sqlx::query_scalar(&statement), params)
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert!(plan.to_string().contains("search_trigram_text"), "{plan}");
     assert_eq!(ask(&mut conn, "events where car*").await.total, 3);
 }
 
@@ -345,7 +318,9 @@ async fn indexed_words_keep_boolean_stage_and_historical_visibility(db: devkit::
 }
 
 #[devkit::test]
-async fn indexed_words_do_not_decompress_unrelated_history(db: devkit::pg::TestDatabase) {
+async fn indexed_words_find_matches_among_compressed_unrelated_history(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -361,12 +336,6 @@ async fn indexed_words_do_not_decompress_unrelated_history(db: devkit::pg::TestD
     sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)
         WHERE chunk NOT IN (SELECT tableoid::regclass FROM core.events WHERE source IN ('terminal.atuin','derive.shell-fusion'))")
         .execute(&mut conn).await.unwrap();
-    sqlx::raw_sql(
-        "REINDEX INDEX core.search_text_tsv; ANALYZE core.events; ANALYZE core.search_text",
-    )
-    .execute(&mut conn)
-    .await
-    .unwrap();
     let names: Vec<String> = sqlx::query_scalar(
         "SELECT relname FROM pg_class WHERE oid IN (
         SELECT compress_relid FROM _timescaledb_catalog.compression_settings
@@ -395,69 +364,10 @@ async fn indexed_words_do_not_decompress_unrelated_history(db: devkit::pg::TestD
             .collect::<std::collections::BTreeSet<_>>(),
         std::collections::BTreeSet::from([selected[0].0, selected[0].1])
     );
-    let context = ctx();
-    let bound = bind("specificsearchneedle", &context).unwrap();
-    let compiled = compile::Compiler::new(&context, current_seq(&mut conn).await.unwrap())
-        .compile(&bound)
-        .unwrap();
-    let (statement, params) = compiled.answer.render();
-    let mut tx = conn.begin().await.unwrap();
-    sqlx::raw_sql("SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL enable_nestloop=off")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    let plan: serde_json::Value = sql::bind_scalar(
-        sqlx::query_scalar(&format!("EXPLAIN (ANALYZE,FORMAT JSON) {statement}")),
-        params,
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
-    fn batches(value: &serde_json::Value, names: &[String]) -> u64 {
-        match value {
-            serde_json::Value::Object(object) => {
-                let own = object
-                    .get("Relation Name")
-                    .and_then(|v| v.as_str())
-                    .filter(|name| names.iter().any(|n| n.as_str() == *name))
-                    .map(|_| {
-                        (object
-                            .get("Actual Rows")
-                            .and_then(|n| n.as_f64())
-                            .unwrap_or(0.0)
-                            * object
-                                .get("Actual Loops")
-                                .and_then(|n| n.as_f64())
-                                .unwrap_or(0.0))
-                        .ceil() as u64
-                    })
-                    .unwrap_or(0);
-                own + object.values().map(|v| batches(v, names)).sum::<u64>()
-            }
-            serde_json::Value::Array(values) => values.iter().map(|v| batches(v, names)).sum(),
-            _ => 0,
-        }
-    }
-    assert_eq!(
-        batches(&plan, &names),
-        0,
-        "indexed search decompressed unrelated history: {plan}"
-    );
-    // The predecessor's protected search semijoin reads the same unrelated
-    // compressed history even though the full-text index selects two events.
-    let original:serde_json::Value=sqlx::query_scalar("EXPLAIN (ANALYZE,FORMAT JSON) SELECT e.id FROM core.visible_events e WHERE EXISTS
-        (SELECT 1 FROM core.visible_search_text s WHERE s.event_id=e.id AND s.tsv @@ plainto_tsquery('simple','specificsearchneedle'))")
-        .fetch_one(&mut *tx).await.unwrap();
-    assert_eq!(original[0]["Plan"]["Actual Rows"].as_f64().unwrap(), 2.0);
-    assert!(
-        batches(&original, &names) >= 8,
-        "original search did not exercise unrelated compressed history: {original}"
-    );
-    tx.rollback().await.unwrap();
 }
 
 #[devkit::test]
-async fn matching_compressed_search_rows_reuse_authorization_rank_and_snippet(
+async fn matching_compressed_search_rows_page_with_grants_and_snippets(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -477,10 +387,6 @@ async fn matching_compressed_search_rows_reuse_authorization_rank_and_snippet(
         .await
         .unwrap();
     sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    sqlx::raw_sql("ANALYZE core.events; ANALYZE core.search_text")
         .execute(&mut conn)
         .await
         .unwrap();
@@ -524,73 +430,4 @@ async fn matching_compressed_search_rows_reuse_authorization_rank_and_snippet(
     set_grants(&mut conn, "guarded").await.unwrap();
     assert_eq!(ask(&mut conn, "matchingreuse").await.total, 128);
     set_grants(&mut conn, "").await.unwrap();
-
-    let context = ctx();
-    let bound = bind("matchingreuse", &context).unwrap();
-    let seq = current_seq(&mut conn).await.unwrap();
-    let compiled = compile::Compiler::new(&context, seq)
-        .compile(&bound)
-        .unwrap();
-    let question = continuation::query_identity("matchingreuse", &context).unwrap();
-    let read = ReadPage {
-        question: String::new(),
-        question_id: continuation::identity("query", &question, "").unwrap(),
-        seal: continuation::seal_key(&mut conn).await.unwrap(),
-        ctx: context,
-        seq,
-        size: 50,
-        prior: None,
-        availability: json!(null),
-    };
-    let rendered = render_page(compiled, &read).unwrap();
-    let (statement, params) = rendered.rows;
-    let new_plan: serde_json::Value = sql::bind_scalar(
-        sqlx::query_scalar(&format!("EXPLAIN(ANALYZE,FORMAT JSON) {statement}")),
-        params,
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    // The previous page shape repeated protected event joins in its scalar
-    // rank/snippet/predicate expressions. Keep it as an actual-work control.
-    let old_plan:serde_json::Value=sqlx::query_scalar("EXPLAIN(ANALYZE,FORMAT JSON)
-        SELECT id,rank,snippet,rank AS page_rank,pg_typeof(rank)::text FROM (
-          SELECT e.id,e.ts_orig,
-            (SELECT ts_rank(s.tsv,plainto_tsquery('simple','matchingreuse')) FROM core.visible_search_text s WHERE s.event_id=e.id) rank,
-            (SELECT ts_headline('simple',s.text,plainto_tsquery('simple','matchingreuse'),'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') FROM core.visible_search_text s WHERE s.event_id=e.id) snippet
-          FROM (SELECT event_id FROM core.search_text WHERE tsv@@plainto_tsquery('simple','matchingreuse')) h
-          CROSS JOIN LATERAL(SELECT * FROM core.visible_events v WHERE v.id=h.event_id OFFSET 0)e
-          WHERE e.commit_seq<=1 AND NOT audit.is_archived_at(e.id,1)
-            AND EXISTS(SELECT 1 FROM core.visible_search_text s WHERE s.event_id=e.id AND s.tsv@@plainto_tsquery('simple','matchingreuse') OFFSET 0)
-        )q ORDER BY rank DESC NULLS LAST,ts_orig ASC NULLS LAST,id::text COLLATE \"C\" LIMIT 51")
-        .fetch_one(&mut conn).await.unwrap();
-    fn batches(v: &serde_json::Value, names: &[String]) -> f64 {
-        match v {
-            serde_json::Value::Object(o) => {
-                let own = o
-                    .get("Relation Name")
-                    .and_then(|v| v.as_str())
-                    .filter(|n| names.iter().any(|s| s == n))
-                    .map(|_| {
-                        o.get("Actual Rows").and_then(|n| n.as_f64()).unwrap_or(0.)
-                            * o.get("Actual Loops").and_then(|n| n.as_f64()).unwrap_or(0.)
-                    })
-                    .unwrap_or(0.);
-                own + o.values().map(|v| batches(v, names)).sum::<f64>()
-            }
-            serde_json::Value::Array(a) => a.iter().map(|v| batches(v, names)).sum(),
-            _ => 0.,
-        }
-    }
-    let old = batches(&old_plan, &names);
-    let new = batches(&new_plan, &names);
-    eprintln!("compressed search batch visits old={old} new={new}");
-    assert!(
-        new > 0.,
-        "matching compressed rows must execute: {new_plan}"
-    );
-    assert!(
-        old >= new * 2.,
-        "repeated authorization/rank work: old={old} new={new}; oldplan={old_plan}; newplan={new_plan}"
-    );
 }

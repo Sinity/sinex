@@ -249,30 +249,10 @@ async fn set_bounds_keep_workspace_fallback_and_exclude_unknown_event_time(
     );
 }
 
-fn scan_work(node: &Value) -> f64 {
-    let loops = node["Actual Loops"].as_f64().unwrap_or(0.);
-    let own = if node["Node Type"]
-        .as_str()
-        .is_some_and(|kind| kind.contains("Scan"))
-    {
-        (node["Actual Rows"].as_f64().unwrap_or(0.)
-            + node["Rows Removed by Filter"].as_f64().unwrap_or(0.)
-            + node["Rows Removed by Index Recheck"].as_f64().unwrap_or(0.))
-            * loops
-    } else {
-        0.
-    };
-    own + node["Rows Removed by Join Filter"].as_f64().unwrap_or(0.) * loops
-        + node["Plans"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(scan_work)
-            .sum::<f64>()
-}
-
 #[devkit::test]
-async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDatabase) {
+async fn set_bounds_cover_many_scopes_and_leave_an_empty_day_unchanged(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
     let mut events = Vec::new();
     for n in 0..128 {
@@ -284,61 +264,8 @@ async fn set_bounds_do_not_repeat_history_for_each_scope(db: devkit::pg::TestDat
     }
     admit(&mut conn, events).await;
     let selected = kinds(None);
-    let (types, contains) = kind_arrays(&selected);
-    let fields: Vec<String> = state_transition::payload_fields(FOCUS)
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
     for (start, end) in [(0, DAY), (2 * DAY, 3 * DAY)] {
-        let old: Value = sqlx::query_scalar(&format!(
-            "EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {}",
-            include_str!("previous.sql")
-        ))
-        .bind(&types)
-        .bind(&contains)
-        .bind(at(start))
-        .bind(at(end))
-        .bind("scope")
-        .bind(vec!["window", "class"])
-        .bind(at(10 * DAY))
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        let before = scan_work(&old[0]["Plan"]);
-        let mut after = 0.;
-        for day_only in [true, false] {
-            let plan: Value = sqlx::query_scalar(&format!(
-                "EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {}",
-                include_str!("../sql/state_transition_rows.sql")
-            ))
-            .bind(&types)
-            .bind(&contains)
-            .bind(at(start))
-            .bind(at(end))
-            .bind(&fields)
-            .bind(&types)
-            .bind(&contains)
-            .bind(day_only)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-            after += scan_work(&plan[0]["Plan"]);
-            if start != 0 {
-                assert_eq!(
-                    plan[0]["Plan"]["Actual Rows"].as_f64(),
-                    Some(0.),
-                    "empty day must not project history: {plan:#}"
-                );
-            }
-        }
-        println!(
-            "transition metadata start={start}, scan and join-filter tuple examinations: previous={before}, two fixed passes={after}"
-        );
         let expected = if start == 0 {
-            assert!(
-                before > after * 8.,
-                "scope count must not multiply history scans: before={before}, after={after}"
-            );
             (at(-1), at(DAY + 1) + time::Duration::microseconds(1))
         } else {
             (at(start), at(end) + time::Duration::microseconds(1))

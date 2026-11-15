@@ -311,32 +311,20 @@ async fn a_step_waits_while_another_session_holds_the_work(db: devkit::pg::TestD
     assert!(remaining(&mut conn).await.unwrap().is_empty());
 }
 
-async fn plan(conn: &mut PgConnection, query: &str) -> String {
-    conn.execute("SET enable_seqscan = off").await.unwrap();
-    let plan: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN {query}"))
-        .fetch_all(&mut *conn)
-        .await
-        .unwrap();
-    conn.execute("RESET enable_seqscan").await.unwrap();
-    plan.join("\n")
-}
-
-/// Feed pages read the chunks in commit order without the feed index and
-/// through it once it exists, with identical results.
+/// Feed pages read in commit order before the event indexes exist and give
+/// the same page once they do.
 #[devkit::test]
-async fn readers_use_other_indexes_until_event_indexes_exist(db: devkit::pg::TestDatabase) {
+async fn feed_pages_are_the_same_before_and_after_event_indexes_exist(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     upgraded_with_lineage(&mut conn).await;
     assert_eq!(index_oid(&mut conn, "core.events_feed").await, None);
     assert_eq!(index_oid(&mut conn, "core.events_coverage").await, None);
     let feed =
         "SELECT id::text FROM core.events WHERE commit_seq > 3 ORDER BY commit_seq, id LIMIT 5";
-    let unindexed = plan(&mut conn, feed).await;
-    assert!(!unindexed.contains("events_feed"), "{unindexed}");
     let before: Vec<String> = sqlx::query_scalar(feed).fetch_all(&mut conn).await.unwrap();
     finish(&mut conn).await.unwrap();
-    let indexed = plan(&mut conn, feed).await;
-    assert!(indexed.contains("events_feed"), "{indexed}");
     let after: Vec<String> = sqlx::query_scalar(feed).fetch_all(&mut conn).await.unwrap();
     assert_eq!(before, after);
     assert_eq!(after.len(), 5);

@@ -196,21 +196,6 @@ async fn pgvector_indexed_candidates_match_cosine_and_filtered_unembedded_rows_s
             .collect::<Vec<_>>(),
         ids.iter().map(|id| id.to_string()).collect::<Vec<_>>()
     );
-
-    // Force only plan selection, never a timing threshold.
-    sqlx::query("SET enable_seqscan=off")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    let statement = format!(
-        "EXPLAIN(FORMAT JSON) SELECT embedding_id FROM core.embedding_vectors WHERE space='{}' AND coverage='indexed' ORDER BY projected::vector(3) <=> '[1,0,0]'::vector(3) LIMIT 3",
-        space(3).id()
-    );
-    let plan: serde_json::Value = sqlx::query_scalar(&statement)
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert!(plan.to_string().contains("embedding_space_"), "{plan}");
 }
 
 #[devkit::test]

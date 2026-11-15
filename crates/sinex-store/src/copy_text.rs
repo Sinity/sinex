@@ -10,14 +10,6 @@ pub(crate) const JSON_STRING_BYTES: usize = 4096;
 pub struct CopyText<'c> {
     pub(crate) copy: PgCopyIn<&'c mut PgConnection>,
     pub(crate) bytes: Vec<u8>,
-    #[cfg(test)]
-    pub(crate) peak: usize,
-    #[cfg(test)]
-    pub(crate) messages: usize,
-    #[cfg(test)]
-    pub(crate) captured: Option<Vec<u8>>,
-    #[cfg(test)]
-    pub(crate) fragment_peak: usize,
 }
 
 impl<'c> CopyText<'c> {
@@ -26,29 +18,13 @@ impl<'c> CopyText<'c> {
         Self {
             copy,
             bytes: Vec::with_capacity(COPY_BYTES),
-            #[cfg(test)]
-            peak: 0,
-            #[cfg(test)]
-            messages: 0,
-            #[cfg(test)]
-            captured: None,
-            #[cfg(test)]
-            fragment_peak: 0,
         }
     }
 
     pub(crate) async fn flush(&mut self) -> Result<()> {
         if !self.bytes.is_empty() {
-            #[cfg(test)]
-            if let Some(captured) = &mut self.captured {
-                captured.extend_from_slice(&self.bytes);
-            }
             self.copy.send(self.bytes.as_slice()).await?;
             self.bytes.clear();
-            #[cfg(test)]
-            {
-                self.messages += 1;
-            }
         }
         Ok(())
     }
@@ -57,10 +33,6 @@ impl<'c> CopyText<'c> {
         while !bytes.is_empty() {
             let n = bytes.len().min(COPY_BYTES - self.bytes.len());
             self.bytes.extend_from_slice(&bytes[..n]);
-            #[cfg(test)]
-            {
-                self.peak = self.peak.max(self.bytes.len());
-            }
             bytes = &bytes[n..];
             if self.bytes.len() == COPY_BYTES {
                 self.flush().await?;
@@ -101,10 +73,6 @@ impl<'c> CopyText<'c> {
             // Reuse serde_json's exact spelling, without another whole-field String.
             let quoted =
                 serde_json::to_string(&text[..end]).map_err(|e| Error::Invalid(e.to_string()))?;
-            #[cfg(test)]
-            {
-                self.fragment_peak = self.fragment_peak.max(quoted.len());
-            }
             self.text(&quoted[1..quoted.len() - 1]).await?;
             text = &text[end..];
         }

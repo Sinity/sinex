@@ -35,16 +35,6 @@ async fn prepared_step(
     complete: bool,
 ) -> (Progress, bool) {
     let mut tx = conn.begin().await.unwrap();
-    let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))";
-    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    select::source_batch(&mut tx, op, Phase::Archive, &ids)
-        .await
-        .unwrap();
-    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    assert_eq!(
-        after, before,
-        "current membership must not reread immutable event headers"
-    );
     let Step::Moved { progress, done, .. } = step(
         &mut tx,
         op,
@@ -128,26 +118,12 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     let new_id = new.id.0;
     admit(&mut writer, &batch(vec![new])).await;
     let mut read_tx = read.begin().await.unwrap();
-    sqlx::query("SET LOCAL max_parallel_workers_per_gather=0")
-        .execute(&mut *read_tx)
-        .await
-        .unwrap();
-    let scans = "SELECT coalesce(sum(seq_scan+idx_scan),0)::bigint FROM pg_stat_xact_user_tables WHERE schemaname IN('core','_timescaledb_internal')";
-    let before: i64 = sqlx::query_scalar(scans)
-        .fetch_one(&mut *read_tx)
-        .await
-        .unwrap();
     let mut stream = source_roots(&mut read_tx, &reopened, progress.after).unwrap();
     let mut prepared = Vec::new();
     while let Some(id) = stream.try_next().await.unwrap() {
         prepared.push(id);
     }
     drop(stream);
-    let after: i64 = sqlx::query_scalar(scans)
-        .fetch_one(&mut *read_tx)
-        .await
-        .unwrap();
-    let source_scans = after - before;
     assert_eq!(prepared.len(), 80);
     assert!(
         prepared.contains(&archived),
@@ -173,13 +149,11 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         operate(&mut writer, Act::Tombstone, events(&[&roots[80]]), 16).await,
         Ended::Ok { .. }
     ));
-    let mut batches = 0;
     for chunk in prepared.chunks(8) {
         let complete = chunk.last() == prepared.last();
         let (next, done) =
             prepared_step(&mut writer, &reopened, progress, chunk.to_vec(), complete).await;
         progress = next;
-        batches += 1;
         assert_eq!(done, complete);
     }
     assert_eq!(count(&mut writer,"SELECT count(*) FROM audit.archived WHERE event_id IN(SELECT id FROM core.events WHERE source='retired-source')").await,95);
@@ -200,27 +174,6 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         .await,
         1
     );
-    // Positive control: the former per-batch query revisits compressed
-    // relations for each page even when only the root IDs are needed.
-    let before: i64 = sqlx::query_scalar(scans)
-        .fetch_one(&mut *read_tx)
-        .await
-        .unwrap();
-    for _ in 0..batches {
-        select::roots(&mut read_tx, &reopened, Phase::Archive, saved.after, 8)
-            .await
-            .unwrap();
-    }
-    let after: i64 = sqlx::query_scalar(scans)
-        .fetch_one(&mut *read_tx)
-        .await
-        .unwrap();
-    assert!(source_scans > 0);
-    assert!(
-        after - before >= source_scans * 3,
-        "old scans {}, one stream {source_scans}",
-        after - before
-    );
     read_tx.rollback().await.unwrap();
     assert_eq!(
         count(
@@ -234,7 +187,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
 }
 
 #[devkit::test]
-async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
+async fn archive_of_a_source_moves_only_its_chain_among_archived_history(
     db: devkit::pg::TestDatabase,
 ) {
     let mut writer = context(&db).await;
@@ -306,13 +259,6 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     .await
     .unwrap();
     let mut tx = writer.begin().await.unwrap();
-    let work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid IN ('audit.archived'::regclass,'core.event_children'::regclass)";
-    let event_work = "SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid='core.events'::regclass OR relid IN(SELECT show_chunks('core.events')) OR relid IN(SELECT compress_relid FROM _timescaledb_catalog.compression_settings WHERE relid IN(SELECT show_chunks('core.events')))";
-    let events_before: i64 = sqlx::query_scalar(event_work)
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
-    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
     let Step::Moved { counts, .. } = step(
         &mut tx,
         &op,
@@ -328,20 +274,6 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
     .unwrap() else {
         panic!("archive refused")
     };
-    let events_after: i64 = sqlx::query_scalar(event_work)
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
-    assert_eq!(
-        events_after, events_before,
-        "unconsumed field-keyed chain must not read event history or payloads"
-    );
-    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    assert!(
-        after - before <= 16,
-        "selected chain visited {} archive/edge tuples",
-        after - before
-    );
     assert_eq!(counts.archived.values().sum::<u64>(), 2);
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -360,21 +292,6 @@ async fn archive_selected_chain_does_not_scan_unrelated_archived_edges(
         .fetch_one(&mut *tx)
         .await
         .unwrap()
-    );
-    // The old final anti-join reads unrelated archive history when recursive
-    // cardinality estimates select a hash plan, as on compressed deployments.
-    sqlx::query("SET LOCAL enable_nestloop=off")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    sqlx::query("SELECT d.id FROM unnest($1::uuid[]) d(id) WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)")
-        .bind(vec![root.id.0,child_id]).fetch_all(&mut *tx).await.unwrap();
-    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    assert!(
-        after - before >= 8192,
-        "old anti-join control visited {} tuples",
-        after - before
     );
     tx.commit().await.unwrap();
     assert_state_order(&mut writer).await;

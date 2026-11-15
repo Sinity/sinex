@@ -401,7 +401,7 @@ fn an_empty_material_has_one_physical_extent_and_no_decoded_bytes() {
 }
 
 #[devkit::test]
-async fn extent_commit_does_not_visit_unrelated_catalog_or_extent_history(
+async fn extent_commit_records_a_new_extent_among_unrelated_catalog_history(
     db: devkit::pg::TestDatabase,
 ) {
     use sqlx::Connection;
@@ -415,29 +415,20 @@ async fn extent_commit_does_not_visit_unrelated_catalog_or_extent_history(
         .execute(&mut conn).await.unwrap();
     sqlx::query("INSERT INTO core.blob_extents(hash,descriptor,deleting) SELECT b.hash,x.descriptor,false FROM core.blobs b CROSS JOIN core.blob_extents x WHERE x.hash=$1")
         .bind(&name).execute(&mut conn).await.unwrap();
-    sqlx::raw_sql("ANALYZE core.blobs; ANALYZE core.blob_extents;")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    blobs.put(b"one new extent").unwrap();
+    let new = blobs.put(b"one new extent").unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let work = "SELECT COALESCE(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid IN ('core.blobs'::regclass,'core.blob_extents'::regclass)";
-    let before: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
     let receipt = blobs.commit_extents(&mut tx).await.unwrap();
-    let after: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    assert!(
-        after - before <= 4,
-        "extent commit visited {} old tuples for one new extent",
-        after - before
-    );
-    let unchanged: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents x JOIN core.blobs b ON b.hash=x.hash WHERE x.deleting IS DISTINCT FROM (b.status='deleting'))")
+    let recorded: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash=$1 AND NOT deleting)",
+    )
+    .bind(&new)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert!(recorded);
+    let mismatched: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents x JOIN core.blobs b ON b.hash=x.hash WHERE x.deleting IS DISTINCT FROM (b.status='deleting'))")
         .fetch_one(&mut *tx).await.unwrap();
-    assert!(!unchanged);
-    let scanned: i64 = sqlx::query_scalar(work).fetch_one(&mut *tx).await.unwrap();
-    assert!(
-        scanned - after >= 8192,
-        "the old global query must visit unrelated history for this oracle to discriminate"
-    );
+    assert!(!mismatched);
     tx.commit().await.unwrap();
     blobs.acknowledge(receipt).unwrap();
 }

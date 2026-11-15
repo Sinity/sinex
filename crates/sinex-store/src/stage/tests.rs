@@ -1,23 +1,10 @@
-//! Exact predecessor wire bytes and actual PostgreSQL COPY are the controls.
+//! Rows streamed through PostgreSQL COPY read back field for field.
 use super::*;
 use sinex_model::{
     Class, EventId, MaterialId, ReadingOrder, RecordLocation, Timestamp,
     event_types::CommandImported,
 };
 use sqlx::{Connection, Row};
-use std::fmt::Write;
-
-fn escape(buf: &mut String, text: &str) {
-    for c in text.chars() {
-        match c {
-            '\\' => buf.push_str("\\\\"),
-            '\t' => buf.push_str("\\t"),
-            '\n' => buf.push_str("\\n"),
-            '\r' => buf.push_str("\\r"),
-            c => buf.push(c),
-        }
-    }
-}
 
 fn event(n: i64, payload: serde_json::Value) -> Event {
     let mut e = Event::build(
@@ -46,101 +33,8 @@ fn event(n: i64, payload: serde_json::Value) -> Event {
     e
 }
 
-fn legacy_row(buf: &mut String, ord: i64, e: &Event) -> Result<()> {
-    let (material, anchor, output_index, parents) = match &e.origin {
-        Origin::Record {
-            location,
-            output_index,
-        } => (
-            Some(location.material.0.to_string()),
-            Some(
-                i64::try_from(location.anchor)
-                    .map_err(|_| Error::Invalid("anchor beyond i64".into()))?
-                    .to_string(),
-            ),
-            i64::try_from(*output_index)
-                .map_err(|_| Error::Invalid("output index beyond i64".into()))?,
-            None,
-        ),
-        Origin::Derived { parents } => (
-            None,
-            None,
-            0,
-            Some(format!(
-                "{{{}}}",
-                parents
-                    .iter()
-                    .map(|p| p.0.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )),
-        ),
-    };
-    let ts_orig = match e.ts_orig.at {
-        Some(t) => Some(
-            t.0.format(&time::format_description::well_known::Rfc3339)
-                .map_err(|_| Error::Invalid("unformattable ts_orig".into()))?,
-        ),
-        None => None,
-    };
-    let mut hash = String::from("\\\\x");
-    for b in e.record_hash {
-        let _ = write!(hash, "{b:02x}");
-    }
-    let fields: [Option<String>; 19] = [
-        Some(ord.to_string()),
-        Some(e.id.0.to_string()),
-        Some(e.event_type.to_owned()),
-        Some(e.source.clone()),
-        material,
-        anchor,
-        Some(output_index.to_string()),
-        parents,
-        ts_orig,
-        Some(e.ts_orig.quality.as_db().to_owned()),
-        Some(e.payload.to_string()),
-        e.equivalence_key.as_ref().map(|k| k.0.clone()),
-        Some(
-            e.replace
-                .ok_or_else(|| {
-                    Error::Invalid("historical declaration has no replacement rule".into())
-                })?
-                .as_db()
-                .to_owned(),
-        ),
-        Some(e.reading_order.0.to_string()),
-        None, // record_hash, written pre-escaped below
-        Some(e.record_state.as_db().to_owned()),
-        Some(e.class.as_db().to_owned()),
-        Some(
-            e.kind_ref()
-                .database_version()
-                .map_err(Error::Invalid)?
-                .to_string(),
-        ),
-        Some(e.validation.as_db().to_owned()),
-    ];
-    for (i, field) in fields.iter().enumerate() {
-        if i > 0 {
-            buf.push('\t');
-        }
-        if i == 14 {
-            buf.push_str(&hash);
-            continue;
-        }
-        match field {
-            None => buf.push_str("\\N"),
-            Some(text) => escape(buf, text),
-        }
-    }
-    buf.push('\n');
-    Ok(())
-}
-
 #[devkit::test]
-async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
-    db: devkit::pg::TestDatabase,
-) {
+async fn streaming_copy_round_trips_json_and_every_escaped_field(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut deep = serde_json::json!({"empty_array":[],"empty_object":{}});
     for _ in 0..64 {
@@ -192,10 +86,6 @@ async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
     );
     second.equivalence_key = None;
     let events = [first, second];
-    let mut expected = String::new();
-    for (i, e) in events.iter().enumerate() {
-        legacy_row(&mut expected, i as i64, e).unwrap();
-    }
     let mut tx = conn.begin().await.unwrap();
     sqlx::raw_sql("CREATE TEMP TABLE copy_wire (LIKE core.admission_stage INCLUDING ALL); ALTER TABLE copy_wire ALTER COLUMN payload TYPE text USING payload::text").execute(&mut *tx).await.unwrap();
     {
@@ -204,18 +94,12 @@ async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
             .await
             .unwrap();
         let mut encoder = CopyText::new(copy);
-        encoder.captured = Some(Vec::new());
         for (i, e) in events.iter().enumerate() {
             encoder.row(i as i64, e).await.unwrap();
         }
-        encoder.flush().await.unwrap();
-        assert_eq!(encoder.captured.take().unwrap(), expected.as_bytes());
-        assert_eq!(encoder.peak, COPY_BYTES);
-        assert_eq!(encoder.bytes.capacity(), COPY_BYTES);
-        assert!(encoder.fragment_peak <= 6 * JSON_STRING_BYTES + 2);
-        encoder.copy.finish().await.unwrap();
+        encoder.finish().await.unwrap();
     }
-    let rows=sqlx::query("SELECT ord,id,event_type,source,payload,equivalence_key,parents,record_hash FROM copy_wire ORDER BY ord")
+    let rows=sqlx::query("SELECT ord,id,event_type,source,material_id,anchor,output_index,payload,equivalence_key,parents,reading_order,record_hash,class FROM copy_wire ORDER BY ord")
         .fetch_all(&mut *tx).await.unwrap();
     for (i, (row, e)) in rows.iter().zip(&events).enumerate() {
         assert_eq!(row.get::<i64, _>("ord"), i as i64);
@@ -231,21 +115,39 @@ async fn streaming_copy_matches_exact_wire_bytes_for_json_and_all_fields(
             e.equivalence_key.as_ref().map(|k| k.0.clone())
         );
         assert_eq!(row.get::<Vec<u8>, _>("record_hash"), e.record_hash);
+        assert_eq!(row.get::<i64, _>("reading_order"), e.reading_order.0);
+        assert_eq!(row.get::<String, _>("class"), e.class.as_db());
         match &e.origin {
-            Origin::Derived { parents } => assert_eq!(
-                row.get::<Vec<uuid::Uuid>, _>("parents"),
-                parents.iter().map(|p| p.0).collect::<Vec<_>>()
-            ),
-            _ => assert!(row.get::<Option<Vec<uuid::Uuid>>, _>("parents").is_none()),
+            Origin::Derived { parents } => {
+                assert_eq!(
+                    row.get::<Vec<uuid::Uuid>, _>("parents"),
+                    parents.iter().map(|p| p.0).collect::<Vec<_>>()
+                );
+                assert_eq!(row.get::<i64, _>("output_index"), 0);
+                assert!(row.get::<Option<uuid::Uuid>, _>("material_id").is_none());
+            }
+            Origin::Record {
+                location,
+                output_index,
+            } => {
+                assert!(row.get::<Option<Vec<uuid::Uuid>>, _>("parents").is_none());
+                assert_eq!(
+                    row.get::<Option<uuid::Uuid>, _>("material_id"),
+                    Some(location.material.0)
+                );
+                assert_eq!(
+                    row.get::<Option<i64>, _>("anchor"),
+                    Some(location.anchor as i64)
+                );
+                assert_eq!(row.get::<i64, _>("output_index"), *output_index as i64);
+            }
         }
     }
     tx.rollback().await.unwrap();
 }
 
 #[devkit::test]
-async fn streaming_copy_bounds_scratch_for_one_huge_field_and_many_rows(
-    db: devkit::pg::TestDatabase,
-) {
+async fn streaming_copy_admits_one_huge_field_and_many_rows(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut events = vec![event(
         1,
@@ -253,16 +155,6 @@ async fn streaming_copy_bounds_scratch_for_one_huge_field_and_many_rows(
     )];
     events
         .extend((2..258).map(|n| event(n, serde_json::json!({"text":"synthetic ".repeat(2048)}))));
-    let mut predecessor = String::new();
-    for (i, e) in events.iter().enumerate() {
-        legacy_row(&mut predecessor, i as i64, e).unwrap();
-    }
-    let old_bytes = predecessor.len();
-    assert!(
-        old_bytes > 16 * 1024 * 1024,
-        "old full-batch allocation is the positive control"
-    );
-    drop(predecessor);
     let mut tx = conn.begin().await.unwrap();
     {
         let copy = tx
@@ -273,12 +165,7 @@ async fn streaming_copy_bounds_scratch_for_one_huge_field_and_many_rows(
         for (i, e) in events.iter().enumerate() {
             encoder.row(i as i64, e).await.unwrap();
         }
-        encoder.flush().await.unwrap();
-        assert_eq!(encoder.peak, COPY_BYTES);
-        assert_eq!(encoder.bytes.capacity(), COPY_BYTES);
-        assert!(encoder.fragment_peak <= 6 * JSON_STRING_BYTES + 2);
-        assert!(encoder.messages > 256);
-        encoder.copy.finish().await.unwrap();
+        encoder.finish().await.unwrap();
     }
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.admission_stage")

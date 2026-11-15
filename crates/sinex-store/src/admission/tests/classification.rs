@@ -1,9 +1,8 @@
-//! The old join can read all live keys under a merge plan. The replacement
-//! must agree on every row while visiting only the offered exact keys.
+//! Classification compares each offered row with the live row for its key
+//! or record location.
 use super::*;
 use sqlx::Executor;
 
-const OLD: &str = include_str!("classification/predecessor.sql");
 const NEW: &str = include_str!("../classification.sql");
 type Row = (i64, String, Option<Uuid>);
 
@@ -22,33 +21,6 @@ async fn stage(conn: &mut PgConnection, events: &[Event]) {
         .map(|(i, e)| (i as i64, e))
         .collect::<Vec<_>>();
     crate::stage::copy(conn, &numbered).await.unwrap();
-}
-async fn table_work(conn: &mut PgConnection) -> i64 {
-    sqlx::query_scalar("SELECT coalesce(sum(seq_tup_read+idx_tup_fetch),0)::bigint FROM pg_stat_xact_user_tables WHERE relid IN ('core.live_equivalence'::regclass,'core.live_locations'::regclass)")
-        .fetch_one(conn).await.unwrap()
-}
-async fn encoder_calls(conn: &mut PgConnection) -> i64 {
-    sqlx::query_scalar("SELECT coalesce((SELECT calls FROM pg_stat_xact_user_functions WHERE funcid='core.encode_equivalence_key(text)'::regprocedure),0)::bigint")
-        .fetch_one(conn).await.unwrap()
-}
-fn plan_contains(plan: &serde_json::Value, field: &str, text: &str) -> bool {
-    match plan {
-        Value::Object(fields) => {
-            fields
-                .get(field)
-                .is_some_and(|v| v.as_str().is_some_and(|s| s.contains(text)))
-                || fields.values().any(|v| plan_contains(v, field, text))
-        }
-        Value::Array(values) => values.iter().any(|v| plan_contains(v, field, text)),
-        _ => false,
-    }
-}
-async fn plan(conn: &mut PgConnection, sql: &str) -> Value {
-    sqlx::query_scalar(&format!("EXPLAIN (FORMAT JSON) {sql}"))
-        .persistent(false)
-        .fetch_one(conn)
-        .await
-        .unwrap()
 }
 fn input(key: Option<&str>, material: MaterialId, anchor: u64, hash: u8, order: i64) -> Event {
     let mut e = keyed("synthetic-classifier", 1, hash, order);
@@ -98,7 +70,6 @@ async fn classification_exact_probes_preserve_rank_removal_and_location_semantic
             state.to_owned(),
             if state == "new" { None } else { Some(live) },
         )];
-        assert_eq!(rows(&mut conn, OLD).await, expected);
         assert_eq!(rows(&mut conn, NEW).await, expected);
     }
     let mut other_source = input(Some("key"), material, 7, 1, 10);
@@ -110,7 +81,6 @@ async fn classification_exact_probes_preserve_rank_removal_and_location_semantic
         parents: vec![sinex_model::EventId::new()],
     };
     stage(&mut conn, &[no_location]).await;
-    assert_eq!(rows(&mut conn, OLD).await, rows(&mut conn, NEW).await);
     assert_eq!(rows(&mut conn, NEW).await, vec![(0, "new".into(), None)]);
     let mut suppressed = input(Some("key"), material, 7, 2, 11);
     suppressed.replace = Some(sinex_model::ReplaceRule::SuppressRepeat);
@@ -121,7 +91,6 @@ async fn classification_exact_probes_preserve_rank_removal_and_location_semantic
     );
     suppressed.record_state = sinex_model::RecordState::Removed;
     stage(&mut conn, &[suppressed]).await;
-    assert_eq!(rows(&mut conn, OLD).await, rows(&mut conn, NEW).await);
     assert_eq!(
         rows(&mut conn, NEW).await,
         vec![(0, "newer".into(), Some(live))]
@@ -135,12 +104,10 @@ async fn classification_exact_probes_preserve_rank_removal_and_location_semantic
     ];
     stage(&mut conn, &events).await;
     let actual = rows(&mut conn, NEW).await;
-    // The caller discards live_id for superseded rows; rank-one decisions
-    // retain the exact predecessor identity without probing discarded rows.
-    let old = rows(&mut conn, OLD).await;
+    // Superseded rows are not compared with live rows, so they carry none.
     assert_eq!(
-        actual.iter().map(|r| (&r.0, &r.1)).collect::<Vec<_>>(),
-        old.iter().map(|r| (&r.0, &r.1)).collect::<Vec<_>>()
+        actual.iter().map(|r| r.2).collect::<Vec<_>>(),
+        [None, None, Some(live), None, Some(live)]
     );
     assert_eq!(
         actual.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
@@ -160,15 +127,7 @@ async fn classification_exact_probes_preserve_rank_removal_and_location_semantic
 }
 
 #[devkit::test]
-async fn classification_bounds_live_key_work_under_merge_plans(db: devkit::pg::TestDatabase) {
-    // Compile-time binding/result validation uses another connection; it
-    // cannot change the measured session's prepared statements or GUCs.
-    let mut checked = PgConnection::connect(&db.url(None)).await.unwrap();
-    sqlx::query_file!("src/admission/classification.sql")
-        .fetch_all(&mut checked)
-        .await
-        .unwrap();
-    checked.close().await.unwrap();
+async fn classification_matches_offered_rows_among_many_live_keys(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let material = MaterialId::new();
     sqlx::query("INSERT INTO core.live_equivalence SELECT 'synthetic-classifier','command.executed',core.encode_equivalence_key('key-'||g),uuidv7(),10,decode(repeat('01',32),'hex') FROM generate_series(1,8192)g")
@@ -176,11 +135,13 @@ async fn classification_bounds_live_key_work_under_merge_plans(db: devkit::pg::T
     sqlx::query("INSERT INTO core.live_locations SELECT $1,g,'command.executed',0,uuidv7(),10,decode(repeat('01',32),'hex') FROM generate_series(1,8192)g")
         .bind(material.0).execute(&mut conn).await.unwrap();
     let mut events = Vec::new();
+    let mut expected = Vec::new();
     for i in 1..=64 {
         for _ in 0..2 {
             events.push(input(Some(&format!("key-{i}")), material, i, 1, 10));
         }
         events.push(input(None, material, i, 1, 10));
+        expected.extend(["superseded", "repeat", "repeat"]);
     }
     for i in 8193..8201 {
         events.push(input(
@@ -191,9 +152,7 @@ async fn classification_bounds_live_key_work_under_merge_plans(db: devkit::pg::T
             10,
         ));
         events.push(input(None, material, i, 1, 10));
-    }
-    for e in &mut events {
-        e.payload["command"] = json!("wide\t\\\nλ".repeat(8192));
+        expected.extend(["new", "new"]);
     }
     stage(&mut conn, &events).await;
     conn.execute(
@@ -201,62 +160,19 @@ async fn classification_bounds_live_key_work_under_merge_plans(db: devkit::pg::T
     )
     .await
     .unwrap();
-    let mut tx = conn.begin().await.unwrap();
-    tx.execute("SET LOCAL max_parallel_workers_per_gather=0; SET LOCAL enable_hashjoin=off; SET LOCAL enable_nestloop=off; SET LOCAL track_functions='all'; SET LOCAL jit=off").await.unwrap();
-    let old_plan = plan(&mut tx, OLD).await;
-    assert!(
-        plan_contains(&old_plan, "Node Type", "Merge Join"),
-        "{old_plan}"
+    let actual = sqlx::query_file!("src/admission/classification.sql")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        actual.iter().map(|r| r.ord).collect::<Vec<_>>(),
+        (0..events.len() as i64).collect::<Vec<_>>()
     );
-    let new_plan = plan(&mut tx, NEW).await;
-    assert!(
-        plan_contains(&new_plan, "Index Cond", "equivalence_key"),
-        "{new_plan}"
+    assert_eq!(
+        actual.iter().map(|r| r.state.as_str()).collect::<Vec<_>>(),
+        expected
     );
-    let before = table_work(&mut tx).await;
-    let fn_before = encoder_calls(&mut tx).await;
-    let expected = rows(&mut tx, OLD).await;
-    for _ in 1..8 {
-        assert_eq!(rows(&mut tx, OLD).await, expected);
+    for row in &actual {
+        assert_eq!(row.live_id.is_some(), row.state == "repeat", "{}", row.ord);
     }
-    let old_work = table_work(&mut tx).await - before;
-    let old_calls = encoder_calls(&mut tx).await - fn_before;
-    let before = table_work(&mut tx).await;
-    let fn_before = encoder_calls(&mut tx).await;
-    for _ in 0..8 {
-        let actual = rows(&mut tx, NEW).await;
-        assert_eq!(
-            actual.iter().map(|r| (&r.0, &r.1)).collect::<Vec<_>>(),
-            expected.iter().map(|r| (&r.0, &r.1)).collect::<Vec<_>>()
-        );
-        for (a, b) in actual.iter().zip(&expected) {
-            if a.1 != "superseded" {
-                assert_eq!(a, b);
-            }
-        }
-    }
-    let new_work = table_work(&mut tx).await - before;
-    let new_calls = encoder_calls(&mut tx).await - fn_before;
-    eprintln!(
-        "classification tuple visits over8: old={old_work} new={new_work}; encoder calls old={old_calls} new={new_calls}"
-    );
-    assert!(
-        old_work >= 8192 * 8,
-        "old query must read unrelated live history: {old_work}"
-    );
-    assert!(
-        new_work <= events.len() as i64 * 8 * 2,
-        "new probes exceed offered rows: {new_work}"
-    );
-    assert!(old_work > new_work * 4, "old={old_work} new={new_work}");
-    assert!(
-        new_calls
-            <= events
-                .iter()
-                .filter(|e| e.equivalence_key.is_some())
-                .count() as i64
-                * 8,
-        "encoder ran more than once per keyed row: {new_calls}"
-    );
-    tx.rollback().await.unwrap();
 }

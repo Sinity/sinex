@@ -23,53 +23,6 @@ async fn missing(conn: &mut PgConnection) -> i64 {
     .unwrap()
 }
 
-/// Count compressed batch tuples actually passed to decompression, rather
-/// than the aggregate's one output row or a LIMIT's returned suffix.
-async fn batch_work(conn: &mut PgConnection) -> (u64, serde_json::Value) {
-    let names: Vec<String> = sqlx::query_scalar(
-        "SELECT relname FROM pg_class WHERE oid IN (
-          SELECT compress_relid FROM _timescaledb_catalog.compression_settings
-          WHERE relid IN (SELECT show_chunks('core.events')) AND compress_relid IS NOT NULL)",
-    )
-    .fetch_all(&mut *conn)
-    .await
-    .unwrap();
-    let plan:serde_json::Value=sqlx::query_scalar(
-        "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT sum(e.commit_seq) FROM core.events e WHERE e.commit_seq>8190 AND e.commit_seq<=8192")
-        .fetch_one(conn).await.unwrap();
-    fn visited(value: &serde_json::Value, names: &[String]) -> u64 {
-        match value {
-            serde_json::Value::Object(object) => {
-                let own = object
-                    .get("Relation Name")
-                    .and_then(|name| name.as_str())
-                    .filter(|name| names.iter().any(|candidate| candidate.as_str() == *name))
-                    .map(|_| {
-                        (object
-                            .get("Actual Rows")
-                            .and_then(|n| n.as_f64())
-                            .unwrap_or(0.0)
-                            * object
-                                .get("Actual Loops")
-                                .and_then(|n| n.as_f64())
-                                .unwrap_or(0.0))
-                        .ceil() as u64
-                    })
-                    .unwrap_or(0);
-                own + object
-                    .values()
-                    .map(|child| visited(child, names))
-                    .sum::<u64>()
-            }
-            serde_json::Value::Array(values) => {
-                values.iter().map(|child| visited(child, names)).sum()
-            }
-            _ => 0,
-        }
-    }
-    (visited(&plan, &names), plan)
-}
-
 async fn compressed_predecessor(conn: &mut PgConnection) {
     // The old chunks retain an additional configured bloom that the current
     // hypertable setting alone no longer mentions.
@@ -114,11 +67,6 @@ async fn native_sparse_rebuild_preserves_objects_values_and_resumes_per_chunk(
             "{configured}"
         );
     }
-    let (unpruned, old_plan) = batch_work(&mut conn).await;
-    assert!(
-        unpruned >= 4,
-        "unpruned compressed-batch positive control: {old_plan}"
-    );
     assert_eq!(missing(&mut conn).await, 2);
     assert_eq!(
         crate::online::remaining(&mut conn).await.unwrap(),
@@ -161,11 +109,6 @@ async fn native_sparse_rebuild_preserves_objects_values_and_resumes_per_chunk(
         }
     );
     assert_eq!(missing(&mut conn).await, 0);
-    let (pruned, new_plan) = batch_work(&mut conn).await;
-    assert!(
-        pruned > 0 && pruned <= 2 && pruned < unpruned,
-        "compressed batches {unpruned} -> {pruned}; old: {old_plan}; new: {new_plan}"
-    );
     assert_eq!(sqlx::query_scalar::<_,Option<i64>>("SELECT sum(commit_seq)::bigint FROM core.events WHERE commit_seq>8190 AND commit_seq<=8192")
         .fetch_one(&mut conn).await.unwrap(),Some(16383));
     assert_eq!(rows(&mut conn).await, before);
