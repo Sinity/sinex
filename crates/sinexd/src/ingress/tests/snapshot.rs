@@ -210,6 +210,61 @@ async fn snapshot_pages_read_one_position_and_complete_with_their_stream_start(
 }
 
 #[devkit::test]
+async fn a_sealed_reading_arrives_withheld_in_a_snapshot(db: devkit::pg::TestDatabase) {
+    let (h, _, admitted) = setup(db, 1, sinex_model::Class::Open).await;
+    // Admission never stores a sealed reading without a configured seal, and
+    // stored rows are immutable, so the sealed reading is a second synthetic
+    // output of the same record at the same commit position.
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    let (columns, values): (String, String) = sqlx::query_as(
+        "SELECT string_agg(quote_ident(column_name), ',' ORDER BY ordinal_position), \
+         string_agg('sealed.' || quote_ident(column_name), ',' ORDER BY ordinal_position) \
+         FROM information_schema.columns \
+         WHERE table_schema='core' AND table_name='events' AND is_generated='NEVER'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let sealed: uuid::Uuid = sqlx::query_scalar(&format!(
+        "INSERT INTO core.events ({columns}) SELECT {values} FROM core.events e, \
+         jsonb_populate_record(NULL::core.events, to_jsonb(e) || jsonb_build_object(\
+         'id', uuidv7(), 'output_index', e.output_index + 1, 'class', 'sealed')) sealed \
+         WHERE e.id=$1 RETURNING id"
+    ))
+    .bind(admitted[0].0)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    // The producer's grants include the sealed class, yet a sealed reading
+    // needs an operator unlock, so the page names it and withholds its body.
+    let SnapshotReply::Page {
+        events,
+        next: SnapshotNext::Complete { .. },
+    } = page(&h, "synthetic", None).await
+    else {
+        panic!("one complete page")
+    };
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        &events[0].event,
+        SnapshotReading::Inline(event) if event.id == admitted[0]
+    ));
+    let SnapshotReading::Withheld(withheld) = &events[1].event else {
+        panic!("a sealed reading is withheld")
+    };
+    assert_eq!(withheld.event, EventId(sealed));
+    assert_eq!(withheld.class, sinex_model::Class::Sealed);
+    assert_eq!(withheld.reason, sinex_protocol::WithheldReason::Class);
+    assert_eq!(withheld.event_type, declaration().kind.name);
+    assert!(!events[1].archived);
+    // A producer granted only the open class does not get it at all.
+    let SnapshotReply::Page { events, .. } = page(&h, "narrow", None).await else {
+        panic!("narrow page")
+    };
+    assert_eq!(ids(&events), admitted);
+}
+
+#[devkit::test]
 async fn a_tombstone_between_pages_restarts_the_snapshot(db: devkit::pg::TestDatabase) {
     let (h, material, _) = setup(db, 257, sinex_model::Class::Open).await;
     let SnapshotReply::Page {
