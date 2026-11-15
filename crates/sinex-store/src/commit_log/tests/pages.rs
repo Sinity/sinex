@@ -36,11 +36,12 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,reading_order,record_hash,class)
       SELECT ('01800000-0000-7000-8'||substr(md5(n::text),1,3)||'-'||substr(md5(n::text),5,12))::uuid,
         'synthetic.page','synthetic.page', '01800000-0000-4000-8000-000000000001'::uuid,
-        '01800000-0000-4000-8000-000000000002'::uuid,n,n%3,
-        ARRAY['01800000-0000-4000-8000-000000000003'::uuid],
-        '2022-04-01'::timestamptz+n*interval '1 second','unknown',
+        CASE WHEN n%2=0 THEN '01800000-0000-4000-8000-000000000002'::uuid END,
+        CASE WHEN n%2=0 THEN n END,n%3,
+        CASE WHEN n%2=1 THEN ARRAY['01800000-0000-4000-8000-000000000003'::uuid] END,
+        '2022-04-01'::timestamptz+n*interval '1 second','intrinsic',
         '2022-04-01'::timestamptz+n*interval '1 second',n,
-        jsonb_build_object('n',n,'text',repeat(md5(n::text),128)),n,decode(md5(n::text),'hex'),
+        jsonb_build_object('n',n,'text',repeat(md5(n::text),128)),n,decode(repeat(md5(n::text),2),'hex'),
         CASE n%3 WHEN 0 THEN 'open' WHEN 1 THEN 'guarded' ELSE 'sealed' END
       FROM generate_series(1,8448)n;
       INSERT INTO core.commit_log(commit_seq) VALUES(8449),(8450);
@@ -76,7 +77,7 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
             let n = 8193 + offset as i64;
             assert_eq!(event.commit_seq, n);
             assert_eq!(event.payload["n"], n);
-            assert_eq!(event.anchor, Some(n));
+            assert_eq!(event.anchor, (n % 2 == 0).then_some(n));
             assert_eq!(event.output_index, n % 3);
             assert_eq!(
                 event.class,
