@@ -72,7 +72,7 @@ async fn seed(conn: &mut PgConnection, offers: &Offers, candidate: bool) -> Base
         }};
     }
     if candidate {
-        read!("src/admission/orders/candidate_seed.sql")
+        read!("src/admission/orders/seed.sql")
     } else {
         read!("src/admission/orders/old_seed.sql")
     }
@@ -85,7 +85,7 @@ async fn work(conn: &mut PgConnection) -> i64 {
 
 async fn executor_work(conn: &mut PgConnection, offers: &Offers, candidate: bool) -> f64 {
     let query = if candidate {
-        include_str!("candidate_seed.sql")
+        include_str!("seed.sql")
     } else {
         include_str!("old_seed.sql")
     };

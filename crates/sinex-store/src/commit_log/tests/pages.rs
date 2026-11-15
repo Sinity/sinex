@@ -30,6 +30,16 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let declaration = sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef {
+            name: "synthetic.page".into(),
+            version: 1,
+        },
+        "synthetic".into(),
+    );
+    sinex_schema::kinds::register(&mut conn, "synthetic", &[declaration])
+        .await
+        .unwrap();
     // Legacy random UUID suffixes have no relationship to commit order. The
     // native UUID time dimension requires the version-7 envelope. All rows share
     // a time chunk; timestamps retain the ordinary compression ordering.
@@ -120,7 +130,9 @@ async fn commit_pairs_preserve_full_pages_and_bound_legacy_uuid_hydration(
         let old = work(&mut tx).await - before;
         let before = work(&mut tx).await;
         for _ in 0..8 {
-            assert_eq!(rows(&mut tx, NEW, 8192, 16, i64::MAX).await, expected);
+            let actual = after(&mut tx, 8192, 16, i64::MAX).await.unwrap();
+            assert_eq!(actual.events, all.events);
+            assert_eq!(actual.up_to, all.up_to);
         }
         let new = work(&mut tx).await - before;
         let before = work(&mut tx).await;
