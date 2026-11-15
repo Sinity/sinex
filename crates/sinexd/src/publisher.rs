@@ -421,12 +421,11 @@ async fn publish_chunk(
             _ => None,
         })
         .collect();
-    let mut complete: std::collections::BTreeMap<_, _> =
-        crate::confirmed_event::build(&mut tx, open)
-            .await?
-            .into_iter()
-            .map(|event| (event.id.0, event))
-            .collect();
+    let mut whole: std::collections::BTreeMap<_, _> = crate::confirmed_event::build(&mut tx, open)
+        .await?
+        .into_iter()
+        .map(|event| (event.id.0, event))
+        .collect();
     let limit = message_limit(js);
     let mut acks = Vec::new();
     for entry in entries {
@@ -453,9 +452,9 @@ async fn publish_chunk(
                     )
                     .map(Confirmed::Withheld)
                 };
-                let message = match complete.remove(&id) {
-                    Some(complete) => {
-                        let message = Confirmed::Event(Box::new(complete));
+                let message = match whole.remove(&id) {
+                    Some(event) => {
+                        let message = Confirmed::Event(Box::new(event));
                         if serde_json::to_vec(&message)?.len() > limit {
                             withheld(WithheldReason::Size)?
                         } else {

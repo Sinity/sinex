@@ -480,6 +480,7 @@ async fn archive_consumer_observes_archive_restore_archive_without_duplicate_eve
             Confirmed::Event(event) => {
                 assert!(live.insert(event.id));
             }
+            Confirmed::Withheld(event) => panic!("an open event travels whole: {event:?}"),
             Confirmed::Archived(n) => {
                 assert_eq!(n.event, id);
                 live.remove(&n.event);
