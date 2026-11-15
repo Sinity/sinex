@@ -194,7 +194,6 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             "example",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "unknown-version".into(),
                 events: vec![unknown],
                 failures: vec![]
@@ -211,7 +210,6 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             "example",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "invalid".into(),
                 events: vec![invalid],
                 failures: vec![],
@@ -256,7 +254,6 @@ async fn producer_replay_replaces_repeat_readings_and_rolls_back_invalid_later_b
             "example",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "first".into(),
                 events: vec![event(&d, material, "old", 10)],
                 failures: vec![]
@@ -454,7 +451,6 @@ async fn every_polylogue_repeat_kind_is_replaced_atomically_and_an_archived_reco
             "polylogue",
             &Ingress::Events {
                 source: Some(test_source("polylogue")),
-                coverage: None,
                 frame: "first".into(),
                 events: events("old", 10),
                 failures: vec![],
@@ -561,7 +557,6 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
         "example",
         &Ingress::Events {
             source: Some(test_source("example")),
-            coverage: None,
             frame: "first".into(),
             events: vec![event(&d, material, "first", 1)],
             failures: vec![],
@@ -574,7 +569,6 @@ async fn changed_live_readings_refuse_a_prepared_replay(db: devkit::pg::TestData
             "example",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "arrived".into(),
                 events: vec![event(&d, material, "arrived", 2)],
                 failures: vec![],
@@ -644,7 +638,6 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
             "example",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "old".into(),
                 events: vec![event(&selected_kind, material, "old", 1)],
                 failures: vec![]
@@ -661,7 +654,6 @@ async fn readings_outside_the_selected_kind_do_not_invalidate_replay(db: devkit:
             "example",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "outside".into(),
                 events: vec![event(&other_kind, material, "outside", 2)],
                 failures: vec![]
@@ -731,7 +723,6 @@ async fn writer_assigned_orders_preserve_a_b_a_and_exact_frame_retries(
         offered.reading_order = None;
         let frame = Ingress::Events {
             source: Some(test_source("example")),
-            coverage: None,
             frame: format!("assigned-{ordinal}"),
             events: vec![offered],
             failures: vec![],

@@ -27,12 +27,12 @@ use crate::{Error, Result};
 pub(crate) mod authority;
 mod bytes;
 mod confirmed_consumer;
-mod coverage;
 pub(crate) mod fetch;
-mod native_prefix;
 mod recorded;
 pub(crate) mod replay;
 mod signals;
+mod snapshot;
+mod stream_messages;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
 use async_nats::jetstream::{self, AckKind, consumer, stream};
@@ -249,20 +249,12 @@ impl Ingest {
                 Ok(Ingress::LargeFrame { .. }) => unreachable!("large frame was decoded"),
             }
         };
-        let checked = match checked {
-            Ok(value) => match self.coverage_claim(producer, details).await {
-                Ok(coverage) => Ok((value, coverage)),
-                Err(error) => Err(error),
-            },
-            Err(error) => Err(error),
-        };
         let mut batch = match checked {
-            Ok(((progress, records), coverage)) => Batch {
+            Ok((progress, records)) => Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
                     content_hash: Some(content_hash.clone()),
                     receipt_number: None,
-                    coverage,
                     native_source: native_source(details).cloned(),
                     source_fingerprint: native_source(details).and_then(|source| {
                         self.grants
@@ -962,7 +954,6 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
         kind: BatchKind::Ingress(Box::new(IngressFrame {
             content_hash: None,
             receipt_number: None,
-            coverage: None,
             native_source: None,
             source_fingerprint: None,
             host: None,
@@ -1052,6 +1043,27 @@ enum ResponseBody {
 }
 
 impl Requests {
+    /// The host's current day, quiet hours and interrupt budget, read at one
+    /// database snapshot.
+    pub(super) async fn public_context(&self) -> sinex_protocol::PublicContext {
+        let result: Result<_> = async {
+            use sqlx::Connection;
+            let mut conn = self.reads.acquire().await?;
+            let mut tx = conn.begin().await?;
+            sinex_store::query::read_one_snapshot(&mut tx).await?;
+            let context = self
+                .public_context
+                .snapshot(&mut tx, Timestamp::now())
+                .await?;
+            tx.commit().await?;
+            Ok(context)
+        }
+        .await;
+        result.unwrap_or_else(|reason| sinex_protocol::PublicContext::Unavailable {
+            reason: reason.to_string(),
+        })
+    }
+
     async fn connect(&self, producer: &str, hello: &ProducerHello) -> Result<ProducerWelcome> {
         let write = authority::write(&self.read_grants, producer).ok();
         let mut conn = self.reads.acquire().await?;
@@ -1250,7 +1262,7 @@ impl Requests {
                     Err(error) => sinex_protocol::PublicContext::Refused {
                         reason: error.to_string(),
                     },
-                    Ok(request) => self.public_context_snapshot(&producer, &request).await,
+                    Ok(sinex_protocol::PublicContextRequest {}) => self.public_context().await,
                 }
             };
             ResponseBody::Context(response)
@@ -1331,11 +1343,9 @@ impl Requests {
             }
         } else if subject == self.subjects.replay_scope(&producer) {
             match serde_json::from_slice::<sinex_protocol::ReplayQuery>(payload) {
-                Ok(sinex_protocol::ReplayQuery::Inputs { cache, cursor }) => {
-                    ResponseBody::Replay(sinex_protocol::ReplayReply::Inputs {
-                        result: self
-                            .replay_inputs(&producer, &cache, cursor.as_deref())
-                            .await,
+                Ok(sinex_protocol::ReplayQuery::Snapshot { cursor }) => {
+                    ResponseBody::Replay(sinex_protocol::ReplayReply::Snapshot {
+                        reply: self.snapshot(&producer, cursor).await,
                     })
                 }
                 Ok(sinex_protocol::ReplayQuery::Materials { query }) => {

@@ -534,7 +534,6 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
 
     let events = Ingress::Events {
         source: Some(test_source("kitty")),
-        coverage: None,
         frame: "e1".into(),
         events: vec![imported(material, 0, "ls"), imported(material, 18, "pwd")],
         failures: vec![],
@@ -556,7 +555,6 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
     // The same events in a new frame are repeats.
     let resent = Ingress::Events {
         source: Some(test_source("kitty")),
-        coverage: None,
         frame: "e2".into(),
         events: vec![imported(material, 0, "ls")],
         failures: vec![],
@@ -708,7 +706,6 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     });
     let events = |text: &str, order: i64, name: &str| Ingress::Events {
         source: Some(test_source("polylogue")),
-        coverage: None,
         frame: name.into(),
         events: vec![
             event("polylogue.session", session.clone(), 0, order),
@@ -812,7 +809,6 @@ async fn invalid_frames_are_refused_and_recorded(db: devkit::pg::TestDatabase) {
                 "kitty",
                 &Ingress::Events {
                     source: Some(test_source("kitty")),
-                    coverage: None,
                     frame: name.into(),
                     events: vec![event],
                     failures: vec![],
@@ -1054,7 +1050,6 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "e1".into(),
                 events: vec![imported(material, 0, "ls")],
                 failures: vec![],
@@ -1074,17 +1069,13 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         .get_last_raw_message_by_subject(&h.subjects.confirmed_event("open", "command.imported"))
         .await
         .unwrap();
-    let confirmed: Confirmed = serde_json::from_slice(&message.payload).unwrap();
-    assert_eq!(
-        confirmed,
-        Confirmed::EventReference {
-            commit_seq: receipt.commit_seq().unwrap(),
-            event: receipt.admitted()[0]
-        }
-    );
-    let wire: Value = serde_json::from_slice(&message.payload).unwrap();
-    assert!(wire.get("payload").is_none());
-    assert_eq!(wire.as_object().unwrap().len(), 3);
+    let Confirmed::Event(event) = serde_json::from_slice(&message.payload).unwrap() else {
+        panic!("an open event travels complete")
+    };
+    assert_eq!(event.commit_seq, receipt.commit_seq().unwrap());
+    assert_eq!(event.id, receipt.admitted()[0]);
+    assert_eq!(event.event_type, "command.imported");
+    assert_eq!(event.location.unwrap().material, material);
     let _ = &h.nats;
 }
 
@@ -1141,7 +1132,6 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
             "node",
             &Ingress::Events {
                 source: Some(test_source("node")),
-                coverage: None,
                 frame: "e-up".into(),
                 events: vec![imported(id, 0, "ls")],
                 failures: vec![ProducerFailure {
@@ -1170,7 +1160,6 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names(db: devkit::pg::Test
     h.send("kitty", &frame).await;
     let inner = Ingress::Events {
         source: Some(test_source("kitty")),
-        coverage: None,
         frame: "e-big".into(),
         events: vec![imported(material, 0, "ls")],
         failures: vec![],
@@ -1266,7 +1255,6 @@ async fn a_producer_archives_through_a_lifecycle_request(db: devkit::pg::TestDat
     for (producer, material) in [("kitty", mine), ("phone", other)] {
         let events = Ingress::Events {
             source: Some(test_source(producer)),
-            coverage: None,
             frame: format!("e-{producer}"),
             events: vec![imported(material, 0, "ls")],
             failures: vec![],
@@ -1541,7 +1529,6 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
         }
         let frame = Ingress::Events {
             source: Some(test_source("session")),
-            coverage: None,
             frame: format!("events-{index}"),
             events: vec![event],
             failures: vec![],
@@ -1672,7 +1659,6 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
                 "session",
                 &Ingress::Events {
                     source: Some(test_source("session")),
-                    coverage: None,
                     frame: format!("a/events/{first}/{name}"),
                     events: vec![event],
                     failures: vec![],
@@ -1697,7 +1683,6 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             repeated.kind.name = "not.\0declared".into();
             let retry = Ingress::Events {
                 source: Some(test_source("session")),
-                coverage: None,
                 frame: format!("a/events/{first}/{name}"),
                 events: vec![repeated],
                 failures: vec![],
@@ -1739,7 +1724,6 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             "session",
             &Ingress::Events {
                 source: Some(test_source("session")),
-                coverage: None,
                 frame: "valid-after-malformed-content".into(),
                 events: vec![imported(second, 0, "valid registered content")],
                 failures: vec![],
@@ -1963,7 +1947,6 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     event.kind.name = "not.declared".into();
     let content = Ingress::Events {
         source: Some(test_source("node")),
-        coverage: None,
         frame: format!("a:/spool/capture@host/events/{material}/content"),
         events: vec![event.clone(), event],
         failures: vec![],
@@ -1995,7 +1978,6 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     );
     let malformed = Ingress::Events {
         source: Some(test_source("other-node")),
-        coverage: None,
         frame: "c/events/invalid".into(),
         events: vec![ProducerEvent {
             location: None,
@@ -2138,7 +2120,7 @@ mod families;
 
 mod replies;
 
-mod coverage;
+mod snapshot;
 
 mod recorded_continuations;
 

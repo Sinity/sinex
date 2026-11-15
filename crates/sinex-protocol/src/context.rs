@@ -1,27 +1,15 @@
-//! Owner-provided public temporal and attention policy snapshots.
+//! Sinex-provided public temporal and attention policy snapshots.
 use serde::{Deserialize, Serialize};
 use sinex_model::Timestamp;
 
+/// The producer is the authenticated subject's; the body names nothing.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct PublicContextRequest {
-    #[serde(default)]
-    pub coverage: Option<CoverageRequest>,
-}
+pub struct PublicContextRequest {}
 
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CoverageRequest {
-    #[serde(default)]
-    pub basis: Option<CoverageProof>,
-    pub cache: String,
-    pub completed_position: i64,
-    #[serde(default)]
-    pub completion: Option<DeliveredCompletion>,
-}
-
-/// A delivered native completion marker. This proves an eligible delivery
-/// window; it does not assert that the consumer committed its local changes.
+/// The confirmed-stream completion marker a consumer applied last: the stream
+/// instance, the marker's sequence and its fingerprint. Sinex reads that
+/// message back from the broker to resume delivery after it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeliveredCompletion {
@@ -30,8 +18,8 @@ pub struct DeliveredCompletion {
     pub fingerprint: String,
 }
 impl DeliveredCompletion {
-    /// Bind an immutable native record, including its original broker timestamp.
-    /// A new append of an old payload is not the original delivered boundary.
+    /// Identify one stored stream message, including its original broker
+    /// timestamp, so a new append of an old body is not mistaken for it.
     pub fn fingerprint(
         sequence: u64,
         published_nanos: i128,
@@ -49,27 +37,6 @@ impl DeliveredCompletion {
     }
 }
 
-/// The signed stamp is opaque. Its claims are validated by the owner on new writes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoverageProof {
-    pub stamp: String,
-    pub position: i64,
-    pub scope: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum CoverageStatus {
-    Complete {
-        proof: CoverageProof,
-    },
-    Incomplete {
-        reason: String,
-        basis: crate::ReplayBasisStatus,
-    },
-    NotRequested,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PublicInterruptBudget {
     pub per_hour: u64,
@@ -84,14 +51,12 @@ pub struct PublicInterruptBudget {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PublicContext {
     Available {
-        context_token: String,
         settings_identity: String,
         owner_revision: u64,
         day: query_language::time::DaySettingWire,
         quiet_hours: Option<signals::QuietHours>,
         interrupt_budget: PublicInterruptBudget,
         observed_at: Timestamp,
-        coverage: CoverageStatus,
     },
     Pending {
         reason: String,

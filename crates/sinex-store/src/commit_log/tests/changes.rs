@@ -254,7 +254,7 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
     let mut actual = Vec::new();
     let mut last = 0;
     loop {
-        let page = crate::commit_log::references_after_origin(&mut conn, cursor, &origin, 1, 1)
+        let page = crate::commit_log::stream_changes_after_origin(&mut conn, cursor, &origin, 1, 1)
             .await
             .unwrap();
         assert!(page.gap.is_none());
@@ -295,7 +295,7 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
         .execute(&mut *conn)
         .await
         .unwrap();
-    let page = crate::commit_log::references_after_origin(
+    let page = crate::commit_log::stream_changes_after_origin(
         &mut conn,
         ChangeCursor::after(last),
         &origin,
@@ -308,7 +308,7 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
     let mut wrong = origin.clone();
     wrong.store = "other synthetic store".into();
     assert!(
-        crate::commit_log::references_after_origin(
+        crate::commit_log::stream_changes_after_origin(
             &mut conn,
             ChangeCursor::after(last),
             &wrong,

@@ -143,7 +143,6 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
                 producer,
                 &Ingress::Events {
                     source: Some(test_source("example")),
-                    coverage: None,
                     frame: "raw-copy".into(),
                     events: vec![event(&raw.kind, id, producer, "same captured text")],
                     failures: vec![]
@@ -162,7 +161,6 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
             "host-b",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "unauthorized-summary".into(),
                 events: vec![event(&summary.kind, b, "host-b", "forged summary")],
                 failures: vec![]
@@ -177,7 +175,6 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
             "host-a",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "canonical-summary".into(),
                 events: vec![event(&summary.kind, a, "canonical", "summary")],
                 failures: vec![]
@@ -273,7 +270,6 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
             "host-a",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                coverage: None,
                 frame: "old-owner-unknown".into(),
                 events: vec![event(
                     &KindRef {

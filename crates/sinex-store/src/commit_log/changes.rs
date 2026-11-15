@@ -78,10 +78,10 @@ impl<E> Default for ChangePage<E> {
     }
 }
 
-/// Routing fields needed by the confirmed publisher. Payloads are fetched by
-/// authorized readers, not loaded again while publishing their references.
+/// The routing fields of a committed event. The publisher loads complete
+/// events only for those it sends inline.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EventReference {
+pub struct EventHeader {
     pub commit_seq: i64,
     pub id: Uuid,
     pub event_type: String,
@@ -105,7 +105,7 @@ impl EventProjection for Committed {
         load_events(conn, ids).await
     }
 }
-impl EventProjection for EventReference {
+impl EventProjection for EventHeader {
     const PAYLOAD: bool = false;
     fn id(&self) -> Uuid {
         self.id
@@ -142,16 +142,53 @@ impl EventProjection for EventReference {
     }
 }
 
-/// Read payload-free publication work with the same ordering and authority as
-/// the full canonical feed. Post-origin deltas require a complete certified
-/// projection; predecessor gaps remain closed by the schema constraint.
-pub async fn references_after_origin(
+/// A committed event as the confirmed publisher sends it: complete when its
+/// class is open, by its routing fields otherwise.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StreamEvent {
+    Open(Box<crate::confirmed::Row>),
+    Header(EventHeader),
+}
+impl EventProjection for StreamEvent {
+    const PAYLOAD: bool = true;
+    fn id(&self) -> Uuid {
+        match self {
+            Self::Open(row) => row.id,
+            Self::Header(header) => header.id,
+        }
+    }
+    async fn load(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Self>> {
+        let headers = EventHeader::load(conn, ids).await?;
+        let open: Vec<_> = headers
+            .iter()
+            .filter(|header| header.class == "open")
+            .map(|header| header.id)
+            .collect();
+        let rows: BTreeMap<_, _> = crate::confirmed::rows(conn, &open)
+            .await?
+            .into_iter()
+            .map(|row| (row.id, row))
+            .collect();
+        Ok(headers
+            .into_iter()
+            .map(|header| match rows.get(&header.id) {
+                Some(row) => Self::Open(Box::new(row.clone())),
+                None => Self::Header(header),
+            })
+            .collect())
+    }
+}
+
+/// Read the confirmed stream's work after its origin, in the same order and
+/// with the same history checks as the full feed. Pages are bounded by stored
+/// payload bytes.
+pub async fn stream_changes_after_origin(
     conn: &mut PgConnection,
     after: ChangeCursor,
     origin: &HistoryOrigin,
     limit: i64,
     bytes: i64,
-) -> Result<ChangePage<EventReference>> {
+) -> Result<ChangePage<StreamEvent>> {
     changes_page_from(conn, after, limit, bytes, Some(origin)).await
 }
 

@@ -4,7 +4,8 @@ type Tuple = (i64, EventId, &'static str);
 
 pub(super) fn tuple(message: &Confirmed) -> Option<Tuple> {
     match message {
-        Confirmed::EventReference { commit_seq, event } => Some((*commit_seq, *event, "event")),
+        Confirmed::Event(event) => Some((event.commit_seq, event.id, "event")),
+        Confirmed::Withheld(event) => Some((event.commit_seq, event.event, "event")),
         Confirmed::Archived(a) => Some((a.archived_seq, a.event, "archived")),
         Confirmed::Restored(a) => Some((a.restored_seq, a.event, "restored")),
         Confirmed::Tombstoned {
@@ -115,7 +116,7 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
         origin.position,
         commit_log::latest(&mut conn).await.unwrap()
     );
-    assert!(origin.requires_projection);
+    assert!(origin.requires_snapshot);
     assert_eq!(
         publish_pending(&mut conn, &js, &subjects)
             .await
@@ -192,7 +193,7 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
         .unwrap();
     let stream = confirmed_stream(&mut conn, &js, &subjects).await.unwrap();
     let origin = history_origin(&stream).unwrap();
-    let page = commit_log::references_after_origin(
+    let page = commit_log::stream_changes_after_origin(
         &mut conn,
         commit_log::ChangeCursor::after(before),
         &origin,
@@ -305,7 +306,7 @@ async fn empty_database_is_ready_at_zero_and_nonempty_old_contract_is_refused(
 }
 
 #[devkit::test]
-async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::pg::TestDatabase) {
+async fn giant_event_metadata_travels_by_id_and_completes(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -355,14 +356,17 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::p
     ));
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
     let messages = read_wire_all(&js, &subjects).await;
-    assert!(matches!(&messages[0],Confirmed::EventReference{event,..} if *event==parent_id));
+    assert!(matches!(&messages[0], Confirmed::Event(event) if event.id == parent_id));
     assert_eq!(
         messages[1..],
         [
-            Confirmed::EventReference {
+            Confirmed::Withheld(sinex_protocol::WithheldEvent {
                 commit_seq: 2,
-                event: id
-            },
+                event: id,
+                event_type: "command.executed".into(),
+                class: Class::Open,
+                reason: WithheldReason::Size,
+            }),
             Confirmed::PositionComplete { commit_seq: 2 }
         ]
     );
@@ -379,7 +383,9 @@ async fn giant_event_metadata_uses_compact_reference_and_completes(db: devkit::p
 }
 
 #[devkit::test]
-async fn references_expose_no_source_key_and_route_by_stored_class(db: devkit::pg::TestDatabase) {
+async fn withheld_events_expose_no_source_key_and_route_by_stored_class(
+    db: devkit::pg::TestDatabase,
+) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -426,10 +432,13 @@ async fn references_expose_no_source_key_and_route_by_stored_class(db: devkit::p
     let wire: Confirmed = serde_json::from_slice(&raw.payload).unwrap();
     assert_eq!(
         wire,
-        Confirmed::EventReference {
+        Confirmed::Withheld(sinex_protocol::WithheldEvent {
             commit_seq: 1,
-            event: id
-        }
+            event: id,
+            event_type: "command.executed".into(),
+            class: Class::Guarded,
+            reason: WithheldReason::Class,
+        })
     );
     let key: String = sqlx::query_scalar("SELECT equivalence_key FROM core.events WHERE id=$1")
         .bind(id.0)
@@ -454,7 +463,7 @@ async fn references_expose_no_source_key_and_route_by_stored_class(db: devkit::p
 }
 
 #[devkit::test]
-async fn retained_inline_contract_two_is_refused_without_erasing_messages(
+async fn an_older_stream_contract_is_refused_without_erasing_messages(
     db: devkit::pg::TestDatabase,
 ) {
     let nats = devkit::nats::test_nats().unwrap();
@@ -465,7 +474,7 @@ async fn retained_inline_contract_two_is_refused_without_erasing_messages(
         subjects: vec![subjects.confirmed_all()],
         ..Default::default()
     };
-    config.metadata.insert(CONTRACT_KEY.into(), "2".into());
+    config.metadata.insert(CONTRACT_KEY.into(), "4".into());
     js.create_stream(config).await.unwrap();
     let old = serde_json::json!({"type":"event","equivalence_key":"synthetic-inline-key"});
     js.publish(
@@ -486,5 +495,5 @@ async fn retained_inline_contract_two_is_refused_without_erasing_messages(
     );
     let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
     assert_eq!(stream.cached_info().state.messages, 1);
-    assert_eq!(stream.cached_info().config.metadata[CONTRACT_KEY], "2");
+    assert_eq!(stream.cached_info().config.metadata[CONTRACT_KEY], "4");
 }

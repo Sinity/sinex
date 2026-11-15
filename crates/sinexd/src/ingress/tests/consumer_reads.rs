@@ -12,7 +12,7 @@ async fn provision(
         h.subjects.confirmed_consumer(producer),
         serde_json::to_vec(&ConfirmedConsumer {
             completion,
-            basis: None,
+            start: None,
             after,
             cache: "synthetic-index".into(),
             status_only: false,
@@ -48,7 +48,6 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "open-event".into(),
                 events: vec![imported(open, 0, "open")],
                 failures: vec![],
@@ -66,7 +65,6 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
             "phone",
             &Ingress::Events {
                 source: Some(test_source("phone")),
-                coverage: None,
                 frame: "guarded-event".into(),
                 events: vec![event],
                 failures: vec![]
@@ -130,7 +128,10 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         let message = message.unwrap();
         let item: Confirmed = serde_json::from_slice(&message.payload).unwrap();
         match item {
-            Confirmed::EventReference { event, .. } => events.push(event),
+            Confirmed::Event(event) => {
+                assert_eq!(event.payload["command"], "open");
+                events.push(event.id)
+            }
             Confirmed::PositionComplete { commit_seq } => {
                 complete = commit_seq;
                 let info = message.info().unwrap();
@@ -158,7 +159,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         h.subjects.confirmed_consumer("replica"),
         serde_json::to_vec(&ConfirmedConsumer {
             completion: None,
-            basis: None,
+            start: None,
             after: 0,
             cache: "synthetic-index".into(),
             status_only: true,
@@ -210,7 +211,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     );
     let reply = provision(&h, "replica", head - 1, None).await;
     assert!(
-        matches!(reply, ConfirmedConsumerReply::ProjectionRequired { .. }),
+        matches!(reply, ConfirmedConsumerReply::SnapshotRequired { .. }),
         "an unproved scalar cannot skip history: {reply:?}"
     );
     let reply = provision(&h, "replica", head + 1, None).await;

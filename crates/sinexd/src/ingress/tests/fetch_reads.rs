@@ -100,7 +100,6 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "fetch-event".into(),
                 events: vec![event],
                 failures: vec![],
@@ -197,7 +196,6 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     let command = "y ".repeat(h.client.server_info().max_payload);
     let inner = Ingress::Events {
         source: Some(test_source("kitty")),
-        coverage: None,
         frame: "large-event".into(),
         events: vec![imported(material, 0, &command)],
         failures: vec![],
@@ -283,7 +281,6 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "erasure-race-event".into(),
                 events: vec![event],
                 failures: vec![],
@@ -401,7 +398,6 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "policy-event".into(),
                 events: vec![imported(material, 0, "synthetic exact raw bytes")],
                 failures: vec![],
@@ -471,7 +467,6 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "hidden-event".into(),
                 events: vec![imported(hidden, 0, "synthetic hidden raw bytes")],
                 failures: vec![],
@@ -554,7 +549,6 @@ async fn fetch_material_returns_bytes_and_ranges_and_pages_by_bytes(db: devkit::
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "byte-page-event".into(),
                 events: vec![imported(material, 0, "bytes")],
                 failures: vec![],

@@ -806,7 +806,6 @@ async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
         batch.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
             content_hash: None,
             receipt_number: None,
-            coverage: None,
             native_source: None,
             source_fingerprint: None,
             host: None,
@@ -870,7 +869,6 @@ async fn stored_frame_outcome_decodes(db: devkit::pg::TestDatabase) {
         batch.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
             content_hash: Some(format!("blake3:{name}")),
             receipt_number: None,
-            coverage: None,
             native_source: None,
             source_fingerprint: None,
             host: None,
@@ -997,7 +995,6 @@ async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_in
         b.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
             content_hash: None,
             receipt_number: None,
-            coverage: None,
             native_source: Some(declaration.source.clone()),
             source_fingerprint: Some(declaration.fingerprint()),
             host: Some("attested-host".into()),
@@ -1084,72 +1081,6 @@ async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_in
             .is_err(),
         "provenance never needs an event update exception"
     );
-}
-
-#[devkit::test]
-async fn canonical_identical_repeat_advances_the_highwater_before_a_delayed_replacement(
-    db: devkit::pg::TestDatabase,
-) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let offered = |position: i64, content: u8| {
-        let mut event = keyed("canonical", 1, content, position);
-        event.origin = Origin::Derived {
-            parents: vec![EventId::new()],
-        };
-        let mut b = batch(vec![event.clone()]);
-        b.kind = BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
-            content_hash: None,
-            receipt_number: None,
-            native_source: None,
-            source_fingerprint: None,
-            host: None,
-            coverage: Some(sinex_model::OwnerCoverage {
-                stamp: "already-validated-by-admission".into(),
-                position,
-                scope: "scope".into(),
-                catalog: "catalog".into(),
-                instance: "instance".into(),
-                host: "host".into(),
-                settings_identity: "settings".into(),
-            }),
-            family: Some("canonical".into()),
-            write_kind_prefixes: vec![],
-            assign_orders: vec![],
-            producer: "publisher".into(),
-            frame: String::new(),
-            material: None,
-            refusal: None,
-            declarations: vec![],
-            source: None,
-            event_types: vec![],
-        }));
-        (b, event)
-    };
-    // This unit exercises the order phase after signature validation. The
-    // identical newer payload may be suppressed by classification afterward.
-    for (position, content) in [(10, 1), (20, 1)] {
-        let (batch, event) = offered(position, content);
-        orders::assign(&mut conn, &batch, &mut [event])
-            .await
-            .unwrap();
-    }
-    let order: i64 = sqlx::query_scalar(
-        "SELECT reading_order FROM core.producer_orders WHERE source='canonical'",
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(order, 20);
-    let (delayed, event) = offered(15, 2);
-    assert!(
-        orders::assign(&mut conn, &delayed, &mut [event])
-            .await
-            .is_err()
-    );
-    let (newer, event) = offered(21, 2);
-    orders::assign(&mut conn, &newer, &mut [event])
-        .await
-        .unwrap();
 }
 
 mod classification;

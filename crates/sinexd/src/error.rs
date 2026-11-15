@@ -250,16 +250,6 @@ impl From<sinex_library::plan::PlanError> for Error {
     }
 }
 
-impl From<sinex_store::read_coverage::AuthorityError> for Error {
-    fn from(error: sinex_store::read_coverage::AuthorityError) -> Self {
-        use sinex_store::read_coverage::AuthorityError;
-        match error {
-            AuthorityError::Invalidated(reason) => Self::conflict(reason),
-            AuthorityError::Unverified(error) => error.into(),
-        }
-    }
-}
-
 impl From<zbus::Error> for Error {
     fn from(error: zbus::Error) -> Self {
         Self::new(FailureKind::NotRunning, error).within("D-Bus")

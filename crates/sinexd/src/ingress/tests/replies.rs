@@ -31,7 +31,6 @@ async fn sixty_five_thousand_outputs_have_one_complete_verified_producer_receipt
         .collect();
     let inner = Ingress::Events {
         source: Some(test_source("kitty")),
-        coverage: None,
         frame: "bulk-outputs".into(),
         events,
         failures: vec![],
@@ -159,7 +158,6 @@ async fn request_replies_cannot_be_forwarded_to_a_foreign_principal_inbox(
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
-                coverage: None,
                 frame: "private-event".into(),
                 events: vec![imported(material, 0, "private event")],
                 failures: vec![],

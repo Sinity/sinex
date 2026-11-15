@@ -1,11 +1,10 @@
 //! Producer reads use operator grants attached to the authenticated NATS identity.
 use super::*;
 use crate::{Error, Result};
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::Deserialize;
 use sinex_model::Class;
 use sinex_protocol::{
-    ConfirmedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
-    FetchRefusalKind,
+    FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply, FetchRefusalKind,
 };
 use sqlx::Connection;
 use std::collections::BTreeMap;
@@ -144,9 +143,6 @@ fn unavailable(error: impl std::fmt::Display) -> Refusal {
         reason: error.to_string(),
     }
 }
-fn field<T: DeserializeOwned>(value: &Value, name: &str) -> ReadResult<T> {
-    serde_json::from_value(value[name].clone()).map_err(unavailable)
-}
 impl Requests {
     pub(super) fn grants(&self, producer: &str) -> ReadResult<&Grants> {
         self.read_grants
@@ -221,85 +217,17 @@ impl Requests {
                 reason: "sealed producer reads require an operator unlock".into(),
             });
         }
-        let view = sinex_store::query::show(&mut conn, &sinex_model::query::Reference::Event(id.0))
+        let row = sinex_store::confirmed::rows(&mut conn, &[id.0])
             .await
-            .map_err(|error| match error {
-                sinex_store::Error::Invalid(_) | sinex_store::Error::NotFound(_) => missing(),
-                other => unavailable(other),
-            })?;
-        let event_type: String = field(&view, "event_type")?;
-        let class: Class = field(&view, "class")?;
-        if !grant.kind(&event_type) || !grant.class(class) {
-            return Err(denied());
-        }
-        if class == Class::Sealed {
-            return Err(Refusal {
-                kind: FetchRefusalKind::Locked,
-                reason: "sealed producer reads require an operator unlock".into(),
-            });
-        }
-        let location = if view["material"].is_null() {
-            None
-        } else {
-            Some(sinex_model::RecordLocation {
-                material: field(&view, "material")?,
-                anchor: field(&view, "offset")?,
-            })
-        };
-        let (source_name, source_version, source_fingerprint, producer_family, producer_identity) =
-            sinex_store::producer_reads::event_source(&mut conn, id.0)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
-        let source_ref = source_version
-            .map(|version| {
-                u32::try_from(version).map(|version| sinex_model::SourceRef {
-                    name: source_name,
-                    version,
-                })
-            })
-            .transpose()
-            .map_err(unavailable)?;
-        let kind_version: u64 = field(&view, "kind_version")?;
-        let reference = sinex_model::KindRef {
-            name: event_type.clone(),
-            version: kind_version,
-        };
-        let declarations = sinex_schema::kinds::load(&mut conn, std::slice::from_ref(&reference))
+            .map_err(unavailable)?
+            .pop()
+            .ok_or_else(missing)?;
+        let event = crate::confirmed_event::build(&mut conn, vec![row])
             .await
-            .map_err(unavailable)?;
-        let kind_definition_hash = declarations
-            .get(&reference)
-            .ok_or_else(|| unavailable("event kind definition is unavailable"))?
-            .definition_hash();
-        Ok(FetchEventReply::Event(Box::new(ConfirmedEvent {
-            source_ref,
-            source_fingerprint,
-            producer_family,
-            producer_identity,
-            kind_version,
-            kind_definition_hash,
-            validation: field(&view, "validation")?,
-            commit_seq: field(&view, "commit_seq")?,
-            id: field(&view, "id")?,
-            event_type,
-            source: field(&view, "source")?,
-            run: field(&view, "run")?,
-            location,
-            output_index: field(&view, "output")?,
-            parents: field::<Option<Vec<EventId>>>(&view, "parents")?.unwrap_or_default(),
-            ts_orig: field(&view, "when")?,
-            ts_quality: field(&view, "time_quality")?,
-            ts_coided: field(&view, "seen")?,
-            ts_persisted: field(&view, "written")?,
-            record_state: field(&view, "record_state")?,
-            class,
-            equivalence_key: field(&view, "key")?,
-            reading_order: field(&view, "reading_order")?,
-            record_hash: field(&view, "record_hash")?,
-            projection: sinex_protocol::ProjectionIdentity::for_payload(&view["payload"]),
-            payload: view["payload"].clone(),
-        })))
+            .map_err(unavailable)?
+            .pop()
+            .ok_or_else(missing)?;
+        Ok(FetchEventReply::Event(Box::new(event)))
     }
     pub(super) async fn fetch_event(
         &self,

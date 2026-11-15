@@ -9,8 +9,7 @@ pub mod cli;
 mod commands;
 pub mod context;
 pub use context::{
-    CoverageProof, CoverageRequest, CoverageStatus, DeliveredCompletion, PublicContext,
-    PublicContextRequest, PublicInterruptBudget,
+    DeliveredCompletion, PublicContext, PublicContextRequest, PublicInterruptBudget,
 };
 pub mod nats;
 mod projection;
@@ -19,8 +18,8 @@ pub use projection::ProjectionIdentity;
 pub mod replay;
 mod request;
 pub use replay::{
-    FullProjectionComplete, InputReference, InputReplayReply, ReplayBasisStatus,
-    ReplayContinuation, ReplayQuery, ReplayReply,
+    LastStreamMessage, ReplayQuery, ReplayReply, SnapshotComplete, SnapshotCursor, SnapshotEvent,
+    SnapshotNext, SnapshotReading, SnapshotReply, SnapshotStart,
 };
 pub mod stage_report;
 
@@ -33,7 +32,7 @@ pub use nats::{
     ProducerMaterial, ProducerReplay, ProducerWelcome, ReceiptHint, RecordedContinuation,
     RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders, RecordedMaterialBinding,
     RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery,
-    ReplaySelection, Restored, Subjects,
+    ReplaySelection, Restored, Subjects, WithheldEvent, WithheldReason,
 };
 pub use request::{Call, Reply, Request, deadline, stopped_early};
 pub use sinex_model::SourceRef;

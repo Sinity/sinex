@@ -19,8 +19,8 @@ use uuid::Uuid;
 mod changes;
 mod origin;
 pub use changes::{
-    Change, ChangeCursor, ChangePage, CommittedChange, EventReference, HistoryGap, LifecycleChange,
-    Tombstone, changes_page, references_after_origin,
+    Change, ChangeCursor, ChangePage, CommittedChange, EventHeader, HistoryGap, LifecycleChange,
+    StreamEvent, Tombstone, changes_page, stream_changes_after_origin,
 };
 pub use origin::HistoryOrigin;
 

@@ -1,4 +1,4 @@
-//! The daemon provisions one native, grant-filtered durable per authenticated identity.
+//! The daemon provisions one grant-filtered durable consumer per authenticated identity.
 use super::*;
 use crate::Error;
 use sinex_protocol::{ConfirmedConsumer, ConfirmedConsumerReply};
@@ -30,33 +30,12 @@ impl Requests {
             origin.validate(&mut conn).await?;
             let head = sinex_store::query::current_seq(&mut conn).await?;
             drop(conn);
-            let projection_required = || ConfirmedConsumerReply::ProjectionRequired {
+            let snapshot_required = || ConfirmedConsumerReply::SnapshotRequired {
                 origin: origin.position,
                 position: head,
                 scope: scope.clone(),
                 stream_instance: instance.clone(),
             };
-            let basis = if let Some(basis) = &request.basis {
-                match self
-                    .verify_replay_basis(producer, &request.cache, request.after, basis)
-                    .await
-                {
-                    Ok(claims) => Some(claims),
-                    Err(super::coverage::Failure::Invalidated(_)) => {
-                        return Ok(projection_required());
-                    }
-                    Err(error) => return Err(Error::from(error)),
-                }
-            } else {
-                None
-            };
-            if origin.requires_projection
-                && basis
-                    .as_ref()
-                    .is_none_or(|basis| basis.position < origin.position)
-            {
-                return Ok(projection_required());
-            }
             if request.status_only {
                 return Ok(ConfirmedConsumerReply::Provisioned {
                     position: head,
@@ -73,36 +52,31 @@ impl Requests {
                     reason: "requested position exceeds durable commit history".into(),
                 });
             }
-            let start = if let Some(receipt) = &request.completion {
-                match super::native_prefix::completion(
+            // A completion marker of this stream instance shows the consumer
+            // followed this stream; an applied snapshot names where its read
+            // stopped; a stream that starts at position zero can be read whole.
+            let start = if let Some(marker) = &request.completion {
+                super::stream_messages::completion(
                     &stream,
-                    receipt,
+                    marker,
                     request.after,
                     &self.subjects.confirmed_control(),
                 )
                 .await
-                {
-                    Ok(()) => receipt.stream_sequence,
-                    Err(super::coverage::Failure::Invalidated(_)) => {
-                        return Ok(projection_required());
-                    }
-                    Err(error) => return Err(Error::from(error)),
+            } else if let Some(start) = &request.start {
+                if start.stream_instance != instance || request.after < origin.position {
+                    return Ok(snapshot_required());
                 }
-            } else if let Some(basis) = &basis {
-                if basis.position != request.after {
-                    return Ok(projection_required());
-                }
-                match super::native_prefix::projection_start(&stream, &basis.native_prefix).await {
-                    Ok(start) => start,
-                    Err(super::coverage::Failure::Invalidated(_)) => {
-                        return Ok(projection_required());
-                    }
-                    Err(error) => return Err(Error::from(error)),
-                }
-            } else if request.after == 0 {
-                1
+                super::stream_messages::after_snapshot(&stream, &start.last).await
+            } else if request.after == 0 && !origin.requires_snapshot {
+                Ok(1)
             } else {
-                return Ok(projection_required());
+                return Ok(snapshot_required());
+            };
+            let start = match start {
+                Ok(start) => start,
+                Err(super::stream_messages::Refusal::Changed(_)) => return Ok(snapshot_required()),
+                Err(super::stream_messages::Refusal::Unavailable(error)) => return Err(error),
             };
             let _guard = self.consumer_admin.lock().await;
             let config = consumer::pull::Config {
@@ -129,8 +103,8 @@ impl Requests {
                 }
                 Err(error) => return Err(Error::nats(error)),
             };
-            // Reoffer the completed marker itself. A seeded native floor or a
-            // previously ACKed marker is not a delivery in this connection.
+            // Reoffer the completion marker itself. A seeded start sequence or a
+            // previously acknowledged marker is not a delivery in this connection.
             if current.is_some() {
                 stream.delete_consumer(&name).await?;
             }

@@ -27,9 +27,8 @@ pub mod time_settings;
 pub use accounting::Accounting;
 pub use batch::{
     AdmissionCounts, ArchiveReason, ArchiveRequest, Batch, BatchKind, DerivationHistory,
-    FrameRefusal, IngressFrame, InputRef, MaterialRef, ObservationFacts, OwnerCoverage,
-    ReaderMemory, RecordOutcome, ReplayScope, RevisionChange, SourceProgress, SourceRef,
-    WrappedDataKey,
+    FrameRefusal, IngressFrame, InputRef, MaterialRef, ObservationFacts, ReaderMemory,
+    RecordOutcome, ReplayScope, RevisionChange, SourceProgress, SourceRef, WrappedDataKey,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};

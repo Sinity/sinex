@@ -163,7 +163,6 @@ async fn recorded_material_continuation_conserves_source3_when_startup_artifact_
     let invalid = Ingress::Events {
         frame: "bad-continued-body".into(),
         source: Some(binding.source.clone()),
-        coverage: None,
         events: vec![ProducerEvent {
             payload: json!({}),
             ..imported(claim.material, 0, "ignored")
@@ -183,7 +182,6 @@ async fn recorded_material_continuation_conserves_source3_when_startup_artifact_
             name: "kitty".into(),
             version: 4,
         }),
-        coverage: None,
         events: vec![imported(claim.material, 0, "synthetic")],
         failures: vec![],
     };

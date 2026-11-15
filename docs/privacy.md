@@ -98,7 +98,7 @@ A class is a named outcome the operator defines: an action plus the grants that 
 
 **One output transform serves every output**: the CLI, JSON, MCP, HTTP, `follow`, the reader web, exports (`read --to`), search snippets and counts, typed SQL, and the confirmed stream. The same rule has the same effect everywhere for the same caller, and an agent and the operator holding the same grants see the same output.
 
-- **The confirmed stream** is one stream for every consumer. It carries only event IDs and original positions; each outside consumer fetches metadata and payload by event ID through the producer client under its own token's grants, and the fetch returns what any other surface returns for those grants. A class outside the fetch grant returns a typed refusal ([the confirmed stream](producers.md#the-confirmed-stream)).
+- **The confirmed stream** is one stream for every consumer. An open-class event travels whole; any other event travels by ID, and each outside consumer fetches it through the producer client under its own token's grants, so the fetch returns what any other surface returns for those grants. A class outside the fetch grant returns a typed refusal ([the confirmed stream](producers.md#the-confirmed-stream)).
 - **Search** never reveals, in a result, count or snippet, text that a rule hides from the caller. A newly withheld reading leaves no old text searchable.
 - **The SQL reader is an access boundary.** Its views apply the field-level transform inside the view, so typed SQL cannot reach a field the reader's grants withhold. The reader role has no access to raw event payloads, the hashing key, data keys, detector hits, or payload-bearing raw and audit columns.
 - **Raw material and range reads**, and on-demand argument decoding (`show --arguments`), are allowed when the caller's grants pass every rule that matches a record in the requested range; otherwise they are refused, naming the rule.
@@ -110,7 +110,7 @@ A class is a named outcome the operator defines: an action plus the grants that 
 
 ### SQL reader privileges
 
-The SQL reader role receives the public event views and explicit registry and counter relations. It has no table or column access to raw payloads, configured rules, source cursors, wrapping keys, hashes used as keys, continuation signing material, host checkpoints or owner protocol signing material. Database preparation removes inherited public access to `pg_catalog.set_config` and grants execution to the writer and configured owner. Startup and upgrade refuse a database whose SQL reader can execute that function. This prevents a wrapped `SELECT` from changing its grant or role context through direct, dependent or materialized expressions.
+The SQL reader role receives the public event views and explicit registry and counter relations. It has no table or column access to raw payloads, configured rules, source cursors, wrapping keys, hashes used as keys, continuation signing material, host checkpoints or the database secret. Database preparation removes inherited public access to `pg_catalog.set_config` and grants execution to the writer and configured owner. Startup and upgrade refuse a database whose SQL reader can execute that function. This prevents a wrapped `SELECT` from changing its grant or role context through direct, dependent or materialized expressions.
 
 ## Sealing
 

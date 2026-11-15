@@ -82,8 +82,6 @@ pub struct IngressFrame {
     pub content_hash: Option<String>,
     /// Reserved by the atomic replay writer, not by a producer.
     pub receipt_number: Option<i64>,
-    /// Owner-configured expectations; never deserialized from a producer frame.
-    pub coverage: Option<OwnerCoverage>,
     pub native_source: Option<SourceRef>,
     pub source_fingerprint: Option<String>,
     pub host: Option<String>,
@@ -105,17 +103,6 @@ pub struct IngressFrame {
     /// The source named at the start of a capture binding; otherwise unknown.
     pub source: Option<String>,
     pub event_types: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct OwnerCoverage {
-    pub stamp: String,
-    pub position: i64,
-    pub scope: String,
-    pub catalog: String,
-    pub instance: String,
-    pub host: String,
-    pub settings_identity: String,
 }
 
 /// What a producer must do after a refused frame.

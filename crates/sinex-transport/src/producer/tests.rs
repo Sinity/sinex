@@ -31,7 +31,6 @@ fn conflict_keeps_the_prior_owned_receipt_distinct_from_the_offered_body() {
     let offered = Ingress::Events {
         frame: "same-frame".into(),
         source: None,
-        coverage: None,
         events: vec![],
         failures: vec![],
     };
@@ -409,7 +408,6 @@ async fn duplicate_receipt_with_different_bytes_remains_typed_conflict_evidence(
     let offered = Ingress::Events {
         frame: fixture.frame.frame().into(),
         source: None,
-        coverage: None,
         events: vec![],
         failures: vec![],
     };

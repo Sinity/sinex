@@ -111,12 +111,23 @@ async fn read_all(js: &jetstream::Context, subjects: &Subjects) -> Vec<Confirmed
         .filter(|message| !matches!(message, Confirmed::PositionComplete { .. }))
         .collect()
 }
+/// The commit position and ID of an event message, complete or withheld.
+pub(super) fn event_message(message: &Confirmed) -> Option<(i64, EventId)> {
+    match message {
+        Confirmed::Event(event) => Some((event.commit_seq, event.id)),
+        Confirmed::Withheld(event) => Some((event.commit_seq, event.event)),
+        _ => None,
+    }
+}
+
 async fn instance(js: &jetstream::Context, subjects: &Subjects) -> String {
     stream_instance(&js.get_stream(subjects.confirmed_stream()).await.unwrap())
 }
 
 #[devkit::test]
-async fn publishes_only_references_in_commit_order(db: devkit::pg::TestDatabase) {
+async fn publishes_open_events_whole_and_others_by_id_in_commit_order(
+    db: devkit::pg::TestDatabase,
+) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -164,37 +175,31 @@ async fn publishes_only_references_in_commit_order(db: devkit::pg::TestDatabase)
     assert_eq!(messages.len(), 4);
     let seqs: Vec<i64> = messages
         .iter()
-        .filter_map(|m| match m {
-            Confirmed::EventReference { commit_seq, .. } => Some(*commit_seq),
-            Confirmed::Archived(_)
-            | Confirmed::Restored(_)
-            | Confirmed::Tombstoned { .. }
-            | Confirmed::PositionComplete { .. }
-            | Confirmed::Gap { .. } => None,
-        })
+        .filter_map(|m| event_message(m).map(|(seq, _)| seq))
         .collect();
     assert_eq!(seqs, [1, 2, 3]);
-    assert!(matches!(
-        &messages[0],
-        Confirmed::EventReference { commit_seq: 1, .. }
-    ));
-    assert!(matches!(
-        &messages[1],
-        Confirmed::EventReference { commit_seq: 2, .. }
-    ));
-    for message in messages
-        .iter()
-        .filter(|message| matches!(message, Confirmed::EventReference { .. }))
-    {
-        let wire = serde_json::to_value(message).unwrap();
-        let object = wire.as_object().unwrap();
-        assert_eq!(object.len(), 3);
-        assert!(
-            object.contains_key("kind")
-                && object.contains_key("event")
-                && object.contains_key("commit_seq")
-        );
-    }
+    let Confirmed::Event(open) = &messages[0] else {
+        panic!("an open event travels whole")
+    };
+    assert_eq!((open.commit_seq, open.id), (1, first_id));
+    assert_eq!(open.payload["command"], "ls");
+    assert_eq!(open.class, Class::Open);
+    assert_eq!(
+        open.projection,
+        sinex_protocol::ProjectionIdentity::for_payload(&open.payload)
+    );
+    let Confirmed::Withheld(guarded) = &messages[1] else {
+        panic!("a guarded event travels by ID")
+    };
+    assert_eq!(guarded.commit_seq, 2);
+    assert_eq!(guarded.class, Class::Guarded);
+    assert_eq!(guarded.reason, WithheldReason::Class);
+    let wire = serde_json::to_value(&messages[1]).unwrap();
+    assert!(wire.get("payload").is_none(), "{wire}");
+    let Confirmed::Event(newer) = &messages[2] else {
+        panic!("the newer open reading travels whole")
+    };
+    assert_eq!(newer.payload["command"], "ls -la");
     let Confirmed::Archived(change) = &messages[3] else {
         panic!("the change follows the event that caused it")
     };
@@ -203,8 +208,8 @@ async fn publishes_only_references_in_commit_order(db: devkit::pg::TestDatabase)
     assert_eq!(change.reason, sinex_model::ArchiveReason::NewerReading);
 }
 
-/// Found on real data: one Atuin command of 4 MB. The event goes out,
-/// without its payload, and the next ones follow it.
+/// Found on real data: one Atuin command of 4 MB. The event goes out by ID,
+/// and the next ones follow it whole.
 #[devkit::test]
 async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
@@ -237,11 +242,11 @@ async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit:
     let messages = read_all(&js, &subjects).await;
     assert!(matches!(
         &messages[0],
-        Confirmed::EventReference { commit_seq: 1, .. }
+        Confirmed::Withheld(event) if event.commit_seq == 1 && event.reason == WithheldReason::Size
     ));
     assert!(matches!(
         &messages[1],
-        Confirmed::EventReference { commit_seq: 2, .. }
+        Confirmed::Event(event) if event.commit_seq == 2
     ));
 }
 
@@ -370,7 +375,7 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
     assert!(
         !messages
             .iter()
-            .any(|m| matches!(m, Confirmed::EventReference{event,..} if *event == secret_id)),
+            .any(|m| event_message(m).is_some_and(|(_, event)| event == secret_id)),
         "the tombstoned event's message is gone"
     );
     let removed_seq: Option<i64> =
@@ -424,16 +429,18 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
     let rebuilt = read_wire_all(&js, &subjects).await;
     let origin =
         history_origin(&js.get_stream(subjects.confirmed_stream()).await.unwrap()).unwrap();
-    assert!(origin.requires_projection);
+    assert!(origin.requires_snapshot);
     assert_eq!(
         rebuilt,
         vec![Confirmed::PositionComplete {
             commit_seq: origin.position
         }]
     );
-    assert!(!rebuilt.iter().any(
-        |message| matches!(message, Confirmed::EventReference{event,..} if *event == secret_id)
-    ));
+    assert!(
+        !rebuilt
+            .iter()
+            .any(|message| event_message(message).is_some_and(|(_, event)| event == secret_id))
+    );
 }
 
 #[devkit::test]
@@ -470,8 +477,8 @@ async fn archive_consumer_observes_archive_restore_archive_without_duplicate_eve
     let mut visibility = Vec::new();
     for message in messages {
         match message {
-            Confirmed::EventReference { event, .. } => {
-                assert!(live.insert(event));
+            Confirmed::Event(event) => {
+                assert!(live.insert(event.id));
             }
             Confirmed::Archived(n) => {
                 assert_eq!(n.event, id);
@@ -547,7 +554,10 @@ async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
     assert_eq!(pairs, [(first_id.0, 1), (missing_id.0, 2), (last_id.0, 6)]);
     let messages = read_all(&js, &subjects).await;
     assert!(matches!(&messages[2], Confirmed::Archived(_)));
-    assert!(matches!(&messages[3], Confirmed::EventReference{event,..} if *event == last_id));
+    assert_eq!(
+        event_message(&messages[3]).map(|(_, event)| event),
+        Some(last_id)
+    );
 }
 
 #[devkit::test]
@@ -578,10 +588,7 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
         &js,
         subjects.confirmed_event(&committed.class, &committed.event_type),
         format!("event-{}", committed.commit_seq),
-        &Confirmed::EventReference {
-            commit_seq: committed.commit_seq,
-            event: EventId(committed.id),
-        },
+        &withheld_copy(committed),
     )
     .await
     .unwrap()
@@ -658,10 +665,7 @@ async fn unrecorded_published_references_are_recorded_at_start(db: devkit::pg::T
         &js,
         subjects.confirmed_event(&committed.class, &committed.event_type),
         "copy-after-the-duplicate-window".into(),
-        &Confirmed::EventReference {
-            commit_seq: committed.commit_seq,
-            event: EventId(committed.id),
-        },
+        &withheld_copy(committed),
     )
     .await
     .unwrap()
@@ -690,7 +694,7 @@ async fn unrecorded_published_references_are_recorded_at_start(db: devkit::pg::T
         !read_all(&js, &subjects)
             .await
             .iter()
-            .any(|m| matches!(m, Confirmed::EventReference { event, .. } if *event == id)),
+            .any(|m| event_message(m).is_some_and(|(_, event)| event == id)),
         "no copy of the tombstoned event stays on the stream"
     );
 }
@@ -725,10 +729,7 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         &js,
         subjects.confirmed_event(&committed.class, &committed.event_type),
         "another-copy".into(),
-        &Confirmed::EventReference {
-            commit_seq: committed.commit_seq,
-            event: EventId(committed.id),
-        },
+        &withheld_copy(committed),
     )
     .await
     .unwrap()
@@ -766,6 +767,17 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
         read_all(&js, &subjects)
             .await
             .iter()
-            .all(|m| !matches!(m, Confirmed::EventReference { .. }))
+            .all(|m| event_message(m).is_none())
     );
+}
+
+/// A body-free copy of a committed event, as a stray resend would carry it.
+fn withheld_copy(committed: &commit_log::Committed) -> Confirmed {
+    Confirmed::Withheld(sinex_protocol::WithheldEvent {
+        commit_seq: committed.commit_seq,
+        event: EventId(committed.id),
+        event_type: committed.event_type.clone(),
+        class: Class::Open,
+        reason: WithheldReason::Size,
+    })
 }

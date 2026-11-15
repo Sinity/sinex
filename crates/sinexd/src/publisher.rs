@@ -1,16 +1,17 @@
-//! Publish the canonical committed-change feed with cumulative completion
-//! barriers. A scalar checkpoint covers only fully acknowledged positions;
-//! transfer pages may divide a position without advancing it. Shared stream
-//! messages carry references, with payload access decided by authorized fetch.
-//! Publisher checkpoints and exact erasure mappings belong to a native stream
-//! incarnation, so a lost broker store replays from PostgreSQL. A store that
-//! lost only its newest messages keeps its incarnation; each pass first moves
-//! the saved position back to what the stream still holds (`align_with_stream`).
+//! Publish the committed-change feed with cumulative completion markers. A
+//! scalar checkpoint covers only fully acknowledged positions; transfer pages
+//! may divide a position without advancing it. An open-class event travels
+//! complete; any other event, or one too large for a stream message, travels
+//! by ID for consumers to fetch under their grants. Publisher checkpoints and
+//! erasure mappings belong to one stream instance, so a lost broker store
+//! replays from PostgreSQL. A store that lost only its newest messages keeps
+//! its instance; each pass first moves the saved position back to what the
+//! stream still holds (`align_with_stream`).
 use crate::{Error, Result};
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{EventId, OperationId};
-use sinex_protocol::{Archived, Confirmed, Restored, Subjects};
+use sinex_protocol::{Archived, Confirmed, Restored, Subjects, WithheldReason};
 use sinex_store::commit_log::{self, ArchiveChange};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
@@ -31,7 +32,7 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
         .build(client)
 }
 
-const CONTRACT: &str = "4";
+const CONTRACT: &str = "5";
 const CONTRACT_KEY: &str = "sinex_confirmed_contract";
 const ORIGIN_KEY: &str = "sinex_history_origin";
 
@@ -207,7 +208,7 @@ pub(crate) async fn publish_pending_measured(
     total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
         let started = Instant::now();
-        let page = commit_log::references_after_origin(
+        let page = commit_log::stream_changes_after_origin(
             conn,
             cursor,
             &origin,
@@ -362,8 +363,11 @@ async fn align_with_stream(
                     marker = Some(commit_seq);
                     break;
                 }
-                Ok(Confirmed::EventReference { event, .. }) => {
-                    unlisted.push((event.0, i64::try_from(seq)?));
+                Ok(Confirmed::Event(event)) => {
+                    unlisted.push((event.id.0, i64::try_from(seq)?));
+                }
+                Ok(Confirmed::Withheld(event)) => {
+                    unlisted.push((event.event.0, i64::try_from(seq)?));
                 }
                 _ => {}
             },
@@ -401,24 +405,72 @@ async fn publish_chunk(
     subjects: &Subjects,
     instance: &str,
     consumer: &str,
-    entries: &[commit_log::CommittedChange<commit_log::EventReference>],
+    entries: &[commit_log::CommittedChange<commit_log::StreamEvent>],
     complete: Option<i64>,
     total: &mut Published,
 ) -> Result<(Duration, Duration, Duration)> {
     let acknowledge_started = Instant::now();
     let mut tx = conn.begin().await?;
+    let open: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| match &entry.change {
+            commit_log::Change::Event(event) => match event.as_ref() {
+                commit_log::StreamEvent::Open(row) => Some((**row).clone()),
+                commit_log::StreamEvent::Header(_) => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let mut complete: std::collections::BTreeMap<_, _> =
+        crate::confirmed_event::build(&mut tx, open)
+            .await?
+            .into_iter()
+            .map(|event| (event.id.0, event))
+            .collect();
+    let limit = message_limit(js);
     let mut acks = Vec::new();
     for entry in entries {
         let (message, subject, id, event) = match &entry.change {
-            commit_log::Change::Event(event) => (
-                Confirmed::EventReference {
-                    commit_seq: event.commit_seq,
-                    event: EventId(event.id),
-                },
-                subjects.confirmed_event(&event.class, &event.event_type),
-                format!("event-{}", entry.position),
-                Some(event.id),
-            ),
+            commit_log::Change::Event(event) => {
+                let (id, commit_seq, event_type, class) = match event.as_ref() {
+                    commit_log::StreamEvent::Open(row) => {
+                        (row.id, row.commit_seq, &row.event_type, &row.class)
+                    }
+                    commit_log::StreamEvent::Header(header) => (
+                        header.id,
+                        header.commit_seq,
+                        &header.event_type,
+                        &header.class,
+                    ),
+                };
+                let withheld = |reason| {
+                    crate::confirmed_event::withheld(
+                        commit_seq,
+                        id,
+                        event_type.clone(),
+                        class,
+                        reason,
+                    )
+                    .map(Confirmed::Withheld)
+                };
+                let message = match complete.remove(&id) {
+                    Some(complete) => {
+                        let message = Confirmed::Event(Box::new(complete));
+                        if serde_json::to_vec(&message)?.len() > limit {
+                            withheld(WithheldReason::Size)?
+                        } else {
+                            message
+                        }
+                    }
+                    None => withheld(WithheldReason::Class)?,
+                };
+                (
+                    message,
+                    subjects.confirmed_event(class, event_type),
+                    format!("event-{}", entry.position),
+                    Some(id),
+                )
+            }
             commit_log::Change::Archive(lifecycle) => {
                 let change = &lifecycle.archive;
                 let message = if change.archived {
@@ -551,6 +603,12 @@ async fn publish(
     js.publish_with_headers(subject, headers, body.into())
         .await
         .map_err(|e| Error::nats(format!("publish {id}: {e}")))
+}
+
+/// The largest stream message body the broker takes, less room for the
+/// subject and headers.
+fn message_limit(js: &jetstream::Context) -> usize {
+    js.client().server_info().max_payload.saturating_sub(4096)
 }
 
 fn archived_message(n: &ArchiveChange) -> Result<Archived> {

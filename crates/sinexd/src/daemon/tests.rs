@@ -100,7 +100,6 @@ fn shutdown_batch(tag: &str) -> sinex_model::Batch {
         kind: BatchKind::Ingress(Box::new(IngressFrame {
             content_hash: Some(blake3::hash(tag.as_bytes()).to_hex().to_string()),
             receipt_number: None,
-            coverage: None,
             native_source: None,
             source_fingerprint: None,
             host: None,

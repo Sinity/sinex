@@ -96,7 +96,6 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
         },
         Ingress::Events {
             source: None,
-            coverage: None,
             frame: "b/events".into(),
             events: vec![event(10)],
             failures: vec![],
@@ -167,7 +166,6 @@ async fn an_unacknowledged_batch_is_resent_with_uploaded_bytes() {
     received.lock().unwrap().clear();
     let big = Ingress::Events {
         source: None,
-        coverage: None,
         frame: "b/big".into(),
         events: vec![event(2 * producer.max_message)],
         failures: vec![],
@@ -206,7 +204,6 @@ impl Producer {
     ) -> Result<(), sinex_transport::producer::SubmitError> {
         let envelope = Ingress::Events {
             source: None,
-            coverage: None,
             frame: frame.into(),
             events: vec![],
             failures: vec![],
@@ -456,7 +453,6 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
     .unwrap();
     let invalid = Ingress::Events {
         source: None,
-        coverage: None,
         frame: "invalid".into(),
         events: vec![event(2 * producer.max_message)],
         failures: vec![],
@@ -465,7 +461,6 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
         frames: vec![
             Ingress::Events {
                 source: None,
-                coverage: None,
                 frame: "first".into(),
                 events: vec![event(1)],
                 failures: vec![],
@@ -473,7 +468,6 @@ async fn a_recorded_invalid_frame_is_skipped_and_the_next_frame_is_sent() {
             invalid,
             Ingress::Events {
                 source: None,
-                coverage: None,
                 frame: "valid".into(),
                 events: vec![event(1)],
                 failures: vec![],
@@ -646,7 +640,6 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
             source: None,
-            coverage: None,
             frame: "events".into(),
             events: vec![event(1)],
             failures: vec![],
@@ -730,7 +723,6 @@ async fn a_restart_after_a_fix_retries_malformed_and_material_content_refusals()
         } else {
             Ingress::Events {
                 source: None,
-                coverage: None,
                 frame: "broken".into(),
                 events: vec![event(1)],
                 failures: vec![],
@@ -875,7 +867,6 @@ async fn a_stale_malformed_acknowledgment_does_not_refuse_another_frame() {
     let ack = producer
         .send(Ingress::Events {
             source: None,
-            coverage: None,
             frame: "valid".into(),
             events: vec![event(1)],
             failures: vec![],
@@ -972,7 +963,6 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
             source: None,
-            coverage: None,
             frame: "events".into(),
             events,
             failures: vec![],
@@ -1060,7 +1050,6 @@ async fn a_saved_invalid_name_restarts_under_a_valid_attempt_name() {
     UnacknowledgedFrames {
         frames: vec![Ingress::Events {
             source: None,
-            coverage: None,
             frame: prefix,
             events: vec![event(1)],
             failures: vec![],
@@ -1198,7 +1187,6 @@ fn producer_positions_and_fact_journals_persist_only_the_shared_encoding() {
     let frames = UnacknowledgedFrames {
         frames: vec![Ingress::Events {
             source: None,
-            coverage: None,
             frame: "synthetic".into(),
             events: vec![event(1_000_000)],
             failures: vec![],
@@ -1239,7 +1227,6 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
         });
         Ingress::Events {
             source: Some(source),
-            coverage: None,
             frame: "native/reading".into(),
             events: vec![reading],
             failures: vec![],
@@ -1248,7 +1235,6 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
     let frame = make(source.clone());
     let Ingress::Events {
         source: failed_source,
-        coverage,
         events,
         failures,
         ..
@@ -1257,7 +1243,6 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
         panic!("failure must be an event frame")
     };
     assert_eq!(failed_source, Some(source));
-    assert!(coverage.is_none());
     assert!(events.is_empty());
     assert_eq!(failures.len(), 1);
     assert!(

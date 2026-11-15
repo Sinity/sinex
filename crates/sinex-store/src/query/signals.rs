@@ -183,7 +183,7 @@ pub async fn standing_query(
     } else {
         Class::Open
     };
-    let owner_key = crate::owner_protocol::key(conn).await?;
+    let owner_key = crate::store_secret::key(conn).await?;
     let identity_key = blake3::derive_key("sinex.owner_protocol.signal_occurrence.v1", &owner_key);
     let mut rows = Vec::with_capacity(values.len());
     for mut value in values {

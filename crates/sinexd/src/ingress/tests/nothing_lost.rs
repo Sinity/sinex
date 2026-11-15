@@ -91,7 +91,6 @@ async fn frames_sent_while_the_writer_stalls_are_admitted_once(db: devkit::pg::T
     for (i, name) in names.iter().enumerate() {
         let frame = Ingress::Events {
             source: Some(test_source("kitty")),
-            coverage: None,
             frame: name.clone(),
             events: vec![
                 imported(material, 2 * i as u64, &format!("cmd {i}")),

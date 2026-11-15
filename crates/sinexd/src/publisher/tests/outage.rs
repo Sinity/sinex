@@ -315,9 +315,9 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         let published: Vec<(i64, uuid::Uuid)> = read_filtered(&direct, &stream, filters)
             .await
             .into_iter()
-            .map(|m| match m {
-                Confirmed::EventReference { commit_seq, event } => (commit_seq, event.0),
-                other => panic!("an event subject carried {other:?}"),
+            .map(|m| match event_message(&m) {
+                Some((commit_seq, event)) => (commit_seq, event.0),
+                None => panic!("an event subject carried {m:?}"),
             })
             .collect();
         let committed: Vec<(i64, uuid::Uuid)> = sqlx::query_as(
@@ -350,21 +350,20 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     );
     assert_eq!(changes[1].1, sinex_model::ArchiveReason::Archive);
 
-    // References retain exact original positions and IDs, with no inline
-    // payload, key or other source metadata surviving a later rule edit.
+    // Event messages keep their exact original positions and IDs.
     let all = read_filtered(&direct, &stream, vec![subjects.confirmed_all()]).await;
     let mut ids = BTreeSet::new();
     for message in &all {
-        let Confirmed::EventReference { commit_seq, event } = message else {
+        let Some((commit_seq, event)) = event_message(message) else {
             continue;
         };
-        assert!(ids.insert(*event), "{event} published twice");
+        assert!(ids.insert(event), "{event} published twice");
         let stored: i64 = sqlx::query_scalar("SELECT commit_seq FROM core.events WHERE id=$1")
             .bind(event.0)
             .fetch_one(&mut conn)
             .await
             .unwrap();
-        assert_eq!(*commit_seq, stored);
+        assert_eq!(commit_seq, stored);
     }
     let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
@@ -443,11 +442,9 @@ async fn recorded_positions_hold_their_events(
             "{event} recorded at {seq}, past the stream's last {last}"
         );
         let message = stream.get_raw_message(seq as u64).await.unwrap();
+        let message: Confirmed = serde_json::from_slice(&message.payload).unwrap();
         assert!(
-            matches!(
-                serde_json::from_slice(&message.payload).unwrap(),
-                Confirmed::EventReference { event: found, .. } if found.0 == event
-            ),
+            event_message(&message).is_some_and(|(_, found)| found.0 == event),
             "{event} recorded at {seq}, which holds another message"
         );
     }
@@ -470,10 +467,7 @@ async fn publisher_rewinds_to_last_marker_after_stream_truncation(db: devkit::pg
     )
     .await
     .into_iter()
-    .filter_map(|m| match m {
-        Confirmed::EventReference { event, .. } => Some(event),
-        _ => None,
-    })
+    .filter_map(|m| event_message(&m).map(|(_, event)| event))
     .collect();
     let committed: Vec<EventId> = groups.concat();
     assert_eq!(
@@ -509,10 +503,7 @@ async fn erasure_never_deletes_a_reused_sequence(db: devkit::pg::TestDatabase) {
     )
     .await
     .into_iter()
-    .filter_map(|m| match m {
-        Confirmed::EventReference { event, .. } => Some(event),
-        _ => None,
-    })
+    .filter_map(|m| event_message(&m).map(|(_, event)| event))
     .collect();
     assert!(!events.contains(&lost[0]), "the tombstoned event is erased");
     for kept in [lost[1], after[0]] {

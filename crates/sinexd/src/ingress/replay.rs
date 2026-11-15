@@ -503,7 +503,6 @@ impl Ingest {
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
                     content_hash: None,
                     receipt_number: None,
-                    coverage: None,
                     native_source: Some(request.sequence.source.clone()),
                     source_fingerprint: None,
                     host: self

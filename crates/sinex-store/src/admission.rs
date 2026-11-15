@@ -228,11 +228,6 @@ pub(crate) async fn admit(
         }
         _ => None,
     };
-    let validated = match &batch.kind {
-        BatchKind::Ingress(frame) => crate::read_coverage::validate(conn, frame).await?,
-        _ => false,
-    };
-
     let provenance = register::provenance(conn, batch, frame_number).await?;
     let mut outcome = Outcome::default();
     let kept_batch;
@@ -342,9 +337,6 @@ pub(crate) async fn admit(
                 &provenance,
             )
             .await?;
-        }
-        if validated && let BatchKind::Ingress(frame) = &batch.kind {
-            crate::read_coverage::validate_parents(conn, frame, &events).await?;
         }
         resolved = classified.resolved;
     }

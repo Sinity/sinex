@@ -10,6 +10,7 @@ mod binding_runner;
 mod build_identity;
 mod catalog;
 mod commit_reader;
+mod confirmed_event;
 mod crawl;
 mod daemon;
 mod derivation_runner;

@@ -903,7 +903,6 @@ impl Producer {
                         name: source.spec().name.to_owned(),
                         version: source.spec().parser_version,
                     }),
-                    coverage: None,
                     frame: format!("{binding}/events/{material}/{index}/{chunk}"),
                     events: frame_events,
                     failures: if chunk == 0 {
@@ -1043,7 +1042,6 @@ fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
     locations.dedup();
     Ok(Ingress::Events {
         source,
-        coverage: None,
         frame: format!("{}/failures/{}", frames[0].frame(), uuid::Uuid::now_v7()),
         events: vec![],
         failures: locations

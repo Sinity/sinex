@@ -29,7 +29,7 @@ async fn header_batches_preserve_order_duplicates_and_classes_on_compressed_hist
     ids.push(missing);
     let mut tx = conn.begin().await.unwrap();
     {
-        let headers = <EventReference as EventProjection>::load(&mut tx, &ids)
+        let headers = <EventHeader as EventProjection>::load(&mut tx, &ids)
             .await
             .unwrap();
         assert_eq!(

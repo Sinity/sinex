@@ -39,7 +39,7 @@ Producer positions and unacknowledged journals use the same encoding and one syn
 
 **Event outcomes** are the admission function's: admitted, repeated, superseded, older, removed, failed, superseded-in-batch, and dropped as `superseded_input`, with the committed position and the event IDs Sinex minted. A producer is told success only after commit.
 
-**Acknowledgments are typed.** Each names the frame, the order Sinex recorded it in and the hash of the frame body recorded under that name, and carries exactly one result: `admitted` (the registered material and its extents, the admitted event IDs, the counts above and the last commit position), `kinds_registered` (each declaration with its definition hash), `replayed` (the replay's operation, its admitted event IDs and last position) or `refused` (the refusal kind and reason). A conflict refusal carries the hash of the body already recorded, never the offered one. `core.ingress_frames.outcome` stores the same result, tagged by `result`, beside the frame's columns. The connect reply (`welcome` or `refused`), the consumer reply (`provisioned`, `projection_required`, `gap` or `refused`) and the fetch replies (`event`, `erased` or `refused`; `material` or `refused`) are typed the same way, so a reply that is two things at once cannot be written or read.
+**Acknowledgments are typed.** Each names the frame, the order Sinex recorded it in and the hash of the frame body recorded under that name, and carries exactly one result: `admitted` (the registered material and its extents, the admitted event IDs, the counts above and the last commit position), `kinds_registered` (each declaration with its definition hash), `replayed` (the replay's operation, its admitted event IDs and last position) or `refused` (the refusal kind and reason). A conflict refusal carries the hash of the body already recorded, never the offered one. `core.ingress_frames.outcome` stores the same result, tagged by `result`, beside the frame's columns. The connect reply (`welcome` or `refused`), the consumer reply (`provisioned`, `snapshot_required`, `gap` or `refused`), the snapshot reply (`page`, `restart` or `unavailable`) and the fetch replies (`event`, `erased` or `refused`; `material` or `refused`) are typed the same way, so a reply that is two things at once cannot be written or read.
 
 ### Write identity
 
@@ -72,7 +72,7 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 - **Resend on reconnect.** Unacknowledged frames are sent again, under their original identities; Sinex answers repeats from its record. A producer may send `have` to learn which frames are already recorded.
 - **Remove only what is settled.** Spooled bytes and frames are removed only once acknowledged and behind the producer's committed position.
 - **Positions follow commits.** A producer's position in its own inputs is saved only for rows Sinex has committed; an empty fetch is not "caught up".
-- **Fetch by reference and by event ID.** The client fetches material bytes and ranges, fields carried as references, and fields marked withheld on the confirmed stream, each under the caller's grants ([privacy](privacy.md#output-parity)).
+- **Fetch by ID.** The client fetches material bytes and ranges, and events the confirmed stream carries withheld, each under the caller's grants ([privacy](privacy.md#output-parity)).
 - **Transfer classes and connect on demand** for producers on metered or battery-powered hosts ([hosts](hosts.md#producer-identity-credentials-and-sending)).
 
 **One client, one conformance kit** (decided target, 2026-11-01). The client lives in `sinex-transport` with an API of wire types only; Polylogue uses it and keeps no producer client of its own. The contract's test is a conformance kit in devkit: any producer in any language runs it against a test Sinex, and it covers resend, crash at every step, refusal, outage and `have`. Sinex's own producers, Polylogue and any third-language producer (a phone app through a generated binding) pass it.
@@ -94,44 +94,44 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 
 ## The confirmed stream
 
-**Every committed change after the stream origin is published in commit order.** A fresh incarnation pins a database cut and starts with a certified current-state snapshot for each consumer, followed by complete deltas. It is the delivery log for everything outside the daemon.
+**Every committed change after the stream origin is published in commit order.** A stream instance that starts at a current-state origin gives each new consumer a snapshot of the current state, followed by complete deltas. It is the delivery log for everything outside the daemon.
 
 ### Content
 
 - **Changes**: every committed event, and every lifecycle change: archived, restored, tombstoned, and material status changes ([the lifecycle](lifecycle.md)).
-- **Each data message carries its global commit position**, the event ID and the change. Archive change IDs identify rows; they are never consumer watermarks. Events precede lifecycle changes within one position, with lifecycle rows ordered by their stable change IDs.
-- **Completion is explicit.** `PositionComplete { commit_seq: P }` says every change through P has been acknowledged. It is cumulative and includes empty positions. Consumers durably stage partial positions, expose them and advance their scalar watermark only on this barrier. Transfer pages can divide any position; page budgets never cap its changes. An empty store emits position zero to signal readiness.
-- Decided target (2026-11-01): the confirmed stream carries each event's open fields inline, with fields a rule withholds marked withheld and fetched by event ID; the reference-only stream below goes, because it makes every consumer fetch every payload, so a Polylogue rebuild becomes millions of point reads.
-- **Every event travels by reference.** `EventReference { commit_seq, event }` contains only the event ID and its original commit position. Payloads, source keys and other metadata are fetched under the consumer's grants ([privacy](privacy.md#output-parity)). The shared stream retains no inline event metadata or payload, including for the open class. A large stored payload or parent list uses the same bounded fetch path as a small event.
-- **Routing uses the stored class.** An event routes by its class and a lifecycle notice by the class recorded with the change. Fetch keeps the canonical source identity separate from the returned payload identity.
+- **Each data message carries its global commit position**, the event ID and the change. Archive change IDs identify rows; they are never consumer positions. Events precede lifecycle changes within one position, with lifecycle rows ordered by their stable change IDs.
+- **Completion is explicit.** `PositionComplete { commit_seq: P }` says every change through P has been published. It is cumulative and includes empty positions. Consumers stage partial positions, expose them and advance their position only on this marker. Transfer pages can divide any position; page budgets never cap its changes. An empty store emits position zero to signal readiness.
+- **Open events travel whole.** `Event` carries the complete committed event: identity, kind version and its definition hash, source, record location, parents, times, class, key, reading order, record hash and the stored payload. Field rules apply at admission ([privacy](privacy.md#evaluation)), so the stored payload is what every caller sees.
+- **Other events travel by ID.** `Withheld { commit_seq, event, event_type, class, reason }` stands in for an event whose class is not open, or whose complete message would exceed the broker's message size. A consumer fetches it by ID under its own grants ([privacy](privacy.md#output-parity)); a class outside its grants returns a typed refusal.
+- **Routing uses the stored class.** An event routes by its class and a lifecycle notice by the class recorded with the change.
 - **Subjects express the configured scope.** Events use `confirmed.event.<class>.<kind>`, lifecycle notices use `confirmed.lifecycle.<class>.<kind>`, and global completion and gap controls use `confirmed.control`, under the configured root. The daemon provisions each durable's class and kind filters.
-- **One stream for every consumer.** There is no per-consumer stream: each consumer's grants apply when it fetches withheld fields.
+- **One stream for every consumer.** There is no per-consumer stream: each consumer's grants apply when it fetches a withheld event.
+
+### Snapshots
+
+A stream instance created over a database that already holds history starts at a current-state origin H. A consumer that has not followed this instance asks for a durable consumer and is answered `snapshot_required` (origin, current position, scope, stream instance). It then reads the snapshot page by page with `ReplayQuery::Snapshot { cursor }`:
+
+- The first page fixes the snapshot: the current commit position B, the producer's scope and installed catalog, the stream instance, and the last stream message before the database read (its sequence and fingerprint, read from the broker). Publication follows commit, so B covers every event that message or any earlier one delivered.
+- Each page carries up to 256 readings of the catalog's kinds in the consumer's classes, as of B, in commit order: whole for classes its grants lift, withheld for sealed readings, each with its archived state and last lifecycle position at B. Original admission positions are kept.
+- The cursor is plain data. On every page Sinex recomputes the scope and catalog from the producer's current grants and the stream instance from the broker, checks that B is within history and that no reading of the selected kinds at or below B was tombstoned since, and checks that the catalog's kind definitions are still registered. Any change answers `restart` with the reason, and the consumer discards its partial snapshot. A database or broker failure answers `unavailable`, and the consumer asks again with the same cursor.
+- The last page carries `SnapshotComplete { position: B, scope, stream_instance, last }`. The consumer applies the whole snapshot atomically and saves it with position B; a partial snapshot is never an applied prefix. Its next consumer request names `start: { stream_instance, last }`, and Sinex reads that message back from the broker and starts delivery after it (from the first sequence when there was none). After its first completion marker the consumer resumes with that marker instead.
 
 ### Retention
 
-**The confirmed stream keeps every post-origin delivery**: no age limit, no compaction, no discard. A new outside derivation installs every bounded page of an owner-certified indexed projection at B, at or after the origin H, then reads deltas strictly after B. The projection preserves original admission positions and retained archived state. Completion atomically replaces reconstructible consumer state and its saved certificate; a partial projection is never an applied prefix. Original producer journals and paid outputs are outside that replacement. Stream size is a storage cost, measured and reported in status.
+**The confirmed stream keeps every post-origin delivery**: no age limit, no compaction, no discard. Stream size is a storage cost, measured and reported in status.
 
-**Tombstone reaches the stream.** The publisher records every acknowledged copy's sequence together with the native stream incarnation (name and creation time). A tombstone deletes those exact copies. Its notice carries the newly allocated tombstone position and the exact original admission position. The original position remains an empty slot; rebuild never inserts an extra data tuple there. Payload-free archive history and lineage remain available for reconstruction.
+**Tombstone reaches the stream.** The publisher records every acknowledged copy's sequence together with the stream instance (name and creation time). A tombstone deletes those exact copies. Its notice carries the newly allocated tombstone position and the exact original admission position. The original position remains an empty slot; rebuild never inserts an extra data tuple there. Payload-free archive history and lineage remain available for reconstruction.
 
 ### Rebuild and outages
 
-- A fresh native stream incarnation records a serialized PostgreSQL origin H and a domain-separated store identity in owner metadata. If the broker store is lost, its replacement gets a new origin and consumers acquire a new complete projection. Restoring a database below H or belonging to another store refuses the stream. Missing predecessor tombstone metadata remains unknown and unchanged; the schema preserves that closed predecessor set while rejecting every new incomplete tombstone. The ordinary full-history reader still reports those unknown positions as a named gap.
-- Restarting the same broker store resumes its saved PostgreSQL checkpoint. Data items have stable logical IDs, so replay before a completion barrier is idempotent; handlers also deduplicate durable staged items after the broker's duplicate window expires.
-- The stream carries reference-only contract version 4 metadata with its database origin, independently of the producer protocol version. Existing streams without that origin are refused and preserved; deployment selects a fresh namespace. A consumer, including status-only and restored-cache requests, needs a valid same-incarnation full-projection certificate when the origin requires it. A changed scope, catalog, incarnation or invalidated projection requests a new projection; unavailable owner evidence refuses without claiming a reset.
+- A new stream instance records a serialized PostgreSQL origin H and a store identity derived from the database's secret in its metadata. If the broker store is lost, its replacement gets a new origin and consumers take a new snapshot. Restoring a database below H or belonging to another store refuses the stream. Missing tombstone metadata from older history remains unknown and unchanged; the schema keeps that closed set while rejecting every new incomplete tombstone. The full-history reader still reports those unknown positions as a named gap.
+- The stream records its contract version (5: events whole or withheld) and origin in its metadata, independently of the producer protocol version. A stream with another contract is refused and kept; deployment deletes it or selects a fresh namespace, and consumers take a new snapshot from the new instance.
+- Restarting the same broker store resumes its saved PostgreSQL checkpoint. Data items have stable logical IDs, so replay before a completion marker is idempotent; handlers also deduplicate staged items after the broker's duplicate window expires.
 - A NATS outage pauses the publisher, which resumes from its saved position; derivation inside the daemon continues.
-- **Identical post-origin sequences.** For any filter and positions after H, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences. They differ only in fields withheld or carried by reference under the consumer's grants.
-- Publication reads only the selected event and lifecycle routing headers in one exact-ID batch per page, under the page's existing snapshot. Missing live rows retain the tombstone fallback and named unknown-history refusal; batch lookup order never changes feed order or completion barriers.
+- **Identical post-origin sequences.** For any filter and positions after H, the in-daemon commit-order reader and the confirmed stream deliver identical `(commit position, event ID, change)` sequences. They differ only in events the stream carries withheld.
+- Publication reads routing headers for one page in one batch and complete rows for its open events in a second, under the page's snapshot. Missing live rows keep the tombstone fallback and named unknown-history refusal; batch lookup order never changes feed order or completion markers.
 
-Consumer resume requests carry the actual completion receipt. Its fingerprint binds the stream instance, native sequence,
-original broker timestamp, subject and body. An erased or changed boundary
-requests a new projection; unavailable native evidence refuses for retry.
-
-A complete projection captures native prefix N before opening SQL cut B. Since
-publication follows committed admission, B covers every fact emitted through N.
-The existing signed basis binds that prefix, so its first consumer starts at
-N+1 without searching completion markers. N proves projection coverage, not
-completion delivery. An empty prefix starts at one and skips nothing. A lost
-or changed prefix cannot authorize a skip.
+**Resuming.** A consumer request carries the completion marker it applied last: stream instance, sequence and a fingerprint of the stored message (sequence, original broker timestamp, subject and body). Sinex reads that message from the broker and resumes delivery at it. A changed instance or an erased or changed marker answers `snapshot_required`; a broker failure refuses for retry.
 
 ## Outside consumers and handlers
 
@@ -144,12 +144,12 @@ An outside handler declares:
 | identity | its producer and consumer identity |
 | version | the exact version of its logic; outputs carry it |
 | input filter | which kinds and sources it reads |
-| start position | a certified projection position followed by all later complete deltas |
+| start position | a snapshot position followed by all later complete deltas |
 
 It then behaves as follows:
 
 - **It sees only committed facts**, under its grants, in commit order, plus lifecycle messages.
-- **Its completed position and actual native completion receipt** commit with the corresponding local result. A reconnect validates that exact stored marker and reoffers it, then later data; it does not redeliver the original history. Broker ACKs and a native floor seeded by a start sequence do not prove completion. A separate staged cursor can acknowledge durably saved partial pages without moving the completed boundary. A late old barrier cannot move that boundary past unapplied data.
+- **Its completed position and the completion marker it applied** commit with the corresponding local result. A reconnect names that marker; Sinex reoffers it, then later data, and does not redeliver the original history. Broker acknowledgments and a start sequence alone do not show completion. A separate staged cursor can acknowledge durably saved partial pages without moving the completed boundary. A late old marker cannot move that boundary past unapplied data.
 - **Its outputs return through the ingress** with source, version, a stable output identity and parent citations, and follow the [derivation](derivations.md) rules, including whole-chain archival: when an input is archived, the outputs that cite it are archived with it.
 - **Delivery is at least once.** Duplicates never duplicate conclusions, because outputs have stable identities; external side effects are the handler's to make idempotent.
 - **A filter or version change** requires an explicit start decision, with the resulting lag visible in status.

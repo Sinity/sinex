@@ -1199,13 +1199,17 @@ async fn publisher_survives(between_pages: bool) {
         while let Some(m) = futures::StreamExt::next(&mut messages).await {
             let m = m.unwrap();
             read += 1;
-            if let sinex_protocol::Confirmed::EventReference { event, commit_seq } =
-                serde_json::from_slice(&m.payload).unwrap()
-            {
+            let message: sinex_protocol::Confirmed = serde_json::from_slice(&m.payload).unwrap();
+            let event = match message {
+                sinex_protocol::Confirmed::Event(event) => Some((event.id, event.commit_seq)),
+                sinex_protocol::Confirmed::Withheld(event) => Some((event.event, event.commit_seq)),
+                _ => None,
+            };
+            if let Some((event, commit_seq)) = event {
                 assert_eq!(
                     expected.get(&event),
                     Some(&commit_seq),
-                    "reference names its exact committed event and position"
+                    "the message names its exact committed event and position"
                 );
                 assert!(seen.insert(event), "event {event} is on the stream twice");
             }

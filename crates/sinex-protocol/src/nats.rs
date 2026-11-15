@@ -11,7 +11,7 @@
 //! | `<root>.recorded.<producer>` | the producer, as a request | [`RecordedQuery`]: what Sinex recorded for these frames |
 //! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
 //! | `<root>.lifecycle.<producer>` | the producer, as a request | [`Lifecycle`]: archive, restore, undo or tombstone, with the producer as actor |
-//! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::EventReference`] |
+//! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::Event`], or a [`Confirmed::Withheld`] reference to fetch by ID |
 //! | `<root>.confirmed.lifecycle.<class>.<event type>` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Tombstoned`] message |
 //!
 //! Each producer's credentials allow only its own subjects
@@ -331,9 +331,8 @@ pub enum Ingress {
     },
     Events {
         frame: String,
-        /// Native source declaration; absent only for owner-declared canonical contracts.
+        /// The producer's source declaration; absent only for contracts Sinex declares.
         source: Option<SourceRef>,
-        coverage: Option<crate::context::CoverageProof>,
         events: Vec<ProducerEvent>,
         /// Records the producer's parser could not read. Their bytes stay in
         /// the cited material, so a replay can read them again.
@@ -659,7 +658,7 @@ pub struct ReceiptHint {
     pub frame_hash: String,
 }
 
-pub const PRODUCER_VERSION: u32 = 5;
+pub const PRODUCER_VERSION: u32 = 6;
 
 /// Checked before any material or events are sent. Event declarations can
 /// be registered here before checking the names the producer will emit.
@@ -773,11 +772,11 @@ pub enum Confirmed {
     Gap {
         reason: String,
     },
-    /// Metadata exceeding a transfer unit is fetched under the same scoped grants.
-    EventReference {
-        commit_seq: i64,
-        event: EventId,
-    },
+    /// A committed event of the open class, complete.
+    Event(Box<ConfirmedEvent>),
+    /// A committed event whose class is not open, or whose message would not
+    /// fit one stream message: fetch it by ID under the consumer's grants.
+    Withheld(WithheldEvent),
     Archived(Archived),
     /// An archived reading is live again at a new position.
     Restored(Restored),
@@ -795,7 +794,28 @@ pub enum Confirmed {
     },
 }
 
-/// A successful fetch. Stream messages carry only event references.
+/// Why an event travels without its body.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WithheldReason {
+    /// Its class is not open; a consumer granted the class fetches it.
+    Class,
+    /// The complete event is larger than one stream message.
+    Size,
+}
+
+/// An event on the stream or in a snapshot without its body.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WithheldEvent {
+    pub commit_seq: i64,
+    pub event: EventId,
+    pub event_type: String,
+    pub class: Class,
+    pub reason: WithheldReason,
+}
+
+/// A committed event, as the confirmed stream, a snapshot or a fetch carries it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
     /// Historical readings retain unknown source authority explicitly.
@@ -804,7 +824,7 @@ pub struct ConfirmedEvent {
     pub producer_family: Option<String>,
     pub producer_identity: Option<String>,
     pub kind_version: u64,
-    /// Exact immutable owner registry definition for this reading's kind.
+    /// The registered definition of this reading's kind version.
     pub kind_definition_hash: String,
     pub validation: sinex_model::Validation,
     pub commit_seq: i64,
@@ -854,16 +874,20 @@ pub struct Restored {
 #[cfg(test)]
 mod tests;
 
-/// The daemon selects and provisions the authenticated identity's scoped consumer.
+/// The daemon selects and provisions the authenticated identity's scoped
+/// consumer. Delivery resumes after `completion` when it is given, else after
+/// the applied snapshot's `start`, else from the first message when `after`
+/// is zero.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmedConsumer {
-    #[serde(default)]
-    pub basis: Option<crate::FullProjectionComplete>,
     pub after: i64,
-    /// The actual completion saved atomically with `after`, not the latest
-    /// staged message or the broker's acknowledgment floor.
+    /// The completion marker saved with `after`, not the latest staged
+    /// message or the broker's acknowledgment floor.
     pub completion: Option<crate::DeliveredCompletion>,
+    /// The snapshot applied at `after`, until a completion marker replaces it.
+    #[serde(default)]
+    pub start: Option<crate::SnapshotStart>,
     pub cache: String,
     #[serde(default)]
     pub status_only: bool,
@@ -871,9 +895,9 @@ pub struct ConfirmedConsumer {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "reply", rename_all = "snake_case")]
 pub enum ConfirmedConsumerReply {
-    /// This incarnation starts at a current-state cut. Install a complete
-    /// owner-certified projection at or after `origin` before following it.
-    ProjectionRequired {
+    /// This stream instance starts at a current-state origin. Install a
+    /// complete snapshot ([`crate::ReplayQuery::Snapshot`]) before following it.
+    SnapshotRequired {
         origin: i64,
         position: i64,
         scope: String,
