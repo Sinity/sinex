@@ -877,6 +877,7 @@ async fn windows_read_in_pages_equal_windows_read_alone(db: devkit::pg::TestData
 }
 
 mod all_derivations;
+mod bounded;
 mod shutdown;
 mod superseded_inputs;
 mod versions;
