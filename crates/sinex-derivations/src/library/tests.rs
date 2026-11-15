@@ -168,3 +168,5 @@ fn clock_corrections_do_not_change_capture_order() {
     assert_eq!(item(&output).revision, "blake3:b");
     assert_eq!(item(&output).replaces.as_deref(), Some("blake3:a"));
 }
+
+mod filename_hints;

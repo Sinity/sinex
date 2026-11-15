@@ -531,4 +531,4 @@ pub async fn require_bundled(conn: &mut PgConnection) -> Result<(), Error> {
 }
 
 #[cfg(test)]
-pub(crate) mod version_tests;
+pub(crate) mod tests;
