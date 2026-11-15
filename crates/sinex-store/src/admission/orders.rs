@@ -139,3 +139,6 @@ pub(super) async fn assign(
       ON CONFLICT(source,event_type,key_hash) DO UPDATE SET reading_order=greatest(core.producer_orders.reading_order,EXCLUDED.reading_order)"#,&sources,&kinds,&hashes,&orders).execute(conn).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
