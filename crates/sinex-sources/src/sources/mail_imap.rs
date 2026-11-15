@@ -754,13 +754,22 @@ impl sinex_source_core::binding::Reader for ImapReader {
         Ok(())
     }
 
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        if let Some((held, _)) = &self.held {
-            if !held.admitted(cursor) {
-                return held.acquired(cursor);
-            }
+    fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
+        if self
+            .held
+            .as_ref()
+            .is_some_and(|(held, _)| held.admitted(cursor))
+        {
             let (_, known) = self.held.take().expect("checked");
             self.known = known;
+        }
+        Ok(0)
+    }
+
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        self.committed(cursor)?;
+        if let Some((held, _)) = &self.held {
+            return held.acquired(cursor);
         }
         let polled = self.mail.poll(cursor, &self.known)?;
         let Some(known) = polled.known else {

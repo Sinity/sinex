@@ -137,17 +137,9 @@ impl DirSnapshot {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some(held) = state.held.take() {
-            if held.material.admitted(cursor) {
-                state.files = held.files;
-                state.failures = held.failures;
-                state.retries = held.retries;
-                state.locations = held.locations;
-            } else {
-                let acquired = held.material.acquired(cursor)?;
-                state.held = Some(held);
-                return Ok(acquired);
-            }
+        state.release_admitted(cursor);
+        if let Some(held) = &state.held {
+            return held.material.acquired(cursor);
         }
         let facts = match file_facts(&self.root) {
             Ok(f) => f,

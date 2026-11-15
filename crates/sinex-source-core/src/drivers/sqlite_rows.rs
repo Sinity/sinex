@@ -128,6 +128,18 @@ pub struct RowState {
 }
 
 impl RowState {
+    /// Once `cursor` admits the held material, keep its row hashes and drop
+    /// its bytes.
+    pub fn release_admitted(&mut self, cursor: &Value) {
+        if let Some((held, _)) = &self.held
+            && held.admitted(cursor)
+        {
+            let (_, hashes) = self.held.take().expect("checked");
+            self.hashes.extend(hashes);
+            self.polled = true;
+        }
+    }
+
     /// Remember the rows of one stored part. Parts are offered newest
     /// first, so a row already remembered keeps its newer line.
     pub fn remember_rows(&mut self, bytes: &[u8]) {
@@ -201,15 +213,9 @@ impl SqliteRows {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        if let Some((held, hashes)) = state.held.take() {
-            if held.admitted(cursor) {
-                state.hashes.extend(hashes);
-                state.polled = true;
-            } else {
-                let acquired = held.acquired(cursor)?;
-                state.held = Some((held, hashes));
-                return Ok(acquired);
-            }
+        state.release_admitted(cursor);
+        if let Some((held, _)) = &state.held {
+            return held.acquired(cursor);
         }
         let unavailable = |reason: String| Acquired {
             memory: None,

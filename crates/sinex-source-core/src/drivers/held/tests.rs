@@ -118,3 +118,36 @@ fn a_restart_inside_a_material_reads_on_from_the_file() {
     assert_eq!(next.manifest.file_offset, Some(4));
     assert_eq!(next.records, vec![(0, 4), (4, 10)]);
 }
+
+/// Once its final cursor is admitted the reader keeps none of the material's
+/// bytes, without waiting for another poll. A file read to its end is not
+/// polled again while it stays unchanged, so bytes kept until the next poll
+/// stayed for the life of the daemon, one part for every such binding.
+#[devkit::test]
+fn an_admitted_material_is_released_without_another_poll() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("input");
+    std::fs::write(&path, b"alpha\nbeta\n").unwrap();
+    let mut reader = reader(&path);
+    let acquired = reader.poll(&Value::Null).unwrap();
+    let m = acquired.material.as_ref().unwrap();
+    let partial = (m.cursor_at)(6).unwrap();
+    let end = (m.cursor_at)(11).unwrap();
+    let kept: Box<dyn Fn() -> bool> = match m.stored.as_ref().unwrap() {
+        StoredBytes::FramedMemory(bytes) => {
+            let bytes = Arc::downgrade(bytes);
+            Box::new(move || bytes.upgrade().is_some())
+        }
+        StoredBytes::FramedFile(file) => {
+            let file = Arc::downgrade(file);
+            Box::new(move || file.upgrade().is_some())
+        }
+        _ => panic!("an appended file holds framed bytes"),
+    };
+    drop(acquired);
+    assert!(kept(), "the material is held until it is admitted");
+    reader.committed(&partial).unwrap();
+    assert!(kept(), "a cursor short of the end keeps the material");
+    reader.committed(&end).unwrap();
+    assert!(!kept(), "the admitted material's bytes are released");
+}
